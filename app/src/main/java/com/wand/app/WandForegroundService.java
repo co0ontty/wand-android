@@ -32,7 +32,8 @@ public class WandForegroundService extends Service {
             return START_NOT_STICKY;
         }
 
-        Intent mainIntent = new Intent(this, MainActivity.class);
+        // 点通知回到原生主界面（HomeActivity）；WebView 仅作网页版兜底。
+        Intent mainIntent = new Intent(this, HomeActivity.class);
         mainIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         if (intent != null) {
             String serverUrl = intent.getStringExtra("server_url");

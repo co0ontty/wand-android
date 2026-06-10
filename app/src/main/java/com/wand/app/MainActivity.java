@@ -132,7 +132,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                             finish();
                         } else {
                             lastBackPressedTime = now;
-                            Toast.makeText(MainActivity.this, "再按一次退出", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(MainActivity.this, "再按一次返回原生界面", Toast.LENGTH_SHORT).show();
                         }
                     }
                 );
@@ -391,26 +391,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         @JavascriptInterface
         public void setAppIcon(String iconName) {
-            if (!"shorthair".equals(iconName) && !"garfield".equals(iconName)) return;
-            if (iconName.equals(serverStore.getAppIcon())) return;
-            serverStore.setAppIcon(iconName);
-
-            PackageManager pm = getPackageManager();
-            String pkg = getPackageName();
-            ComponentName shorthairAlias = new ComponentName(pkg, pkg + ".ConnectActivity.Shorthair");
-            ComponentName garfieldAlias = new ComponentName(pkg, pkg + ".ConnectActivity.Garfield");
-
-            if ("garfield".equals(iconName)) {
-                pm.setComponentEnabledSetting(shorthairAlias,
-                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
-                pm.setComponentEnabledSetting(garfieldAlias,
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP);
-            } else {
-                pm.setComponentEnabledSetting(garfieldAlias,
-                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
-                pm.setComponentEnabledSetting(shorthairAlias,
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP);
-            }
+            AppIconSwitcher.setAppIcon(MainActivity.this, serverStore, iconName);
         }
 
         @JavascriptInterface

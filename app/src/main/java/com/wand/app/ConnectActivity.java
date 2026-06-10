@@ -512,8 +512,9 @@ public class ConnectActivity extends AppCompatActivity {
         return "连接失败，请检查地址或稍后重试";
     }
 
+    /** 连接成功后进入原生主界面（HomeActivity）；WebView（MainActivity）只作网页版兜底。 */
     private void launchWebView(String url, String appToken) {
-        Intent intent = new Intent(this, MainActivity.class);
+        Intent intent = new Intent(this, HomeActivity.class);
         intent.putExtra("server_url", url);
         if (appToken != null) {
             intent.putExtra("app_token", appToken);
