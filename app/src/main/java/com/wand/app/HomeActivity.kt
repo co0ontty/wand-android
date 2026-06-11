@@ -81,6 +81,9 @@ class HomeActivity : AppCompatActivity() {
                     api = api,
                     actions = actions,
                     onAuthenticated = {
+                        // 认证成功后启动会话通知中枢（全局 WS → 进度/完成/授权通知）。
+                        // start 幂等，Activity 重建时复用既有连接。
+                        SessionWatcher.start(this, api.baseUrl, appToken)
                         // 每个进程只在首次认证成功后静默检查一次更新（从 WebView 首屏迁来）。
                         if (!updateCheckedThisProcess) {
                             updateCheckedThisProcess = true
@@ -119,6 +122,8 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun switchServer() {
+        // 换服务器 / 断开：停掉旧服务器的通知中枢，避免跨服务器串通知。
+        SessionWatcher.stop()
         val intent = Intent(this, ConnectActivity::class.java)
         intent.putExtra("skip_auto_connect", true)
         startActivity(intent)

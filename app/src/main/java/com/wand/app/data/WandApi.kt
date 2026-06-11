@@ -213,6 +213,34 @@ class WandApi(baseUrl: String, val token: String?) {
         )
     }
 
+    /** AI 预生成 commit message 与推荐 tag（只生成不提交，对应网页版「AI」按钮）。 */
+    suspend fun generateCommitMessage(sessionId: String): GenerateCommitMessageResult =
+        GenerateCommitMessageResult.parse(
+            requestObject(
+                "POST",
+                "/api/sessions/$sessionId/generate-commit-message",
+                timeoutSec = 180,
+            )
+        )
+
+    /** 补推送：把已有 commit / tag 推到远端；submodule 为 true 时递归推送各 submodule。 */
+    suspend fun gitPush(
+        sessionId: String,
+        pushCommits: Boolean,
+        pushTags: Boolean,
+        submodule: Boolean,
+        tag: String?,
+    ): GitPushResult {
+        val body = JSONObject()
+            .put("pushCommits", pushCommits)
+            .put("pushTags", pushTags)
+            .put("submodule", submodule)
+        if (!tag.isNullOrEmpty()) body.put("tag", tag)
+        return GitPushResult.parse(
+            requestObject("POST", "/api/sessions/$sessionId/git/push", body, timeoutSec = 180)
+        )
+    }
+
     // MARK: - 目录与配置
 
     suspend fun listDirectory(query: String): DirectoryListing =

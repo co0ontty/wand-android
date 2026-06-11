@@ -53,8 +53,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.SessionWatcher
 import com.wand.app.data.WandApi
 import com.wand.app.ui.ChatStore
+import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.theme.WandColors
 import kotlinx.coroutines.delay
 
@@ -73,9 +75,29 @@ fun ChatScreen(
     onBack: () -> Unit,
 ) {
     val store = remember(sessionId) { ChatStore(sessionId, api) }
+    val quickCommit = remember(sessionId) {
+        QuickCommitStore(sessionId, api) { msg -> store.toast = msg }
+    }
     DisposableEffect(store) {
         store.start()
         onDispose { store.shutdown() }
+    }
+    DisposableEffect(quickCommit) {
+        onDispose { quickCommit.shutdown() }
+    }
+    // 注册「正在看」的会话：通知中枢据此抑制当前会话的打扰通知（对齐网页
+    // skipWhenSelectedSessionId —— 正盯着的会话不需要系统通知再吵一遍）。
+    DisposableEffect(sessionId) {
+        SessionWatcher.activeChatSessionId = sessionId
+        onDispose {
+            if (SessionWatcher.activeChatSessionId == sessionId) {
+                SessionWatcher.activeChatSessionId = null
+            }
+        }
+    }
+    // 进屏加载一次 git 状态（决定顶栏徽标显隐）；每回合结束后刷新（agent 可能改了文件）。
+    LaunchedEffect(store.isResponding) {
+        if (!store.isResponding) quickCommit.loadStatus(force = true)
     }
 
     var draft by remember { mutableStateOf("") }
@@ -120,7 +142,10 @@ fun ChatScreen(
                         )
                     }
                 },
-                actions = { StatusBadge(store) },
+                actions = {
+                    GitTopBarBadge(quickCommit) { quickCommit.openPanel() }
+                    StatusBadge(store)
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
@@ -182,6 +207,15 @@ fun ChatScreen(
                         }
                     }
                 }
+            }
+
+            // Git 快捷提交弹层（磁吸气泡 dock，对齐网页版交互）。
+            if (quickCommit.panelOpen) {
+                QuickCommitSheet(
+                    qc = quickCommit,
+                    isHapticEnabled = isHapticEnabled,
+                    onDismiss = { quickCommit.closePanel() },
+                )
             }
 
             // Toast：顶部居中胶囊。

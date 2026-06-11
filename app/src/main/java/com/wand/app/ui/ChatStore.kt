@@ -118,6 +118,8 @@ class ChatStore(val sessionId: String, val api: WandApi) {
             }
             "output" -> event.data?.let { applyOutput(it) }
             "status" -> event.data?.let { applyStatus(it) }
+            // 当前任务实时更新（对齐网页 state.currentTask）；data 为 null 表示任务清空。
+            "task" -> currentTaskTitle = event.data?.taskTitle
             "ended" -> {
                 val data = event.data
                 if (data != null) {

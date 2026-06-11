@@ -375,6 +375,8 @@ data class WsData(
     val isResponding: Boolean?,
     // —— status 事件附加字段 ——
     val permissionRequest: PermissionRequestInfo?,
+    // —— task 事件：data 本身就是任务对象（{title, …}），其余字段缺省 ——
+    val taskTitle: String?,
 ) {
     /** init 的 data 是完整快照 —— 转成 SessionSnapshot（messages 不带，避免双份内存）。 */
     fun toSnapshot(): SessionSnapshot? {
@@ -427,6 +429,7 @@ data class WsData(
             incremental = o.bool("incremental"),
             isResponding = o.bool("isResponding"),
             permissionRequest = PermissionRequestInfo.parse(o.obj("permissionRequest")),
+            taskTitle = o.str("title"),
         )
     }
 }
@@ -573,6 +576,36 @@ data class GitStatusResult(
                 error = o.str("error"),
             )
         }
+    }
+}
+
+/** POST /api/sessions/:id/generate-commit-message 响应：AI 撰写的 message 与推荐 tag（不提交）。 */
+data class GenerateCommitMessageResult(
+    val message: String?,
+    val suggestedTag: String?,
+) {
+    companion object {
+        fun parse(o: JSONObject): GenerateCommitMessageResult = GenerateCommitMessageResult(
+            message = o.str("message"),
+            suggestedTag = o.str("suggestedTag"),
+        )
+    }
+}
+
+/** POST /api/sessions/:id/git/push 响应。部分失败时 HTTP 仍是 200，error 带原因。 */
+data class GitPushResult(
+    val ok: Boolean,
+    val pushedCommits: Boolean?,
+    val pushedTags: Boolean?,
+    val error: String?,
+) {
+    companion object {
+        fun parse(o: JSONObject): GitPushResult = GitPushResult(
+            ok = o.bool("ok") ?: false,
+            pushedCommits = o.bool("pushedCommits"),
+            pushedTags = o.bool("pushedTags"),
+            error = o.str("error"),
+        )
     }
 }
 
