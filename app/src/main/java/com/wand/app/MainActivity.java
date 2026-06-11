@@ -129,7 +129,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                         if ("true".equals(result)) return;
                         long now = System.currentTimeMillis();
                         if (now - lastBackPressedTime < 2000) {
-                            finish();
+                            navigateBackToNative();
                         } else {
                             lastBackPressedTime = now;
                             Toast.makeText(MainActivity.this, "再按一次返回原生界面", Toast.LENGTH_SHORT).show();
@@ -165,6 +165,17 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         connectIntent.putExtra("skip_auto_connect", true);
         connectIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(connectIntent);
+        finish();
+    }
+
+    /** 回到原生主界面。显式导航而不是单纯 finish()——
+     *  点通知直接拉起本页时任务栈里可能没有 HomeActivity。 */
+    private void navigateBackToNative() {
+        Intent home = new Intent(this, HomeActivity.class);
+        home.putExtra("server_url", serverUrl);
+        if (appToken != null) home.putExtra("app_token", appToken);
+        home.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(home);
         finish();
     }
 
@@ -360,6 +371,12 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         @JavascriptInterface
         public void switchServer() {
             runOnUiThread(MainActivity.this::openConnectScreen);
+        }
+
+        @JavascriptInterface
+        public void backToNative() {
+            // 网页侧边栏「返回App」按钮：回到原生主界面。
+            runOnUiThread(MainActivity.this::navigateBackToNative);
         }
 
         @JavascriptInterface
