@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -40,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +62,7 @@ import com.wand.app.ui.ChatStore
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.theme.WandColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 原生聊天视图 —— 对称 iOS ChatView.swift：
@@ -101,14 +105,23 @@ fun ChatScreen(
     }
 
     var draft by remember { mutableStateOf("") }
+    var followsLatest by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
+    val isListDragged by listState.interactionSource.collectIsDraggedAsState()
+    val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
 
-    // 消息变化时滚到底部；首次加载完成后钉底。
-    val itemCount = store.messages.size + if (store.isResponding) 1 else 0
-    LaunchedEffect(itemCount, store.loading) {
-        if (!store.loading && itemCount > 0) {
-            listState.animateScrollToItem((itemCount - 1).coerceAtLeast(0))
+    // 用户开始拖动后立即暂停跟随，避免流式更新把历史阅读位置抢回底部。
+    LaunchedEffect(isListDragged) {
+        if (isListDragged) followsLatest = false
+    }
+
+    // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
+    // 列表末尾有独立锚点，确保长消息增长时滚到真正底部而非最后一项顶部。
+    val bottomIndex = store.messages.size + if (store.isResponding) 1 else 0
+    LaunchedEffect(store.messages, store.isResponding, store.loading) {
+        if (!store.loading && followsLatest) {
+            listState.scrollToItem(bottomIndex)
         }
     }
 
@@ -205,7 +218,27 @@ fun ChatScreen(
                                 RespondingIndicator(store.currentTaskTitle)
                             }
                         }
+                        item(key = "chat-bottom") {
+                            Spacer(modifier = Modifier.size(1.dp))
+                        }
                     }
+                }
+            }
+
+            if (!store.loading && store.loadError == null && !followsLatest) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        followsLatest = true
+                        scrollScope.launch { listState.animateScrollToItem(bottomIndex) }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 12.dp),
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shape = CircleShape,
+                ) {
+                    Text("↓", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
