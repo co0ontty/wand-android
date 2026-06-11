@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -301,7 +304,7 @@ private fun SwipeDeleteRow(
 }
 
 /**
- * 单条会话卡片：StatusDot（呼吸）+ 标题 + runner 徽章 + 路径尾段 + 行尾 StatusBadge。
+ * 单条会话卡片：助手图标 + 状态点 + 标题 + provider/runner + 路径尾段 + 行尾 StatusBadge。
  * 内容高 ≥40dp + 上下 12dp 内边距 → 整行 ≥64dp。
  */
 @Composable
@@ -318,7 +321,7 @@ private fun SessionCard(session: SessionSnapshot, onClick: () -> Unit) {
                 .heightIn(min = 40.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StatusDot(status)
+            ProviderMark(session = session, status = status)
             Spacer(modifier = Modifier.width(12.dp))
             Column(
                 modifier = Modifier.weight(1f),
@@ -336,6 +339,13 @@ private fun SessionCard(session: SessionSnapshot, onClick: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    Text(
+                        if (session.provider == "codex") "Codex" else "Claude",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (session.provider == "codex") WandColors.info else WandColors.brand,
+                        maxLines = 1,
+                    )
                     RunnerBadge(isStructured = session.isStructured)
                     val cwdTail = session.cwd
                         ?.trimEnd('/')
@@ -355,6 +365,43 @@ private fun SessionCard(session: SessionSnapshot, onClick: () -> Unit) {
             }
             Spacer(modifier = Modifier.width(8.dp))
             StatusBadge(status)
+        }
+    }
+}
+
+/** 左侧助手标识：Claude 用品牌星芒，Codex 用蓝色终端符号，右下角叠加实时状态。 */
+@Composable
+private fun ProviderMark(session: SessionSnapshot, status: String) {
+    val isCodex = session.provider == "codex"
+    val tint = if (isCodex) WandColors.info else WandColors.brand
+    val background = if (isCodex) WandColors.infoSoft else WandColors.brandSoft
+    val icon = if (isCodex) WandIcons.terminal else WandIcons.sparkle
+    val label = if (isCodex) "Codex" else "Claude"
+
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(WandShapes.md)
+            .background(background)
+            .border(1.dp, tint.copy(alpha = 0.24f), WandShapes.md),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = "$label，${session.displayTitle}",
+            tint = tint,
+            modifier = Modifier.size(21.dp),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(13.dp)
+                .clip(CircleShape)
+                .background(WandColors.surface)
+                .padding(2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            StatusDot(status, modifier = Modifier.size(8.dp))
         }
     }
 }

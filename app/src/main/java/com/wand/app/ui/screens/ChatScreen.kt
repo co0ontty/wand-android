@@ -10,9 +10,11 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -30,6 +33,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -37,8 +42,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
@@ -56,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -63,6 +67,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.SessionWatcher
@@ -78,7 +83,6 @@ import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
-import com.wand.app.ui.theme.WandShapes
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -220,9 +224,9 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
-                            start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp,
+                            start = 14.dp, end = 14.dp, top = 8.dp, bottom = 6.dp,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         // key = index：流式原地替换最后一条时 key 不变不触发动画，
                         // 只有真正新增的消息才走 animateItem 淡入。
@@ -368,7 +372,7 @@ private fun BottomBar(
             // 这就是 WebView 时代键盘重叠问题的原生解法。
             .navigationBarsPadding()
             .imePadding()
-            .padding(bottom = 8.dp),
+            .padding(bottom = 4.dp),
     ) {
         // 权限审批卡：底部滑入 + 淡入；退场期间用缓存内容避免闪空。
         val hasPermission = store.pendingEscalation != null || store.legacyPermissionPrompt != null
@@ -442,62 +446,86 @@ private fun InputBar(
     onSend: () -> Unit,
 ) {
     val canSend = draft.isNotBlank() && !store.sessionEnded
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val borderColor by androidx.compose.animation.animateColorAsState(
+        if (focused) WandColors.brand.copy(alpha = 0.72f) else WandColors.border,
+        WandMotion.tweenFast(),
+        label = "composerBorder",
+    )
     Row(
         verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(WandColors.surface)
+            .border(1.dp, borderColor, RoundedCornerShape(18.dp))
+            .padding(start = 13.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
     ) {
-        OutlinedTextField(
+        BasicTextField(
             value = draft,
             onValueChange = onDraftChange,
-            placeholder = { Text("发消息…", fontSize = 16.sp, color = WandColors.textMuted) },
+            interactionSource = interaction,
+            textStyle = TextStyle(
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                color = WandColors.textPrimary,
+            ),
+            cursorBrush = SolidColor(WandColors.brand),
             minLines = 1,
             maxLines = 5,
-            shape = WandShapes.lg,
             keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.Sentences,
             ),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = WandColors.brand,
-                unfocusedBorderColor = WandColors.border,
-                focusedContainerColor = WandColors.surface,
-                unfocusedContainerColor = WandColors.surface,
-            ),
-            modifier = Modifier.weight(1f),
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (draft.isEmpty()) {
+                        Text("输入消息…", fontSize = 15.sp, color = WandColors.textMuted)
+                    }
+                    innerTextField()
+                }
+            },
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 34.dp, max = 108.dp)
+                .padding(vertical = 6.dp),
         )
         if (store.isResponding) {
-            CircleIconButton(
-                background = WandColors.danger,
+            ComposerIconButton(
+                background = WandColors.dangerSoft,
+                enabled = true,
                 onClick = { store.stopResponding() },
             ) {
                 Icon(
                     WandIcons.stop,
                     contentDescription = "停止回复",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
+                    tint = WandColors.danger,
+                    modifier = Modifier.size(17.dp),
                 )
             }
+            Spacer(modifier = Modifier.size(5.dp))
         }
-        CircleIconButton(
-            background = if (canSend) WandColors.brand else WandColors.brand.copy(alpha = 0.35f),
-            onClick = { if (canSend) onSend() },
+        ComposerIconButton(
+            background = if (canSend) WandColors.brand else WandColors.surfaceSoft,
+            enabled = canSend,
+            onClick = onSend,
         ) {
             Icon(
                 WandIcons.send,
                 contentDescription = "发送",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp),
+                tint = if (canSend) Color.White else WandColors.textMuted,
+                modifier = Modifier.size(17.dp),
             )
         }
     }
 }
 
-/** 圆形操作按钮：按压时 0.92 缩放反馈。 */
+/** 输入器内操作按钮：紧凑圆角方块，保留按压缩放反馈。 */
 @Composable
-private fun CircleIconButton(
+private fun ComposerIconButton(
     background: Color,
+    enabled: Boolean,
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -506,20 +534,20 @@ private fun CircleIconButton(
     val scale by animateFloatAsState(
         if (pressed) 0.92f else 1f,
         WandMotion.tweenFast(),
-        label = "circleBtnScale",
+        label = "composerBtnScale",
     )
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .padding(bottom = 4.dp)
-            .size(40.dp)
+            .size(34.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(11.dp))
             .background(background)
             .clickable(
+                enabled = enabled,
                 interactionSource = interaction,
                 indication = LocalIndication.current,
                 onClick = onClick,

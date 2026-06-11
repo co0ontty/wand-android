@@ -126,19 +126,19 @@ private fun UserBubble(turn: ConversationTurn) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 56.dp),
+            .padding(start = 44.dp),
         horizontalArrangement = Arrangement.End,
     ) {
         SelectionContainer {
             Text(
                 text,
                 fontSize = 15.sp,
-                lineHeight = 22.sp,
+                lineHeight = 21.sp,
                 color = Color.White,
                 modifier = Modifier
                     .clip(bubbleShape)
                     .background(WandColors.brand)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 13.dp, vertical = 8.dp),
             )
         }
     }
@@ -275,7 +275,7 @@ private data class MarkdownSegment(val content: String, val isCode: Boolean)
 @Composable
 fun MarkdownText(text: String) {
     val segments = remember(text) { splitMarkdownSegments(text) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         segments.forEach { segment ->
             if (segment.isCode) {
                 Box(
@@ -285,7 +285,7 @@ fun MarkdownText(text: String) {
                         .background(WandColors.surfaceSoft)
                         .border(1.dp, WandColors.border, WandShapes.sm)
                         .horizontalScroll(rememberScrollState())
-                        .padding(10.dp),
+                        .padding(9.dp),
                 ) {
                     SelectionContainer {
                         Text(
@@ -301,7 +301,7 @@ fun MarkdownText(text: String) {
                     Text(
                         inlineMarkdown(segment.content),
                         fontSize = 15.sp,
-                        lineHeight = 23.sp,
+                        lineHeight = 22.sp,
                         color = WandColors.textPrimary,
                     )
                 }
@@ -450,7 +450,7 @@ fun ToolCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 11.dp, vertical = 8.dp),
             ) {
                 if (running) {
                     val spin = rememberInfiniteTransition(label = "toolSpin")
