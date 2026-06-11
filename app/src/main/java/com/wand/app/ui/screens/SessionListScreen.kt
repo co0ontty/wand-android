@@ -1,33 +1,27 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -46,16 +40,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
+import com.wand.app.ui.components.EmptyState
+import com.wand.app.ui.components.ErrorState
+import com.wand.app.ui.components.LoadingState
+import com.wand.app.ui.components.StatusBadge
+import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandShapes
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -120,27 +120,55 @@ fun SessionListScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Wand", fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        "Wand",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                    )
+                },
                 navigationIcon = {
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
                             Icon(
                                 Icons.Default.MoreVert,
                                 contentDescription = "菜单",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = WandColors.textSecondary,
                             )
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text("设置") },
+                                leadingIcon = {
+                                    Icon(
+                                        WandIcons.settings,
+                                        contentDescription = null,
+                                        tint = WandColors.textSecondary,
+                                    )
+                                },
                                 onClick = { menuOpen = false; onOpenSettings() },
                             )
                             DropdownMenuItem(
                                 text = { Text("打开网页版") },
+                                leadingIcon = {
+                                    Icon(
+                                        WandIcons.web,
+                                        contentDescription = null,
+                                        tint = WandColors.textSecondary,
+                                    )
+                                },
                                 onClick = { menuOpen = false; onOpenWeb() },
                             )
                             DropdownMenuItem(
                                 text = { Text("切换服务器") },
+                                leadingIcon = {
+                                    Icon(
+                                        WandIcons.swapServer,
+                                        contentDescription = null,
+                                        tint = WandColors.textSecondary,
+                                    )
+                                },
                                 onClick = { menuOpen = false; onSwitchServer() },
                             )
                         }
@@ -149,9 +177,9 @@ fun SessionListScreen(
                 actions = {
                     IconButton(onClick = onNewSession) {
                         Icon(
-                            Icons.Default.Add,
+                            WandIcons.add,
                             contentDescription = "新建会话",
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = WandColors.brand,
                         )
                     }
                 },
@@ -164,43 +192,22 @@ fun SessionListScreen(
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
             when {
                 state.loading && state.sessions.isEmpty() -> {
-                    CircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
+                    LoadingState("正在加载会话…")
                 }
                 state.loadError != null && state.sessions.isEmpty() -> {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text(
-                            state.loadError ?: "",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                        )
-                        OutlinedButton(onClick = { scope.launch { state.load() } }) {
-                            Text("重试")
-                        }
-                    }
+                    ErrorState(
+                        message = state.loadError ?: "加载失败",
+                        onRetry = { scope.launch { state.load() } },
+                    )
                 }
                 state.visibleSessions.isEmpty() -> {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        Text(
-                            "还没有会话",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Button(onClick = onNewSession) { Text("新建会话") }
-                    }
+                    EmptyState(
+                        icon = WandIcons.sparkle,
+                        title = "还没有会话",
+                        subtitle = "新建一个会话，开始与 AI 协作",
+                        actionText = "创建第一个会话",
+                        onAction = onNewSession,
+                    )
                 }
                 else -> {
                     PullToRefreshBox(
@@ -213,9 +220,19 @@ fun SessionListScreen(
                             }
                         },
                     ) {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                start = 16.dp,
+                                end = 16.dp,
+                                top = 8.dp,
+                                bottom = 16.dp,
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             items(state.visibleSessions, key = { it.id }) { session ->
                                 SwipeDeleteRow(
+                                    modifier = Modifier.animateItem(),
                                     onDelete = {
                                         state.removeLocally(session.id)
                                         scope.launch {
@@ -227,15 +244,11 @@ fun SessionListScreen(
                                         }
                                     },
                                 ) {
-                                    SessionRow(
+                                    SessionCard(
                                         session = session,
                                         onClick = { onOpenChat(session.id) },
                                     )
                                 }
-                                HorizontalDivider(
-                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                    thickness = 0.5.dp,
-                                )
                             }
                         }
                     }
@@ -247,7 +260,11 @@ fun SessionListScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SwipeDeleteRow(onDelete: () -> Unit, content: @Composable () -> Unit) {
+private fun SwipeDeleteRow(
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
@@ -260,19 +277,21 @@ private fun SwipeDeleteRow(onDelete: () -> Unit, content: @Composable () -> Unit
     )
     SwipeToDismissBox(
         state = dismissState,
+        modifier = modifier,
         enableDismissFromStartToEnd = false,
         backgroundContent = {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.error),
+                    .clip(WandShapes.md)
+                    .background(WandColors.danger),
                 contentAlignment = Alignment.CenterEnd,
             ) {
-                Text(
-                    "删除",
-                    color = Color.White,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(end = 24.dp),
+                Icon(
+                    WandIcons.delete,
+                    contentDescription = "删除",
+                    tint = MaterialTheme.colorScheme.onError,
+                    modifier = Modifier.padding(end = 20.dp),
                 )
             }
         },
@@ -281,90 +300,89 @@ private fun SwipeDeleteRow(onDelete: () -> Unit, content: @Composable () -> Unit
     }
 }
 
+/**
+ * 单条会话卡片：StatusDot（呼吸）+ 标题 + runner 徽章 + 路径尾段 + 行尾 StatusBadge。
+ * 内容高 ≥40dp + 上下 12dp 内边距 → 整行 ≥64dp。
+ */
 @Composable
-private fun SessionRow(session: SessionSnapshot, onClick: () -> Unit) {
-    val statusTint = statusTint(session)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun SessionCard(session: SessionSnapshot, onClick: () -> Unit) {
+    val status = derivedStatus(session)
+    WandCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(9.dp)
-                .clip(CircleShape)
-                .background(statusTint),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                session.displayTitle,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(top = 3.dp),
+                .fillMaxWidth()
+                .heightIn(min = 40.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(status)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    if (session.isStructured) "聊天" else "终端",
-                    fontSize = 11.sp,
+                    session.displayTitle,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                val cwdTail = session.cwd
-                    ?.trimEnd('/')
-                    ?.substringAfterLast('/')
-                    .orEmpty()
-                if (cwdTail.isNotEmpty()) {
-                    Text(
-                        cwdTail,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RunnerBadge(isStructured = session.isStructured)
+                    val cwdTail = session.cwd
+                        ?.trimEnd('/')
+                        ?.substringAfterLast('/')
+                        .orEmpty()
+                    if (cwdTail.isNotEmpty()) {
+                        Text(
+                            cwdTail,
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = WandColors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
+            Spacer(modifier = Modifier.width(8.dp))
+            StatusBadge(status)
         }
-        Text(
-            statusLabel(session),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = statusTint,
-        )
     }
 }
 
+/** runner 类型徽章：聊天 brandSoft/brand，终端 infoSoft/info，11sp 弱底胶囊。 */
 @Composable
-private fun statusTint(session: SessionSnapshot): Color {
-    if (session.hasPendingPermission) return WandColors.permission
-    return when (session.status ?: "") {
-        "running" -> if (session.isResponding) WandColors.running else WandColors.brand
-        "idle" -> WandColors.brand.copy(alpha = 0.6f)
-        else -> Color.Gray
-    }
+private fun RunnerBadge(isStructured: Boolean) {
+    val bg = if (isStructured) WandColors.brandSoft else WandColors.infoSoft
+    val fg = if (isStructured) WandColors.brand else WandColors.info
+    Text(
+        if (isStructured) "聊天" else "终端",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Medium,
+        color = fg,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(WandShapes.full)
+            .background(bg)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    )
 }
 
-private fun statusLabel(session: SessionSnapshot): String {
-    if (session.hasPendingPermission) return "待授权"
-    if (session.isResponding) return "回复中"
-    return when (session.status ?: "") {
-        "running" -> "运行中"
-        "idle" -> "空闲"
-        "exited", "stopped" -> "已结束"
-        "failed" -> "失败"
-        else -> session.status ?: ""
-    }
+/**
+ * 服务端 status（running/idle/exited/failed/stopped）+ 客户端派生态折算：
+ * 待授权 > 思考中 > 原始状态，喂给公共 StatusDot/StatusBadge。
+ */
+private fun derivedStatus(session: SessionSnapshot): String = when {
+    session.hasPendingPermission -> "permission"
+    session.isResponding -> "thinking"
+    else -> session.status ?: "idle"
 }

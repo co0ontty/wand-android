@@ -4,16 +4,23 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -22,12 +29,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -43,17 +50,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.R
 import com.wand.app.data.WandApi
 import com.wand.app.ui.HomeActions
+import com.wand.app.ui.components.SectionHeader
+import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.theme.WandColors
 
 /**
  * 原生设置页 —— 对称 iOS SettingsView，并把原 WebView 桥（WandNative）的
  * Android 特有能力迁到原生：提示音/音量/振动、应用图标切换、后台保活、检查更新。
+ * 视觉对齐重设计规范 v1 第 3.4 节：区块卡片化 + 图标化 ActionRow + 图标预览卡。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,7 +109,7 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     showDisconnectConfirm = false
                     actions.disconnect()
-                }) { Text("断开", color = MaterialTheme.colorScheme.error) }
+                }) { Text("断开", color = WandColors.danger) }
             },
             dismissButton = {
                 TextButton(onClick = { showDisconnectConfirm = false }) { Text("取消") }
@@ -101,21 +118,28 @@ fun SettingsScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = WandColors.bgPrimary,
         topBar = {
             TopAppBar(
-                title = { Text("设置", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        "设置",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = WandColors.textSecondary,
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = WandColors.bgPrimary,
                 ),
             )
         },
@@ -126,196 +150,319 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // —— 服务器 ——
             SectionHeader("服务器")
-            InfoRow("地址", actions.serverUrl, mono = true)
-            InfoRow("认证方式", if (actions.hasToken) "连接码" else "无密码")
-            serverVersion?.let { InfoRow("服务端版本", "v$it") }
-            ActionRow("切换服务器") { actions.switchServer() }
-            ActionRow("断开连接", tintDanger = true) { showDisconnectConfirm = true }
-
-            SectionDivider()
+            WandCard(modifier = Modifier.fillMaxWidth()) {
+                InfoRow("地址", actions.serverUrl, mono = true)
+                RowDivider()
+                InfoRow("认证方式", if (actions.hasToken) "连接码" else "无密码")
+                serverVersion?.let {
+                    RowDivider()
+                    InfoRow("服务端版本", "v$it", mono = true)
+                }
+                RowDivider()
+                ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
+                RowDivider()
+                ActionRow("断开连接", WandIcons.logout, danger = true) {
+                    showDisconnectConfirm = true
+                }
+            }
 
             // —— 通知与反馈 ——
             SectionHeader("通知与反馈")
-            Text(
-                "提示音",
-                fontSize = 14.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                // 与 NotificationHelper.SOUND_PRESETS 对齐。
-                val presets = listOf("chime" to "叮咚", "bubble" to "气泡", "meow" to "喵~", "bell" to "铃声")
-                presets.forEachIndexed { index, (id, label) ->
-                    SegmentedButton(
-                        selected = selectedSound == id,
-                        onClick = {
-                            selectedSound = id
-                            actions.setNotificationSound(id)
-                            actions.previewSound(id)
+            WandCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("提示音", fontSize = 14.sp, color = WandColors.textPrimary)
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        // 与 NotificationHelper.SOUND_PRESETS 对齐。
+                        val presets = listOf(
+                            "chime" to "叮咚",
+                            "bubble" to "气泡",
+                            "meow" to "喵~",
+                            "bell" to "铃声",
+                        )
+                        presets.forEachIndexed { index, (id, label) ->
+                            SegmentedButton(
+                                selected = selectedSound == id,
+                                onClick = {
+                                    selectedSound = id
+                                    actions.setNotificationSound(id)
+                                    actions.previewSound(id)
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = presets.size,
+                                ),
+                                colors = SegmentedButtonDefaults.colors(
+                                    activeContainerColor = WandColors.brandSoft,
+                                    activeContentColor = WandColors.brand,
+                                    activeBorderColor = WandColors.brand,
+                                    inactiveContainerColor = Color.Transparent,
+                                    inactiveContentColor = WandColors.textSecondary,
+                                    inactiveBorderColor = WandColors.border,
+                                ),
+                            ) { Text(label, fontSize = 12.sp, maxLines = 1) }
+                        }
+                    }
+                }
+                RowDivider()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 52.dp)
+                        .padding(horizontal = 14.dp),
+                ) {
+                    Text("音量", fontSize = 14.sp, color = WandColors.textPrimary)
+                    Slider(
+                        value = volume,
+                        onValueChange = { volume = it },
+                        onValueChangeFinished = {
+                            actions.setNotificationVolume(volume.toInt())
+                            actions.previewSound(selectedSound)
                         },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = presets.size),
-                    ) { Text(label, fontSize = 12.sp, maxLines = 1) }
+                        valueRange = 0f..100f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = WandColors.brand,
+                            activeTrackColor = WandColors.brand,
+                            inactiveTrackColor = WandColors.brandSoft,
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 12.dp),
+                    )
+                    Text(
+                        "${volume.toInt()}",
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textMuted,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                RowDivider()
+                SwitchRow("振动反馈", hapticEnabled) {
+                    hapticEnabled = it
+                    actions.setHapticEnabled(it)
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("音量", fontSize = 14.sp)
-                Slider(
-                    value = volume,
-                    onValueChange = { volume = it },
-                    onValueChangeFinished = {
-                        actions.setNotificationVolume(volume.toInt())
-                        actions.previewSound(selectedSound)
-                    },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp),
-                )
-                Text(
-                    "${volume.toInt()}",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
-            }
-            SwitchRow("振动反馈", hapticEnabled) {
-                hapticEnabled = it
-                actions.setHapticEnabled(it)
-            }
-
-            SectionDivider()
 
             // —— 应用图标 ——
             SectionHeader("应用图标")
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val icons = listOf("shorthair" to "赛博虎妞", "garfield" to "勤劳初二")
-                icons.forEachIndexed { index, (id, label) ->
-                    SegmentedButton(
-                        selected = appIcon == id,
-                        onClick = {
-                            appIcon = id
-                            actions.setAppIcon(id)
-                        },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = icons.size),
-                    ) { Text(label, fontSize = 13.sp, maxLines = 1) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AppIconCard(
+                    name = "赛博虎妞",
+                    backgroundRes = R.drawable.ic_launcher_background,
+                    foregroundRes = R.drawable.ic_launcher_foreground,
+                    selected = appIcon == "shorthair",
+                    modifier = Modifier.weight(1f),
+                ) {
+                    appIcon = "shorthair"
+                    actions.setAppIcon("shorthair")
+                }
+                AppIconCard(
+                    name = "勤劳初二",
+                    backgroundRes = R.drawable.ic_launcher_background_garfield,
+                    foregroundRes = R.drawable.ic_launcher_foreground_garfield,
+                    selected = appIcon == "garfield",
+                    modifier = Modifier.weight(1f),
+                ) {
+                    appIcon = "garfield"
+                    actions.setAppIcon("garfield")
                 }
             }
             Text(
                 "切换后桌面图标会变化，部分启动器需要几秒生效。",
                 fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = WandColors.textMuted,
+                modifier = Modifier.padding(top = 8.dp),
             )
-
-            SectionDivider()
 
             // —— 后台 ——
             SectionHeader("后台")
-            SwitchRow("后台保活（常驻通知）", keepAlive) { enabled ->
-                keepAlive = enabled
-                if (enabled && Build.VERSION.SDK_INT >= 33) {
-                    notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            WandCard(modifier = Modifier.fillMaxWidth()) {
+                SwitchRow("后台保活（常驻通知）", keepAlive) { enabled ->
+                    keepAlive = enabled
+                    if (enabled && Build.VERSION.SDK_INT >= 33) {
+                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    actions.setKeepAlive(enabled)
                 }
-                actions.setKeepAlive(enabled)
+                Text(
+                    "保持与服务器的连接，便于任务在后台继续推进。",
+                    fontSize = 11.sp,
+                    color = WandColors.textMuted,
+                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                )
             }
-            Text(
-                "保持与服务器的连接，便于任务在后台继续推进。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            SectionDivider()
 
             // —— 更多 ——
             SectionHeader("更多")
-            ActionRow("检查更新") { actions.manualCheckUpdate() }
-            ActionRow("打开网页版（完整功能）") { actions.openWeb() }
-            InfoRow("App 版本", "v${actions.appVersion}")
+            WandCard(modifier = Modifier.fillMaxWidth()) {
+                ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
+                RowDivider()
+                ActionRow("打开网页版（完整功能）", WandIcons.web) { actions.openWeb() }
+                RowDivider()
+                InfoRow("App 版本", "v${actions.appVersion}", mono = true)
+            }
 
             Spacer(modifier = Modifier.size(32.dp))
         }
     }
 }
 
+/** 卡片内行间分割线：0.5dp border 色，左右与行内边距对齐。 */
 @Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-    )
-}
-
-@Composable
-private fun SectionDivider() {
+private fun RowDivider() {
     HorizontalDivider(
-        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-        modifier = Modifier.padding(vertical = 6.dp),
+        thickness = 0.5.dp,
+        color = WandColors.border,
+        modifier = Modifier.padding(horizontal = 14.dp),
     )
 }
 
+/** 信息行：标签 + 右对齐值（textSecondary，可选 mono）。 */
 @Composable
 private fun InfoRow(label: String, value: String, mono: Boolean = false) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
-        Text(label, fontSize = 14.sp)
+        Text(label, fontSize = 14.sp, color = WandColors.textPrimary)
         Spacer(modifier = Modifier.weight(1f))
         Text(
             value,
             fontSize = if (mono) 12.sp else 13.sp,
             fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = WandColors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 16.dp),
         )
     }
 }
 
+/** 操作行：左侧场景图标 + 标签 + 行尾右箭头，行高 ≥52dp，danger 时图标与标签同色。 */
 @Composable
-private fun ActionRow(label: String, tintDanger: Boolean = false, onClick: () -> Unit) {
+private fun ActionRow(
+    label: String,
+    icon: ImageVector,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val tint = if (danger) WandColors.danger else WandColors.brand
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
+            .heightIn(min = 52.dp)
+            .padding(horizontal = 14.dp),
     ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(20.dp),
+        )
         Text(
             label,
-            fontSize = 14.sp,
-            color = if (tintDanger) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
+            fontSize = 15.sp,
+            color = if (danger) WandColors.danger else WandColors.textPrimary,
+            modifier = Modifier.padding(start = 12.dp),
         )
         Spacer(modifier = Modifier.weight(1f))
-        Text("›", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(
+            WandIcons.chevronRight,
+            contentDescription = null,
+            tint = WandColors.textMuted,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
+/** 开关行：标签 + 行尾 brand 色 Switch，行高 ≥52dp。 */
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
+            .heightIn(min = 52.dp)
+            .padding(horizontal = 14.dp),
     ) {
-        Text(label, fontSize = 14.sp)
+        Text(label, fontSize = 14.sp, color = WandColors.textPrimary)
         Spacer(modifier = Modifier.weight(1f))
         Switch(
             checked = checked,
             onCheckedChange = onChange,
             colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                checkedTrackColor = WandColors.brand,
             ),
         )
+    }
+}
+
+/**
+ * 应用图标预览卡：launcher 前景/背景矢量按自适应图标安全区放大裁圆，
+ * 模拟桌面实际效果；选中态走 WandCard(selected=true) 的 mode-card 规范。
+ */
+@Composable
+private fun AppIconCard(
+    name: String,
+    backgroundRes: Int,
+    foregroundRes: Int,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    WandCard(
+        modifier = modifier,
+        onClick = onClick,
+        selected = selected,
+        contentPadding = PaddingValues(vertical = 14.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(WandColors.surfaceSoft),
+                contentAlignment = Alignment.Center,
+            ) {
+                // 自适应图标可视区约为画布中央 2/3，放大到 72dp 再裁 48dp 圆，贴近桌面观感。
+                Image(
+                    painterResource(backgroundRes),
+                    contentDescription = null,
+                    modifier = Modifier.requiredSize(72.dp),
+                )
+                Image(
+                    painterResource(foregroundRes),
+                    contentDescription = null,
+                    modifier = Modifier.requiredSize(72.dp),
+                )
+            }
+            Text(
+                name,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (selected) WandColors.brand else WandColors.textPrimary,
+            )
+        }
     }
 }
