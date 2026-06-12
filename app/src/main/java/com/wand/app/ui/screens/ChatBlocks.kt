@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -267,114 +269,329 @@ private fun SubagentTag(meta: SubagentMeta?) {
     }
 }
 
-// MARK: - Markdown-lite
+// MARK: - Markdown
 
-private data class MarkdownSegment(val content: String, val isCode: Boolean)
+private sealed class MarkdownBlock {
+    data class Paragraph(val text: String) : MarkdownBlock()
+    data class Heading(val level: Int, val text: String) : MarkdownBlock()
+    data class ListItem(
+        val marker: String,
+        val text: String,
+        val indent: Int,
+        val checked: Boolean? = null,
+    ) : MarkdownBlock()
+    data class Quote(val text: String) : MarkdownBlock()
+    data class Code(val text: String, val language: String?) : MarkdownBlock()
+    data object Divider : MarkdownBlock()
+}
 
-/** 简化 Markdown 渲染：按 ``` 切分代码块，其余段落做 **bold** / `code` 内联样式。 */
+/** 原生 Markdown 渲染：块级结构独立布局，内联标记使用 AnnotatedString。 */
 @Composable
 fun MarkdownText(text: String) {
-    val segments = remember(text) { splitMarkdownSegments(text) }
+    val blocks = remember(text) { parseMarkdownBlocks(text) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        segments.forEach { segment ->
-            if (segment.isCode) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(WandShapes.sm)
-                        .background(WandColors.surfaceSoft)
-                        .border(1.dp, WandColors.border, WandShapes.sm)
-                        .horizontalScroll(rememberScrollState())
-                        .padding(9.dp),
-                ) {
-                    SelectionContainer {
-                        Text(
-                            segment.content,
-                            fontSize = 13.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = WandColors.textPrimary,
-                        )
-                    }
-                }
-            } else {
-                SelectionContainer {
+        blocks.forEach { block ->
+            when (block) {
+                is MarkdownBlock.Paragraph -> SelectionContainer {
                     Text(
-                        inlineMarkdown(segment.content),
+                        inlineMarkdown(block.text),
                         fontSize = 15.sp,
                         lineHeight = 22.sp,
                         color = WandColors.textPrimary,
                     )
                 }
+                is MarkdownBlock.Heading -> SelectionContainer {
+                    Text(
+                        inlineMarkdown(block.text),
+                        fontSize = when (block.level) {
+                            1 -> 20.sp
+                            2 -> 18.sp
+                            3 -> 16.sp
+                            else -> 15.sp
+                        },
+                        lineHeight = when (block.level) {
+                            1 -> 26.sp
+                            2 -> 24.sp
+                            else -> 22.sp
+                        },
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                        modifier = Modifier.padding(top = if (block.level <= 2) 3.dp else 1.dp),
+                    )
+                }
+                is MarkdownBlock.ListItem -> Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier.padding(start = (block.indent * 14).dp),
+                ) {
+                    Text(
+                        block.checked?.let { if (it) "☑" else "☐" } ?: block.marker,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (block.checked == true) WandColors.success else WandColors.brand,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    SelectionContainer {
+                        Text(
+                            inlineMarkdown(block.text),
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp,
+                            color = WandColors.textPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                is MarkdownBlock.Quote -> Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(WandShapes.xs)
+                        .background(WandColors.surfaceSoft)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(3.dp)
+                            .height(IntrinsicSize.Max)
+                            .background(WandColors.brand, WandShapes.full),
+                    )
+                    SelectionContainer {
+                        Text(
+                            inlineMarkdown(block.text),
+                            fontSize = 14.sp,
+                            lineHeight = 21.sp,
+                            color = WandColors.textSecondary,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                is MarkdownBlock.Code -> Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(WandShapes.sm)
+                        .background(WandColors.surfaceSoft)
+                        .border(1.dp, WandColors.border, WandShapes.sm),
+                ) {
+                    if (!block.language.isNullOrEmpty()) {
+                        Text(
+                            block.language,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = WandColors.textMuted,
+                            modifier = Modifier.padding(start = 10.dp, top = 6.dp, bottom = 2.dp),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                block.text,
+                                fontSize = 13.sp,
+                                lineHeight = 19.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = WandColors.textPrimary,
+                            )
+                        }
+                    }
+                }
+                MarkdownBlock.Divider -> HorizontalDivider(
+                    thickness = 1.dp,
+                    color = WandColors.border,
+                    modifier = Modifier.padding(vertical = 3.dp),
+                )
             }
         }
     }
 }
 
-private fun splitMarkdownSegments(text: String): List<MarkdownSegment> {
-    val parts = text.split("```")
-    val result = mutableListOf<MarkdownSegment>()
-    parts.forEachIndexed { index, raw ->
-        val isCode = index % 2 == 1
-        var content = raw
-        if (isCode) {
-            // 去掉语言标记行（``` 后第一行）
-            val newline = content.indexOf('\n')
-            if (newline >= 0) {
-                val firstLine = content.substring(0, newline)
-                if (firstLine.length <= 24 && !firstLine.contains(' ')) {
-                    content = content.substring(newline + 1)
-                }
-            }
-        }
-        content = content.trim()
-        if (content.isNotEmpty()) {
-            result.add(MarkdownSegment(content, isCode))
+private fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
+    val result = mutableListOf<MarkdownBlock>()
+    val paragraph = mutableListOf<String>()
+    val code = mutableListOf<String>()
+    var codeFence: String? = null
+    var codeLanguage: String? = null
+
+    fun flushParagraph() {
+        if (paragraph.isNotEmpty()) {
+            result.add(MarkdownBlock.Paragraph(paragraph.joinToString("\n").trim()))
+            paragraph.clear()
         }
     }
+
+    fun flushCode() {
+        result.add(MarkdownBlock.Code(code.joinToString("\n").trimEnd(), codeLanguage))
+        code.clear()
+        codeFence = null
+        codeLanguage = null
+    }
+
+    text.lines().forEach { rawLine ->
+        val trimmed = rawLine.trim()
+        if (codeFence != null) {
+            if (trimmed.startsWith(codeFence!!)) flushCode() else code.add(rawLine)
+            return@forEach
+        }
+        if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+            flushParagraph()
+            codeFence = trimmed.take(3)
+            codeLanguage = trimmed.drop(3).trim().ifEmpty { null }
+            return@forEach
+        }
+        if (trimmed.isEmpty()) {
+            flushParagraph()
+            return@forEach
+        }
+
+        val headingLevel = trimmed.takeWhile { it == '#' }.length
+        if (headingLevel in 1..6 && trimmed.getOrNull(headingLevel) == ' ') {
+            flushParagraph()
+            result.add(MarkdownBlock.Heading(headingLevel, trimmed.drop(headingLevel + 1)))
+            return@forEach
+        }
+        if (trimmed.replace(" ", "") in setOf("---", "***", "___")) {
+            flushParagraph()
+            result.add(MarkdownBlock.Divider)
+            return@forEach
+        }
+        if (trimmed.startsWith(">")) {
+            flushParagraph()
+            result.add(MarkdownBlock.Quote(trimmed.drop(1).trimStart()))
+            return@forEach
+        }
+
+        val indent = (rawLine.length - rawLine.trimStart().length) / 2
+        val bullet = listOf("- ", "* ", "+ ").firstOrNull { trimmed.startsWith(it) }
+        val orderedEnd = trimmed.indexOfFirst { it == '.' || it == ')' }
+        val ordered = if (
+            orderedEnd > 0 &&
+            trimmed.substring(0, orderedEnd).all(Char::isDigit) &&
+            trimmed.getOrNull(orderedEnd + 1) == ' '
+        ) {
+            trimmed.substring(0, orderedEnd + 1) to trimmed.drop(orderedEnd + 2)
+        } else {
+            null
+        }
+        if (bullet != null || ordered != null) {
+            flushParagraph()
+            val marker = ordered?.first ?: "•"
+            var content = ordered?.second ?: trimmed.drop(2)
+            val task = when {
+                content.startsWith("[x] ", ignoreCase = true) -> true
+                content.startsWith("[ ] ") -> false
+                else -> null
+            }
+            if (task != null) content = content.drop(4)
+            result.add(MarkdownBlock.ListItem(marker, content, indent, task))
+            return@forEach
+        }
+        paragraph.add(rawLine)
+    }
+    if (codeFence != null) flushCode() else flushParagraph()
     return result
 }
 
-/** 内联样式：**bold** 与 `code`。逐字符扫描，避免正则回溯。 */
-private fun inlineMarkdown(raw: String): AnnotatedString = buildAnnotatedString {
-    var i = 0
-    while (i < raw.length) {
-        when {
-            raw.startsWith("**", i) -> {
-                val end = raw.indexOf("**", i + 2)
-                if (end > i + 2) {
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                        append(raw.substring(i + 2, end))
+/** 内联样式：粗体、斜体、删除线、链接与行内代码。未闭合标记按原文显示。 */
+@Composable
+private fun inlineMarkdown(raw: String): AnnotatedString {
+    val linkColor = WandColors.info
+    val codeBackground = WandColors.surfaceSoft
+    return buildAnnotatedString {
+        var i = 0
+        while (i < raw.length) {
+            when {
+                raw[i] == '\\' && i + 1 < raw.length -> {
+                    append(raw[i + 1])
+                    i += 2
+                }
+                raw.startsWith("**", i) || raw.startsWith("__", i) -> {
+                    val marker = raw.substring(i, i + 2)
+                    val end = raw.indexOf(marker, i + 2)
+                    if (end > i + 2) {
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                            append(inlineMarkdownPlain(raw.substring(i + 2, end)))
+                        }
+                        i = end + 2
+                    } else {
+                        append(marker)
+                        i += 2
                     }
-                    i = end + 2
-                } else {
+                }
+                raw.startsWith("~~", i) -> {
+                    val end = raw.indexOf("~~", i + 2)
+                    if (end > i + 2) {
+                        withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                            append(raw.substring(i + 2, end))
+                        }
+                        i = end + 2
+                    } else {
+                        append("~~")
+                        i += 2
+                    }
+                }
+                raw[i] == '`' -> {
+                    val end = raw.indexOf('`', i + 1)
+                    if (end > i + 1) {
+                        withStyle(
+                            SpanStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                background = codeBackground,
+                            )
+                        ) {
+                            append(raw.substring(i + 1, end))
+                        }
+                        i = end + 1
+                    } else {
+                        append(raw[i])
+                        i++
+                    }
+                }
+                raw[i] == '[' -> {
+                    val closeText = raw.indexOf(']', i + 1)
+                    val openUrl = if (closeText >= 0) raw.getOrNull(closeText + 1) else null
+                    val closeUrl = if (openUrl == '(') raw.indexOf(')', closeText + 2) else -1
+                    if (closeText > i + 1 && closeUrl > closeText + 2) {
+                        withStyle(
+                            SpanStyle(
+                                color = linkColor,
+                                textDecoration = TextDecoration.Underline,
+                            )
+                        ) {
+                            append(raw.substring(i + 1, closeText))
+                        }
+                        i = closeUrl + 1
+                    } else {
+                        append(raw[i])
+                        i++
+                    }
+                }
+                raw[i] == '*' || raw[i] == '_' -> {
+                    val marker = raw[i]
+                    val end = raw.indexOf(marker, i + 1)
+                    if (end > i + 1) {
+                        withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                            append(raw.substring(i + 1, end))
+                        }
+                        i = end + 1
+                    } else {
+                        append(marker)
+                        i++
+                    }
+                }
+                else -> {
                     append(raw[i])
                     i++
                 }
-            }
-            raw[i] == '`' -> {
-                val end = raw.indexOf('`', i + 1)
-                if (end > i + 1) {
-                    withStyle(
-                        SpanStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp,
-                        )
-                    ) {
-                        append(raw.substring(i + 1, end))
-                    }
-                    i = end + 1
-                } else {
-                    append(raw[i])
-                    i++
-                }
-            }
-            else -> {
-                append(raw[i])
-                i++
             }
         }
     }
 }
+
+private fun inlineMarkdownPlain(raw: String): String =
+    raw.replace("\\*", "*").replace("\\_", "_").replace("\\`", "`")
 
 // MARK: - 工具调用卡片（含结果区，三态）
 
