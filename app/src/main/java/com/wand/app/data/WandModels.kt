@@ -249,6 +249,7 @@ data class SessionSnapshot(
     val summary: String?,
     val currentTaskTitle: String?,
     val selectedModel: String?,
+    val thinkingEffort: String?,
     val claudeSessionId: String?,
     val messages: List<ConversationTurn>?,
     val queuedMessages: List<String>?,
@@ -258,6 +259,8 @@ data class SessionSnapshot(
     val autoApprovePermissions: Boolean?,
 ) {
     val isStructured: Boolean get() = (sessionKind ?: "pty") == "structured"
+
+    val providerLabel: String get() = if (provider == "codex") "Codex" else "Claude"
 
     /** 列表标题：摘要 > 当前任务 > cwd 末段。 */
     val displayTitle: String
@@ -293,6 +296,7 @@ data class SessionSnapshot(
             summary = o.str("summary"),
             currentTaskTitle = o.str("currentTaskTitle"),
             selectedModel = o.str("selectedModel"),
+            thinkingEffort = o.str("thinkingEffort"),
             claudeSessionId = o.str("claudeSessionId"),
             messages = ConversationTurn.parseList(o.arr("messages")),
             queuedMessages = o.arr("queuedMessages")?.let { arr ->
@@ -312,6 +316,110 @@ data class SessionSnapshot(
                     out.add(parse(snapObj))
                 } catch (_: Exception) {
                 }
+            }
+            return out
+        }
+    }
+}
+
+// MARK: - 历史会话
+
+/** 从 Claude/Codex 本地历史文件扫描出的会话。两个 provider 的接口形状一致（对称 iOS HistorySession）。 */
+data class HistorySession(
+    val claudeSessionId: String,
+    val cwd: String,
+    val firstUserMessage: String,
+    val timestamp: String?,
+    val mtimeMs: Double?,
+    val hasConversation: Boolean?,
+    val managedByWand: Boolean?,
+    val provider: String?,
+) {
+    val id: String get() = claudeSessionId
+
+    companion object {
+        fun parseList(arr: JSONArray, provider: String): List<HistorySession> {
+            val out = mutableListOf<HistorySession>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val sessionId = o.str("claudeSessionId") ?: continue
+                out.add(
+                    HistorySession(
+                        claudeSessionId = sessionId,
+                        cwd = o.str("cwd") ?: "",
+                        firstUserMessage = o.str("firstUserMessage") ?: "",
+                        timestamp = o.str("timestamp"),
+                        mtimeMs = o.dbl("mtimeMs"),
+                        hasConversation = o.bool("hasConversation"),
+                        managedByWand = o.bool("managedByWand"),
+                        provider = o.str("provider") ?: provider,
+                    )
+                )
+            }
+            return out
+        }
+    }
+}
+
+// MARK: - 模型列表
+
+/** GET /api/models 的单个模型（对称 iOS ModelInfo）。 */
+data class ModelInfo(
+    val id: String,
+    val label: String,
+    val alias: Boolean?,
+) {
+    companion object {
+        fun parseList(arr: JSONArray?): List<ModelInfo> {
+            if (arr == null) return emptyList()
+            val out = mutableListOf<ModelInfo>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val id = o.str("id") ?: continue
+                out.add(ModelInfo(id = id, label = o.str("label") ?: id, alias = o.bool("alias")))
+            }
+            return out
+        }
+    }
+}
+
+data class ModelsResponse(
+    val models: List<ModelInfo>,
+    val codexModels: List<ModelInfo>,
+    val defaultModel: String?,
+) {
+    companion object {
+        fun parse(o: JSONObject): ModelsResponse = ModelsResponse(
+            models = ModelInfo.parseList(o.arr("models")),
+            codexModels = ModelInfo.parseList(o.arr("codexModels")),
+            defaultModel = o.str("defaultModel"),
+        )
+    }
+}
+
+// MARK: - 附件上传
+
+/** POST /api/sessions/:id/upload 返回的单个文件。 */
+data class UploadedFile(
+    val originalName: String,
+    val savedPath: String,
+    val size: Int,
+    val mimeType: String,
+) {
+    companion object {
+        fun parseList(o: JSONObject): List<UploadedFile> {
+            val arr = o.arr("files") ?: return emptyList()
+            val out = mutableListOf<UploadedFile>()
+            for (i in 0 until arr.length()) {
+                val f = arr.optJSONObject(i) ?: continue
+                out.add(
+                    UploadedFile(
+                        originalName = f.str("originalName") ?: "",
+                        savedPath = f.str("savedPath") ?: "",
+                        size = f.int("size") ?: 0,
+                        mimeType = f.str("mimeType") ?: "",
+                    )
+                )
             }
             return out
         }
@@ -361,6 +469,7 @@ data class WsData(
     val summary: String?,
     val currentTaskTitle: String?,
     val selectedModel: String?,
+    val thinkingEffort: String?,
     val claudeSessionId: String?,
     val messages: List<ConversationTurn>?,
     val queuedMessages: List<String>?,
@@ -386,6 +495,7 @@ data class WsData(
             command = command, cwd = cwd, mode = mode, status = status, exitCode = exitCode,
             startedAt = startedAt, endedAt = endedAt, archived = archived, summary = summary,
             currentTaskTitle = currentTaskTitle, selectedModel = selectedModel,
+            thinkingEffort = thinkingEffort,
             claudeSessionId = claudeSessionId, messages = null, queuedMessages = queuedMessages,
             structuredState = structuredState, pendingEscalation = pendingEscalation,
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
@@ -409,6 +519,7 @@ data class WsData(
             summary = o.str("summary"),
             currentTaskTitle = o.str("currentTaskTitle"),
             selectedModel = o.str("selectedModel"),
+            thinkingEffort = o.str("thinkingEffort"),
             claudeSessionId = o.str("claudeSessionId"),
             messages = ConversationTurn.parseList(o.arr("messages")),
             queuedMessages = o.arr("queuedMessages")?.let { arr ->

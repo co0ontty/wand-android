@@ -25,8 +25,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -282,4 +286,34 @@ fun WandCard(
             .padding(contentPadding),
         content = content,
     )
+}
+
+/** Wand 品牌标记：品牌渐变圆角方块 + 白色星芒图标（对称 iOS Theme.WandBrandMark）。 */
+@Composable
+fun WandBrandMark(size: Int = 64) {
+    val corner = RoundedCornerShape((size * 0.28f).dp)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(size.dp)
+            .shadow(
+                elevation = (size * 0.18f).dp,
+                shape = corner,
+                ambientColor = WandColors.brand.copy(alpha = 0.35f),
+                spotColor = WandColors.brand.copy(alpha = 0.35f),
+            )
+            .clip(corner)
+            .background(
+                Brush.linearGradient(
+                    listOf(WandColors.brand, lerp(WandColors.brand, Color.Black, 0.18f))
+                )
+            ),
+    ) {
+        Icon(
+            WandIcons.sparkle,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size((size * 0.46f).dp),
+        )
+    }
 }

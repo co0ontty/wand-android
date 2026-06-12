@@ -1,6 +1,9 @@
 package com.wand.app.ui.screens
 
 import android.Manifest
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -18,8 +21,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -44,6 +46,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,7 +59,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -70,12 +75,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
@@ -86,9 +96,12 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.SessionWatcher
+import com.wand.app.data.ContentBlock
+import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.WandApi
+import com.wand.app.data.WandApiException
 import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
@@ -96,13 +109,15 @@ import com.wand.app.ui.ChatStore
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
-import com.wand.app.ui.components.StatusBadge
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -148,7 +163,6 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
     var followsLatest by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
-    val isListDragged by listState.interactionSource.collectIsDraggedAsState()
     val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
 
@@ -173,14 +187,57 @@ fun ChatScreen(
         }
     }
 
-    // 用户开始拖动后立即暂停跟随，避免流式更新把历史阅读位置抢回底部。
-    LaunchedEffect(isListDragged) {
-        if (isListDragged) followsLatest = false
+    // 仅用户明确向下拖动、准备查看更早消息时暂停跟随（阈值 18dp，对齐 iOS）。
+    // 轻微触摸或收键盘不会误关跟随，新回复仍自动贴底。
+    val density = LocalDensity.current
+    val followPauseConnection = remember(density) {
+        val thresholdPx = with(density) { 18.dp.toPx() }
+        object : NestedScrollConnection {
+            private var pulledDown = 0f
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput) {
+                    if (available.y > 0f) {
+                        pulledDown += available.y
+                        if (pulledDown > thresholdPx) followsLatest = false
+                    } else if (available.y < 0f) {
+                        pulledDown = 0f
+                    }
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
+    val displayItems = remember(store.messages) { groupExplorationTurns(store.messages) }
+
+    // 附件上传：+ 菜单 → 系统文件选择器（多选 ≤5 个 / 单个 ≤10MB）→ savedPath 回填输入框。
+    var uploadingAttachments by remember { mutableStateOf(false) }
+    val attachmentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
+        uploadingAttachments = true
+        scrollScope.launch {
+            try {
+                val files = withContext(Dispatchers.IO) {
+                    uris.take(5).map { uri -> readAttachment(context, uri) }
+                }
+                val uploaded = api.uploadAttachments(sessionId, files)
+                val paths = uploaded.joinToString("\n") { it.savedPath }
+                draft = "[附件已上传，请查看以下文件:\n$paths\n]\n\n" + draft
+                store.toast = "已上传 ${uploaded.size} 个附件"
+            } catch (e: Exception) {
+                store.toast = e.message ?: "附件上传失败"
+            } finally {
+                uploadingAttachments = false
+            }
+        }
     }
 
     // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
     // 列表末尾有独立锚点，确保长消息增长时滚到真正底部而非最后一项顶部。
-    val bottomIndex = store.messages.size + if (store.isResponding) 1 else 0
+    val bottomIndex = displayItems.size + if (store.isResponding) 1 else 0
     LaunchedEffect(store.messages, store.isResponding, store.loading) {
         if (!store.loading && followsLatest) {
             listState.scrollToItem(bottomIndex)
@@ -198,28 +255,29 @@ fun ChatScreen(
     Scaffold(
         containerColor = WandColors.bgPrimary,
         topBar = {
-            TopAppBar(
+            // 顶栏对齐 iOS navigationStatus：居中显示最新一条用户消息 + 完整工作目录，
+            // 右侧是 Git 变更统计 + 会话设置菜单（仅结构化会话）。
+            CenterAlignedTopAppBar(
                 title = {
-                    Column {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            store.snapshot?.displayTitle ?: "会话",
-                            fontSize = 17.sp,
+                            latestUserMessage(store.messages)
+                                ?: store.snapshot?.displayTitle ?: "对话详情",
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = WandColors.textPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 190.dp),
                         )
-                        val cwd = store.snapshot?.cwd
-                        if (!cwd.isNullOrBlank()) {
-                            Text(
-                                cwdTail(cwd),
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = WandColors.textMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                        Text(
+                            middleTruncate(store.snapshot?.cwd ?: "未设置工作目录", 44),
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = WandColors.textSecondary,
+                            maxLines = 1,
+                            modifier = Modifier.widthIn(max = 190.dp),
+                        )
                     }
                 },
                 navigationIcon = {
@@ -232,22 +290,31 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    GitTopBarBadge(quickCommit) { quickCommit.openPanel() }
-                    StatusBadge(
-                        chatStatus(store),
-                        modifier = Modifier.padding(end = 14.dp),
-                    )
+                    GitChangesButton(quickCommit) { quickCommit.openPanel() }
+                    if (store.isStructured) {
+                        SessionSettingsMenu(store)
+                    }
+                    Spacer(modifier = Modifier.size(6.dp))
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = WandColors.bgPrimary,
                 ),
             )
         },
-        bottomBar = { BottomBar(store, draft, onDraftChange = { draft = it }, voice = voice, onMicDown = onMicDown) {
-            // 发送回调（带触感反馈）
+        bottomBar = { BottomBar(
+            store = store,
+            draft = draft,
+            onDraftChange = { draft = it },
+            voice = voice,
+            onMicDown = onMicDown,
+            uploading = uploadingAttachments,
+            onUpload = { attachmentPicker.launch(arrayOf("*/*")) },
+        ) {
+            // 发送回调（带触感反馈）；发送后立即恢复贴底跟随（对齐 iOS sendDraft）。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val text = draft
             draft = ""
+            followsLatest = true
             store.send(text)
         } },
     ) { padding ->
@@ -259,10 +326,14 @@ fun ChatScreen(
             when {
                 store.loading -> LoadingState("正在加载会话…")
                 store.loadError != null -> ErrorState(store.loadError ?: "加载失败")
+                store.isStructured && store.messages.isEmpty() && !store.isResponding ->
+                    SessionLaunchPanel(store.snapshot?.providerLabel ?: "结构化会话")
                 else -> {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .nestedScroll(followPauseConnection),
                         contentPadding = PaddingValues(
                             start = 14.dp, end = 14.dp, top = 8.dp, bottom = 6.dp,
                         ),
@@ -270,20 +341,29 @@ fun ChatScreen(
                     ) {
                         // key = index：流式原地替换最后一条时 key 不变不触发动画，
                         // 只有真正新增的消息才走 animateItem 淡入。
-                        itemsIndexed(store.messages, key = { index, _ -> index }) { index, turn ->
+                        itemsIndexed(displayItems, key = { index, _ -> index }) { _, item ->
                             Box(modifier = Modifier.animateItem()) {
-                                TurnView(
-                                    turn,
-                                    isLastTurn = index == store.messages.lastIndex,
-                                    isResponding = store.isResponding,
-                                    askSelections = store.askUserSelections,
-                                    onAskToggle = { toolUseId, qIdx, optIdx, multi ->
-                                        store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
-                                    },
-                                    onAskSubmit = { toolUseId, answerText ->
-                                        store.submitAskUser(toolUseId, answerText)
-                                    },
-                                )
+                                when (item) {
+                                    is MessageDisplayItem.Turn -> TurnView(
+                                        item.turn,
+                                        isLastTurn = item.index == store.messages.lastIndex,
+                                        isResponding = store.isResponding,
+                                        askSelections = store.askUserSelections,
+                                        onAskToggle = { toolUseId, qIdx, optIdx, multi ->
+                                            store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
+                                        },
+                                        onAskSubmit = { toolUseId, answerText ->
+                                            followsLatest = true
+                                            store.submitAskUser(toolUseId, answerText)
+                                        },
+                                    )
+                                    is MessageDisplayItem.Exploration -> ExplorationGroupCard(
+                                        tools = item.tools,
+                                        running = store.isResponding &&
+                                            item.lastTurnIndex == store.messages.lastIndex &&
+                                            item.tools.any { it.result == null },
+                                    )
+                                }
                             }
                         }
                         if (store.isResponding) {
@@ -366,27 +446,223 @@ fun ChatScreen(
     }
 }
 
-/**
- * 顶栏状态折算：派生态（重连/授权/思考）优先于服务端 status。
- * 结束态用 store.status（实时，WS ended 推送会更新）而不是 snapshot.status
- * （只在 REST 加载/恢复时刷新，可能还停在 running）。
- */
-private fun chatStatus(store: ChatStore): String = when {
-    !store.connected -> "reconnecting"
-    store.permissionBlocked -> "permission"
-    store.isResponding -> "thinking"
-    store.sessionEnded -> store.status
-    else -> "idle"
+/** 最新一条非空用户消息（顶栏标题，对齐 iOS latestUserMessage）。 */
+private fun latestUserMessage(messages: List<ConversationTurn>): String? {
+    for (turn in messages.asReversed()) {
+        if (turn.role != "user") continue
+        val text = turn.content
+            .filterIsInstance<ContentBlock.Text>()
+            .joinToString(" ") { it.text }
+            .split(Regex("\\s+"))
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+        if (text.isNotEmpty()) return text
+    }
+    return null
 }
 
-/** 取工作目录最后两段做顶栏副标题。 */
-private fun cwdTail(cwd: String): String {
-    val segments = cwd.trimEnd('/').split('/').filter { it.isNotEmpty() }
-    return if (segments.size <= 2) {
-        cwd
-    } else {
-        "…/" + segments.takeLast(2).joinToString("/")
+/** 中间截断（对齐 iOS .truncationMode(.middle)，Compose 没有内置实现）。 */
+private fun middleTruncate(text: String, maxChars: Int): String {
+    if (text.length <= maxChars) return text
+    val head = (maxChars - 1) / 2
+    val tail = maxChars - 1 - head
+    return text.take(head) + "…" + text.takeLast(tail)
+}
+
+/** 空结构化会话的居中欢迎卡（对齐 iOS sessionLaunchPanel）。 */
+@Composable
+private fun SessionLaunchPanel(providerLabel: String) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 340.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(WandColors.surface)
+                .border(1.dp, WandColors.border, RoundedCornerShape(20.dp))
+                .padding(horizontal = 22.dp, vertical = 24.dp),
+        ) {
+            WandBrandMark(size = 52)
+            Text(
+                providerLabel,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = WandColors.textPrimary,
+            )
+        }
     }
+}
+
+/** 思考深度档位（对齐 iOS thinkingLevels / 服务端 thinking-effort 端点）。 */
+private val THINKING_LEVELS = listOf(
+    "off" to "off",
+    "standard" to "think",
+    "deep" to "think hard",
+    "max" to "ultrathink",
+)
+
+private fun thinkingLabel(id: String): String =
+    THINKING_LEVELS.firstOrNull { it.first == id }?.second ?: "off"
+
+/**
+ * 会话设置菜单（对齐 iOS sessionSettingsMenu）：
+ * 顶栏齿轮图标 → 「模型 / 思考深度」两级菜单，实时切换进行中的会话参数。
+ */
+@Composable
+private fun SessionSettingsMenu(store: ChatStore) {
+    var menu by remember { mutableStateOf<String?>(null) }
+    Box {
+        IconButton(onClick = { menu = "root" }) {
+            Icon(
+                WandIcons.tune,
+                contentDescription = "会话设置",
+                tint = WandColors.brand,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = menu != null,
+            onDismissRequest = { menu = null },
+            containerColor = WandColors.surface,
+        ) {
+            when (menu) {
+                "model" -> {
+                    SettingsMenuOption("默认", selected = store.selectedModel == null) {
+                        store.setModel(null)
+                        menu = null
+                    }
+                    store.availableModels.filter { it.id != "default" }.forEach { model ->
+                        SettingsMenuOption(model.label, selected = store.selectedModel == model.id) {
+                            store.setModel(model.id)
+                            menu = null
+                        }
+                    }
+                }
+                "thinking" -> THINKING_LEVELS.forEach { (id, label) ->
+                    SettingsMenuOption(label, selected = store.thinkingEffort == id) {
+                        store.chooseThinkingEffort(id)
+                        menu = null
+                    }
+                }
+                else -> {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "模型 · ${store.selectedModel ?: "默认"}",
+                                fontSize = 13.sp,
+                                color = WandColors.textPrimary,
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(
+                                WandIcons.chevronRight,
+                                contentDescription = null,
+                                tint = WandColors.textMuted,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        },
+                        onClick = { menu = "model" },
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "思考深度 · ${thinkingLabel(store.thinkingEffort)}",
+                                fontSize = 13.sp,
+                                color = WandColors.textPrimary,
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(
+                                WandIcons.chevronRight,
+                                contentDescription = null,
+                                tint = WandColors.textMuted,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        },
+                        onClick = { menu = "thinking" },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsMenuOption(label: String, selected: Boolean, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label, fontSize = 13.sp, color = WandColors.textPrimary) },
+        leadingIcon = {
+            if (selected) {
+                Icon(
+                    WandIcons.check,
+                    contentDescription = "当前选中",
+                    tint = WandColors.brand,
+                    modifier = Modifier.size(16.dp),
+                )
+            } else {
+                Spacer(modifier = Modifier.size(16.dp))
+            }
+        },
+        onClick = onClick,
+    )
+}
+
+/**
+ * Git 变更统计按钮（对齐 iOS gitChangesButton）：~修改 -删除 +新增，
+ * 点击打开快速提交面板。
+ */
+@Composable
+private fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
+    var modified = 0
+    var deleted = 0
+    var added = 0
+    quickCommit.status?.files.orEmpty().forEach { file ->
+        val status = file.status.uppercase()
+        when {
+            status.contains("?") || status.contains("A") -> added++
+            status.contains("D") -> deleted++
+            else -> modified++
+        }
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            WandIcons.commit,
+            contentDescription = "Git 变更",
+            tint = WandColors.textSecondary,
+            modifier = Modifier.size(15.dp),
+        )
+        val countStyle = TextStyle(
+            fontSize = 9.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = FontFamily.Monospace,
+        )
+        Text("~$modified", style = countStyle, color = WandColors.textSecondary)
+        Text("-$deleted", style = countStyle, color = WandColors.danger)
+        Text("+$added", style = countStyle, color = WandColors.success)
+    }
+}
+
+/** 从 content Uri 读出 (文件名, 字节)，供 multipart 上传。 */
+private fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray> {
+    var name = "attachment"
+    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) {
+            cursor.getString(index)?.takeIf { it.isNotEmpty() }?.let { name = it }
+        }
+    }
+    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        ?: throw WandApiException(null, "无法读取 $name")
+    return name to bytes
 }
 
 @Composable
@@ -416,6 +692,8 @@ private fun BottomBar(
     onDraftChange: (String) -> Unit,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
+    uploading: Boolean,
+    onUpload: () -> Unit,
     onSend: () -> Unit,
 ) {
     Column(
@@ -511,6 +789,8 @@ private fun BottomBar(
             voiceMode = voiceMode,
             onVoiceModeChange = { voiceMode = it },
             onMicDown = onMicDown,
+            uploading = uploading,
+            onUpload = onUpload,
             onSend = onSend,
         )
     }
@@ -525,16 +805,11 @@ private fun InputBar(
     voiceMode: Boolean,
     onVoiceModeChange: (Boolean) -> Unit,
     onMicDown: () -> Unit,
+    uploading: Boolean,
+    onUpload: () -> Unit,
     onSend: () -> Unit,
 ) {
     val canSend = draft.isNotBlank() && !store.sessionEnded
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val borderColor by androidx.compose.animation.animateColorAsState(
-        if (focused) WandColors.brand.copy(alpha = 0.72f) else WandColors.border,
-        WandMotion.tweenFast(),
-        label = "composerBorder",
-    )
     // 从语音模式轻点切回键盘时自动聚焦文本框，键盘直接弹起。
     val focusRequester = remember { FocusRequester() }
     var focusAfterExit by remember { mutableStateOf(false) }
@@ -544,90 +819,157 @@ private fun InputBar(
             runCatching { focusRequester.requestFocus() }
         }
     }
+    // 布局对齐 iOS inputBar：[+ 菜单] [输入框（麦克风嵌右下角）] [停止?] [发送]。
     Row(
         verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(WandColors.surface)
-            .border(1.dp, borderColor, RoundedCornerShape(18.dp))
-            .padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        VoiceMicButton(
-            voice = voice,
-            voiceMode = voiceMode,
-            onToggleMode = { onVoiceModeChange(!voiceMode) },
-            onMicDown = onMicDown,
-        )
-        Spacer(modifier = Modifier.size(7.dp))
-        if (voiceMode) {
-            VoiceHoldField(
-                draft = draft,
-                voice = voice,
-                onMicDown = onMicDown,
-                onExitVoiceMode = {
-                    focusAfterExit = true
-                    onVoiceModeChange(false)
-                },
-                modifier = Modifier.weight(1f),
-            )
-        } else {
-            BasicTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                interactionSource = interaction,
-                textStyle = TextStyle(
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp,
-                    color = WandColors.textPrimary,
-                ),
-                cursorBrush = SolidColor(WandColors.brand),
-                minLines = 1,
-                maxLines = 5,
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                ),
-                decorationBox = { innerTextField ->
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        if (draft.isEmpty()) {
-                            Text("输入消息…", fontSize = 15.sp, color = WandColors.textMuted)
+        ComposerActionsMenu(uploading = uploading, onUpload = onUpload)
+        Box(
+            contentAlignment = Alignment.BottomEnd,
+            modifier = Modifier.weight(1f),
+        ) {
+            if (voiceMode) {
+                VoiceHoldField(
+                    draft = draft,
+                    voice = voice,
+                    onMicDown = onMicDown,
+                    onExitVoiceMode = {
+                        focusAfterExit = true
+                        onVoiceModeChange(false)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 0.dp),
+                )
+            } else {
+                BasicTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    textStyle = TextStyle(
+                        fontSize = 16.sp,
+                        lineHeight = 21.sp,
+                        color = WandColors.textPrimary,
+                    ),
+                    cursorBrush = SolidColor(WandColors.brand),
+                    minLines = 1,
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                    ),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            contentAlignment = Alignment.CenterStart,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(WandColors.surface)
+                                .border(1.dp, WandColors.border, RoundedCornerShape(20.dp))
+                                .padding(start = 14.dp, end = 48.dp, top = 9.dp, bottom = 9.dp),
+                        ) {
+                            if (draft.isEmpty()) {
+                                Text("发消息…", fontSize = 16.sp, color = WandColors.textMuted)
+                            }
+                            innerTextField()
                         }
-                        innerTextField()
-                    }
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 34.dp, max = 108.dp)
-                    .padding(vertical = 6.dp)
-                    .focusRequester(focusRequester),
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 38.dp, max = 128.dp)
+                        .focusRequester(focusRequester),
+                )
+            }
+            VoiceMicButton(
+                voice = voice,
+                voiceMode = voiceMode,
+                onToggleMode = { onVoiceModeChange(!voiceMode) },
+                onMicDown = onMicDown,
+                modifier = Modifier.padding(end = 4.dp, bottom = 3.dp),
             )
         }
         if (store.isResponding) {
             ComposerIconButton(
-                background = WandColors.dangerSoft,
+                background = WandColors.danger,
                 enabled = true,
                 onClick = { store.stopResponding() },
             ) {
                 Icon(
                     WandIcons.stop,
                     contentDescription = "停止回复",
-                    tint = WandColors.danger,
+                    tint = Color.White,
                     modifier = Modifier.size(17.dp),
                 )
             }
-            Spacer(modifier = Modifier.size(5.dp))
         }
         ComposerIconButton(
-            background = if (canSend) WandColors.brand else WandColors.surfaceSoft,
+            background = if (canSend) WandColors.brand else WandColors.brand.copy(alpha = 0.4f),
             enabled = canSend,
             onClick = onSend,
         ) {
             Icon(
-                WandIcons.send,
+                WandIcons.arrowUp,
                 contentDescription = "发送",
-                tint = if (canSend) Color.White else WandColors.textMuted,
-                modifier = Modifier.size(17.dp),
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 输入栏左侧「更多操作」按钮（对齐 iOS composerActionsMenu）：
+ * 圆形 + 号，点开菜单首项「上传附件」；上传中显示转圈。
+ */
+@Composable
+private fun ComposerActionsMenu(uploading: Boolean, onUpload: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(WandColors.surface)
+                .border(1.dp, WandColors.border, CircleShape)
+                .clickable(enabled = !uploading) { open = true },
+        ) {
+            if (uploading) {
+                CircularProgressIndicator(
+                    color = WandColors.textSecondary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp),
+                )
+            } else {
+                Icon(
+                    WandIcons.add,
+                    contentDescription = "更多操作",
+                    tint = WandColors.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = WandColors.surface,
+        ) {
+            DropdownMenuItem(
+                text = { Text("上传附件", fontSize = 13.sp, color = WandColors.textPrimary) },
+                leadingIcon = {
+                    Icon(
+                        WandIcons.attach,
+                        contentDescription = null,
+                        tint = WandColors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+                onClick = {
+                    open = false
+                    onUpload()
+                },
             )
         }
     }
@@ -703,28 +1045,30 @@ private fun VoiceMicButton(
     voiceMode: Boolean,
     onToggleMode: () -> Unit,
     onMicDown: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val currentOnToggle by rememberUpdatedState(onToggleMode)
     val currentOnMicDown by rememberUpdatedState(onMicDown)
+    // 对齐 iOS micButton：32dp 圆形嵌输入框右下角，平时品牌弱底，按住实底（取消态红）。
     val background = when {
         voice.pressed && voice.canceling -> WandColors.danger
         voice.pressed -> WandColors.brand
-        else -> WandColors.surfaceSoft
+        else -> WandColors.brand.copy(alpha = 0.12f)
     }
     val scale by animateFloatAsState(
-        if (voice.pressed) 1.08f else 1f,
+        if (voice.pressed) 1.1f else 1f,
         WandMotion.tweenFast(),
         label = "micScale",
     )
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(34.dp)
+        modifier = modifier
+            .size(32.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(RoundedCornerShape(11.dp))
+            .clip(CircleShape)
             .background(background)
             .pointerInput(voice) {
                 voiceTapOrHoldGesture(
@@ -737,8 +1081,8 @@ private fun VoiceMicButton(
         Icon(
             if (voiceMode && !voice.pressed) WandIcons.keyboard else WandIcons.mic,
             contentDescription = if (voiceMode) "切回键盘输入" else "轻点切语音模式，长按说话",
-            tint = if (voice.pressed) Color.White else WandColors.textSecondary,
-            modifier = Modifier.size(17.dp),
+            tint = if (voice.pressed) Color.White else WandColors.brand,
+            modifier = Modifier.size(16.dp),
         )
     }
 }
@@ -769,9 +1113,10 @@ private fun VoiceHoldField(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .heightIn(min = 34.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .heightIn(min = 38.dp)
+            .clip(RoundedCornerShape(20.dp))
             .background(background)
+            .border(1.dp, WandColors.border, RoundedCornerShape(20.dp))
             .pointerInput(voice) {
                 voiceTapOrHoldGesture(
                     voice = voice,
@@ -779,7 +1124,7 @@ private fun VoiceHoldField(
                     onHoldStart = { currentOnMicDown() },
                 )
             }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(start = 14.dp, end = 48.dp, top = 6.dp, bottom = 6.dp),
     ) {
         when {
             voice.pressed && voice.canceling -> Text(
@@ -971,7 +1316,7 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
 
 private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
 
-/** 输入器内操作按钮：紧凑圆角方块，保留按压缩放反馈。 */
+/** 输入栏操作按钮：38dp 圆形（对齐 iOS 停止/发送圆钮），保留按压缩放反馈。 */
 @Composable
 private fun ComposerIconButton(
     background: Color,
@@ -989,12 +1334,12 @@ private fun ComposerIconButton(
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(34.dp)
+            .size(38.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(RoundedCornerShape(11.dp))
+            .clip(CircleShape)
             .background(background)
             .clickable(
                 enabled = enabled,

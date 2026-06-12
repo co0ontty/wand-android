@@ -3,6 +3,7 @@ package com.wand.app.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
@@ -145,6 +146,94 @@ class WandApi(baseUrl: String, val token: String?) {
 
     suspend fun resumeSession(id: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/resume"))
+
+    // MARK: - 模型与思考深度
+
+    suspend fun models(): ModelsResponse =
+        ModelsResponse.parse(requestObject("GET", "/api/models"))
+
+    /** model 传 null 表示恢复默认（服务端收 JSON null）。 */
+    suspend fun setModel(id: String, model: String?): SessionSnapshot {
+        val body = JSONObject().put("model", model ?: JSONObject.NULL)
+        return SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/model", body))
+    }
+
+    suspend fun setThinkingEffort(id: String, thinkingEffort: String): SessionSnapshot =
+        SessionSnapshot.parse(
+            requestObject(
+                "POST",
+                "/api/sessions/$id/thinking-effort",
+                JSONObject().put("thinkingEffort", thinkingEffort),
+            )
+        )
+
+    // MARK: - 附件上传
+
+    /**
+     * 上传附件：multipart/form-data，字段名 files，服务端限制单文件 10MB、单次最多 5 个。
+     * 入参是 (文件名, 字节) 对 —— UI 层负责从 content Uri 读出字节。
+     */
+    suspend fun uploadAttachments(
+        id: String,
+        files: List<Pair<String, ByteArray>>,
+    ): List<UploadedFile> = withContext(Dispatchers.IO) {
+        val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
+        for ((name, bytes) in files.take(5)) {
+            if (bytes.size > 10 * 1024 * 1024) {
+                throw WandApiException(null, "$name 超过 10 MB")
+            }
+            multipart.addFormDataPart(
+                "files",
+                name,
+                bytes.toRequestBody("application/octet-stream".toMediaType()),
+            )
+        }
+        val request = Request.Builder()
+            .url("$baseUrl/api/sessions/$id/upload")
+            .post(multipart.build())
+            .build()
+        val (code, text) = try {
+            execute(request, timeoutSec = 60)
+        } catch (e: IOException) {
+            throw WandApiException(null, "网络错误：${e.message ?: "请求失败"}")
+        }
+        if (code !in 200..299) throw WandApiException(code, "附件上传失败")
+        try {
+            UploadedFile.parseList(JSONObject(text))
+        } catch (e: Exception) {
+            throw WandApiException(null, "响应解析失败：${e.message}")
+        }
+    }
+
+    // MARK: - 历史会话
+
+    suspend fun listClaudeHistory(): List<HistorySession> =
+        HistorySession.parseList(requestArray("GET", "/api/claude-history"), provider = "claude")
+
+    suspend fun listCodexHistory(): List<HistorySession> =
+        HistorySession.parseList(requestArray("GET", "/api/codex-history"), provider = "codex")
+
+    suspend fun resumeHistory(history: HistorySession): SessionSnapshot {
+        val provider = if (history.provider == "codex") "codex" else "claude"
+        return SessionSnapshot.parse(
+            requestObject(
+                "POST",
+                "/api/$provider-sessions/${encode(history.claudeSessionId)}/resume",
+                JSONObject().put("cwd", history.cwd),
+            )
+        )
+    }
+
+    suspend fun deleteHistory(history: HistorySession) {
+        val provider = if (history.provider == "codex") "codex" else "claude"
+        requestData("DELETE", "/api/$provider-history/${encode(history.claudeSessionId)}")
+    }
+
+    suspend fun deleteHistoryBatch(provider: String, ids: List<String>) {
+        if (ids.isEmpty()) return
+        val body = JSONObject().put("claudeSessionIds", JSONArray(ids))
+        requestData("POST", "/api/$provider-history/batch-delete", body)
+    }
 
     // MARK: - 权限
 

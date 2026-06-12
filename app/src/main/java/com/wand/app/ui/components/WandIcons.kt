@@ -7,10 +7,16 @@ import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Commit
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
@@ -34,6 +40,7 @@ import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -57,6 +64,23 @@ object WandIcons {
 
     /** web / fetch / websearch；也用作「打开网页版」。 */
     val web: ImageVector = Icons.Outlined.Language
+
+    /** 会话设置（模型 / 思考深度），对称 iOS slider.horizontal.3。 */
+    val tune: ImageVector = Icons.Outlined.Tune
+
+    /** 发送（对称 iOS arrow.up 圆钮）。 */
+    val arrowUp: ImageVector = Icons.Outlined.ArrowUpward
+
+    /** 附件（对称 iOS paperclip）。 */
+    val attach: ImageVector = Icons.Outlined.AttachFile
+
+    /** Git 变更统计（对称 iOS arrow.triangle.branch）。 */
+    val commit: ImageVector = Icons.Outlined.Commit
+
+    /** 探索卡列表的三态（对称 iOS checkmark/xmark.circle.fill 与 circle.dotted）。 */
+    val statusDone: ImageVector = Icons.Outlined.CheckCircle
+    val statusFail: ImageVector = Icons.Outlined.Cancel
+    val statusPending: ImageVector = Icons.Outlined.RadioButtonUnchecked
 
     /** task / agent / subagent。 */
     val agent: ImageVector = Icons.Outlined.Groups

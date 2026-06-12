@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
+import com.wand.app.data.ModelInfo
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
@@ -65,6 +66,13 @@ class ChatStore(val sessionId: String, val api: WandApi) {
     var snapshot by mutableStateOf<SessionSnapshot?>(null)
         private set
 
+    var availableModels by mutableStateOf<List<ModelInfo>>(emptyList())
+        private set
+    var selectedModel by mutableStateOf<String?>(null)
+        private set
+    var thinkingEffort by mutableStateOf("off")
+        private set
+
     /**
      * AskUserQuestion 卡片的选择状态（toolUseId → 各题已选项 + 是否已提交）。
      * 放 store 而非卡片 remember：流式推送会整条替换消息重组视图，局部状态会丢。
@@ -99,6 +107,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
                 loading = false
                 loadError = e.message ?: "加载失败"
             }
+            loadModels()
             socket.connect()
             socket.subscribe(sessionId)
         }
@@ -120,6 +129,8 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         pendingEscalation = snap.pendingEscalation
         permissionBlocked = snap.permissionBlocked ?: (snap.pendingEscalation != null)
         currentTaskTitle = snap.currentTaskTitle
+        selectedModel = snap.selectedModel
+        thinkingEffort = snap.thinkingEffort ?: "off"
         if (snap.pendingEscalation != null) legacyPermissionPrompt = null
     }
 
@@ -208,6 +219,48 @@ class ChatStore(val sessionId: String, val api: WandApi) {
             }
         }
         data.currentTaskTitle?.let { currentTaskTitle = it }
+        data.selectedModel?.let { selectedModel = it }
+        data.thinkingEffort?.let { thinkingEffort = it }
+    }
+
+    // MARK: - 模型与思考深度（对齐 iOS setModel / setThinkingEffort：乐观更新 + 失败回滚）
+
+    fun setModel(model: String?) {
+        val previous = selectedModel
+        selectedModel = model
+        scope.launch {
+            try {
+                val snap = api.setModel(sessionId, model)
+                apply(snap)
+            } catch (e: Exception) {
+                selectedModel = previous
+                toast = e.message ?: "切换模型失败"
+            }
+        }
+    }
+
+    fun chooseThinkingEffort(effort: String) {
+        val previous = thinkingEffort
+        thinkingEffort = effort
+        scope.launch {
+            try {
+                val snap = api.setThinkingEffort(sessionId, effort)
+                apply(snap)
+            } catch (e: Exception) {
+                thinkingEffort = previous
+                toast = e.message ?: "调整思考深度失败"
+            }
+        }
+    }
+
+    private suspend fun loadModels() {
+        val response = try {
+            api.models()
+        } catch (_: Exception) {
+            return
+        }
+        availableModels =
+            if (snapshot?.provider == "codex") response.codexModels else response.models
     }
 
     // MARK: - 用户动作

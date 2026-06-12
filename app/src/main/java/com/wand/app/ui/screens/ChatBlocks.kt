@@ -26,11 +26,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -151,6 +155,10 @@ fun TurnView(
                         // 最后一轮回复的末尾块视为流式中（Thinking 块图标呼吸用）
                         streaming = isLastTurn && isResponding && index == items.lastIndex,
                     )
+                    is DisplayItem.Exploration -> ExplorationGroupCard(
+                        tools = item.tools,
+                        running = isLastTurn && isResponding && item.tools.any { it.result == null },
+                    )
                 }
             }
         }
@@ -194,6 +202,110 @@ private fun UserBubble(turn: ConversationTurn) {
 private sealed class DisplayItem {
     class Plain(val block: ContentBlock) : DisplayItem()
     class Tool(val use: ContentBlock.ToolUse, val result: ContentBlock.ToolResult?) : DisplayItem()
+    class Exploration(val tools: List<ExplorationToolItem>) : DisplayItem()
+}
+
+/** 探索卡里的一个工具（配对后的 use + 可选 result）。 */
+data class ExplorationToolItem(
+    val use: ContentBlock.ToolUse,
+    val result: ContentBlock.ToolResult?,
+)
+
+/** 跨消息分组后的渲染单元（对齐 iOS MessageDisplayItem）。 */
+sealed class MessageDisplayItem {
+    data class Turn(val index: Int, val turn: ConversationTurn) : MessageDisplayItem()
+    data class Exploration(
+        val tools: List<ExplorationToolItem>,
+        val lastTurnIndex: Int,
+    ) : MessageDisplayItem()
+}
+
+/**
+ * 将相邻、且内容完全由只读探索工具组成的 assistant turn 跨消息合并。
+ * 用户消息、正式文本、编辑/命令等操作都会立即终止分组（对齐 iOS groupExplorationTurns）。
+ */
+fun groupExplorationTurns(turns: List<ConversationTurn>): List<MessageDisplayItem> {
+    val items = mutableListOf<MessageDisplayItem>()
+    val pending = mutableListOf<ExplorationToolItem>()
+    var pendingLastIndex = -1
+
+    fun flushPending() {
+        if (pending.isNotEmpty()) {
+            items.add(MessageDisplayItem.Exploration(pending.toList(), pendingLastIndex))
+            pending.clear()
+            pendingLastIndex = -1
+        }
+    }
+
+    turns.forEachIndexed { index, turn ->
+        val tools = explorationToolsOnly(turn)
+        if (tools != null) {
+            pending += tools
+            pendingLastIndex = index
+        } else {
+            flushPending()
+            items.add(MessageDisplayItem.Turn(index, turn))
+        }
+    }
+    flushPending()
+    return items
+}
+
+/** turn 是否仅由探索类工具组成；是则返回这些工具，否则 null。 */
+private fun explorationToolsOnly(turn: ConversationTurn): List<ExplorationToolItem>? {
+    if (turn.role != "assistant") return null
+    val tools = mutableListOf<ExplorationToolItem>()
+    for (item in pairToolBlocks(turn.content)) {
+        when {
+            item is DisplayItem.Exploration -> tools += item.tools
+            item is DisplayItem.Tool && isExplorationTool(item.use.name) ->
+                tools += ExplorationToolItem(item.use, item.result)
+            else -> return null
+        }
+    }
+    return tools.ifEmpty { null }
+}
+
+/** 只读探索类工具：读取 / 搜索 / 网页获取 / 待办读取。 */
+private fun isExplorationTool(name: String): Boolean {
+    val lower = name.lowercase()
+    return lower.startsWith("read") ||
+        lower.startsWith("grep") ||
+        lower.startsWith("glob") ||
+        lower.startsWith("search") ||
+        lower.startsWith("find") ||
+        lower.contains("websearch") ||
+        lower.contains("webfetch") ||
+        lower == "todoread"
+}
+
+/**
+ * 连续读取、搜索、网页获取通常只是模型探索上下文，不需要逐张占满对话流。
+ * 至少连续两次才合并，单次操作仍保留完整工具卡（对齐 iOS collapseConsecutiveExplorationTools）。
+ */
+private fun collapseConsecutiveExplorationTools(paired: List<DisplayItem>): List<DisplayItem> {
+    val items = mutableListOf<DisplayItem>()
+    val exploration = mutableListOf<ExplorationToolItem>()
+
+    fun flushExploration() {
+        if (exploration.size >= 2) {
+            items.add(DisplayItem.Exploration(exploration.toList()))
+        } else {
+            exploration.firstOrNull()?.let { items.add(DisplayItem.Tool(it.use, it.result)) }
+        }
+        exploration.clear()
+    }
+
+    for (item in paired) {
+        if (item is DisplayItem.Tool && isExplorationTool(item.use.name)) {
+            exploration.add(ExplorationToolItem(item.use, item.result))
+        } else {
+            flushExploration()
+            items.add(item)
+        }
+    }
+    flushExploration()
+    return items
 }
 
 /**
@@ -246,7 +358,7 @@ private fun pairToolBlocks(content: List<ContentBlock>): List<DisplayItem> {
             items.add(DisplayItem.Plain(block))
         }
     }
-    return items
+    return collapseConsecutiveExplorationTools(items)
 }
 
 // MARK: - 内容块
@@ -325,6 +437,7 @@ private sealed class MarkdownBlock {
     ) : MarkdownBlock()
     data class Quote(val text: String) : MarkdownBlock()
     data class Code(val text: String, val language: String?) : MarkdownBlock()
+    data class Table(val headers: List<String>, val rows: List<List<String>>) : MarkdownBlock()
     data object Divider : MarkdownBlock()
 }
 
@@ -440,6 +553,7 @@ fun MarkdownText(text: String) {
                         }
                     }
                 }
+                is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows)
                 MarkdownBlock.Divider -> HorizontalDivider(
                     thickness = 1.dp,
                     color = WandColors.border,
@@ -449,6 +563,69 @@ fun MarkdownText(text: String) {
         }
     }
 }
+
+/**
+ * Markdown 表格（对齐 iOS markdownTable）：表头品牌弱底、行色交替、
+ * 列间/行间分隔线，整体可横向滚动。
+ */
+@Composable
+private fun MarkdownTable(headers: List<String>, rows: List<List<String>>) {
+    Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .border(1.dp, WandColors.border, RoundedCornerShape(10.dp)),
+        ) {
+            MarkdownTableRow(headers, header = true, background = WandColors.brand.copy(alpha = 0.09f))
+            rows.forEachIndexed { index, row ->
+                HorizontalDivider(thickness = 1.dp, color = WandColors.border)
+                MarkdownTableRow(
+                    normalizedTableRow(row, headers.size),
+                    header = false,
+                    background = if (index % 2 == 0) {
+                        WandColors.surface
+                    } else {
+                        WandColors.bgPrimary.copy(alpha = 0.45f)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownTableRow(cells: List<String>, header: Boolean, background: Color) {
+    Row(
+        modifier = Modifier
+            .height(IntrinsicSize.Min)
+            .background(background),
+    ) {
+        cells.forEachIndexed { index, cell ->
+            SelectionContainer {
+                Text(
+                    inlineMarkdown(cell),
+                    fontSize = if (header) 13.sp else 12.sp,
+                    lineHeight = if (header) 18.sp else 17.sp,
+                    fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (header) WandColors.textPrimary else WandColors.textSecondary,
+                    modifier = Modifier
+                        .widthIn(min = 110.dp, max = 190.dp)
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                )
+            }
+            if (index < cells.lastIndex) {
+                VerticalDivider(
+                    thickness = 1.dp,
+                    color = WandColors.border,
+                    modifier = Modifier.fillMaxHeight(),
+                )
+            }
+        }
+    }
+}
+
+private fun normalizedTableRow(row: List<String>, count: Int): List<String> =
+    if (row.size >= count) row.take(count) else row + List(count - row.size) { "" }
 
 private fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
     val result = mutableListOf<MarkdownBlock>()
@@ -471,38 +648,66 @@ private fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
         codeLanguage = null
     }
 
-    text.lines().forEach { rawLine ->
+    val lines = text.lines()
+    var lineIndex = 0
+    while (lineIndex < lines.size) {
+        val rawLine = lines[lineIndex]
         val trimmed = rawLine.trim()
         if (codeFence != null) {
             if (trimmed.startsWith(codeFence!!)) flushCode() else code.add(rawLine)
-            return@forEach
+            lineIndex++
+            continue
         }
         if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
             flushParagraph()
             codeFence = trimmed.take(3)
             codeLanguage = trimmed.drop(3).trim().ifEmpty { null }
-            return@forEach
+            lineIndex++
+            continue
         }
         if (trimmed.isEmpty()) {
             flushParagraph()
-            return@forEach
+            lineIndex++
+            continue
+        }
+
+        // Markdown 表格：表头行 + 分隔线，随后逐行收集（对齐 iOS parseBlocks）。
+        val headers = tableCells(rawLine)
+        if (headers != null &&
+            lineIndex + 1 < lines.size &&
+            isTableSeparator(lines[lineIndex + 1], headers.size)
+        ) {
+            flushParagraph()
+            val rows = mutableListOf<List<String>>()
+            lineIndex += 2
+            while (lineIndex < lines.size) {
+                val row = tableCells(lines[lineIndex]) ?: break
+                if (row.isEmpty()) break
+                rows.add(row)
+                lineIndex++
+            }
+            result.add(MarkdownBlock.Table(headers, rows))
+            continue
         }
 
         val headingLevel = trimmed.takeWhile { it == '#' }.length
         if (headingLevel in 1..6 && trimmed.getOrNull(headingLevel) == ' ') {
             flushParagraph()
             result.add(MarkdownBlock.Heading(headingLevel, trimmed.drop(headingLevel + 1)))
-            return@forEach
+            lineIndex++
+            continue
         }
         if (trimmed.replace(" ", "") in setOf("---", "***", "___")) {
             flushParagraph()
             result.add(MarkdownBlock.Divider)
-            return@forEach
+            lineIndex++
+            continue
         }
         if (trimmed.startsWith(">")) {
             flushParagraph()
             result.add(MarkdownBlock.Quote(trimmed.drop(1).trimStart()))
-            return@forEach
+            lineIndex++
+            continue
         }
 
         val indent = (rawLine.length - rawLine.trimStart().length) / 2
@@ -528,12 +733,34 @@ private fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
             }
             if (task != null) content = content.drop(4)
             result.add(MarkdownBlock.ListItem(marker, content, indent, task))
-            return@forEach
+            lineIndex++
+            continue
         }
         paragraph.add(rawLine)
+        lineIndex++
     }
     if (codeFence != null) flushCode() else flushParagraph()
     return result
+}
+
+/** 按 "|" 拆一行表格单元格；不是表格行返回 null（对齐 iOS tableCells）。 */
+private fun tableCells(line: String): List<String>? {
+    var trimmed = line.trim()
+    if (!trimmed.contains("|")) return null
+    if (trimmed.startsWith("|")) trimmed = trimmed.drop(1)
+    if (trimmed.endsWith("|")) trimmed = trimmed.dropLast(1)
+    val cells = trimmed.split("|").map { it.trim() }
+    return if (cells.size >= 2) cells else null
+}
+
+/** 表头下一行是否是 `---|:---:` 形式的分隔线。 */
+private fun isTableSeparator(line: String, columnCount: Int): Boolean {
+    val cells = tableCells(line) ?: return false
+    if (cells.size != columnCount) return false
+    return cells.all { cell ->
+        val marker = cell.replace(":", "")
+        marker.length >= 3 && marker.all { it == '-' }
+    }
 }
 
 /** 内联样式：粗体、斜体、删除线、链接与行内代码。未闭合标记按原文显示。 */
@@ -658,8 +885,8 @@ private fun toolLabel(name: String): String {
 }
 
 /**
- * 工具调用卡片：图标 + 中文工具名 + 参数摘要 + 可折叠结果区。
- * 三态：运行中（图标旋转）/ 成功（左侧 2dp 绿竖线）/ 失败（红弱底 + 红边框）。
+ * 工具调用卡片（对齐 iOS ToolUseCard）：34dp 彩色图标框 + 中文工具名 + 参数摘要 +
+ * 状态胶囊（处理中/完成/失败/待执行）+ 可折叠结果区。
  */
 @Composable
 fun ToolCard(
@@ -676,120 +903,314 @@ fun ToolCard(
         WandMotion.tweenNormal(),
         label = "toolArrow",
     )
+    val statusColor = when {
+        isError -> WandColors.danger
+        running -> WandColors.brand
+        isSuccess -> WandColors.success
+        else -> WandColors.textSecondary
+    }
+    val statusText = when {
+        isError -> "失败"
+        running -> "处理中"
+        isSuccess -> "完成"
+        else -> "待执行"
+    }
 
-    val cardBg = if (isError) WandColors.dangerSoft else WandColors.surface
-    val cardBorder = if (isError) WandColors.danger.copy(alpha = 0.45f) else WandColors.border
-
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(IntrinsicSize.Min)
             .clip(WandShapes.md)
-            .background(cardBg)
-            .border(1.dp, cardBorder, WandShapes.md)
-            .then(
-                if (hasBody) {
-                    Modifier.clickable { expanded = !expanded }
-                } else {
-                    Modifier
-                }
-            ),
+            .background(WandColors.surface)
+            .border(1.dp, statusColor.copy(alpha = if (isError) 0.42f else 0.16f), WandShapes.md)
+            .animateContentSize(WandMotion.tweenNormal()),
     ) {
-        // 成功态左侧 2dp 语义色竖线
-        if (isSuccess) {
-            Box(
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (hasBody) Modifier.clickable { expanded = !expanded } else Modifier)
+                .padding(horizontal = 11.dp, vertical = 10.dp),
+        ) {
+            ToolStatusIconBox(statusColor = statusColor, running = running) {
+                Icon(
+                    toolIcon(use.name),
+                    contentDescription = null,
+                    tint = statusColor,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    toolLabel(use.name),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isError) WandColors.danger else WandColors.textPrimary,
+                )
+                val summary = toolSummary(use.description, use.input)
+                if (summary.isNotEmpty()) {
+                    Text(
+                        summary,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Text(
+                statusText,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = statusColor,
                 modifier = Modifier
-                    .width(2.dp)
-                    .fillMaxHeight()
-                    .background(WandColors.success),
+                    .clip(WandShapes.full)
+                    .background(statusColor.copy(alpha = 0.10f))
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+            )
+            if (hasBody) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(WandColors.bgPrimary),
+                ) {
+                    Icon(
+                        WandIcons.expand,
+                        contentDescription = if (expanded) "收起" else "展开",
+                        tint = WandColors.textSecondary,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .graphicsLayer { rotationZ = arrowRotation },
+                    )
+                }
+            }
+        }
+        if (expanded && result != null) {
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = WandColors.border.copy(alpha = 0.7f),
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            ToolResultBody(
+                result,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             )
         }
-        Column(modifier = Modifier.animateContentSize(WandMotion.tweenNormal())) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 11.dp, vertical = 8.dp),
+    }
+}
+
+/** 工具卡左侧 34dp 状态图标框：运行中转圈，否则显示传入图标（对齐 iOS 头部 ZStack）。 */
+@Composable
+private fun ToolStatusIconBox(
+    statusColor: Color,
+    running: Boolean,
+    icon: @Composable () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(statusColor.copy(alpha = 0.11f)),
+    ) {
+        if (running) {
+            CircularProgressIndicator(
+                color = statusColor,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(16.dp),
+            )
+        } else {
+            icon()
+        }
+    }
+}
+
+// MARK: - 探索上下文紧凑卡（连续只读探索工具合并，对齐 iOS ExplorationGroupCard）
+
+@Composable
+fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
+    var expanded by remember { mutableStateOf(false) }
+    val completedCount = tools.count { it.result != null }
+    val failedCount = tools.count { it.result?.isError == true }
+    val progress = if (tools.isEmpty()) 0f else completedCount.toFloat() / tools.size
+    val tint = when {
+        failedCount > 0 -> WandColors.danger
+        running -> WandColors.brand
+        else -> WandColors.success
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(WandColors.surface)
+            .border(1.dp, tint.copy(alpha = if (failedCount > 0) 0.42f else 0.16f), WandShapes.md)
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 11.dp, vertical = 10.dp),
+        ) {
+            ToolStatusIconBox(statusColor = tint, running = running) {
+                Icon(
+                    WandIcons.search,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1f),
             ) {
-                if (running) {
-                    val spin = rememberInfiniteTransition(label = "toolSpin")
-                    val angle by spin.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 360f,
-                        animationSpec = infiniteRepeatable(tween(900)),
-                        label = "toolSpinAngle",
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "探索上下文",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
                     )
-                    Icon(
-                        WandIcons.refresh,
-                        contentDescription = "运行中",
-                        tint = WandColors.brand,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .graphicsLayer { rotationZ = angle },
-                    )
-                } else {
-                    Icon(
-                        toolIcon(use.name),
-                        contentDescription = null,
-                        tint = if (isError) WandColors.danger else WandColors.textSecondary,
-                        modifier = Modifier.size(18.dp),
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        "$completedCount/${tools.size}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace,
+                        color = tint,
                     )
                 }
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
+                Text(
+                    explorationSummary(tools),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                LinearProgressIndicator(
+                    progress = { progress },
+                    color = tint,
+                    trackColor = WandColors.border,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (failedCount > 0) {
+                Text(
+                    "失败 $failedCount",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.danger,
+                    modifier = Modifier
+                        .clip(WandShapes.full)
+                        .background(WandColors.danger.copy(alpha = 0.10f))
+                        .padding(horizontal = 7.dp, vertical = 4.dp),
+                )
+            }
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = WandColors.textSecondary,
+                modifier = Modifier
+                    .size(14.dp)
+                    .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+            )
+        }
+        if (expanded) {
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = WandColors.border.copy(alpha = 0.7f),
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            ) {
+                tools.forEach { tool ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(
-                            toolLabel(use.name),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isError) WandColors.danger else WandColors.textPrimary,
+                        Icon(
+                            when {
+                                tool.result?.isError == true -> WandIcons.statusFail
+                                tool.result != null -> WandIcons.statusDone
+                                else -> WandIcons.statusPending
+                            },
+                            contentDescription = null,
+                            tint = when {
+                                tool.result?.isError == true -> WandColors.danger
+                                tool.result != null -> WandColors.success
+                                else -> WandColors.brand
+                            },
+                            modifier = Modifier.size(14.dp),
                         )
-                        if (isError) {
-                            Text(
-                                "出错",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = WandColors.danger,
-                            )
-                        }
-                    }
-                    val summary = toolSummary(use.description, use.input)
-                    if (summary.isNotEmpty()) {
                         Text(
-                            summary,
-                            fontSize = 12.sp,
+                            toolLabel(tool.use.name),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = WandColors.textPrimary,
+                            maxLines = 1,
+                            modifier = Modifier.width(54.dp),
+                        )
+                        Text(
+                            explorationToolSummary(tool),
+                            fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = WandColors.textMuted,
+                            color = WandColors.textSecondary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
-                if (hasBody) {
-                    Icon(
-                        WandIcons.expand,
-                        contentDescription = if (expanded) "收起" else "展开",
-                        tint = WandColors.textMuted,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .graphicsLayer { rotationZ = arrowRotation },
-                    )
-                }
-            }
-            if (expanded && result != null) {
-                ToolResultBody(
-                    result,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-                )
             }
         }
     }
+}
+
+/** 探索卡摘要：「读取 3 · 搜索 2 · 网页 1」（对齐 iOS activitySummary）。 */
+private fun explorationSummary(tools: List<ExplorationToolItem>): String {
+    val counts = mutableMapOf<String, Int>()
+    for (tool in tools) {
+        val label = explorationActivityLabel(tool.use.name)
+        counts[label] = (counts[label] ?: 0) + 1
+    }
+    return listOf("读取", "搜索", "网页", "待办")
+        .mapNotNull { label -> counts[label]?.let { "$label $it" } }
+        .joinToString(" · ")
+}
+
+private fun explorationActivityLabel(name: String): String {
+    val lower = name.lowercase()
+    return when {
+        lower.contains("web") -> "网页"
+        lower == "todoread" -> "待办"
+        lower.startsWith("read") -> "读取"
+        else -> "搜索"
+    }
+}
+
+/** 探索卡单行参数摘要（对齐 iOS toolSummary：路径/查询词/URL 优先）。 */
+private fun explorationToolSummary(tool: ExplorationToolItem): String {
+    val keys = listOf("file_path", "path", "pattern", "query", "url", "file", "filename")
+    for (key in keys) {
+        if (tool.use.input.has(key) && !tool.use.input.isNull(key)) {
+            val text = summaryText(tool.use.input.opt(key))
+            if (text.isNotEmpty()) return text
+        }
+    }
+    tool.use.description?.takeIf { it.isNotEmpty() }?.let { return it }
+    val firstKey = tool.use.input.keys().asSequence().firstOrNull() ?: return "无参数"
+    return "$firstKey: ${summaryText(tool.use.input.opt(firstKey))}"
 }
 
 /** 工具结果正文：次级底色代码框 + 4000 字截断。 */
