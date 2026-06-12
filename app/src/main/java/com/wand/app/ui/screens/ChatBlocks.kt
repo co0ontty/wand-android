@@ -68,6 +68,7 @@ import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SubagentMeta
+import com.wand.app.data.arrayField
 import com.wand.app.data.str
 import com.wand.app.data.summaryText
 import com.wand.app.ui.AskUserSelectionState
@@ -1525,7 +1526,7 @@ data class AskUserQuestionData(
     companion object {
         /** 从 tool_use 的 input 解析 questions 数组；形状不符返回空列表（上层回落通用工具卡）。 */
         fun parse(input: JSONObject): List<AskUserQuestionData> {
-            val items = input.optJSONArray("questions") ?: return emptyList()
+            val items = input.arrayField("questions") ?: return emptyList()
             val result = mutableListOf<AskUserQuestionData>()
             for (i in 0 until items.length()) {
                 val obj = items.optJSONObject(i) ?: continue
@@ -2105,7 +2106,7 @@ fun currentTodos(messages: List<ConversationTurn>): List<TodoEntry> {
         if (i < startIdx) break
         for (block in messages[i].content.reversed()) {
             if (block is ContentBlock.ToolUse && block.name == "TodoWrite") {
-                val arr = block.input.optJSONArray("todos") ?: continue
+                val arr = block.input.arrayField("todos") ?: continue
                 val todos = mutableListOf<TodoEntry>()
                 for (j in 0 until arr.length()) {
                     val obj = arr.optJSONObject(j) ?: continue

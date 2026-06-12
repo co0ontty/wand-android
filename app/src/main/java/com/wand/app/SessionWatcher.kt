@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.arrayField
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import com.wand.app.data.WsData
@@ -290,7 +291,7 @@ object SessionWatcher {
             outer@ for (i in turns.indices.reversed()) {
                 for (block in turns[i].content.reversed()) {
                     if (block is ContentBlock.ToolUse && block.name == "TodoWrite") {
-                        block.input.optJSONArray("todos")?.let { w.todos = it }
+                        block.input.arrayField("todos")?.let { w.todos = it }
                         break@outer
                     }
                 }
@@ -301,7 +302,7 @@ object SessionWatcher {
     private fun updateTodos(w: Watched, turn: ConversationTurn) {
         for (block in turn.content.reversed()) {
             if (block is ContentBlock.ToolUse && block.name == "TodoWrite") {
-                block.input.optJSONArray("todos")?.let { w.todos = it }
+                block.input.arrayField("todos")?.let { w.todos = it }
                 return
             }
         }

@@ -28,6 +28,19 @@ internal fun JSONObject.obj(key: String): JSONObject? = optJSONObject(key)
 
 internal fun JSONObject.arr(key: String): JSONArray? = optJSONArray(key)
 
+/**
+ * 读取 tool_use input 里的数组字段，容忍服务端把数组拍成 JSON 字符串。
+ * `claude -p --output-format stream-json`（默认结构化 runner）会把 TodoWrite.todos /
+ * AskUserQuestion.questions 当成 "[{...}]" 字符串下发，直接 optJSONArray 拿到 null，
+ * 待办进度条与提问卡片整段渲染不出来。数组形态直接用，字符串形态再解析一次。
+ */
+internal fun JSONObject.arrayField(key: String): JSONArray? {
+    optJSONArray(key)?.let { return it }
+    val s = str(key)?.trim() ?: return null
+    if (!s.startsWith("[")) return null
+    return try { JSONArray(s) } catch (_: Exception) { null }
+}
+
 /** 任意 JSON 值 → 单行摘要文本，用于 tool_use 卡片展示参数（对齐 JSONValue.summaryText）。 */
 fun summaryText(value: Any?): String = when (value) {
     null, JSONObject.NULL -> "null"
