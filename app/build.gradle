@@ -109,8 +109,13 @@ dependencies {
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
 
     // Native client UI (Compose) — mirrors the iOS SwiftUI client
-    def composeBom = platform('androidx.compose:compose-bom:2025.05.00')
+    def composeBom = platform('androidx.compose:compose-bom:2025.12.01')
     implementation composeBom
+    // 液态玻璃引擎（Kyant0/AndroidLiquidGlass）：drawBackdrop + vibrancy/blur/lens 折射。
+    // 需要 API 33+ RuntimeShader，低版本由 ui/theme/Glass.kt 降级为半透明+边缘高光。
+    // 注意：该库用 Kotlin 2.3 / Compose 1.10 编译 → 本工程 Kotlin ≥ 2.2、BOM ≥ 2025.12。
+    // 钉 1.0.6（Android-only 末版）：2.0.0 的 AAR 要求 compileSdk 37，AGP 8.10 最高支持 36。
+    implementation 'io.github.kyant0:backdrop:1.0.6'
     implementation 'androidx.compose.material3:material3'
     // 全量 Material Icons（BOM 2025.05 不再带该工件，必须显式版本号）
     implementation 'androidx.compose.material:material-icons-extended:1.7.8'
