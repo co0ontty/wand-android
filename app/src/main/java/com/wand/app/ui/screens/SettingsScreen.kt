@@ -29,6 +29,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -59,8 +60,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import com.wand.app.R
 import com.wand.app.data.WandApi
+import com.wand.app.speech.SherpaSpeechEngine
+import com.wand.app.speech.SttModelManager
 import com.wand.app.ui.HomeActions
 import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.WandCard
@@ -305,6 +309,10 @@ fun SettingsScreen(
                 )
             }
 
+            // —— 语音输入 ——
+            SectionHeader("语音输入")
+            SttModelSection()
+
             // —— 更新 ——
             SectionHeader("更新")
             WandCard(modifier = Modifier.fillMaxWidth()) {
@@ -332,6 +340,108 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.size(32.dp))
         }
+    }
+}
+
+/**
+ * 端侧语音识别模型选择卡：中文小模型 / 中英混合大模型。
+ * 点选即切换；未下载的模型点选后立即开始下载（下载完成自动预热）。
+ * 下载中的行内展示进度条；所选模型未就绪期间语音输入自动回退到已就绪模型。
+ */
+@Composable
+private fun SttModelSection() {
+    val context = LocalContext.current
+    var selectedId by remember { mutableStateOf(SttModelManager.selectedModel(context).id) }
+    // 触发各行就绪状态重算的信号：下载状态变化时 +1。
+    val sttState = SttModelManager.state
+    val downloadingId = SttModelManager.downloadingModelId
+    LaunchedEffect(Unit) { SttModelManager.refresh(context) }
+    // 下载完成立刻预热，让「下载完→按住即用」无加载等待。
+    LaunchedEffect(sttState) {
+        if (sttState is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
+    }
+    WandCard(modifier = Modifier.fillMaxWidth()) {
+        SttModelManager.MODELS.forEachIndexed { index, model ->
+            if (index > 0) RowDivider()
+            val ready = remember(sttState, downloadingId, model.id) {
+                SttModelManager.isReady(context, model)
+            }
+            val downloading = downloadingId == model.id
+            val status = when {
+                downloading && sttState is SttModelManager.State.Downloading ->
+                    "下载中 ${sttState.percent}%"
+                ready -> "已就绪 · 离线运行"
+                sttState is SttModelManager.State.Failed && selectedId == model.id ->
+                    "下载失败，点击重试"
+                else -> "未下载 · ${model.sizeLabel}"
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        selectedId = model.id
+                        SttModelManager.setSelectedModel(context, model.id)
+                        if (SttModelManager.isReady(context, model)) {
+                            SherpaSpeechEngine.warmUp(context)
+                        } else {
+                            SttModelManager.startDownload(context, model)
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            model.label,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = WandColors.textPrimary,
+                        )
+                        Text(
+                            model.description,
+                            fontSize = 11.sp,
+                            color = WandColors.textMuted,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                        Text(
+                            status,
+                            fontSize = 11.sp,
+                            color = when {
+                                downloading -> WandColors.brand
+                                status.startsWith("下载失败") -> WandColors.danger
+                                else -> WandColors.textMuted
+                            },
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                    if (selectedId == model.id) {
+                        Icon(
+                            WandIcons.check,
+                            contentDescription = "使用中",
+                            tint = WandColors.brand,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+                if (downloading && sttState is SttModelManager.State.Downloading) {
+                    LinearProgressIndicator(
+                        progress = { sttState.percent / 100f },
+                        color = WandColors.brand,
+                        trackColor = WandColors.surfaceSoft,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                    )
+                }
+            }
+        }
+        Text(
+            "识别完全在本机离线运行。中英混合模型针对中英夹杂口述（含编程词汇热词增强），" +
+                "内存占用较高，建议 6 GB 以上内存的设备使用。",
+            fontSize = 11.sp,
+            color = WandColors.textMuted,
+            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+        )
     }
 }
 

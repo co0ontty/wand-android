@@ -883,6 +883,7 @@ private fun VoiceTranscriptBubble(voice: VoiceInputController) {
 private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val state = SttModelManager.state
+    val model = remember { SttModelManager.selectedModel(context) }
     // 下载完成立刻预热模型，让「下载完→按住即用」无加载等待。
     LaunchedEffect(state) {
         if (state is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
@@ -931,8 +932,9 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
                     )
                     else -> Text(
                         "此设备没有可用的系统语音识别服务。下载开源端侧模型" +
-                            "（中文，${SttModelManager.DOWNLOAD_SIZE_LABEL}）后，" +
-                            "语音识别完全在本机离线运行：不耗流量、语音内容不出设备。",
+                            "（${model.label}，${model.sizeLabel}）后，" +
+                            "语音识别完全在本机离线运行：不耗流量、语音内容不出设备。" +
+                            "可在设置页切换识别模型。",
                         fontSize = 13.sp,
                         color = WandColors.textSecondary,
                     )
