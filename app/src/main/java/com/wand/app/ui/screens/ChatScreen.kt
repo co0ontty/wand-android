@@ -1,5 +1,8 @@
 package com.wand.app.ui.screens
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -12,6 +15,8 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -38,13 +43,16 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -62,6 +70,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +85,9 @@ import com.wand.app.SessionWatcher
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.WandApi
+import com.wand.app.speech.SherpaSpeechEngine
+import com.wand.app.speech.SttModelManager
+import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.LoadingState
@@ -132,6 +146,27 @@ fun ChatScreen(
     val isListDragged by listState.interactionSource.collectIsDraggedAsState()
     val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
+
+    // 按住说话：端侧语音识别控制器（sherpa 本地模型优先，系统识别器兜底）。
+    val context = LocalContext.current
+    val voice = remember { VoiceInputController(context) }
+    DisposableEffect(voice) {
+        voice.onToast = { store.toast = it }
+        onDispose { voice.destroy() }
+    }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        store.toast = if (granted) "已获得麦克风权限，按住麦克风说话" else "需要麦克风权限才能语音输入"
+    }
+    val onMicDown: () -> Unit = {
+        if (voice.hasMicPermission()) {
+            if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            voice.beginPress { text -> draft = appendVoiceText(draft, text) }
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     // 用户开始拖动后立即暂停跟随，避免流式更新把历史阅读位置抢回底部。
     LaunchedEffect(isListDragged) {
@@ -203,7 +238,7 @@ fun ChatScreen(
                 ),
             )
         },
-        bottomBar = { BottomBar(store, draft, onDraftChange = { draft = it }) {
+        bottomBar = { BottomBar(store, draft, onDraftChange = { draft = it }, voice = voice, onMicDown = onMicDown) {
             // 发送回调（带触感反馈）
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val text = draft
@@ -282,6 +317,11 @@ fun ChatScreen(
                 ) {
                     Icon(WandIcons.expand, contentDescription = "回到底部")
                 }
+            }
+
+            // 端侧语音模型下载对话框（无可用识别引擎时由麦克风按钮触发）。
+            if (voice.showModelDialog) {
+                SttModelDownloadDialog(onDismiss = { voice.showModelDialog = false })
             }
 
             // Git 快捷提交弹层（磁吸气泡 dock，对齐网页版交互）。
@@ -369,6 +409,8 @@ private fun BottomBar(
     store: ChatStore,
     draft: String,
     onDraftChange: (String) -> Unit,
+    voice: VoiceInputController,
+    onMicDown: () -> Unit,
     onSend: () -> Unit,
 ) {
     Column(
@@ -448,7 +490,13 @@ private fun BottomBar(
                 }
             }
         }
-        InputBar(store, draft, onDraftChange, onSend)
+        // 按住说话实时转写气泡（按住期间悬浮在输入栏上方）。
+        if (voice.pressed) {
+            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                VoiceTranscriptBubble(voice)
+            }
+        }
+        InputBar(store, draft, onDraftChange, voice, onMicDown, onSend)
     }
 }
 
@@ -457,6 +505,8 @@ private fun InputBar(
     store: ChatStore,
     draft: String,
     onDraftChange: (String) -> Unit,
+    voice: VoiceInputController,
+    onMicDown: () -> Unit,
     onSend: () -> Unit,
 ) {
     val canSend = draft.isNotBlank() && !store.sessionEnded
@@ -475,8 +525,10 @@ private fun InputBar(
             .clip(RoundedCornerShape(18.dp))
             .background(WandColors.surface)
             .border(1.dp, borderColor, RoundedCornerShape(18.dp))
-            .padding(start = 13.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+            .padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
     ) {
+        VoiceMicButton(voice, onMicDown)
+        Spacer(modifier = Modifier.size(7.dp))
         BasicTextField(
             value = draft,
             onValueChange = onDraftChange,
@@ -534,6 +586,221 @@ private fun InputBar(
         }
     }
 }
+
+// MARK: - 按住说话（端侧语音识别）
+
+/** 识别文本追加进草稿（不覆盖已有内容，对齐 Web commitVoiceTranscript / iOS appendTranscriptToDraft）。 */
+private fun appendVoiceText(existing: String, text: String): String {
+    val clean = text.trim()
+    if (clean.isEmpty()) return existing
+    val base = existing.trimEnd()
+    return if (base.isEmpty()) clean else "$base $clean"
+}
+
+/** 麦克风按钮：按住录音、上滑取消、松手把识别文本追加进输入框。 */
+@Composable
+private fun VoiceMicButton(voice: VoiceInputController, onMicDown: () -> Unit) {
+    val cancelThresholdPx = with(LocalDensity.current) { 60.dp.toPx() }
+    val background = when {
+        voice.pressed && voice.canceling -> WandColors.danger
+        voice.pressed -> WandColors.brand
+        else -> WandColors.surfaceSoft
+    }
+    val scale by animateFloatAsState(
+        if (voice.pressed) 1.08f else 1f,
+        WandMotion.tweenFast(),
+        label = "micScale",
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(34.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(11.dp))
+            .background(background)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    onMicDown()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break
+                        change.consume()
+                        voice.updateCancel(down.position.y - change.position.y > cancelThresholdPx)
+                    }
+                    voice.endPress()
+                }
+            },
+    ) {
+        Icon(
+            WandIcons.mic,
+            contentDescription = "按住说话",
+            tint = if (voice.pressed) Color.White else WandColors.textSecondary,
+            modifier = Modifier.size(17.dp),
+        )
+    }
+}
+
+/** 按住期间的实时转写气泡：覆盖式文本 + 引擎标签 + 上滑取消提示。 */
+@Composable
+private fun VoiceTranscriptBubble(voice: VoiceInputController) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(WandColors.surface)
+            .border(
+                1.dp,
+                if (voice.canceling) WandColors.danger.copy(alpha = 0.55f) else WandColors.border,
+                RoundedCornerShape(12.dp),
+            )
+            .padding(12.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                if (voice.canceling) WandIcons.close else WandIcons.mic,
+                contentDescription = null,
+                tint = if (voice.canceling) WandColors.danger else WandColors.brand,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                when {
+                    voice.canceling -> "松开手指，取消输入"
+                    voice.transcript.isEmpty() -> "正在聆听…"
+                    else -> voice.transcript
+                },
+                fontSize = 14.sp,
+                color = when {
+                    voice.canceling -> WandColors.danger
+                    voice.transcript.isEmpty() -> WandColors.textMuted
+                    else -> WandColors.textPrimary
+                },
+            )
+        }
+        if (!voice.canceling) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    voice.engineLabel,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = WandColors.brand,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(WandColors.brand.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+                Text(
+                    "松开填入输入框 · 上滑取消",
+                    fontSize = 11.sp,
+                    color = WandColors.textMuted,
+                )
+            }
+        }
+    }
+}
+
+/** 端侧语音模型下载对话框：说明 → 下载进度 → 就绪/失败重试。 */
+@Composable
+private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val state = SttModelManager.state
+    // 下载完成立刻预热模型，让「下载完→按住即用」无加载等待。
+    LaunchedEffect(state) {
+        if (state is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
+    }
+    AlertDialog(
+        onDismissRequest = { if (state !is SttModelManager.State.Downloading) onDismiss() },
+        containerColor = WandColors.surface,
+        title = {
+            Text(
+                "下载本地语音模型",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                when (state) {
+                    is SttModelManager.State.Downloading -> {
+                        Text(
+                            "正在下载语音识别模型…",
+                            fontSize = 13.sp,
+                            color = WandColors.textSecondary,
+                        )
+                        LinearProgressIndicator(
+                            progress = { state.percent / 100f },
+                            color = WandColors.brand,
+                            trackColor = WandColors.surfaceSoft,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "${state.percent}%（${formatMb(state.downloadedBytes)} / ${formatMb(state.totalBytes)}）",
+                            fontSize = 12.sp,
+                            color = WandColors.textMuted,
+                        )
+                    }
+                    is SttModelManager.State.Ready -> Text(
+                        "模型已就绪，按住麦克风即可语音输入，识别完全在本机离线运行。",
+                        fontSize = 13.sp,
+                        color = WandColors.textSecondary,
+                    )
+                    is SttModelManager.State.Failed -> Text(
+                        "${state.message}\n可重试，会自动切换镜像源。",
+                        fontSize = 13.sp,
+                        color = WandColors.danger,
+                    )
+                    else -> Text(
+                        "此设备没有可用的系统语音识别服务。下载开源端侧模型" +
+                            "（中文，${SttModelManager.DOWNLOAD_SIZE_LABEL}）后，" +
+                            "语音识别完全在本机离线运行：不耗流量、语音内容不出设备。",
+                        fontSize = 13.sp,
+                        color = WandColors.textSecondary,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            when (state) {
+                is SttModelManager.State.Downloading -> TextButton(onClick = { SttModelManager.cancelDownload() }) {
+                    Text("取消下载", color = WandColors.danger, fontSize = 13.sp)
+                }
+                is SttModelManager.State.Ready -> TextButton(onClick = onDismiss) {
+                    Text("知道了", color = WandColors.brand, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+                else -> TextButton(onClick = { SttModelManager.startDownload(context) }) {
+                    Text(
+                        if (state is SttModelManager.State.Failed) "重试" else "下载",
+                        color = WandColors.brand,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            if (state is SttModelManager.State.Idle || state is SttModelManager.State.Failed) {
+                TextButton(onClick = onDismiss) {
+                    Text("暂不", color = WandColors.textMuted, fontSize = 13.sp)
+                }
+            }
+        },
+    )
+}
+
+private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
 
 /** 输入器内操作按钮：紧凑圆角方块，保留按压缩放反馈。 */
 @Composable

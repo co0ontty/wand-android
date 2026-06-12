@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
@@ -92,6 +93,9 @@ object WandIcons {
 
     /** 发送。 */
     val send: ImageVector = Icons.AutoMirrored.Outlined.Send
+
+    /** 按住说话麦克风。 */
+    val mic: ImageVector = Icons.Outlined.Mic
 
     /** 停止。 */
     val stop: ImageVector = Icons.Outlined.Stop

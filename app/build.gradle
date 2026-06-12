@@ -29,6 +29,12 @@ android {
         targetSdk 36
         versionCode appVersionCode
         versionName appVersionName
+
+        // sherpa-onnx 原生库只随包带 arm64：现代真机全是 arm64-v8a，
+        // 砍掉其余 ABI 省约 3/4 的 .so 体积（代价：x86 模拟器装不了）。
+        ndk {
+            abiFilters "arm64-v8a"
+        }
     }
 
     // Stable signing config — committed to the repo so APKs built locally,
@@ -68,6 +74,14 @@ android {
     buildFeatures {
         compose true
     }
+
+    packagingOptions {
+        jniLibs {
+            // .so 压缩进 APK：下载体积从 +22MB 降到 +8MB（自分发下载体积优先；
+            // 代价是安装时解压、磁盘双份占用）。
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
@@ -92,4 +106,9 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
     // REST + WebSocket client for the native session protocol
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // 端侧语音识别（sherpa-onnx，static-link onnxruntime 版 AAR）。
+    // 提交在 libs/ 而不走仓库依赖：JitPack 对 k2-fsa 最新 tag 构建失败、
+    // 国内可达性不可控；钉本地文件保证三种构建（本地/publish.sh/CI）确定一致。
+    // 来源：https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-static-link-onnxruntime-1.13.2.aar
+    implementation files('libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar')
 }
