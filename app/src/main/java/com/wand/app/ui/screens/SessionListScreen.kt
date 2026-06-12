@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
+import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
@@ -369,13 +370,13 @@ private fun SessionCard(session: SessionSnapshot, onClick: () -> Unit) {
     }
 }
 
-/** 左侧助手标识：Claude 用品牌星芒，Codex 用蓝色终端符号，右下角叠加实时状态。 */
+/** 左侧助手标识：按实际 CLI 显示品牌 logo——Claude 星芒（brand 色）/ Codex 六角结（info 色），右下角叠加实时状态。 */
 @Composable
 private fun ProviderMark(session: SessionSnapshot, status: String) {
     val isCodex = session.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
     val background = if (isCodex) WandColors.infoSoft else WandColors.brandSoft
-    val icon = if (isCodex) WandIcons.terminal else WandIcons.sparkle
+    val icon = if (isCodex) BrandLogos.codex else BrandLogos.claude
     val label = if (isCodex) "Codex" else "Claude"
 
     Box(

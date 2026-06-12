@@ -168,17 +168,32 @@ class WandApi(baseUrl: String, val token: String?) {
 
     // MARK: - 新建会话
 
-    /** 结构化会话（非 PTY）：POST /api/structured-sessions。 */
-    suspend fun createStructuredSession(cwd: String, mode: String?, prompt: String?): SessionSnapshot {
-        val body = JSONObject().put("cwd", cwd)
+    /**
+     * 结构化会话（非 PTY）：POST /api/structured-sessions。
+     * 对齐 Web createStructuredSession：codex 显式走 codex-cli-exec runner，
+     * claude 不传 runner、由服务端按默认（claude-cli-print）解析。
+     */
+    suspend fun createStructuredSession(
+        cwd: String,
+        mode: String?,
+        prompt: String?,
+        provider: String = "claude",
+    ): SessionSnapshot {
+        val body = JSONObject().put("cwd", cwd).put("provider", provider)
+        if (provider == "codex") body.put("runner", "codex-cli-exec")
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
         if (!prompt.isNullOrEmpty()) body.put("prompt", prompt)
         return SessionSnapshot.parse(requestObject("POST", "/api/structured-sessions", body))
     }
 
-    /** PTY 会话：POST /api/commands（command 固定 claude，由服务端解析别名）。 */
-    suspend fun createPtySession(cwd: String, mode: String?, initialInput: String?): SessionSnapshot {
-        val body = JSONObject().put("command", "claude").put("cwd", cwd)
+    /** PTY 会话：POST /api/commands。对齐 Web runPtyCommandFromModal：command 即 provider（claude / codex）。 */
+    suspend fun createPtySession(
+        cwd: String,
+        mode: String?,
+        initialInput: String?,
+        provider: String = "claude",
+    ): SessionSnapshot {
+        val body = JSONObject().put("command", provider).put("provider", provider).put("cwd", cwd)
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
         if (!initialInput.isNullOrEmpty()) body.put("initialInput", initialInput)
         return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
