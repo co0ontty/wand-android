@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
@@ -96,6 +97,9 @@ object WandIcons {
 
     /** 按住说话麦克风。 */
     val mic: ImageVector = Icons.Outlined.Mic
+
+    /** 语音模式下切回键盘输入。 */
+    val keyboard: ImageVector = Icons.Outlined.Keyboard
 
     /** 停止。 */
     val stop: ImageVector = Icons.Outlined.Stop

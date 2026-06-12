@@ -62,17 +62,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -99,6 +103,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 原生聊天视图 —— 对称 iOS ChatView.swift：
@@ -496,7 +501,18 @@ private fun BottomBar(
                 VoiceTranscriptBubble(voice)
             }
         }
-        InputBar(store, draft, onDraftChange, voice, onMicDown, onSend)
+        // 语音输入模式：轻点话筒进入，整个输入框变成「按住说话」面板（转屏后保留）。
+        var voiceMode by rememberSaveable { mutableStateOf(false) }
+        InputBar(
+            store = store,
+            draft = draft,
+            onDraftChange = onDraftChange,
+            voice = voice,
+            voiceMode = voiceMode,
+            onVoiceModeChange = { voiceMode = it },
+            onMicDown = onMicDown,
+            onSend = onSend,
+        )
     }
 }
 
@@ -506,6 +522,8 @@ private fun InputBar(
     draft: String,
     onDraftChange: (String) -> Unit,
     voice: VoiceInputController,
+    voiceMode: Boolean,
+    onVoiceModeChange: (Boolean) -> Unit,
     onMicDown: () -> Unit,
     onSend: () -> Unit,
 ) {
@@ -517,6 +535,15 @@ private fun InputBar(
         WandMotion.tweenFast(),
         label = "composerBorder",
     )
+    // 从语音模式轻点切回键盘时自动聚焦文本框，键盘直接弹起。
+    val focusRequester = remember { FocusRequester() }
+    var focusAfterExit by remember { mutableStateOf(false) }
+    LaunchedEffect(voiceMode, focusAfterExit) {
+        if (!voiceMode && focusAfterExit) {
+            focusAfterExit = false
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
     Row(
         verticalAlignment = Alignment.Bottom,
         modifier = Modifier
@@ -527,36 +554,55 @@ private fun InputBar(
             .border(1.dp, borderColor, RoundedCornerShape(18.dp))
             .padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
     ) {
-        VoiceMicButton(voice, onMicDown)
-        Spacer(modifier = Modifier.size(7.dp))
-        BasicTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            interactionSource = interaction,
-            textStyle = TextStyle(
-                fontSize = 15.sp,
-                lineHeight = 20.sp,
-                color = WandColors.textPrimary,
-            ),
-            cursorBrush = SolidColor(WandColors.brand),
-            minLines = 1,
-            maxLines = 5,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.Sentences,
-            ),
-            decorationBox = { innerTextField ->
-                Box(contentAlignment = Alignment.CenterStart) {
-                    if (draft.isEmpty()) {
-                        Text("输入消息…", fontSize = 15.sp, color = WandColors.textMuted)
-                    }
-                    innerTextField()
-                }
-            },
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 34.dp, max = 108.dp)
-                .padding(vertical = 6.dp),
+        VoiceMicButton(
+            voice = voice,
+            voiceMode = voiceMode,
+            onToggleMode = { onVoiceModeChange(!voiceMode) },
+            onMicDown = onMicDown,
         )
+        Spacer(modifier = Modifier.size(7.dp))
+        if (voiceMode) {
+            VoiceHoldField(
+                draft = draft,
+                voice = voice,
+                onMicDown = onMicDown,
+                onExitVoiceMode = {
+                    focusAfterExit = true
+                    onVoiceModeChange(false)
+                },
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            BasicTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                interactionSource = interaction,
+                textStyle = TextStyle(
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    color = WandColors.textPrimary,
+                ),
+                cursorBrush = SolidColor(WandColors.brand),
+                minLines = 1,
+                maxLines = 5,
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                ),
+                decorationBox = { innerTextField ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (draft.isEmpty()) {
+                            Text("输入消息…", fontSize = 15.sp, color = WandColors.textMuted)
+                        }
+                        innerTextField()
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 34.dp, max = 108.dp)
+                    .padding(vertical = 6.dp)
+                    .focusRequester(focusRequester),
+            )
+        }
         if (store.isResponding) {
             ComposerIconButton(
                 background = WandColors.dangerSoft,
@@ -597,10 +643,69 @@ private fun appendVoiceText(existing: String, text: String): String {
     return if (base.isEmpty()) clean else "$base $clean"
 }
 
-/** 麦克风按钮：按住录音、上滑取消、松手把识别文本追加进输入框。 */
+/** 轻点 vs 按住的分界：按住超过该时长进入录音，否则按轻点处理。 */
+private const val VOICE_HOLD_THRESHOLD_MS = 300L
+
+/**
+ * 轻点 / 按住二分手势：
+ * - 按住超过 [VOICE_HOLD_THRESHOLD_MS] → onHoldStart()（开始录音），
+ *   之后移动驱动「上滑取消」，松手 endPress() 提交；
+ * - 阈值内松手 → onTap()。
+ * 录音的触感反馈在 onHoldStart（即 onMicDown）里触发，正好对应「真正开始聆听」。
+ */
+private suspend fun PointerInputScope.voiceTapOrHoldGesture(
+    voice: VoiceInputController,
+    onTap: () -> Unit,
+    onHoldStart: () -> Unit,
+) {
+    val cancelThresholdPx = 60.dp.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown()
+        down.consume()
+        var recording = false
+        var elapsed = 0L
+        while (true) {
+            val event = if (recording) {
+                awaitPointerEvent()
+            } else {
+                withTimeoutOrNull(VOICE_HOLD_THRESHOLD_MS - elapsed) { awaitPointerEvent() }
+            }
+            if (event == null) {
+                // 按满阈值仍未松手 → 进入按住录音（原有交互）。
+                recording = true
+                onHoldStart()
+                continue
+            }
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            elapsed = change.uptimeMillis - down.uptimeMillis
+            if (!change.pressed) {
+                change.consume()
+                if (!recording) onTap()
+                break
+            }
+            change.consume()
+            if (recording) {
+                voice.updateCancel(down.position.y - change.position.y > cancelThresholdPx)
+            }
+        }
+        if (recording) voice.endPress()
+    }
+}
+
+/**
+ * 麦克风按钮：
+ * - 轻点 → 切换语音输入模式（整个输入框变成「按住说话」面板，图标变键盘）；
+ * - 长按 → 立即按住说话（原交互）：按住录音、上滑取消、松手把识别文本追加进输入框。
+ */
 @Composable
-private fun VoiceMicButton(voice: VoiceInputController, onMicDown: () -> Unit) {
-    val cancelThresholdPx = with(LocalDensity.current) { 60.dp.toPx() }
+private fun VoiceMicButton(
+    voice: VoiceInputController,
+    voiceMode: Boolean,
+    onToggleMode: () -> Unit,
+    onMicDown: () -> Unit,
+) {
+    val currentOnToggle by rememberUpdatedState(onToggleMode)
+    val currentOnMicDown by rememberUpdatedState(onMicDown)
     val background = when {
         voice.pressed && voice.canceling -> WandColors.danger
         voice.pressed -> WandColors.brand
@@ -621,28 +726,90 @@ private fun VoiceMicButton(voice: VoiceInputController, onMicDown: () -> Unit) {
             }
             .clip(RoundedCornerShape(11.dp))
             .background(background)
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    down.consume()
-                    onMicDown()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        change.consume()
-                        voice.updateCancel(down.position.y - change.position.y > cancelThresholdPx)
-                    }
-                    voice.endPress()
-                }
+            .pointerInput(voice) {
+                voiceTapOrHoldGesture(
+                    voice = voice,
+                    onTap = { currentOnToggle() },
+                    onHoldStart = { currentOnMicDown() },
+                )
             },
     ) {
         Icon(
-            WandIcons.mic,
-            contentDescription = "按住说话",
+            if (voiceMode && !voice.pressed) WandIcons.keyboard else WandIcons.mic,
+            contentDescription = if (voiceMode) "切回键盘输入" else "轻点切语音模式，长按说话",
             tint = if (voice.pressed) Color.White else WandColors.textSecondary,
             modifier = Modifier.size(17.dp),
         )
+    }
+}
+
+/**
+ * 语音模式下替换文本框的「按住说话」面板：
+ * 按住录音（同话筒长按），轻点切回键盘输入；非录音时显示当前草稿，所见即所得。
+ */
+@Composable
+private fun VoiceHoldField(
+    draft: String,
+    voice: VoiceInputController,
+    onMicDown: () -> Unit,
+    onExitVoiceMode: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val currentOnExit by rememberUpdatedState(onExitVoiceMode)
+    val currentOnMicDown by rememberUpdatedState(onMicDown)
+    val background by androidx.compose.animation.animateColorAsState(
+        when {
+            voice.pressed && voice.canceling -> WandColors.danger.copy(alpha = 0.16f)
+            voice.pressed -> WandColors.brand.copy(alpha = 0.14f)
+            else -> WandColors.surfaceSoft
+        },
+        WandMotion.tweenFast(),
+        label = "voiceFieldBg",
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .heightIn(min = 34.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(background)
+            .pointerInput(voice) {
+                voiceTapOrHoldGesture(
+                    voice = voice,
+                    onTap = { currentOnExit() },
+                    onHoldStart = { currentOnMicDown() },
+                )
+            }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        when {
+            voice.pressed && voice.canceling -> Text(
+                "松开手指，取消输入",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WandColors.danger,
+            )
+            voice.pressed -> Text(
+                "松开结束 · 上滑取消",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WandColors.brand,
+            )
+            draft.isBlank() -> Text(
+                "按住说话",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WandColors.textSecondary,
+            )
+            else -> Text(
+                draft,
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                color = WandColors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
