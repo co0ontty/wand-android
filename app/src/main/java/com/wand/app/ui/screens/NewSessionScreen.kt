@@ -104,7 +104,8 @@ fun NewSessionScreen(
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
     var provider by remember { mutableStateOf("claude") }
     var isStructured by remember { mutableStateOf(true) }
-    var mode by remember { mutableStateOf("default") }
+    // 默认托管模式（claude 全自动完成）；codex 切换时 clamp 成全权限。
+    var mode by remember { mutableStateOf("managed") }
     var firstMessage by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -257,7 +258,11 @@ fun NewSessionScreen(
                     label = "Claude",
                     description = "完整 Claude 会话能力",
                     selected = provider == "claude",
-                    onClick = { provider = "claude" },
+                    onClick = {
+                        provider = "claude"
+                        // 切回 claude 恢复默认托管模式（codex 把它 clamp 成了全权限）。
+                        mode = "managed"
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 ProviderCard(

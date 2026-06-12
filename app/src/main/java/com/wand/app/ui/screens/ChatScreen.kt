@@ -107,6 +107,7 @@ import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.StatusDot
@@ -281,12 +282,16 @@ fun ChatScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = WandColors.textSecondary,
-                        )
+                    // 返回箭头 + 当前 provider 小徽标（紧贴 title 起始侧）。
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回",
+                                tint = WandColors.textSecondary,
+                            )
+                        }
+                        ChatProviderBadge(store.snapshot?.provider)
                     }
                 },
                 actions = {
@@ -443,6 +448,29 @@ fun ChatScreen(
                 )
             }
         }
+    }
+}
+
+/** 顶栏左侧 provider 小徽标：品牌色弱底圆角方块 + 品牌 logo，标明当前 Claude / Codex。 */
+@Composable
+private fun ChatProviderBadge(provider: String?) {
+    val isCodex = provider == "codex"
+    val tint = if (isCodex) WandColors.info else WandColors.brand
+    val background = if (isCodex) WandColors.infoSoft else WandColors.brandSoft
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(28.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(background)
+            .border(1.dp, tint.copy(alpha = 0.24f), RoundedCornerShape(8.dp)),
+    ) {
+        Icon(
+            if (isCodex) BrandLogos.codex else BrandLogos.claude,
+            contentDescription = if (isCodex) "Codex" else "Claude",
+            tint = tint,
+            modifier = Modifier.size(15.dp),
+        )
     }
 }
 
