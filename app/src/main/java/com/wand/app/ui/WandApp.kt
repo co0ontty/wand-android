@@ -26,7 +26,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandAuth
-import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.NewSessionScreen
 import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
@@ -137,24 +136,19 @@ private fun ReadyContent(api: WandApi, actions: HomeActions) {
     when (val screen = nav.current) {
         is Screen.SessionList -> SessionListScreen(
             state = listState,
-            onOpenChat = { nav.push(Screen.Chat(it)) },
+            onOpenChat = actions.openWebSession,
             onNewSession = { nav.push(Screen.NewSession) },
             onOpenSettings = { nav.push(Screen.Settings) },
             onOpenWeb = actions.openWeb,
             onSwitchServer = actions.switchServer,
-        )
-        is Screen.Chat -> ChatScreen(
-            api = api,
-            sessionId = screen.sessionId,
-            isHapticEnabled = actions.isHapticEnabled,
-            onBack = { nav.pop() },
         )
         is Screen.NewSession -> NewSessionScreen(
             api = api,
             onBack = { nav.pop() },
             onCreated = { snapshot ->
                 listState.prepend(snapshot)
-                nav.replaceTop(Screen.Chat(snapshot.id))
+                nav.pop()
+                actions.openWebSession(snapshot.id)
             },
         )
         is Screen.Settings -> SettingsScreen(

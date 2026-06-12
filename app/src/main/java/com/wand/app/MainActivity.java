@@ -60,6 +60,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     private TextView errorMessage;
     private String serverUrl;
     private String appToken;
+    private String sessionId;
     private boolean hasLoadedPage = false;
     private boolean updateCheckDone = false;
     private boolean lastLoadFailed = false;
@@ -91,6 +92,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         serverUrl = getIntent().getStringExtra("server_url");
         appToken = getIntent().getStringExtra("app_token");
+        sessionId = getIntent().getStringExtra("session_id");
         if (serverUrl == null || serverUrl.isEmpty()) {
             finish();
             return;
@@ -109,7 +111,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         findViewById(R.id.retryButton).setOnClickListener(v -> {
             hideError();
-            webView.loadUrl(serverUrl);
+            webView.loadUrl(buildTargetUrl());
         });
         findViewById(R.id.backToConnectButton).setOnClickListener(v -> openConnectScreen());
 
@@ -118,7 +120,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         notificationHelper.createChannels();
         setupWebView();
         networkMonitor.register();
-        webView.loadUrl(serverUrl);
+        webView.loadUrl(buildTargetUrl());
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -177,6 +179,17 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         home.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(home);
         finish();
+    }
+
+    private String buildTargetUrl() {
+        if (sessionId == null || sessionId.isEmpty()) return serverUrl;
+        Uri uri = Uri.parse(serverUrl);
+        return uri.buildUpon()
+                .clearQuery()
+                .encodedQuery(uri.getEncodedQuery())
+                .appendQueryParameter("session", sessionId)
+                .build()
+                .toString();
     }
 
     // ── WebView setup ──
@@ -297,7 +310,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                     Toast.makeText(MainActivity.this, R.string.renderer_crashed,
                             Toast.LENGTH_SHORT).show();
                     setupWebView();
-                    webView.loadUrl(serverUrl);
+                    webView.loadUrl(buildTargetUrl());
                 } catch (Exception e) {
                     recreate();
                 }

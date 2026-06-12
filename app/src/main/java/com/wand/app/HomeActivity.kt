@@ -54,6 +54,7 @@ class HomeActivity : AppCompatActivity() {
             hasToken = !appToken.isNullOrEmpty(),
             appVersion = appVersion,
             openWeb = { openWebFallback(serverUrl, appToken) },
+            openWebSession = { sessionId -> openWebFallback(serverUrl, appToken, sessionId) },
             switchServer = { switchServer() },
             disconnect = { disconnect(serverStore) },
             manualCheckUpdate = {
@@ -114,10 +115,11 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    private fun openWebFallback(serverUrl: String, appToken: String?) {
+    private fun openWebFallback(serverUrl: String, appToken: String?, sessionId: String? = null) {
         val intent = Intent(this, MainActivity::class.java)
         intent.putExtra("server_url", serverUrl)
         if (!appToken.isNullOrEmpty()) intent.putExtra("app_token", appToken)
+        if (!sessionId.isNullOrEmpty()) intent.putExtra("session_id", sessionId)
         startActivity(intent)
     }
 

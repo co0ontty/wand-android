@@ -2,10 +2,9 @@ package com.wand.app.ui
 
 import androidx.compose.runtime.mutableStateListOf
 
-/** 原生界面的页面栈。只有四屏，手写栈比 navigation-compose 更轻。 */
+/** 原生界面的页面栈。会话内容由独立 WebView Activity 承载。 */
 sealed class Screen {
     data object SessionList : Screen()
-    data class Chat(val sessionId: String) : Screen()
     data object NewSession : Screen()
     data object Settings : Screen()
 }
@@ -23,10 +22,6 @@ class NavState {
         if (stack.size > 1) stack.removeAt(stack.size - 1)
     }
 
-    /** NewSession → Chat 这类「替换当前页」跳转。 */
-    fun replaceTop(screen: Screen) {
-        stack[stack.size - 1] = screen
-    }
 }
 
 /**
@@ -39,6 +34,7 @@ class HomeActions(
     val hasToken: Boolean,
     val appVersion: String,
     val openWeb: () -> Unit,
+    val openWebSession: (String) -> Unit,
     val switchServer: () -> Unit,
     val disconnect: () -> Unit,
     val manualCheckUpdate: () -> Unit,
