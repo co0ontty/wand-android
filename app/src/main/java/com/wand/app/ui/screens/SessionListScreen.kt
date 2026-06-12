@@ -102,7 +102,7 @@ class SessionListState(val api: WandApi) {
 @Composable
 fun SessionListScreen(
     state: SessionListState,
-    onOpenChat: (String) -> Unit,
+    onOpenSession: (SessionSnapshot) -> Unit,
     onNewSession: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
@@ -250,7 +250,7 @@ fun SessionListScreen(
                                 ) {
                                     SessionCard(
                                         session = session,
-                                        onClick = { onOpenChat(session.id) },
+                                        onClick = { onOpenSession(session) },
                                     )
                                 }
                             }
