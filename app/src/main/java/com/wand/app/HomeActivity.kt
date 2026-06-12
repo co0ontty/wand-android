@@ -61,6 +61,8 @@ class HomeActivity : AppCompatActivity() {
                 Toast.makeText(this, "正在检查更新…", Toast.LENGTH_SHORT).show()
                 checkUpdate(manager)
             },
+            isBetaChannel = { serverStore.isBetaChannel },
+            setBetaChannel = { serverStore.setBetaChannel(it) },
             getAppIcon = { serverStore.appIcon },
             setAppIcon = { AppIconSwitcher.setAppIcon(this, serverStore, it) },
             getNotificationSound = { serverStore.notificationSound },

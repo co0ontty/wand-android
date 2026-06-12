@@ -87,6 +87,7 @@ fun SettingsScreen(
     var hapticEnabled by remember { mutableStateOf(actions.isHapticEnabled()) }
     var appIcon by remember { mutableStateOf(actions.getAppIcon()) }
     var keepAlive by remember { mutableStateOf(false) }
+    var betaChannel by remember { mutableStateOf(actions.isBetaChannel()) }
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -304,11 +305,26 @@ fun SettingsScreen(
                 )
             }
 
+            // —— 更新 ——
+            SectionHeader("更新")
+            WandCard(modifier = Modifier.fillMaxWidth()) {
+                SwitchRow("Beta 通道", betaChannel) {
+                    betaChannel = it
+                    actions.setBetaChannel(it)
+                }
+                Text(
+                    "开启后接收最新开发构建（-debug 版本，可能不稳定）；关闭只提示正式版。",
+                    fontSize = 11.sp,
+                    color = WandColors.textMuted,
+                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
+                )
+                RowDivider()
+                ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
+            }
+
             // —— 更多 ——
             SectionHeader("更多")
             WandCard(modifier = Modifier.fillMaxWidth()) {
-                ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
-                RowDivider()
                 ActionRow("打开网页版（完整功能）", WandIcons.web) { actions.openWeb() }
                 RowDivider()
                 InfoRow("App 版本", "v${actions.appVersion}", mono = true)

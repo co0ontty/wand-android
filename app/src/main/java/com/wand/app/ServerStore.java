@@ -22,6 +22,7 @@ public class ServerStore {
     private static final String KEY_NOTIFICATION_SOUND = "notification_sound";
     private static final String KEY_NOTIFICATION_VOLUME = "notification_volume";
     private static final String KEY_HAPTIC_ENABLED = "haptic_enabled";
+    private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final int MAX_RECENT = 5;
 
     private final SharedPreferences prefs;
@@ -132,5 +133,14 @@ public class ServerStore {
 
     public void setHapticEnabled(boolean enabled) {
         prefs.edit().putBoolean(KEY_HAPTIC_ENABLED, enabled).apply();
+    }
+
+    /** 更新通道：true = beta（接收 -debug 开发构建），false = stable（只提示正式版）。 */
+    public boolean isBetaChannel() {
+        return prefs.getBoolean(KEY_BETA_CHANNEL, false);
+    }
+
+    public void setBetaChannel(boolean enabled) {
+        prefs.edit().putBoolean(KEY_BETA_CHANNEL, enabled).apply();
     }
 }

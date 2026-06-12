@@ -38,6 +38,8 @@ class HomeActions(
     val switchServer: () -> Unit,
     val disconnect: () -> Unit,
     val manualCheckUpdate: () -> Unit,
+    val isBetaChannel: () -> Boolean,
+    val setBetaChannel: (Boolean) -> Unit,
     val getAppIcon: () -> String,
     val setAppIcon: (String) -> Unit,
     val getNotificationSound: () -> String,

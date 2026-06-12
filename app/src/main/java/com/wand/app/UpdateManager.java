@@ -64,8 +64,11 @@ final class UpdateManager {
         if (executor == null || executor.isShutdown()) return;
         executor.execute(() -> {
             try {
+                // 更新通道随设置走：beta 接收 -debug 开发构建，stable 只看正式版。
+                String channel = serverStore.isBetaChannel() ? "beta" : "stable";
                 String apiUrl = serverUrl + "/api/android-apk-update?currentVersion=" +
-                        java.net.URLEncoder.encode(currentVersion, "UTF-8");
+                        java.net.URLEncoder.encode(currentVersion, "UTF-8") +
+                        "&channel=" + channel;
                 HttpURLConnection conn = NetUtils.openConnection(apiUrl,
                         NetUtils.CONNECT_TIMEOUT_MS, NetUtils.READ_TIMEOUT_MS);
 
