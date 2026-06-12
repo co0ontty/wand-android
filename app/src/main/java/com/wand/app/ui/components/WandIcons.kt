@@ -1,6 +1,7 @@
 package com.wand.app.ui.components
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.Notes
@@ -118,6 +119,9 @@ object WandIcons {
 
     /** 选中勾。 */
     val check: ImageVector = Icons.Outlined.Check
+
+    /** AskUserQuestion 提问卡。 */
+    val question: ImageVector = Icons.AutoMirrored.Outlined.HelpOutline
 
     /** 关闭。 */
     val close: ImageVector = Icons.Outlined.Close

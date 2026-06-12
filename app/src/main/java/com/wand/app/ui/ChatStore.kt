@@ -28,6 +28,13 @@ import kotlinx.coroutines.launch
  * WandSocket 的回调已保证主线程 FIFO，handle 直接调用、不再包协程 ——
  * 协程 launch 不保证顺序，会打乱增量合流。
  */
+/** AskUserQuestion 卡片的本地选择状态（对齐 Web 端 state.askUserSelections）。 */
+data class AskUserSelectionState(
+    /** questionIndex → 已选 optionIndex 集合。 */
+    val selected: Map<Int, Set<Int>> = emptyMap(),
+    val submitted: Boolean = false,
+)
+
 class ChatStore(val sessionId: String, val api: WandApi) {
 
     var messages by mutableStateOf<List<ConversationTurn>>(emptyList())
@@ -56,6 +63,13 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         private set
     var toast by mutableStateOf<String?>(null)
     var snapshot by mutableStateOf<SessionSnapshot?>(null)
+        private set
+
+    /**
+     * AskUserQuestion 卡片的选择状态（toolUseId → 各题已选项 + 是否已提交）。
+     * 放 store 而非卡片 remember：流式推送会整条替换消息重组视图，局部状态会丢。
+     */
+    var askUserSelections by mutableStateOf<Map<String, AskUserSelectionState>>(emptyMap())
         private set
 
     private val socket = WandSocket(api.baseUrl)
@@ -219,6 +233,47 @@ class ChatStore(val sessionId: String, val api: WandApi) {
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "发送失败"
+                if (isStructured) isResponding = false
+            }
+        }
+    }
+
+    // MARK: - AskUserQuestion 交互（对齐 Web 端 __askSelect / __askSubmit）
+
+    /** 点选一个选项：单选点同一项取消、换选项替换；多选逐项 toggle。已提交后不可改。 */
+    fun toggleAskOption(toolUseId: String, questionIndex: Int, optionIndex: Int, multiSelect: Boolean) {
+        val sel = askUserSelections[toolUseId] ?: AskUserSelectionState()
+        if (sel.submitted) return
+        val current = sel.selected[questionIndex] ?: emptySet()
+        val next = if (multiSelect) {
+            if (optionIndex in current) current - optionIndex else current + optionIndex
+        } else {
+            if (optionIndex in current) emptySet() else setOf(optionIndex)
+        }
+        askUserSelections = askUserSelections +
+            (toolUseId to sel.copy(selected = sel.selected + (questionIndex to next)))
+    }
+
+    /**
+     * 提交答案：每道题一行、同题多选 ", " 连接（对齐 Web），走与普通消息相同的输入通道。
+     * 答案不乐观插入用户气泡——服务端会把它作为 tool_result 回推、卡片转只读态。
+     */
+    fun submitAskUser(toolUseId: String, answerText: String) {
+        val sel = askUserSelections[toolUseId] ?: AskUserSelectionState()
+        if (sel.submitted) return
+        askUserSelections = askUserSelections + (toolUseId to sel.copy(submitted = true))
+        if (isStructured) isResponding = true
+        scope.launch {
+            try {
+                if (isStructured) {
+                    api.sendInput(sessionId, answerText)
+                } else {
+                    api.sendInput(sessionId, answerText + "\n", view = "chat")
+                }
+            } catch (e: Exception) {
+                toast = e.message ?: "发送失败"
+                val rollback = askUserSelections[toolUseId] ?: AskUserSelectionState()
+                askUserSelections = askUserSelections + (toolUseId to rollback.copy(submitted = false))
                 if (isStructured) isResponding = false
             }
         }

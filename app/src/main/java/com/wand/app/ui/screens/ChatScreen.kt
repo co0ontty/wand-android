@@ -236,6 +236,13 @@ fun ChatScreen(
                                     turn,
                                     isLastTurn = index == store.messages.lastIndex,
                                     isResponding = store.isResponding,
+                                    askSelections = store.askUserSelections,
+                                    onAskToggle = { toolUseId, qIdx, optIdx, multi ->
+                                        store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
+                                    },
+                                    onAskSubmit = { toolUseId, answerText ->
+                                        store.submitAskUser(toolUseId, answerText)
+                                    },
                                 )
                             }
                         }
@@ -374,6 +381,13 @@ private fun BottomBar(
             .imePadding()
             .padding(bottom = 4.dp),
     ) {
+        // 待办进度条：当前 turn 有未完成 todos 时悬浮在输入栏上方（对齐 Web todo-progress）。
+        val todos = remember(store.messages) { currentTodos(store.messages) }
+        if (todos.isNotEmpty()) {
+            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                TodoProgressBar(todos)
+            }
+        }
         // 权限审批卡：底部滑入 + 淡入；退场期间用缓存内容避免闪空。
         val hasPermission = store.pendingEscalation != null || store.legacyPermissionPrompt != null
         var cachedEscalation by remember { mutableStateOf<EscalationRequest?>(null) }

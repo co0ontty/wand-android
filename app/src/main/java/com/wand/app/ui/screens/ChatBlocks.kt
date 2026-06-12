@@ -52,12 +52,21 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.Canvas
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SubagentMeta
+import com.wand.app.data.str
 import com.wand.app.data.summaryText
+import com.wand.app.ui.AskUserSelectionState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.toolIcon
@@ -80,6 +89,9 @@ fun TurnView(
     turn: ConversationTurn,
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
+    askSelections: Map<String, AskUserSelectionState> = emptyMap(),
+    onAskToggle: (String, Int, Int, Boolean) -> Unit = { _, _, _, _ -> },
+    onAskSubmit: (String, String) -> Unit = { _, _ -> },
 ) {
     if (turn.role == "user") {
         UserBubble(turn)
@@ -94,13 +106,44 @@ fun TurnView(
                     is DisplayItem.Tool -> {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             SubagentTag(item.use.subagent)
-                            ToolCard(
-                                use = item.use,
-                                result = item.result,
-                                // 最后一轮回复中、且还没有结果的工具 → 运行中
-                                //（并行工具调用时可同时有多个在转）
-                                running = item.result == null && isLastTurn && isResponding,
-                            )
+                            // 工具卡分流（对齐 Web 端 renderToolUseCard）：
+                            // AskUserQuestion → 交互卡；Edit/Write/MultiEdit → diff 卡；
+                            // Bash → 终端卡；其余 → 通用卡。
+                            val use = item.use
+                            val askQuestions = if (use.name == "AskUserQuestion") {
+                                remember(use.input) { AskUserQuestionData.parse(use.input) }
+                            } else {
+                                emptyList()
+                            }
+                            when {
+                                askQuestions.isNotEmpty() -> AskUserQuestionCard(
+                                    toolUseId = use.id,
+                                    questions = askQuestions,
+                                    result = item.result,
+                                    selection = askSelections[use.id] ?: AskUserSelectionState(),
+                                    onToggle = { qIdx, optIdx, multi ->
+                                        onAskToggle(use.id, qIdx, optIdx, multi)
+                                    },
+                                    onSubmit = { answerText -> onAskSubmit(use.id, answerText) },
+                                )
+                                use.name in setOf("Edit", "Write", "MultiEdit") -> DiffCard(
+                                    toolName = use.name,
+                                    input = use.input,
+                                    result = item.result,
+                                )
+                                use.name == "Bash" -> TerminalCard(
+                                    input = use.input,
+                                    result = item.result,
+                                    running = item.result == null && isLastTurn && isResponding,
+                                )
+                                else -> ToolCard(
+                                    use = use,
+                                    result = item.result,
+                                    // 最后一轮回复中、且还没有结果的工具 → 运行中
+                                    //（并行工具调用时可同时有多个在转）
+                                    running = item.result == null && isLastTurn && isResponding,
+                                )
+                            }
                         }
                     }
                     is DisplayItem.Plain -> BlockView(
@@ -1045,4 +1088,747 @@ private fun toolSummary(description: String?, input: JSONObject): String {
     }
     val firstKey = input.keys().asSequence().firstOrNull() ?: return ""
     return "$firstKey: ${summaryText(input.opt(firstKey))}"
+}
+
+// MARK: - AskUserQuestion 交互卡片（对齐 Web 端 ask-user 卡）
+
+/** AskUserQuestion 的一道题（tool_use input.questions[i]），字段对齐 Web 端 chat-render.ts。 */
+data class AskUserQuestionData(
+    val question: String,
+    val header: String?,
+    val multiSelect: Boolean,
+    val options: List<Option>,
+) {
+    data class Option(val label: String, val description: String?)
+
+    companion object {
+        /** 从 tool_use 的 input 解析 questions 数组；形状不符返回空列表（上层回落通用工具卡）。 */
+        fun parse(input: JSONObject): List<AskUserQuestionData> {
+            val items = input.optJSONArray("questions") ?: return emptyList()
+            val result = mutableListOf<AskUserQuestionData>()
+            for (i in 0 until items.length()) {
+                val obj = items.optJSONObject(i) ?: continue
+                val optionsArr = obj.optJSONArray("options") ?: continue
+                val options = mutableListOf<Option>()
+                for (j in 0 until optionsArr.length()) {
+                    val opt = optionsArr.optJSONObject(j) ?: continue
+                    val label = opt.str("label") ?: ""
+                    options.add(
+                        Option(
+                            label = label.ifEmpty { "选项 ${options.size + 1}" },
+                            description = opt.str("description"),
+                        )
+                    )
+                }
+                if (options.isEmpty()) continue
+                result.add(
+                    AskUserQuestionData(
+                        question = obj.str("question") ?: "",
+                        header = obj.str("header"),
+                        multiSelect = obj.optBoolean("multiSelect", false),
+                        options = options,
+                    )
+                )
+            }
+            return result
+        }
+    }
+}
+
+/**
+ * 提问卡：头部「? 提问 · header」，body 是题目 + 选项列表 + 确认提交。
+ * 未答可交互（单选/多选），已答（配对到 tool_result）转只读并高亮用户选过的项。
+ */
+@Composable
+fun AskUserQuestionCard(
+    toolUseId: String,
+    questions: List<AskUserQuestionData>,
+    result: ContentBlock.ToolResult?,
+    selection: AskUserSelectionState,
+    onToggle: (Int, Int, Boolean) -> Unit,
+    onSubmit: (String) -> Unit,
+) {
+    val isAnswered = result != null
+    // 已答时按行拆答案：每道题一行，行内 ", " 分隔多选 label（对齐 Web 的解析）。
+    val answerLines = remember(result?.text) {
+        result?.text?.trim()?.takeIf { it.isNotEmpty() }?.split("\n") ?: emptyList()
+    }
+    var expanded by remember { mutableStateOf(!isAnswered) }
+    // 回答送达后自动折叠（对齐 Web 已答默认折叠）。
+    LaunchedEffect(isAnswered) { if (isAnswered) expanded = false }
+    val allAnswered = questions.indices.all { !selection.selected[it].isNullOrEmpty() }
+    val borderColor = if (isAnswered) {
+        WandColors.success.copy(alpha = 0.55f)
+    } else {
+        WandColors.brand.copy(alpha = 0.35f)
+    }
+    val arrowRotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        WandMotion.tweenNormal(),
+        label = "askArrow",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(WandColors.brand.copy(alpha = 0.05f))
+            .border(1.dp, borderColor, WandShapes.md)
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        // 头部
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Icon(
+                if (isAnswered) WandIcons.check else WandIcons.question,
+                contentDescription = null,
+                tint = if (isAnswered) WandColors.success else WandColors.brand,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                "提问",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+            )
+            val headerLabel = questions.firstOrNull { !it.header.isNullOrEmpty() }?.header
+            if (!headerLabel.isNullOrEmpty()) {
+                Text(
+                    headerLabel,
+                    fontSize = 12.sp,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (isAnswered && answerLines.isNotEmpty()) {
+                Text(
+                    answerLines.joinToString(", "),
+                    fontSize = 12.sp,
+                    color = WandColors.success,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = arrowRotation },
+            )
+        }
+        if (expanded) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            ) {
+                questions.forEachIndexed { qIdx, question ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (question.question.isNotEmpty()) {
+                            Text(
+                                question.question,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 20.sp,
+                                color = WandColors.textPrimary,
+                            )
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            question.options.forEachIndexed { optIdx, option ->
+                                AskUserOptionRow(
+                                    option = option,
+                                    multiSelect = question.multiSelect,
+                                    isAnswered = isAnswered,
+                                    chosen = if (isAnswered) {
+                                        // 只读态：答案第 qIdx 行（缺行回落第一行），按 "," 拆出已选 label。
+                                        val line = answerLines.getOrNull(qIdx)
+                                            ?: answerLines.firstOrNull() ?: ""
+                                        option.label in line.split(",").map { it.trim() }
+                                    } else {
+                                        optIdx in (selection.selected[qIdx] ?: emptySet())
+                                    },
+                                    enabled = !isAnswered && !selection.submitted,
+                                    onClick = { onToggle(qIdx, optIdx, question.multiSelect) },
+                                )
+                            }
+                        }
+                    }
+                }
+                if (!isAnswered) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Button(
+                            onClick = {
+                                val lines = questions.mapIndexed { qIdx, question ->
+                                    (selection.selected[qIdx] ?: emptySet())
+                                        .sorted()
+                                        .joinToString(", ") { question.options[it].label }
+                                }
+                                onSubmit(lines.joinToString("\n"))
+                            },
+                            enabled = allAnswered && !selection.submitted,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = WandColors.brand,
+                                contentColor = Color.White,
+                            ),
+                            contentPadding = ButtonDefaults.TextButtonContentPadding,
+                        ) {
+                            Text(
+                                if (selection.submitted) "已提交…" else "确认提交",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 提问卡单个选项：单选圆形 / 多选圆角方形 indicator，选中实底白点/白勾（对齐 Web）。 */
+@Composable
+private fun AskUserOptionRow(
+    option: AskUserQuestionData.Option,
+    multiSelect: Boolean,
+    isAnswered: Boolean,
+    chosen: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val tint = if (isAnswered) WandColors.success else WandColors.brand
+    val fill = when {
+        isAnswered && chosen -> WandColors.successSoft
+        isAnswered -> WandColors.surface
+        chosen -> WandColors.brand.copy(alpha = 0.16f)
+        else -> WandColors.surface
+    }
+    val border = if (chosen) tint else WandColors.border
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.sm)
+            .background(fill)
+            .border(if (chosen) 1.5.dp else 1.dp, border, WandShapes.sm)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .graphicsLayer { alpha = if (isAnswered && !chosen) 0.55f else 1f }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        // indicator
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .size(16.dp)
+                .clip(if (multiSelect) RoundedCornerShape(3.dp) else CircleShape)
+                .background(if (chosen) tint else Color.Transparent)
+                .border(
+                    2.dp,
+                    if (chosen) tint else WandColors.borderStrong,
+                    if (multiSelect) RoundedCornerShape(3.dp) else CircleShape,
+                ),
+        ) {
+            if (chosen) {
+                if (multiSelect) {
+                    Icon(
+                        WandIcons.check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(11.dp),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(Color.White),
+                    )
+                }
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                option.label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 18.sp,
+                color = WandColors.textPrimary,
+            )
+            if (!option.description.isNullOrEmpty()) {
+                Text(
+                    option.description,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = WandColors.textSecondary,
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Diff 卡片（Edit / Write / MultiEdit，对齐 Web 端 inline-diff）
+
+@Composable
+fun DiffCard(
+    toolName: String,
+    input: JSONObject,
+    result: ContentBlock.ToolResult?,
+) {
+    val path = input.str("file_path") ?: input.str("path") ?: ""
+    val fileName = path.substringAfterLast('/').ifEmpty { path }
+    val isWrite = toolName == "Write" || toolName == "MultiEdit"
+    val oldText = input.str("old_string") ?: ""
+    val newText = input.str("new_string") ?: input.str("content") ?: ""
+
+    val statusText = when {
+        result == null -> "执行中"
+        result.isError ->
+            if (result.text.contains("haven't granted") || result.text.contains("permission")) {
+                "等待授权"
+            } else {
+                "失败"
+            }
+        else -> "已修改"
+    }
+    val statusColor = when {
+        result == null -> WandColors.brand
+        result.isError -> WandColors.danger
+        else -> WandColors.success
+    }
+
+    var expanded by remember { mutableStateOf(result == null) }
+    // 默认展开态对齐 Web：执行中展开，结果到达后自动收起（手动点开不受影响）。
+    LaunchedEffect(result != null) { if (result != null) expanded = false }
+    val arrowRotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        WandMotion.tweenNormal(),
+        label = "diffArrow",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(WandColors.surface)
+            .border(1.dp, WandColors.border, WandShapes.md)
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+        ) {
+            Icon(
+                WandIcons.edit,
+                contentDescription = null,
+                tint = WandColors.brand,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                fileName,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                path,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                statusText,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = statusColor,
+                modifier = Modifier
+                    .clip(WandShapes.full)
+                    .background(statusColor.copy(alpha = 0.12f))
+                    .padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = arrowRotation },
+            )
+        }
+        if (expanded) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            ) {
+                if (!isWrite && oldText.isNotEmpty()) {
+                    DiffColumn(label = "旧", text = oldText, prefix = "- ", tint = WandColors.danger)
+                }
+                if (newText.isNotEmpty()) {
+                    DiffColumn(
+                        label = if (isWrite) "" else "新",
+                        text = newText,
+                        prefix = "+ ",
+                        tint = WandColors.success,
+                    )
+                }
+                if (result != null && result.isError && result.text.isNotEmpty()) {
+                    Text(
+                        if (result.text.length > 600) result.text.take(600) + "…" else result.text,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.danger,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiffColumn(label: String, text: String, prefix: String, tint: Color) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        if (label.isNotEmpty()) {
+            Text(
+                label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textMuted,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(WandShapes.sm)
+                .background(tint.copy(alpha = 0.08f))
+                .horizontalScroll(rememberScrollState())
+                .padding(8.dp),
+        ) {
+            SelectionContainer {
+                Text(
+                    prefix + if (text.length > 2000) text.take(2000) + "\n…（已截断）" else text,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = tint,
+                )
+            }
+        }
+    }
+}
+
+// MARK: - 终端卡片（Bash，对齐 Web 端 inline-terminal）
+
+/** 终端卡固定深色，亮暗主题一致（对齐 Web）。 */
+private val TermBg = Color(0xFF1E1E1E)
+private val TermText = Color(0xFFD9D9D4)
+private val TermErrorText = Color(0xFFF28C82)
+
+@Composable
+fun TerminalCard(
+    input: JSONObject,
+    result: ContentBlock.ToolResult?,
+    running: Boolean = false,
+) {
+    val command = input.str("command") ?: input.str("cmd") ?: ""
+    val statusColor = when {
+        result == null -> WandColors.brand
+        result.isError -> WandColors.danger
+        else -> WandColors.success
+    }
+    var expanded by remember { mutableStateOf(false) }
+    val arrowRotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        WandMotion.tweenNormal(),
+        label = "termArrow",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(TermBg)
+            .border(1.dp, Color.White.copy(alpha = 0.12f), WandShapes.md)
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+        ) {
+            if (running) {
+                val spin = rememberInfiniteTransition(label = "termSpin")
+                val angle by spin.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 360f,
+                    animationSpec = infiniteRepeatable(tween(900)),
+                    label = "termSpinAngle",
+                )
+                Icon(
+                    WandIcons.refresh,
+                    contentDescription = "运行中",
+                    tint = TermText,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .graphicsLayer { rotationZ = angle },
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(statusColor),
+                )
+            }
+            Text(
+                "$ " + if (command.length > 80) command.take(77) + "…" else command,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = TermText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = TermText.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = arrowRotation },
+            )
+        }
+        if (expanded) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            ) {
+                Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    SelectionContainer {
+                        Text(
+                            "$ $command",
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = TermText,
+                        )
+                    }
+                }
+                if (result != null && result.text.isNotEmpty()) {
+                    Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        SelectionContainer {
+                            Text(
+                                if (result.text.length > 4000) {
+                                    result.text.take(4000) + "\n…（已截断）"
+                                } else {
+                                    result.text
+                                },
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (result.isError) TermErrorText else TermText.copy(alpha = 0.85f),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 待办进度条（TodoWrite，对齐 Web 端 todo-progress）
+
+/** TodoWrite 的一项待办（tool_use input.todos[i]）。 */
+data class TodoEntry(
+    val content: String,
+    val status: String,
+    val activeForm: String?,
+)
+
+/**
+ * 当前 turn 的待办列表：只看最后一条 user 消息之后的 TodoWrite，
+ * 对齐 Web 端 updateTodoProgress 的 scoping（上一轮的进度条不跨 turn 残留）。
+ * 全部完成时返回空（对齐 Web allDone 隐藏）。
+ */
+fun currentTodos(messages: List<ConversationTurn>): List<TodoEntry> {
+    var startIdx = 0
+    for (i in messages.indices.reversed()) {
+        if (messages[i].role == "user") {
+            startIdx = i + 1
+            break
+        }
+    }
+    for (i in messages.indices.reversed()) {
+        if (i < startIdx) break
+        for (block in messages[i].content.reversed()) {
+            if (block is ContentBlock.ToolUse && block.name == "TodoWrite") {
+                val arr = block.input.optJSONArray("todos") ?: continue
+                val todos = mutableListOf<TodoEntry>()
+                for (j in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(j) ?: continue
+                    todos.add(
+                        TodoEntry(
+                            content = obj.str("content") ?: "",
+                            status = obj.str("status") ?: "pending",
+                            activeForm = obj.str("activeForm"),
+                        )
+                    )
+                }
+                if (todos.isEmpty()) continue
+                val completed = todos.count { it.status == "completed" }
+                return if (completed == todos.size) emptyList() else todos
+            }
+        }
+    }
+    return emptyList()
+}
+
+/** 输入栏上方的悬浮进度条：环形进度 + N/M + 当前任务，点击展开任务列表。 */
+@Composable
+fun TodoProgressBar(todos: List<TodoEntry>) {
+    if (todos.isEmpty()) return
+    val completed = todos.count { it.status == "completed" }
+    // 1-indexed「正在干第 N 个」：completed+1 封顶（对齐 Web currentStep）。
+    val currentStep = minOf(completed + 1, todos.size)
+    val activeTask = todos.firstOrNull { it.status == "in_progress" }
+        ?.let { it.activeForm?.ifEmpty { null } ?: it.content } ?: ""
+    var expanded by remember { mutableStateOf(false) }
+    val ringColor = WandColors.brand
+    val trackColor = WandColors.border
+    val progress = currentStep.toFloat() / todos.size.toFloat()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.lg)
+            .background(WandColors.surface)
+            .border(1.dp, WandColors.border, WandShapes.lg)
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Canvas(modifier = Modifier.size(18.dp)) {
+                val strokeWidth = 3.dp.toPx()
+                val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                val inset = strokeWidth / 2
+                drawCircle(
+                    color = trackColor,
+                    radius = (size.minDimension - strokeWidth) / 2,
+                    style = stroke,
+                )
+                drawArc(
+                    color = ringColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f * progress,
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = androidx.compose.ui.geometry.Size(
+                        size.width - strokeWidth,
+                        size.height - strokeWidth,
+                    ),
+                    style = stroke,
+                )
+            }
+            Text(
+                "$currentStep/${todos.size}",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.brand,
+            )
+            if (activeTask.isNotEmpty()) {
+                Text(
+                    activeTask,
+                    fontSize = 12.sp,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = if (expanded) 0f else 180f },
+            )
+        }
+        if (expanded) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            ) {
+                todos.forEach { todo ->
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            when (todo.status) {
+                                "completed" -> "✓"
+                                "in_progress" -> "›"
+                                else -> "○"
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = when (todo.status) {
+                                "completed" -> WandColors.success
+                                "in_progress" -> WandColors.brand
+                                else -> WandColors.textMuted
+                            },
+                            modifier = Modifier.width(14.dp),
+                        )
+                        Text(
+                            todo.content,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = if (todo.status == "in_progress") {
+                                WandColors.textPrimary
+                            } else {
+                                WandColors.textSecondary
+                            },
+                            textDecoration = if (todo.status == "completed") {
+                                TextDecoration.LineThrough
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
