@@ -68,6 +68,8 @@ class ChatStore(val sessionId: String, val api: WandApi) {
 
     var availableModels by mutableStateOf<List<ModelInfo>>(emptyList())
         private set
+    var defaultModel by mutableStateOf<String?>(null)
+        private set
     var selectedModel by mutableStateOf<String?>(null)
         private set
     var thinkingEffort by mutableStateOf("off")
@@ -261,6 +263,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         }
         availableModels =
             if (snapshot?.provider == "codex") response.codexModels else response.models
+        defaultModel = response.defaultModel
     }
 
     // MARK: - 用户动作

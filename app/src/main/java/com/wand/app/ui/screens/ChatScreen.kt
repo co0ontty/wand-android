@@ -18,6 +18,8 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -56,6 +58,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
@@ -358,7 +361,7 @@ fun ChatScreen(
                     ErrorState(store.loadError ?: "加载失败", modifier = Modifier.padding(padding))
                 store.isStructured && store.messages.isEmpty() && !store.isResponding ->
                     Box(Modifier.padding(padding)) {
-                        SessionLaunchPanel(store.snapshot?.providerLabel ?: "结构化会话")
+                        SessionLaunchPanel(store)
                     }
                 else -> {
                     LazyColumn(
@@ -557,26 +560,159 @@ private fun middleTruncate(text: String, maxChars: Int): String {
     return text.take(head) + "…" + text.takeLast(tail)
 }
 
-/** 空结构化会话的居中欢迎卡（对齐 iOS sessionLaunchPanel）。 */
+/** 空结构化会话的居中启动卡：在首条消息前直接确认并修改模型与思考深度。 */
 @Composable
-private fun SessionLaunchPanel(providerLabel: String) {
+private fun SessionLaunchPanel(store: ChatStore) {
     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier
                 .padding(horizontal = 24.dp)
-                .widthIn(max = 340.dp)
+                .widthIn(max = 360.dp)
                 .glassCard(RoundedCornerShape(20.dp))
                 .padding(horizontal = 22.dp, vertical = 24.dp),
         ) {
             WandBrandMark(size = 52)
             Text(
-                providerLabel,
+                store.snapshot?.providerLabel ?: "结构化会话",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = WandColors.textPrimary,
             )
+            Text(
+                "发送第一条消息前，可确认本次对话使用的模型和思考深度",
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = WandColors.textSecondary,
+            )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                LaunchSettingPicker(
+                    label = "模型",
+                    value = modelDisplayLabel(store, store.selectedModel),
+                    options = buildList {
+                        add(null to "默认 · ${modelDisplayLabel(store, null)}")
+                        store.availableModels
+                            .filter { it.id != "default" }
+                            .forEach { add(it.id to it.label) }
+                    },
+                    selected = store.selectedModel?.takeUnless { it == "default" },
+                    onSelect = store::setModel,
+                )
+                LaunchSettingPicker(
+                    label = "思考深度",
+                    value = thinkingLabel(store.thinkingEffort),
+                    options = THINKING_LEVELS.map { it.first to it.second },
+                    selected = store.thinkingEffort,
+                    onSelect = { it?.let(store::chooseThinkingEffort) },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LaunchSettingPicker(
+    label: String,
+    value: String,
+    options: List<Pair<String?, String>>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(WandColors.surfaceSoft)
+                .border(1.dp, WandColors.border, RoundedCornerShape(12.dp))
+                .clickable { expanded = true }
+                .padding(horizontal = 13.dp, vertical = 11.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textMuted,
+                )
+                Text(
+                    value,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                WandIcons.expand,
+                contentDescription = "选择$label",
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        if (expanded) {
+            ModalBottomSheet(
+                onDismissRequest = { expanded = false },
+                containerColor = WandColors.bgElevated,
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
+                ) {
+                    Text(
+                        "选择$label",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = WandColors.textPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                    )
+                    options.forEach { (id, optionLabel) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (selected == id) WandColors.brandSoft else Color.Transparent,
+                                )
+                                .clickable {
+                                    onSelect(id)
+                                    expanded = false
+                                }
+                                .padding(horizontal = 14.dp, vertical = 13.dp),
+                        ) {
+                            Text(
+                                optionLabel,
+                                fontSize = 14.sp,
+                                fontWeight = if (selected == id) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selected == id) WandColors.brand else WandColors.textPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (selected == id) {
+                                Icon(
+                                    WandIcons.check,
+                                    contentDescription = "当前选中",
+                                    tint = WandColors.brand,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -591,6 +727,12 @@ private val THINKING_LEVELS = listOf(
 
 private fun thinkingLabel(id: String): String =
     THINKING_LEVELS.firstOrNull { it.first == id }?.second ?: "off"
+
+private fun modelDisplayLabel(store: ChatStore, id: String?): String {
+    val effectiveId = id?.takeIf { it != "default" } ?: store.defaultModel
+    if (effectiveId.isNullOrBlank()) return "跟随服务端默认"
+    return store.availableModels.firstOrNull { it.id == effectiveId }?.label ?: effectiveId
+}
 
 /**
  * 会话设置菜单（对齐 iOS sessionSettingsMenu）：
@@ -615,7 +757,10 @@ private fun SessionSettingsMenu(store: ChatStore) {
         ) {
             when (menu) {
                 "model" -> {
-                    SettingsMenuOption("默认", selected = store.selectedModel == null) {
+                    SettingsMenuOption(
+                        "默认 · ${modelDisplayLabel(store, null)}",
+                        selected = store.selectedModel == null || store.selectedModel == "default",
+                    ) {
                         store.setModel(null)
                         menu = null
                     }
@@ -636,7 +781,7 @@ private fun SessionSettingsMenu(store: ChatStore) {
                     DropdownMenuItem(
                         text = {
                             Text(
-                                "模型 · ${store.selectedModel ?: "默认"}",
+                                "模型 · ${modelDisplayLabel(store, store.selectedModel)}",
                                 fontSize = 13.sp,
                                 color = WandColors.textPrimary,
                             )

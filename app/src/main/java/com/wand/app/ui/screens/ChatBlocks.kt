@@ -107,68 +107,272 @@ fun TurnView(
     onAskSubmit: (String, String) -> Unit = { _, _ -> },
 ) {
     if (turn.role == "user") {
-        UserBubble(turn)
+        UserTurnView(turn)
     } else {
-        val items = remember(turn.content) { pairToolBlocks(turn.content) }
+        val segments = remember(turn.content) { splitBySubagent(turn.content) }
         Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            items.forEachIndexed { index, item ->
-                when (item) {
-                    is DisplayItem.Tool -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            SubagentTag(item.use.subagent)
-                            // 工具卡分流（对齐 Web 端 renderToolUseCard）：
-                            // AskUserQuestion → 交互卡；Edit/Write/MultiEdit → diff 卡；
-                            // Bash → 终端卡；其余 → 通用卡。
-                            val use = item.use
-                            val askQuestions = if (use.name == "AskUserQuestion") {
-                                remember(use.input) { AskUserQuestionData.parse(use.input) }
-                            } else {
-                                emptyList()
-                            }
-                            when {
-                                askQuestions.isNotEmpty() -> AskUserQuestionCard(
-                                    toolUseId = use.id,
-                                    questions = askQuestions,
-                                    result = item.result,
-                                    selection = askSelections[use.id] ?: AskUserSelectionState(),
-                                    onToggle = { qIdx, optIdx, multi ->
-                                        onAskToggle(use.id, qIdx, optIdx, multi)
-                                    },
-                                    onSubmit = { answerText -> onAskSubmit(use.id, answerText) },
-                                )
-                                use.name in setOf("Edit", "Write", "MultiEdit") -> DiffCard(
-                                    toolName = use.name,
-                                    input = use.input,
-                                    result = item.result,
-                                )
-                                use.name == "Bash" -> TerminalCard(
-                                    input = use.input,
-                                    result = item.result,
-                                    running = item.result == null && isLastTurn && isResponding,
-                                )
-                                else -> ToolCard(
-                                    use = use,
-                                    result = item.result,
-                                    // 最后一轮回复中、且还没有结果的工具 → 运行中
-                                    //（并行工具调用时可同时有多个在转）
-                                    running = item.result == null && isLastTurn && isResponding,
-                                )
-                            }
+            segments.forEachIndexed { segmentIndex, segment ->
+                if (segment.subagent == null) {
+                    SegmentBlocks(
+                        blocks = segment.blocks,
+                        isLastTurn = isLastTurn,
+                        isResponding = isResponding,
+                        askSelections = askSelections,
+                        onAskToggle = onAskToggle,
+                        onAskSubmit = onAskSubmit,
+                    )
+                } else {
+                    SubagentPanel(
+                        meta = segment.subagent,
+                        running = isLastTurn && isResponding && segmentIndex == segments.lastIndex,
+                    ) {
+                        SegmentBlocks(
+                            blocks = segment.blocks,
+                            isLastTurn = isLastTurn,
+                            isResponding = isResponding,
+                            askSelections = askSelections,
+                            onAskToggle = onAskToggle,
+                            onAskSubmit = onAskSubmit,
+                            showSubagentTags = false,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** user turn 也可能携带 Task tool_result；保留普通用户气泡，并把子代理回包独立成面板。 */
+@Composable
+private fun UserTurnView(turn: ConversationTurn) {
+    val parentBlocks = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
+    val subagentSegments = remember(turn.content) {
+        splitBySubagent(turn.content).filter { it.subagent != null }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        if (parentBlocks.any { it is ContentBlock.Text && it.text.isNotBlank() }) {
+            UserBubble(turn.copy(content = parentBlocks))
+        }
+        subagentSegments.forEach { segment ->
+            SubagentPanel(meta = segment.subagent ?: return@forEach, running = false) {
+                SegmentBlocks(
+                    blocks = segment.blocks,
+                    isLastTurn = false,
+                    isResponding = false,
+                    askSelections = emptyMap(),
+                    onAskToggle = { _, _, _, _ -> },
+                    onAskSubmit = { _, _ -> },
+                    showSubagentTags = false,
+                )
+            }
+        }
+    }
+}
+
+private data class AssistantSegment(
+    val subagent: SubagentMeta?,
+    val blocks: List<ContentBlock>,
+)
+
+/** 对齐 Web splitTurnBySubagent：按连续 taskId 分段，再把每段渲染进独立面板。 */
+private fun splitBySubagent(blocks: List<ContentBlock>): List<AssistantSegment> {
+    val segments = mutableListOf<AssistantSegment>()
+    var activeMeta: SubagentMeta? = null
+    var activeKey: String? = null
+    var activeBlocks = mutableListOf<ContentBlock>()
+
+    fun flush() {
+        if (activeBlocks.isNotEmpty()) {
+            segments += AssistantSegment(activeMeta, activeBlocks.toList())
+            activeBlocks = mutableListOf()
+        }
+    }
+
+    blocks.forEach { block ->
+        val meta = block.subagentMeta()
+        val key = meta?.taskId
+        if (activeBlocks.isNotEmpty() && key != activeKey) flush()
+        activeMeta = meta
+        activeKey = key
+        activeBlocks += block
+    }
+    flush()
+    return segments
+}
+
+private fun ContentBlock.subagentMeta(): SubagentMeta? = when (this) {
+    is ContentBlock.Text -> subagent
+    is ContentBlock.Thinking -> subagent
+    is ContentBlock.ToolUse -> subagent
+    is ContentBlock.ToolResult -> subagent
+    is ContentBlock.Unknown -> null
+}
+
+@Composable
+private fun SegmentBlocks(
+    blocks: List<ContentBlock>,
+    isLastTurn: Boolean,
+    isResponding: Boolean,
+    askSelections: Map<String, AskUserSelectionState>,
+    onAskToggle: (String, Int, Int, Boolean) -> Unit,
+    onAskSubmit: (String, String) -> Unit,
+    showSubagentTags: Boolean = true,
+) {
+    val items = remember(blocks) { pairToolBlocks(blocks) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        items.forEachIndexed { index, item ->
+            when (item) {
+                is DisplayItem.Tool -> {
+                    val use = item.use
+                    // Task/Agent 自身只表达派遣关系，面板头已经承接该语义。
+                    if (use.subagent?.taskId == use.id && use.name in setOf("Task", "Agent")) {
+                        return@forEachIndexed
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (showSubagentTags) SubagentTag(use.subagent)
+                        val askQuestions = if (use.name == "AskUserQuestion") {
+                            remember(use.input) { AskUserQuestionData.parse(use.input) }
+                        } else {
+                            emptyList()
+                        }
+                        when {
+                            askQuestions.isNotEmpty() -> AskUserQuestionCard(
+                                toolUseId = use.id,
+                                questions = askQuestions,
+                                result = item.result,
+                                selection = askSelections[use.id] ?: AskUserSelectionState(),
+                                onToggle = { qIdx, optIdx, multi ->
+                                    onAskToggle(use.id, qIdx, optIdx, multi)
+                                },
+                                onSubmit = { answerText -> onAskSubmit(use.id, answerText) },
+                            )
+                            use.name in setOf("Edit", "Write", "MultiEdit") -> DiffCard(
+                                toolName = use.name,
+                                input = use.input,
+                                result = item.result,
+                            )
+                            use.name == "Bash" -> TerminalCard(
+                                input = use.input,
+                                result = item.result,
+                                running = item.result == null && isLastTurn && isResponding,
+                            )
+                            else -> ToolCard(
+                                use = use,
+                                result = item.result,
+                                running = item.result == null && isLastTurn && isResponding,
+                            )
                         }
                     }
-                    is DisplayItem.Plain -> BlockView(
-                        item.block,
-                        // 最后一轮回复的末尾块视为流式中（Thinking 块图标呼吸用）
-                        streaming = isLastTurn && isResponding && index == items.lastIndex,
+                }
+                is DisplayItem.Plain -> BlockView(
+                    item.block,
+                    streaming = isLastTurn && isResponding && index == items.lastIndex,
+                    showSubagentTag = showSubagentTags,
+                )
+                is DisplayItem.Exploration -> ExplorationGroupCard(
+                    tools = item.tools,
+                    running = isLastTurn && isResponding && item.tools.any { it.result == null },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubagentPanel(
+    meta: SubagentMeta,
+    running: Boolean,
+    content: @Composable () -> Unit,
+) {
+    var expanded by remember(meta.taskId) { mutableStateOf(false) }
+    val title = meta.agentType?.takeIf { it.isNotBlank() } ?: "Sub-agent"
+    val description = meta.taskDescription?.takeIf { it.isNotBlank() }
+    val arrowRotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        WandMotion.tweenNormal(),
+        label = "subagentArrow",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.lg)
+            .background(WandColors.infoSoft)
+            .border(1.dp, WandColors.info.copy(alpha = 0.28f), WandShapes.lg)
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(WandColors.info.copy(alpha = 0.14f)),
+            ) {
+                if (running) {
+                    CircularProgressIndicator(
+                        color = WandColors.info,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp),
                     )
-                    is DisplayItem.Exploration -> ExplorationGroupCard(
-                        tools = item.tools,
-                        running = isLastTurn && isResponding && item.tools.any { it.result == null },
+                } else {
+                    Icon(
+                        WandIcons.agent,
+                        contentDescription = null,
+                        tint = WandColors.info,
+                        modifier = Modifier.size(16.dp),
                     )
                 }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WandColors.info,
+                )
+                Text(
+                    description ?: if (running) "正在处理子任务" else "子任务输出",
+                    fontSize = 11.sp,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                if (expanded) "收起" else "查看",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.info,
+            )
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起子任务" else "查看子任务",
+                tint = WandColors.info,
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer { rotationZ = arrowRotation },
+            )
+        }
+        if (expanded) {
+            HorizontalDivider(color = WandColors.info.copy(alpha = 0.18f))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(WandColors.surface.copy(alpha = 0.72f))
+                    .padding(12.dp),
+            ) {
+                content()
             }
         }
     }
@@ -398,12 +602,16 @@ private fun pairToolBlocks(content: List<ContentBlock>): List<DisplayItem> {
 // MARK: - 内容块
 
 @Composable
-fun BlockView(block: ContentBlock, streaming: Boolean = false) {
+fun BlockView(
+    block: ContentBlock,
+    streaming: Boolean = false,
+    showSubagentTag: Boolean = true,
+) {
     when (block) {
         is ContentBlock.Text -> {
             if (block.text.isNotBlank()) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SubagentTag(block.subagent)
+                    if (showSubagentTag) SubagentTag(block.subagent)
                     MarkdownText(block.text)
                 }
             }
@@ -416,7 +624,7 @@ fun BlockView(block: ContentBlock, streaming: Boolean = false) {
         is ContentBlock.ToolUse -> {
             // 落单的 ToolUse（正常路径已在 TurnView 配对，这里兜底）
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SubagentTag(block.subagent)
+                if (showSubagentTag) SubagentTag(block.subagent)
                 ToolCard(use = block, result = null, running = false)
             }
         }
@@ -2132,6 +2340,7 @@ fun currentTodos(messages: List<ConversationTurn>): List<TodoEntry> {
             break
         }
     }
+    // 旧 TodoWrite 协议：最后一次写入就是完整快照，倒序取最新即可。
     for (i in messages.indices.reversed()) {
         if (i < startIdx) break
         for (block in messages[i].content.reversed()) {
@@ -2154,7 +2363,46 @@ fun currentTodos(messages: List<ConversationTurn>): List<TodoEntry> {
             }
         }
     }
-    return emptyList()
+
+    // 新 TaskCreate / TaskUpdate 协议：创建与状态更新是增量事件，需要按时间顺序归并。
+    val tasks = linkedMapOf<String, TodoEntry>()
+    val pendingCreates = mutableMapOf<String, ContentBlock.ToolUse>()
+    for (i in startIdx until messages.size) {
+        for (block in messages[i].content) {
+            when {
+                block is ContentBlock.ToolUse && block.name == "TaskCreate" -> {
+                    pendingCreates[block.id] = block
+                }
+                block is ContentBlock.ToolResult && block.toolUseId in pendingCreates -> {
+                    val create = pendingCreates.remove(block.toolUseId) ?: continue
+                    val taskId = Regex("""Task #([^\s]+) created""")
+                        .find(block.text)?.groupValues?.getOrNull(1) ?: create.id
+                    tasks[taskId] = TodoEntry(
+                        content = create.input.str("subject")
+                            ?: create.input.str("description")
+                            ?: "Task #$taskId",
+                        status = "pending",
+                        activeForm = create.input.str("activeForm"),
+                    )
+                }
+                block is ContentBlock.ToolUse && block.name == "TaskUpdate" -> {
+                    val taskId = block.input.str("taskId") ?: continue
+                    val existing = tasks[taskId] ?: TodoEntry(
+                        content = "Task #$taskId",
+                        status = "pending",
+                        activeForm = null,
+                    )
+                    tasks[taskId] = existing.copy(
+                        content = block.input.str("subject") ?: existing.content,
+                        status = block.input.str("status") ?: existing.status,
+                        activeForm = block.input.str("activeForm") ?: existing.activeForm,
+                    )
+                }
+            }
+        }
+    }
+    val derived = tasks.values.toList()
+    return if (derived.isNotEmpty() && derived.all { it.status == "completed" }) emptyList() else derived
 }
 
 /** 输入栏上方的悬浮进度条：环形进度 + N/M + 当前任务，点击展开任务列表。 */
@@ -2170,6 +2418,11 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
     val ringColor = WandColors.brand
     val trackColor = WandColors.border
     val progress = currentStep.toFloat() / todos.size.toFloat()
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(350),
+        label = "todoProgress",
+    )
 
     Column(
         modifier = Modifier
@@ -2197,7 +2450,7 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
                 drawArc(
                     color = ringColor,
                     startAngle = -90f,
-                    sweepAngle = 360f * progress,
+                    sweepAngle = 360f * animatedProgress,
                     useCenter = false,
                     topLeft = Offset(inset, inset),
                     size = androidx.compose.ui.geometry.Size(
@@ -2244,6 +2497,17 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
                     Row(
                         verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (todo.status == "in_progress") {
+                                    WandColors.brandSoft
+                                } else {
+                                    Color.Transparent
+                                }
+                            )
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                     ) {
                         Text(
                             when (todo.status) {
