@@ -2,6 +2,7 @@ package com.wand.app.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,7 +38,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.lerp as lerpDp
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 
@@ -257,10 +260,10 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * 统一卡片容器：surface 底 + border 1dp + MD 圆角。
+ * 统一卡片容器（玻璃质感版）：半透明底 + 对角 rim 渐变描边 + 极轻软阴影。
  * - onClick 非空时整卡可点（带 ripple）。
- * - selected = true 时切换为 brandSoft 底 + brand 1.5dp 边框（mode-card 选中态），带颜色过渡动画。
- * - containerColor 可覆盖底色（如 surfaceSoft 次级卡片）。
+ * - selected = true 时过渡到品牌弱底 + 品牌 rim（mode-card 选中态），带过渡动画。
+ * - containerColor 可覆盖底色（语义弱底卡片走旧的纯色平面路径，保证语义色不被玻璃冲淡）。
  * - 内容是 ColumnScope，内边距用 contentPadding 控制（规范建议 12-14dp）。
  */
 @Composable
@@ -273,15 +276,43 @@ fun WandCard(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val targetBg = containerColor ?: if (selected) WandColors.brandSoft else WandColors.surface
-    val targetBorder = if (selected) WandColors.brand else WandColors.border
-    val bg by animateColorAsState(targetBg, WandMotion.tweenFast(), label = "cardBg")
-    val borderColor by animateColorAsState(targetBorder, WandMotion.tweenFast(), label = "cardBorder")
+    if (containerColor != null) {
+        // 语义色覆盖：保留旧的纯色平面配方（semantic soft 底依赖确定的底色）。
+        val targetBorder = if (selected) WandColors.brand else WandColors.border
+        val bg by animateColorAsState(containerColor, WandMotion.tweenFast(), label = "cardBg")
+        val borderColor by animateColorAsState(targetBorder, WandMotion.tweenFast(), label = "cardBorder")
+        Column(
+            modifier = modifier
+                .clip(shape)
+                .background(bg)
+                .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(contentPadding),
+            content = content,
+        )
+        return
+    }
+    val style = WandGlass.card
+    val brand = WandColors.brand
+    val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
+    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.18f), t)
+    val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.85f), t)
+    val rimShade = lerp(style.rimShade, brand.copy(alpha = 0.55f), t)
     Column(
         modifier = modifier
+            .shadow(
+                elevation = style.shadowElevation,
+                shape = shape,
+                ambientColor = style.shadowColor,
+                spotColor = style.shadowColor,
+            )
             .clip(shape)
             .background(bg)
-            .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
+            .border(
+                lerpDp(1.dp, 1.5.dp, t),
+                Brush.linearGradient(listOf(rimLight, rimShade)),
+                shape,
+            )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(contentPadding),
         content = content,
