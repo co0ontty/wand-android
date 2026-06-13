@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -88,6 +90,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -113,8 +116,16 @@ import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.ui.theme.GlassBackdrop
+import com.wand.app.ui.theme.GlassStyle
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.glassBackdropSource
+import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -253,12 +264,18 @@ fun ChatScreen(
         }
     }
 
+    // 液态玻璃：内容区是 backdrop 捕获源，顶栏/输入栏/FAB 悬浮其上采样模糊+折射。
+    val glassBackdrop = rememberGlassBackdrop()
+    // 全宽栏只要模糊不要 lens 折射（折射是给悬浮小元素的；折射在直角栏边缘会出现拉丝）。
+    val barGlass = WandGlass.regular.copy(refractionHeight = 0.dp)
     Scaffold(
-        containerColor = WandColors.bgPrimary,
+        containerColor = Color.Transparent,
         topBar = {
             // 顶栏对齐 iOS navigationStatus：居中显示最新一条用户消息 + 完整工作目录，
             // 右侧是 Git 变更统计 + 会话设置菜单（仅结构化会话）。
+            // 透明容器 + 玻璃表面：消息流从栏下滚过时可见模糊层次。
             CenterAlignedTopAppBar(
+                modifier = Modifier.glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass),
                 title = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
@@ -302,11 +319,13 @@ fun ChatScreen(
                     Spacer(modifier = Modifier.size(6.dp))
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = WandColors.bgPrimary,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                 ),
             )
         },
         bottomBar = { BottomBar(
+            backdrop = glassBackdrop,
             store = store,
             draft = draft,
             onDraftChange = { draft = it },
@@ -323,24 +342,32 @@ fun ChatScreen(
             store.send(text)
         } },
     ) { padding ->
+        // 捕获层：环境渐变背景 + 消息流，整体作为玻璃 chrome 的采样源。
+        // 注意它是全幅的（不吃 innerPadding）——消息要从顶栏/输入栏「下面」滚过；
+        // innerPadding 移到 LazyColumn 的 contentPadding，几何总量与旧版一致，
+        // 滚动锚定与 IME 行为不变。
         Box(
             modifier = Modifier
-                .padding(padding)
-                .fillMaxSize(),
+                .fillMaxSize()
+                .glassBackdropSource(glassBackdrop),
         ) {
+            AmbientBackground(Modifier.fillMaxSize())
             when {
-                store.loading -> LoadingState("正在加载会话…")
-                store.loadError != null -> ErrorState(store.loadError ?: "加载失败")
+                store.loading -> LoadingState("正在加载会话…", Modifier.padding(padding))
+                store.loadError != null ->
+                    ErrorState(store.loadError ?: "加载失败", modifier = Modifier.padding(padding))
                 store.isStructured && store.messages.isEmpty() && !store.isResponding ->
-                    SessionLaunchPanel(store.snapshot?.providerLabel ?: "结构化会话")
+                    Box(Modifier.padding(padding)) {
+                        SessionLaunchPanel(store.snapshot?.providerLabel ?: "结构化会话")
+                    }
                 else -> {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
                             .nestedScroll(followPauseConnection),
-                        contentPadding = PaddingValues(
-                            start = 14.dp, end = 14.dp, top = 8.dp, bottom = 6.dp,
+                        contentPadding = padding.plus(
+                            PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 6.dp),
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -384,8 +411,16 @@ fun ChatScreen(
                     }
                 }
             }
+        }
 
-            // 回到底部按钮：淡入 + 缩放，替换硬切显隐。
+        // 浮层（FAB / 对话框 / toast）：吃 innerPadding、不进捕获层 ——
+        // 玻璃元素不能采样到自己。
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。
             AnimatedVisibility(
                 visible = !store.loading && store.loadError == null && !followsLatest,
                 enter = fadeIn(WandMotion.tweenFast()) +
@@ -396,16 +431,22 @@ fun ChatScreen(
                     .align(Alignment.BottomEnd)
                     .padding(end = 16.dp, bottom = 12.dp),
             ) {
-                SmallFloatingActionButton(
-                    onClick = {
-                        followsLatest = true
-                        scrollScope.launch { listState.animateScrollToItem(bottomIndex) }
-                    },
-                    containerColor = WandColors.brand,
-                    contentColor = Color.White,
-                    shape = CircleShape,
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .glassSurface(glassBackdrop, CircleShape, WandGlass.accent)
+                        .clickable {
+                            followsLatest = true
+                            scrollScope.launch { listState.animateScrollToItem(bottomIndex) }
+                        },
                 ) {
-                    Icon(WandIcons.expand, contentDescription = "回到底部")
+                    Icon(
+                        WandIcons.expand,
+                        contentDescription = "回到底部",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
 
@@ -435,6 +476,14 @@ fun ChatScreen(
                 exit = fadeOut(WandMotion.tweenNormal()),
                 modifier = Modifier.align(Alignment.TopCenter),
             ) {
+                // 深色玻璃胶囊：采样背后内容微透，比纯黑底更通透。
+                val toastGlass = WandGlass.regular.copy(
+                    tint = Color.Black,
+                    tintAlpha = 0.62f,
+                    fallbackAlpha = 0.78f,
+                    rimLight = Color.White.copy(alpha = 0.28f),
+                    rimShade = Color.White.copy(alpha = 0.06f),
+                )
                 Text(
                     store.toast ?: lastToast,
                     fontSize = 13.sp,
@@ -442,13 +491,24 @@ fun ChatScreen(
                     color = Color.White,
                     modifier = Modifier
                         .padding(top = 8.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.78f))
+                        .glassSurface(glassBackdrop, CircleShape, toastGlass)
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 )
             }
         }
     }
+}
+
+/** innerPadding 与列表内边距合并（玻璃化后 padding 从容器移到 contentPadding 用）。 */
+@Composable
+private fun PaddingValues.plus(other: PaddingValues): PaddingValues {
+    val direction = LocalLayoutDirection.current
+    return PaddingValues(
+        start = calculateStartPadding(direction) + other.calculateStartPadding(direction),
+        top = calculateTopPadding() + other.calculateTopPadding(),
+        end = calculateEndPadding(direction) + other.calculateEndPadding(direction),
+        bottom = calculateBottomPadding() + other.calculateBottomPadding(),
+    )
 }
 
 /** 顶栏左侧 provider 小徽标：品牌色弱底圆角方块 + 品牌 logo，标明当前 Claude / Codex。 */
@@ -507,9 +567,7 @@ private fun SessionLaunchPanel(providerLabel: String) {
             modifier = Modifier
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 340.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(WandColors.surface)
-                .border(1.dp, WandColors.border, RoundedCornerShape(20.dp))
+                .glassCard(RoundedCornerShape(20.dp))
                 .padding(horizontal = 22.dp, vertical = 24.dp),
         ) {
             WandBrandMark(size = 52)
@@ -715,6 +773,7 @@ private fun RespondingIndicator(taskTitle: String?) {
 
 @Composable
 private fun BottomBar(
+    backdrop: GlassBackdrop,
     store: ChatStore,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -727,9 +786,10 @@ private fun BottomBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(WandColors.bgPrimary.copy(alpha = 0.97f))
+            // 玻璃化：容器本身透明（消息从输入药丸的缝隙间滚过），
+            // 各子元素自带玻璃表面。
             // 先垫系统导航栏，再垫输入法：键盘弹起时输入栏精确贴在键盘上方 ——
-            // 这就是 WebView 时代键盘重叠问题的原生解法。
+            // 这就是 WebView 时代键盘重叠问题的原生解法。padding 链一字不动。
             .navigationBarsPadding()
             .imePadding()
             .padding(bottom = 4.dp),
@@ -768,7 +828,10 @@ private fun BottomBar(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .padding(horizontal = 14.dp, vertical = 4.dp)
+                    .glassSurface(backdrop, CircleShape, WandGlass.clear)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
                 Icon(
                     WandIcons.history,
@@ -788,7 +851,9 @@ private fun BottomBar(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 4.dp),
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .glassSurface(backdrop, RoundedCornerShape(14.dp), WandGlass.regular)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
             ) {
                 Text(
                     "会话已结束",
@@ -804,12 +869,13 @@ private fun BottomBar(
         // 按住说话实时转写气泡（按住期间悬浮在输入栏上方）。
         if (voice.pressed) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                VoiceTranscriptBubble(voice)
+                VoiceTranscriptBubble(backdrop, voice)
             }
         }
         // 语音输入模式：轻点话筒进入，整个输入框变成「按住说话」面板（转屏后保留）。
         var voiceMode by rememberSaveable { mutableStateOf(false) }
         InputBar(
+            backdrop = backdrop,
             store = store,
             draft = draft,
             onDraftChange = onDraftChange,
@@ -826,6 +892,7 @@ private fun BottomBar(
 
 @Composable
 private fun InputBar(
+    backdrop: GlassBackdrop,
     store: ChatStore,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -855,13 +922,14 @@ private fun InputBar(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        ComposerActionsMenu(uploading = uploading, onUpload = onUpload)
+        ComposerActionsMenu(backdrop = backdrop, uploading = uploading, onUpload = onUpload)
         Box(
             contentAlignment = Alignment.BottomEnd,
             modifier = Modifier.weight(1f),
         ) {
             if (voiceMode) {
                 VoiceHoldField(
+                    backdrop = backdrop,
                     draft = draft,
                     voice = voice,
                     onMicDown = onMicDown,
@@ -893,9 +961,7 @@ private fun InputBar(
                             contentAlignment = Alignment.CenterStart,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(WandColors.surface)
-                                .border(1.dp, WandColors.border, RoundedCornerShape(20.dp))
+                                .glassSurface(backdrop, RoundedCornerShape(20.dp), WandGlass.regular)
                                 .padding(start = 14.dp, end = 48.dp, top = 9.dp, bottom = 9.dp),
                         ) {
                             if (draft.isEmpty()) {
@@ -920,7 +986,8 @@ private fun InputBar(
         }
         if (store.isResponding) {
             ComposerIconButton(
-                background = WandColors.danger,
+                backdrop = backdrop,
+                style = WandGlass.accent.copy(tint = WandColors.danger),
                 enabled = true,
                 onClick = { store.stopResponding() },
             ) {
@@ -933,7 +1000,10 @@ private fun InputBar(
             }
         }
         ComposerIconButton(
-            background = if (canSend) WandColors.brand else WandColors.brand.copy(alpha = 0.4f),
+            backdrop = backdrop,
+            // 不可发送时压低 tint 浓度，两条渲染路径都呈现「半透明禁用」观感。
+            style = if (canSend) WandGlass.accent
+                else WandGlass.accent.copy(tintAlpha = 0.35f, fallbackAlpha = 0.4f),
             enabled = canSend,
             onClick = onSend,
         ) {
@@ -952,16 +1022,14 @@ private fun InputBar(
  * 圆形 + 号，点开菜单首项「上传附件」；上传中显示转圈。
  */
 @Composable
-private fun ComposerActionsMenu(uploading: Boolean, onUpload: () -> Unit) {
+private fun ComposerActionsMenu(backdrop: GlassBackdrop, uploading: Boolean, onUpload: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(38.dp)
-                .clip(CircleShape)
-                .background(WandColors.surface)
-                .border(1.dp, WandColors.border, CircleShape)
+                .glassSurface(backdrop, CircleShape, WandGlass.clear)
                 .clickable(enabled = !uploading) { open = true },
         ) {
             if (uploading) {
@@ -1121,6 +1189,7 @@ private fun VoiceMicButton(
  */
 @Composable
 private fun VoiceHoldField(
+    backdrop: GlassBackdrop,
     draft: String,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
@@ -1129,11 +1198,12 @@ private fun VoiceHoldField(
 ) {
     val currentOnExit by rememberUpdatedState(onExitVoiceMode)
     val currentOnMicDown by rememberUpdatedState(onMicDown)
-    val background by androidx.compose.animation.animateColorAsState(
+    // 玻璃表面之上叠按住/取消状态色罩（空闲时透明，玻璃自己说话）。
+    val stateTint by androidx.compose.animation.animateColorAsState(
         when {
-            voice.pressed && voice.canceling -> WandColors.danger.copy(alpha = 0.16f)
-            voice.pressed -> WandColors.brand.copy(alpha = 0.14f)
-            else -> WandColors.surfaceSoft
+            voice.pressed && voice.canceling -> WandColors.danger.copy(alpha = 0.20f)
+            voice.pressed -> WandColors.brand.copy(alpha = 0.16f)
+            else -> Color.Transparent
         },
         WandMotion.tweenFast(),
         label = "voiceFieldBg",
@@ -1142,9 +1212,8 @@ private fun VoiceHoldField(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .heightIn(min = 38.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(background)
-            .border(1.dp, WandColors.border, RoundedCornerShape(20.dp))
+            .glassSurface(backdrop, RoundedCornerShape(20.dp), WandGlass.regular)
+            .background(stateTint)
             .pointerInput(voice) {
                 voiceTapOrHoldGesture(
                     voice = voice,
@@ -1188,17 +1257,20 @@ private fun VoiceHoldField(
 
 /** 按住期间的实时转写气泡：覆盖式文本 + 引擎标签 + 上滑取消提示。 */
 @Composable
-private fun VoiceTranscriptBubble(voice: VoiceInputController) {
+private fun VoiceTranscriptBubble(backdrop: GlassBackdrop, voice: VoiceInputController) {
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(WandColors.surface)
-            .border(
-                1.dp,
-                if (voice.canceling) WandColors.danger.copy(alpha = 0.55f) else WandColors.border,
-                RoundedCornerShape(12.dp),
+            .glassSurface(backdrop, RoundedCornerShape(12.dp), WandGlass.regular)
+            .then(
+                if (voice.canceling) {
+                    Modifier.border(
+                        1.dp,
+                        WandColors.danger.copy(alpha = 0.55f),
+                        RoundedCornerShape(12.dp),
+                    )
+                } else Modifier
             )
             .padding(12.dp),
     ) {
@@ -1344,10 +1416,11 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
 
 private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
 
-/** 输入栏操作按钮：38dp 圆形（对齐 iOS 停止/发送圆钮），保留按压缩放反馈。 */
+/** 输入栏操作按钮：38dp 玻璃圆钮（对齐 iOS 停止/发送圆钮），保留按压缩放反馈。 */
 @Composable
 private fun ComposerIconButton(
-    background: Color,
+    backdrop: GlassBackdrop,
+    style: GlassStyle,
     enabled: Boolean,
     onClick: () -> Unit,
     content: @Composable () -> Unit,
@@ -1367,8 +1440,7 @@ private fun ComposerIconButton(
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(CircleShape)
-            .background(background)
+            .glassSurface(backdrop, CircleShape, style)
             .clickable(
                 enabled = enabled,
                 interactionSource = interaction,
