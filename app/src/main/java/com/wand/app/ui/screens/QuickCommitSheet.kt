@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.glassCard
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -177,7 +178,9 @@ fun QuickCommitSheet(
     ModalBottomSheet(
         onDismissRequest = { if (!qc.inFlight) onDismiss() },
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
+        // ModalBottomSheet 是独立 window，采样不到 app 的 backdrop 层，
+        // 永远走降级玻璃：近实底 bgElevated（保证 dock 画布与文字对比度）。
+        containerColor = WandColors.bgElevated.copy(alpha = 0.98f),
     ) {
         Column(
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -553,8 +556,7 @@ private fun MagneticDock(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp)
-                .background(WandColors.card, RoundedCornerShape(14.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+                .glassCard(RoundedCornerShape(14.dp))
                 .padding(horizontal = 16.dp),
         ) {
             CircularProgressIndicator(
@@ -656,12 +658,7 @@ private fun MagneticDock(
                 .weight(1f)
                 .fillMaxHeight()
                 .zIndex(1f)
-                .background(WandColors.card, RoundedCornerShape(14.dp))
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
-                    RoundedCornerShape(14.dp),
-                )
+                .glassCard(RoundedCornerShape(14.dp))
                 .onSizeChanged { fieldSize = it }
                 .pointerInputDock(
                     enabled = enabled,

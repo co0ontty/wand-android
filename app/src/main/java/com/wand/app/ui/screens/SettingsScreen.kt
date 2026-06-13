@@ -69,7 +69,13 @@ import com.wand.app.ui.HomeActions
 import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.glassBackdropSource
+import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.rememberGlassBackdrop
 
 /**
  * 原生设置页 —— 对称 iOS SettingsView，并把原 WebView 桥（WandNative）的
@@ -122,10 +128,17 @@ fun SettingsScreen(
         )
     }
 
+    // 液态玻璃：设置页内容从玻璃顶栏下滚过。
+    val glassBackdrop = rememberGlassBackdrop()
     Scaffold(
-        containerColor = WandColors.bgPrimary,
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
+                modifier = Modifier.glassSurface(
+                    glassBackdrop,
+                    RoundedCornerShape(0.dp),
+                    WandGlass.regular.copy(refractionHeight = 0.dp),
+                ),
                 title = {
                     Text(
                         "设置",
@@ -144,18 +157,27 @@ fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = WandColors.bgPrimary,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                 ),
             )
         },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
-                .padding(padding)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
+                .glassBackdropSource(glassBackdrop),
         ) {
+            AmbientBackground(Modifier.fillMaxSize())
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    // padding 放在 verticalScroll 之后：顶部留白随内容滚动，
+                    // 内容从玻璃顶栏下面滑过。
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            ) {
             // —— 服务器 ——
             SectionHeader("服务器")
             WandCard(modifier = Modifier.fillMaxWidth()) {
@@ -339,6 +361,7 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.size(32.dp))
+            }
         }
     }
 }

@@ -302,13 +302,19 @@ fun Modifier.glassCard(
  */
 @Composable
 fun AmbientBackground(modifier: Modifier = Modifier) {
+    Box(modifier.ambientBackground())
+}
+
+/** [AmbientBackground] 的 Modifier 形态：次级页面直接挂在 Scaffold modifier 上。 */
+@Composable
+fun Modifier.ambientBackground(): Modifier {
     val dark = isSystemInDarkTheme()
     val base = WandColors.bgPrimary
     val glowA = if (dark) Color(0xFFD97A4F).copy(alpha = 0.13f) else Color(0xFFC5653D).copy(alpha = 0.10f)
     val glowB = if (dark) Color(0xFF8C4A2F).copy(alpha = 0.09f) else Color(0xFFD18B00).copy(alpha = 0.07f)
     val glowC = if (dark) Color(0xFF9D9DCC).copy(alpha = 0.05f) else Color(0xFF4F7A58).copy(alpha = 0.04f)
-    Box(
-        modifier.drawBehind {
+    return this.then(
+        Modifier.drawBehind {
             drawRect(base)
             val w = size.width
             val h = size.height
@@ -337,3 +343,9 @@ fun AmbientBackground(modifier: Modifier = Modifier) {
         }
     )
 }
+
+/** 次级页面顶栏的降级玻璃（不叠在滚动内容上，无 backdrop 采样）。 */
+val secondaryBarGlass: GlassStyle
+    @Composable @ReadOnlyComposable get() =
+        (if (isSystemInDarkTheme()) DarkGlassRegular else LightGlassRegular)
+            .copy(refractionHeight = 0.dp, shadowElevation = 0.dp)

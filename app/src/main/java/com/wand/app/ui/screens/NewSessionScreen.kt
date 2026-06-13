@@ -80,6 +80,9 @@ import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.ambientBackground
+import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.secondaryBarGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import kotlinx.coroutines.launch
@@ -173,10 +176,13 @@ fun NewSessionScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        modifier = Modifier.imePadding(),
+        containerColor = Color.Transparent,
+        modifier = Modifier
+            .ambientBackground()
+            .imePadding(),
         topBar = {
             TopAppBar(
+                modifier = Modifier.glassSurface(null, RoundedCornerShape(0.dp), secondaryBarGlass),
                 title = { Text("新建会话", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -206,7 +212,8 @@ fun NewSessionScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                 ),
             )
         },
@@ -214,7 +221,6 @@ fun NewSessionScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(WandColors.bgPrimary)
                     .navigationBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
             ) {
@@ -768,9 +774,11 @@ fun DirectoryBrowserScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
+        modifier = Modifier.ambientBackground(),
         topBar = {
             TopAppBar(
+                modifier = Modifier.glassSurface(null, RoundedCornerShape(0.dp), secondaryBarGlass),
                 title = { Text("选择目录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     TextButton(onClick = onCancel) {
@@ -788,7 +796,8 @@ fun DirectoryBrowserScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                 ),
             )
         },
