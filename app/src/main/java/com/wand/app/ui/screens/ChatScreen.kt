@@ -423,6 +423,11 @@ fun ChatScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            // 断线提示条：贴顶，安全区内显示。恢复连接后滑出消失。
+            ConnectionBanner(
+                visible = !store.connected,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
             // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。
             AnimatedVisibility(
                 visible = !store.loading && store.loadError == null && !followsLatest,
@@ -914,6 +919,50 @@ private fun RespondingIndicator(taskTitle: String?) {
     }
 }
 
+/**
+ * WebSocket 断线提示条（对位 iOS ChatView.connectionBanner）。
+ * 浮在聊天页顶部，连接恢复后自动消失。
+ */
+@Composable
+fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(
+            animationSpec = WandMotion.tweenFast(),
+            initialOffsetY = { -it },
+        ) + fadeIn(animationSpec = WandMotion.tweenFast()),
+        exit = slideOutVertically(
+            animationSpec = WandMotion.tweenFast(),
+            targetOffsetY = { -it },
+        ) + fadeOut(animationSpec = WandMotion.tweenFast()),
+        modifier = modifier,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(WandColors.danger)
+                .padding(vertical = 6.dp, horizontal = 12.dp),
+        ) {
+            Icon(
+                WandIcons.wifiOff,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                "连接已断开，正在重连…",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 // MARK: - 底部栏（权限卡 + 队列 + 输入框）
 
 @Composable
@@ -1054,11 +1103,21 @@ private fun InputBar(
     // 从语音模式轻点切回键盘时自动聚焦文本框，键盘直接弹起。
     val focusRequester = remember { FocusRequester() }
     var focusAfterExit by remember { mutableStateOf(false) }
+    // 发送后保持输入框焦点：避免权限卡/todo bar 插入时 @FocusState 丢焦点、键盘收起，
+    // 用户连续对话时不需要再点一次输入框（对位 iOS ChatView.sendDraft 末尾的 inputFocused = true）。
+    var refocusAfterSend by remember { mutableStateOf(false) }
     // 停止任务二次确认弹窗开关：点停止按钮先弹确认，避免误触中断正在跑的任务。
     var showStopConfirm by remember { mutableStateOf(false) }
     LaunchedEffect(voiceMode, focusAfterExit) {
         if (!voiceMode && focusAfterExit) {
             focusAfterExit = false
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
+    LaunchedEffect(refocusAfterSend, voiceMode, store.sessionEnded) {
+        // 语音模式 / 会话已结束时不抢焦点；这两种情况本来就用不到键盘。
+        if (refocusAfterSend && !voiceMode && !store.sessionEnded) {
+            refocusAfterSend = false
             runCatching { focusRequester.requestFocus() }
         }
     }
@@ -1153,7 +1212,11 @@ private fun InputBar(
             style = if (canSend) WandGlass.accent
                 else WandGlass.accent.copy(tintAlpha = 0.35f, fallbackAlpha = 0.4f),
             enabled = canSend,
-            onClick = onSend,
+            onClick = {
+                onSend()
+                // 标记「需要重新聚焦」，由上面 LaunchedEffect 在安全条件下真正拉焦点。
+                refocusAfterSend = true
+            },
         ) {
             Icon(
                 WandIcons.arrowUp,
@@ -1254,8 +1317,12 @@ private fun appendVoiceText(existing: String, text: String): String {
     return if (base.isEmpty()) clean else "$base $clean"
 }
 
-/** 轻点 vs 按住的分界：按住超过该时长进入录音，否则按轻点处理。 */
-private const val VOICE_HOLD_THRESHOLD_MS = 300L
+/**
+ * 轻点 vs 按住的分界：按住超过该时长进入录音，否则按轻点处理。
+ * 0.18s 仍足以区分轻点/长按，但比 0.3s 让识别框出现快 ~40%，减少「按下去没反应」的感知延迟
+ * （对位 iOS ChatView.voiceHoldThreshold = 0.18）。
+ */
+private const val VOICE_HOLD_THRESHOLD_MS = 180L
 
 /**
  * 轻点 / 按住二分手势：

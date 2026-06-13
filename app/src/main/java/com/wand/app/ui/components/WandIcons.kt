@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -127,6 +128,9 @@ object WandIcons {
 
     /** 停止。 */
     val stop: ImageVector = Icons.Outlined.Stop
+
+    /** 断线（断线提示条用）。 */
+    val wifiOff: ImageVector = Icons.Outlined.WifiOff
 
     /** 运行中旋转指示。 */
     val refresh: ImageVector = Icons.Outlined.Refresh
