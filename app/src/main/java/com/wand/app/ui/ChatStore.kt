@@ -335,6 +335,67 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         }
     }
 
+    // MARK: - 排队消息（仅结构化会话）
+
+    /** inFlight 判定：和 Web/iOS 保持一致 —— 结构化态在 running 且 inFlight。 */
+    private val isInFlight: Boolean
+        get() = snapshot?.structuredState?.inFlight == true && status == "running"
+
+    /**
+     * 把第 index 条排队消息「立即发送」。
+     * 乐观剥掉这一条；inFlight 时带 interrupt+preserveQueue（中断当前回复保留余下队列）。
+     * 失败回滚整段队列。对齐 Web queueBarPromoteIndex。
+     */
+    fun promoteQueued(index: Int) {
+        val prev = queuedMessages
+        if (index < 0 || index >= prev.size) return
+        val picked = prev[index]
+        val rest = prev.toMutableList().apply { removeAt(index) }
+        val inFlight = isInFlight
+        queuedMessages = rest
+        toast = if (inFlight) "已请求中断当前回复，立即发送这条。" else "已立即发送这条消息。"
+        scope.launch {
+            try {
+                val snap = api.promoteQueued(sessionId, picked, inFlight)
+                apply(snap)
+            } catch (e: Exception) {
+                queuedMessages = prev
+                toast = e.message ?: "立即发送失败"
+            }
+        }
+    }
+
+    /** 删除第 index 条排队消息（乐观 + 失败回滚）。 */
+    fun deleteQueued(index: Int) {
+        val prev = queuedMessages
+        if (index < 0 || index >= prev.size) return
+        queuedMessages = prev.toMutableList().apply { removeAt(index) }
+        scope.launch {
+            try {
+                api.deleteQueued(sessionId, index)
+            } catch (e: Exception) {
+                queuedMessages = prev
+                toast = e.message ?: "删除排队消息失败"
+            }
+        }
+    }
+
+    /** 清空全部排队消息（乐观 + 失败回滚）。 */
+    fun clearQueued() {
+        val prev = queuedMessages
+        if (prev.isEmpty()) return
+        queuedMessages = emptyList()
+        scope.launch {
+            try {
+                api.clearQueued(sessionId)
+                toast = "已清空 ${prev.size} 条排队消息。"
+            } catch (e: Exception) {
+                queuedMessages = prev
+                toast = e.message ?: "清空排队消息失败"
+            }
+        }
+    }
+
     /** 停止当前回复：结构化会话调 stop（杀掉当前回合），PTY 发 Esc 中断。 */
     fun stopResponding() {
         scope.launch {

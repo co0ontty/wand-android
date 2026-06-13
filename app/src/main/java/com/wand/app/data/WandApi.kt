@@ -140,6 +140,40 @@ class WandApi(baseUrl: String, val token: String?) {
     suspend fun stopSession(id: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/stop"))
 
+    // MARK: - 排队消息（仅结构化会话）
+
+    /**
+     * 立刻发送第 index 条排队消息（前端已剥离这条）。
+     * inFlight 时带 interrupt+preserveQueue（中断当前回复，保留其余队列）；
+     * 否则当普通新消息发出。对齐 Web 端 queueBarPromoteIndex。
+     */
+    suspend fun promoteQueued(
+        id: String,
+        text: String,
+        inFlight: Boolean,
+    ): SessionSnapshot {
+        val body = JSONObject()
+            .put("input", text)
+            .put("idempotencyKey", java.util.UUID.randomUUID().toString())
+        if (inFlight) {
+            body.put("interrupt", true)
+            body.put("preserveQueue", true)
+        }
+        return SessionSnapshot.parse(
+            requestObject("POST", "/api/structured-sessions/$id/messages", body)
+        )
+    }
+
+    /** 删除第 index 条排队消息。 */
+    suspend fun deleteQueued(id: String, index: Int) {
+        requestData("DELETE", "/api/structured-sessions/$id/queued/$index")
+    }
+
+    /** 清空全部排队消息。 */
+    suspend fun clearQueued(id: String) {
+        requestData("DELETE", "/api/structured-sessions/$id/queued")
+    }
+
     suspend fun deleteSession(id: String) {
         requestData("DELETE", "/api/sessions/$id")
     }

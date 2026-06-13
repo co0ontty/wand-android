@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -226,29 +227,38 @@ fun ChatScreen(
     // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
     val displayItems = remember(store.messages) { groupExplorationTurns(store.messages) }
 
-    // 附件上传：+ 菜单 → 系统文件选择器（多选 ≤5 个 / 单个 ≤10MB）→ savedPath 回填输入框。
+    // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
+    // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
     var uploadingAttachments by remember { mutableStateOf(false) }
-    val attachmentPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris ->
-        if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
-        uploadingAttachments = true
-        scrollScope.launch {
-            try {
-                val files = withContext(Dispatchers.IO) {
-                    uris.take(5).map { uri -> readAttachment(context, uri) }
+    val uploadUris: (List<Uri>) -> Unit = { uris ->
+        if (uris.isNotEmpty()) {
+            uploadingAttachments = true
+            scrollScope.launch {
+                try {
+                    val files = withContext(Dispatchers.IO) {
+                        uris.take(5).map { uri -> readAttachment(context, uri) }
+                    }
+                    val uploaded = api.uploadAttachments(sessionId, files)
+                    val paths = uploaded.joinToString("\n") { it.savedPath }
+                    draft = "[附件已上传，请查看以下文件:\n$paths\n]\n\n" + draft
+                    store.toast = "已上传 ${uploaded.size} 个附件"
+                } catch (e: Exception) {
+                    store.toast = e.message ?: "附件上传失败"
+                } finally {
+                    uploadingAttachments = false
                 }
-                val uploaded = api.uploadAttachments(sessionId, files)
-                val paths = uploaded.joinToString("\n") { it.savedPath }
-                draft = "[附件已上传，请查看以下文件:\n$paths\n]\n\n" + draft
-                store.toast = "已上传 ${uploaded.size} 个附件"
-            } catch (e: Exception) {
-                store.toast = e.message ?: "附件上传失败"
-            } finally {
-                uploadingAttachments = false
             }
         }
     }
+    // 「从文件选择」：系统文档选择器，任意类型。
+    val attachmentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> uploadUris(uris.orEmpty()) }
+    // 「从相册选择」：系统相册选择器（Photo Picker），只回传用户勾选的图片、无需整库权限。
+    // 对齐 iOS PHPicker。
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(5),
+    ) { uris -> uploadUris(uris) }
 
     // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
     // 列表末尾有独立锚点，确保长消息增长时滚到真正底部而非最后一项顶部。
@@ -335,7 +345,12 @@ fun ChatScreen(
             voice = voice,
             onMicDown = onMicDown,
             uploading = uploadingAttachments,
-            onUpload = { attachmentPicker.launch(arrayOf("*/*")) },
+            onPickPhoto = {
+                photoPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            onPickFile = { attachmentPicker.launch(arrayOf("*/*")) },
         ) {
             // 发送回调（带触感反馈）；发送后立即恢复贴底跟随（对齐 iOS sendDraft）。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -920,6 +935,153 @@ private fun RespondingIndicator(taskTitle: String?) {
 }
 
 /**
+ * 排队消息条（对位 Web 端 queue-bar）：折叠态显示「已排队 N 条」+ 操作按钮；
+ * 展开后逐条列出，每条带「立即发送 ⚡」「删除 ×」，外加底部「全部清空」。
+ * promote 的中断/preserveQueue 语义在 ChatStore.promoteQueued 里按 inFlight 自动决定。
+ */
+@Composable
+private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop) {
+    var expanded by rememberSaveable(store.sessionId) { mutableStateOf(false) }
+    val queue = store.queuedMessages
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = WandMotion.tweenFast(),
+        label = "queue-expand-rotate",
+    )
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .glassSurface(backdrop, RoundedCornerShape(14.dp), WandGlass.clear)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // 标题行：图标 + 计数 + 展开/收起；整行可点。
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+        ) {
+            Icon(
+                WandIcons.history,
+                contentDescription = null,
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                "已排队 ${queue.size} 条消息",
+                fontSize = 12.sp,
+                color = WandColors.textMuted,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer { rotationZ = rotation },
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(WandMotion.tweenFast()),
+            exit = fadeOut(WandMotion.tweenFast()),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                queue.forEachIndexed { index, text ->
+                    QueueItemRow(
+                        index = index,
+                        text = text,
+                        onPromote = { store.promoteQueued(index) },
+                        onDelete = { store.deleteQueued(index) },
+                    )
+                }
+                // 全部清空：右对齐，提示性按钮。
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = { store.clearQueued() }) {
+                        Icon(
+                            WandIcons.delete,
+                            contentDescription = null,
+                            tint = WandColors.danger,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text(
+                            "全部清空",
+                            fontSize = 12.sp,
+                            color = WandColors.danger,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueItemRow(
+    index: Int,
+    text: String,
+    onPromote: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(WandColors.surfaceSoft)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(
+            "${index + 1}.",
+            fontSize = 12.sp,
+            color = WandColors.textMuted,
+        )
+        Text(
+            text,
+            fontSize = 13.sp,
+            color = WandColors.textPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        // 立即发送
+        IconButton(
+            onClick = onPromote,
+            modifier = Modifier.size(28.dp),
+        ) {
+            Icon(
+                WandIcons.send,
+                contentDescription = "立即发送",
+                tint = WandColors.brand,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        // 删除
+        IconButton(
+            onClick = onDelete,
+            modifier = Modifier.size(28.dp),
+        ) {
+            Icon(
+                WandIcons.close,
+                contentDescription = "删除",
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+/**
  * WebSocket 断线提示条（对位 iOS ChatView.connectionBanner）。
  * 浮在聊天页顶部，连接恢复后自动消失。
  */
@@ -974,7 +1136,8 @@ private fun BottomBar(
     voice: VoiceInputController,
     onMicDown: () -> Unit,
     uploading: Boolean,
-    onUpload: () -> Unit,
+    onPickPhoto: () -> Unit,
+    onPickFile: () -> Unit,
     onSend: () -> Unit,
 ) {
     Column(
@@ -1020,26 +1183,7 @@ private fun BottomBar(
             }
         }
         if (store.queuedMessages.isNotEmpty()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .padding(horizontal = 14.dp, vertical = 4.dp)
-                    .glassSurface(backdrop, CircleShape, WandGlass.clear)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Icon(
-                    WandIcons.history,
-                    contentDescription = null,
-                    tint = WandColors.textMuted,
-                    modifier = Modifier.size(13.dp),
-                )
-                Text(
-                    "已排队 ${store.queuedMessages.size} 条消息",
-                    fontSize = 12.sp,
-                    color = WandColors.textMuted,
-                )
-            }
+            QueueBar(store = store, backdrop = backdrop)
         }
         if (store.sessionEnded) {
             Row(
@@ -1079,7 +1223,8 @@ private fun BottomBar(
             onVoiceModeChange = { voiceMode = it },
             onMicDown = onMicDown,
             uploading = uploading,
-            onUpload = onUpload,
+            onPickPhoto = onPickPhoto,
+            onPickFile = onPickFile,
             onSend = onSend,
         )
     }
@@ -1096,7 +1241,8 @@ private fun InputBar(
     onVoiceModeChange: (Boolean) -> Unit,
     onMicDown: () -> Unit,
     uploading: Boolean,
-    onUpload: () -> Unit,
+    onPickPhoto: () -> Unit,
+    onPickFile: () -> Unit,
     onSend: () -> Unit,
 ) {
     val canSend = draft.isNotBlank() && !store.sessionEnded
@@ -1129,7 +1275,12 @@ private fun InputBar(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        ComposerActionsMenu(backdrop = backdrop, uploading = uploading, onUpload = onUpload)
+        ComposerActionsMenu(
+            backdrop = backdrop,
+            uploading = uploading,
+            onPickPhoto = onPickPhoto,
+            onPickFile = onPickFile,
+        )
         Box(
             contentAlignment = Alignment.BottomEnd,
             modifier = Modifier.weight(1f),
@@ -1255,10 +1406,15 @@ private fun InputBar(
 
 /**
  * 输入栏左侧「更多操作」按钮（对齐 iOS composerActionsMenu）：
- * 圆形 + 号，点开菜单首项「上传附件」；上传中显示转圈。
+ * 圆形 + 号，点开菜单「从相册选择 / 从文件选择」两项；上传中显示转圈。
  */
 @Composable
-private fun ComposerActionsMenu(backdrop: GlassBackdrop, uploading: Boolean, onUpload: () -> Unit) {
+private fun ComposerActionsMenu(
+    backdrop: GlassBackdrop,
+    uploading: Boolean,
+    onPickPhoto: () -> Unit,
+    onPickFile: () -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         Box(
@@ -1289,7 +1445,7 @@ private fun ComposerActionsMenu(backdrop: GlassBackdrop, uploading: Boolean, onU
             containerColor = WandColors.surface,
         ) {
             DropdownMenuItem(
-                text = { Text("上传附件", fontSize = 13.sp, color = WandColors.textPrimary) },
+                text = { Text("从相册选择", fontSize = 13.sp, color = WandColors.textPrimary) },
                 leadingIcon = {
                     Icon(
                         WandIcons.attach,
@@ -1300,7 +1456,22 @@ private fun ComposerActionsMenu(backdrop: GlassBackdrop, uploading: Boolean, onU
                 },
                 onClick = {
                     open = false
-                    onUpload()
+                    onPickPhoto()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("从文件选择", fontSize = 13.sp, color = WandColors.textPrimary) },
+                leadingIcon = {
+                    Icon(
+                        WandIcons.attach,
+                        contentDescription = null,
+                        tint = WandColors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+                onClick = {
+                    open = false
+                    onPickFile()
                 },
             )
         }
