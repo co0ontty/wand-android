@@ -1054,6 +1054,8 @@ private fun InputBar(
     // 从语音模式轻点切回键盘时自动聚焦文本框，键盘直接弹起。
     val focusRequester = remember { FocusRequester() }
     var focusAfterExit by remember { mutableStateOf(false) }
+    // 停止任务二次确认弹窗开关：点停止按钮先弹确认，避免误触中断正在跑的任务。
+    var showStopConfirm by remember { mutableStateOf(false) }
     LaunchedEffect(voiceMode, focusAfterExit) {
         if (!voiceMode && focusAfterExit) {
             focusAfterExit = false
@@ -1135,7 +1137,7 @@ private fun InputBar(
                 backdrop = backdrop,
                 style = WandGlass.accent.copy(tint = WandColors.danger),
                 enabled = true,
-                onClick = { store.stopResponding() },
+                onClick = { showStopConfirm = true },
             ) {
                 Icon(
                     WandIcons.stop,
@@ -1160,6 +1162,31 @@ private fun InputBar(
                 modifier = Modifier.size(18.dp),
             )
         }
+    }
+    if (showStopConfirm) {
+        AlertDialog(
+            onDismissRequest = { showStopConfirm = false },
+            containerColor = WandColors.surface,
+            title = {
+                Text("停止任务", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            },
+            text = {
+                Text("确定要停止当前正在运行的任务吗？", fontSize = 13.sp)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showStopConfirm = false
+                    store.stopResponding()
+                }) {
+                    Text("停止", color = WandColors.danger, fontSize = 13.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopConfirm = false }) {
+                    Text("取消", color = WandColors.textMuted, fontSize = 13.sp)
+                }
+            },
+        )
     }
 }
 
