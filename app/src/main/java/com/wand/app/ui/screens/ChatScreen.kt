@@ -798,7 +798,7 @@ private fun BottomBar(
         val todos = remember(store.messages) { currentTodos(store.messages) }
         if (todos.isNotEmpty()) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                TodoProgressBar(todos)
+                TodoProgressBar(todos, backdrop)
             }
         }
         // 权限审批卡：底部滑入 + 淡入；退场期间用缓存内容避免闪空。
@@ -821,6 +821,7 @@ private fun BottomBar(
                     escalation = store.pendingEscalation ?: cachedEscalation,
                     legacy = store.legacyPermissionPrompt ?: cachedLegacy,
                     onResolve = { store.resolvePermission(it) },
+                    backdrop = backdrop,
                 )
             }
         }

@@ -43,8 +43,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -75,9 +78,14 @@ import com.wand.app.ui.AskUserSelectionState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.toolIcon
+import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.tinted
 import org.json.JSONObject
 
 /**
@@ -184,14 +192,39 @@ private fun UserBubble(turn: ConversationTurn) {
         horizontalArrangement = Arrangement.End,
     ) {
         SelectionContainer {
+            // 玻璃质感气泡：品牌色纵向渐变（上浅下深）+ 顶缘受光 rim + 品牌色软阴影。
+            val brand = WandColors.brand
             Text(
                 text,
                 fontSize = 15.sp,
                 lineHeight = 21.sp,
                 color = Color.White,
                 modifier = Modifier
+                    .shadow(
+                        elevation = 2.dp,
+                        shape = bubbleShape,
+                        ambientColor = brand.copy(alpha = 0.45f),
+                        spotColor = brand.copy(alpha = 0.45f),
+                    )
                     .clip(bubbleShape)
-                    .background(WandColors.brand)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                lerp(brand, Color.White, 0.10f),
+                                lerp(brand, Color.Black, 0.10f),
+                            )
+                        )
+                    )
+                    .border(
+                        1.dp,
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.White.copy(alpha = 0.32f),
+                                Color.White.copy(alpha = 0.02f),
+                            )
+                        ),
+                        bubbleShape,
+                    )
                     .padding(horizontal = 13.dp, vertical = 8.dp),
             )
         }
@@ -920,9 +953,7 @@ fun ToolCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WandShapes.md)
-            .background(WandColors.surface)
-            .border(1.dp, statusColor.copy(alpha = if (isError) 0.42f else 0.16f), WandShapes.md)
+            .glassCard(WandShapes.md, rimTint = if (isError) statusColor else null)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -1049,9 +1080,7 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WandShapes.md)
-            .background(WandColors.surface)
-            .border(1.dp, tint.copy(alpha = if (failedCount > 0) 0.42f else 0.16f), WandShapes.md)
+            .glassCard(WandShapes.md, rimTint = if (failedCount > 0) tint else null)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -1386,17 +1415,20 @@ fun PermissionCard(
     escalation: EscalationRequest?,
     legacy: PermissionRequestInfo?,
     onResolve: (String) -> Unit,
+    backdrop: GlassBackdrop? = null,
 ) {
     val scopeTitle = escalation?.scopeTitle ?: "权限请求"
     val detail = escalation?.reason ?: legacy?.prompt ?: ""
     val target = escalation?.target ?: legacy?.target
 
+    // 权限金色调的玻璃面板（悬浮在消息流上需要实底感，permissionSoft 太透看不清）。
+    val permissionGlass = WandGlass.regular.tinted(WandColors.permission, 0.22f)
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WandShapes.md)
-            .background(WandColors.permissionSoft)
+            .glassSurface(backdrop, WandShapes.md, permissionGlass)
+            .background(WandColors.permission.copy(alpha = 0.08f))
             .border(1.5.dp, WandColors.permission.copy(alpha = 0.55f), WandShapes.md)
             .padding(14.dp),
     ) {
@@ -1593,7 +1625,7 @@ fun AskUserQuestionCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WandShapes.md)
+            .glassCard(WandShapes.md, rimTint = WandColors.brand)
             .background(WandColors.brand.copy(alpha = 0.05f))
             .border(1.dp, borderColor, WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
@@ -1842,9 +1874,7 @@ fun DiffCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WandShapes.md)
-            .background(WandColors.surface)
-            .border(1.dp, WandColors.border, WandShapes.md)
+            .glassCard(WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -2129,7 +2159,7 @@ fun currentTodos(messages: List<ConversationTurn>): List<TodoEntry> {
 
 /** 输入栏上方的悬浮进度条：环形进度 + N/M + 当前任务，点击展开任务列表。 */
 @Composable
-fun TodoProgressBar(todos: List<TodoEntry>) {
+fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
     if (todos.isEmpty()) return
     val completed = todos.count { it.status == "completed" }
     // 1-indexed「正在干第 N 个」：completed+1 封顶（对齐 Web currentStep）。
@@ -2144,9 +2174,7 @@ fun TodoProgressBar(todos: List<TodoEntry>) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WandShapes.lg)
-            .background(WandColors.surface)
-            .border(1.dp, WandColors.border, WandShapes.lg)
+            .glassSurface(backdrop, WandShapes.lg, WandGlass.regular)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
