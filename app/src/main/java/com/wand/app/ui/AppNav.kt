@@ -10,6 +10,13 @@ sealed class Screen {
     data object Settings : Screen()
 }
 
+/** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
+sealed class QuickAction {
+    data object NewSession : QuickAction()
+    data object OpenWeb : QuickAction()
+    data class OpenSession(val sessionId: String) : QuickAction()
+}
+
 class NavState {
     val stack = mutableStateListOf<Screen>(Screen.SessionList)
 

@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import com.wand.app.data.WandApi
 import com.wand.app.ui.HomeActions
+import com.wand.app.ui.QuickAction
 import com.wand.app.ui.WandApp
 import com.wand.app.ui.theme.WandTheme
 import java.util.concurrent.ExecutorService
@@ -34,6 +35,15 @@ class HomeActivity : AppCompatActivity() {
         if (serverUrl.isNullOrEmpty()) {
             switchServer()
             return
+        }
+
+        // 长按图标快捷操作（WandShortcuts → ConnectActivity 透传）：认证就绪后消费一次。
+        val initialQuickAction = when (intent.getStringExtra(WandShortcuts.EXTRA_QUICK_ACTION)) {
+            WandShortcuts.ACTION_NEW_SESSION -> QuickAction.NewSession
+            WandShortcuts.ACTION_OPEN_WEB -> QuickAction.OpenWeb
+            else -> intent.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID)
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { QuickAction.OpenSession(it) }
         }
 
         val serverStore = ServerStore(this)
@@ -83,6 +93,7 @@ class HomeActivity : AppCompatActivity() {
                 WandApp(
                     api = api,
                     actions = actions,
+                    initialQuickAction = initialQuickAction,
                     onAuthenticated = {
                         // 认证成功后启动会话通知中枢（全局 WS → 进度/完成/授权通知）。
                         // start 幂等，Activity 重建时复用既有连接。
@@ -137,6 +148,8 @@ class HomeActivity : AppCompatActivity() {
     private fun disconnect(serverStore: ServerStore) {
         serverStore.setLastUrl("")
         serverStore.clearAppToken()
+        // 断开后清掉会话快捷项，避免长按图标还能直达旧服务器的会话。
+        WandShortcuts.clear(this)
         switchServer()
     }
 

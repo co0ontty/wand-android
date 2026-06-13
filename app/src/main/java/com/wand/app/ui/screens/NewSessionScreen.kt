@@ -81,6 +81,7 @@ import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.ambientBackground
+import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.secondaryBarGlass
 import com.wand.app.ui.theme.WandMotion
@@ -365,10 +366,14 @@ fun NewSessionScreen(
                         color = WandColors.textMuted,
                     )
                     Spacer(modifier = Modifier.size(6.dp))
-                    WandCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = WandShapes.sm,
-                        containerColor = WandColors.surfaceSoft,
+                    // 最近路径是工作目录卡内部的分组子区，不再用 WandCard 嵌套
+                    // （会与外层卡叠出双层投影发闷）；改用 surfaceSoft 内凹平面 + 细描边。
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(WandShapes.sm)
+                            .background(WandColors.surfaceSoft)
+                            .border(1.dp, WandColors.border, WandShapes.sm),
                     ) {
                         val shown = recentPaths.take(5)
                         shown.forEachIndexed { index, recent ->
@@ -423,9 +428,9 @@ fun NewSessionScreen(
                     modifier = Modifier
                         .padding(top = 16.dp)
                         .fillMaxWidth()
-                        .clip(WandShapes.md)
-                        .background(WandColors.dangerSoft)
-                        .border(1.dp, WandColors.danger.copy(alpha = 0.4f), WandShapes.md)
+                        // 语义弱底错误卡：经 glassCard 继承统一层叠投影 + 倒角描边，
+                        // 与聊天页 error/info 卡同源，不再是贴平的纯色条。
+                        .glassCard(WandShapes.md, tint = WandColors.dangerSoft, rimTint = WandColors.danger)
                         .padding(12.dp),
                 ) {
                     Icon(

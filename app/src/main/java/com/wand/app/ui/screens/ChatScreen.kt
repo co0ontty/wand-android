@@ -586,26 +586,33 @@ private fun SessionLaunchPanel(store: ChatStore) {
     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
             modifier = Modifier
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 360.dp)
                 .glassCard(RoundedCornerShape(20.dp))
                 .padding(horizontal = 22.dp, vertical = 24.dp),
         ) {
-            WandBrandMark(size = 52)
-            Text(
-                store.snapshot?.providerLabel ?: "结构化会话",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = WandColors.textPrimary,
-            )
-            Text(
-                "发送第一条消息前，可确认本次对话使用的模型和思考深度",
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                color = WandColors.textSecondary,
-            )
+            // 标记 + 标题 + 副标题收成一个更紧凑的头部单元（彼此间距小），
+            // 与下方设置组之间留出更大的呼吸位，强化「品牌头 → 操作区」的层次。
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                WandBrandMark(size = 52)
+                Text(
+                    store.snapshot?.providerLabel ?: "结构化会话",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WandColors.textPrimary,
+                )
+                Text(
+                    "发送第一条消息前，可确认本次对话使用的模型和思考深度",
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    color = WandColors.textSecondary,
+                )
+            }
             Column(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -1191,8 +1198,10 @@ private fun BottomBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 4.dp)
+                    // 玻璃面板已带层叠投影，内边距给足一点纵向呼吸位，
+                    // 让「浮起」读作有意为之而非紧贴按钮。
                     .glassSurface(backdrop, RoundedCornerShape(14.dp), WandGlass.regular)
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
             ) {
                 Text(
                     "会话已结束",

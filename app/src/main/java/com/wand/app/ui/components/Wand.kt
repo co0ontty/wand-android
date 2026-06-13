@@ -7,6 +7,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,8 +23,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +47,10 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.bevelRimBrush
+import com.wand.app.ui.theme.cardShadowColors
+import com.wand.app.ui.theme.layeredShadow
+import com.wand.app.ui.theme.surfaceSheenBrush
 
 /**
  * 公共基础组件（重设计规范 v1 第 2.1 节）：
@@ -276,17 +284,35 @@ fun WandCard(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // 按压反馈：轻微下沉（缩放 + 阴影回落），给卡片一个"被按下去"的实体触感。
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressDepth by animateFloatAsState(
+        if (pressed && onClick != null) 1f else 0f,
+        WandMotion.tweenFast(),
+        label = "cardPress",
+    )
+    val scale = 1f - 0.012f * pressDepth
+    val (keyShadow, ambientShadow) = cardShadowColors()
+
     if (containerColor != null) {
-        // 语义色覆盖：保留旧的纯色平面配方（semantic soft 底依赖确定的底色）。
+        // 语义色覆盖：保留纯色底配方（semantic soft 底依赖确定底色，不叠表面微光以免冲淡语义色），
+        // 但补一层轻投影，让语义弱底卡也微微浮起、不再贴平。
         val targetBorder = if (selected) WandColors.brand else WandColors.border
         val bg by animateColorAsState(containerColor, WandMotion.tweenFast(), label = "cardBg")
         val borderColor by animateColorAsState(targetBorder, WandMotion.tweenFast(), label = "cardBorder")
         Column(
             modifier = modifier
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .layeredShadow(shape, 3.5.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
                 .clip(shape)
                 .background(bg)
                 .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
-                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .then(
+                    if (onClick != null) {
+                        Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
+                    } else Modifier
+                )
                 .padding(contentPadding),
             content = content,
         )
@@ -295,25 +321,24 @@ fun WandCard(
     val style = WandGlass.card
     val brand = WandColors.brand
     val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
+    // 选中态抬得更高、按压回落，双层投影 + 表面微光 + 倒角描边 = 浮起的实体卡。
+    val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.35f, t) * (1f - 0.5f * pressDepth)
     val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.18f), t)
     val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.85f), t)
     val rimShade = lerp(style.rimShade, brand.copy(alpha = 0.55f), t)
     Column(
         modifier = modifier
-            .shadow(
-                elevation = style.shadowElevation,
-                shape = shape,
-                ambientColor = style.shadowColor,
-                spotColor = style.shadowColor,
-            )
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .layeredShadow(shape, elevation, keyShadow, ambientShadow)
             .clip(shape)
             .background(bg)
-            .border(
-                lerpDp(1.dp, 1.5.dp, t),
-                Brush.linearGradient(listOf(rimLight, rimShade)),
-                shape,
+            .background(surfaceSheenBrush(), shape)
+            .border(lerpDp(1.dp, 1.5.dp, t), bevelRimBrush(rimLight, rimShade), shape)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
+                } else Modifier
             )
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(contentPadding),
         content = content,
     )

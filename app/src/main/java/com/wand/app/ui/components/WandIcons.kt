@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
@@ -170,6 +171,9 @@ object WandIcons {
 
     /** 聊天会话（runner 类型徽章）。 */
     val chat: ImageVector = Icons.Outlined.ChatBubbleOutline
+
+    /** 时钟（历史会话相对时间徽章，对称 iOS clock）。 */
+    val clock: ImageVector = Icons.Outlined.Schedule
 }
 
 /**

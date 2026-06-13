@@ -40,7 +40,9 @@ android {
 
     defaultConfig {
         applicationId "com.wand.app"
-        minSdk 24
+        // 只兼容最近 ~3 年的设备（Android 13 / 2022 起）。抬到 33 后 RuntimeShader 无条件可用，
+        // 液态玻璃在所有支持设备上原生跑，Glass.kt 的低版本降级分支恒不触发（保留为死分支，无害）。
+        minSdk 33
         targetSdk 36
         versionCode appVersionCode
         versionName appVersionName
@@ -72,7 +74,10 @@ android {
         }
         release {
             signingConfig signingConfigs.wand
-            minifyEnabled false
+            // R8 代码压缩 + 资源裁剪：缩小 APK、加快启动。keep 规则见 proguard-rules.pro
+            // （sherpa-onnx JNI 必须保留，否则 native 方法绑定失效崩溃）。
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }

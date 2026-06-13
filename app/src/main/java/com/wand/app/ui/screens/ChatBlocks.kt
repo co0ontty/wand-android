@@ -83,8 +83,10 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.layeredShadow
 import com.wand.app.ui.theme.tinted
 import org.json.JSONObject
 
@@ -296,12 +298,12 @@ private fun SubagentPanel(
         label = "subagentArrow",
     )
 
+    // 子代理面板是一张可折叠卡片：走 glassCard 继承统一立体感，
+    // info 弱底 + info rim 让"子任务"语义蓝保持清晰。
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WandShapes.lg)
-            .background(WandColors.infoSoft)
-            .border(1.dp, WandColors.info.copy(alpha = 0.28f), WandShapes.lg)
+            .glassCard(WandShapes.lg, tint = WandColors.infoSoft, rimTint = WandColors.info)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -1630,13 +1632,14 @@ fun PermissionCard(
     val target = escalation?.target ?: legacy?.target
 
     // 权限金色调的玻璃面板（悬浮在消息流上需要实底感，permissionSoft 太透看不清）。
+    // glassSurface 已铺好金调实底 + 立体阴影，这里只补一道清晰的金色描边作语义锚点，
+    // 不再叠一层半透明金底（与玻璃实底重复，反而把权限金冲浑）。
     val permissionGlass = WandGlass.regular.tinted(WandColors.permission, 0.22f)
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
             .glassSurface(backdrop, WandShapes.md, permissionGlass)
-            .background(WandColors.permission.copy(alpha = 0.08f))
             .border(1.5.dp, WandColors.permission.copy(alpha = 0.55f), WandShapes.md)
             .padding(14.dp),
     ) {
@@ -1819,23 +1822,18 @@ fun AskUserQuestionCard(
     // 回答送达后自动折叠（对齐 Web 已答默认折叠）。
     LaunchedEffect(isAnswered) { if (isAnswered) expanded = false }
     val allAnswered = questions.indices.all { !selection.selected[it].isNullOrEmpty() }
-    val borderColor = if (isAnswered) {
-        WandColors.success.copy(alpha = 0.55f)
-    } else {
-        WandColors.brand.copy(alpha = 0.35f)
-    }
     val arrowRotation by animateFloatAsState(
         if (expanded) 180f else 0f,
         WandMotion.tweenNormal(),
         label = "askArrow",
     )
 
+    // 状态色通过 glassCard 的 rimTint 表达（已答绿 / 待答品牌），
+    // 不再叠手写 background + border —— 那会与 glassCard 自带的描边/底色撞成双重描边。
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassCard(WandShapes.md, rimTint = WandColors.brand)
-            .background(WandColors.brand.copy(alpha = 0.05f))
-            .border(1.dp, borderColor, WandShapes.md)
+            .glassCard(WandShapes.md, rimTint = if (isAnswered) WandColors.success else WandColors.brand)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         // 头部
@@ -2221,10 +2219,14 @@ fun TerminalCard(
         WandMotion.tweenNormal(),
         label = "termArrow",
     )
+    // 终端固定深色（非玻璃，对齐 Web inline-terminal），但补一层暖调层叠投影，
+    // 让它与相邻工具/Diff 卡一样"浮起"，不再贴平。
+    val (termKeyShadow, termAmbientShadow) = cardShadowColors()
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .layeredShadow(WandShapes.md, 5.dp, termKeyShadow, termAmbientShadow)
             .clip(WandShapes.md)
             .background(TermBg)
             .border(1.dp, Color.White.copy(alpha = 0.12f), WandShapes.md)

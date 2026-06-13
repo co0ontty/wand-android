@@ -1,18 +1,23 @@
 package com.wand.app.ui.screens
 
 import android.text.format.DateUtils
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,13 +34,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -43,7 +42,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,7 +54,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -64,9 +65,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.HistorySession
@@ -85,10 +89,14 @@ import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.bevelRimBrush
+import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.layeredShadow
 import com.wand.app.ui.theme.rememberGlassBackdrop
-import kotlin.math.abs
+import com.wand.app.ui.theme.surfaceSheenBrush
+import kotlin.math.roundToInt
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -189,12 +197,17 @@ fun SessionListScreen(
         dragBaseIds = emptySet()
     }
 
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
         state.load(silent = state.sessions.isNotEmpty())
         while (true) {
             delay(10_000)
             state.load(silent = true)
         }
+    }
+    // 会话列表变化时同步长按图标快捷项（对称 iOS updateRecentSessionShortcuts）。
+    LaunchedEffect(state.sessions) {
+        com.wand.app.WandShortcuts.update(context, state.sessions)
     }
     // 切换范围时退出多选并静默刷新（对齐 iOS onChange(of: scope)）。
     LaunchedEffect(listScope) {
@@ -219,26 +232,10 @@ fun SessionListScreen(
                             color = WandColors.textPrimary,
                         )
                     } else {
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.width(190.dp)) {
-                            listOf("active" to "进行中", "history" to "历史会话")
-                                .forEachIndexed { index, (value, label) ->
-                                    SegmentedButton(
-                                        selected = listScope == value,
-                                        onClick = { listScope = value },
-                                        shape = SegmentedButtonDefaults.itemShape(index, 2),
-                                        colors = SegmentedButtonDefaults.colors(
-                                            activeContainerColor = WandColors.brandSoft,
-                                            activeContentColor = WandColors.brand,
-                                            // 透明非选中底：分段开关嵌在玻璃顶栏里，让玻璃自己透出来。
-                                            inactiveContainerColor = Color.Transparent,
-                                            inactiveContentColor = WandColors.textSecondary,
-                                        ),
-                                        icon = {},
-                                    ) {
-                                        Text(label, fontSize = 12.sp, maxLines = 1)
-                                    }
-                                }
-                        }
+                        ScopeToggle(
+                            selected = listScope,
+                            onSelect = { listScope = it },
+                        )
                     }
                 },
                 navigationIcon = {
@@ -449,10 +446,10 @@ fun SessionListScreen(
                             contentPadding = PaddingValues(
                                 start = 16.dp + padding.calculateStartPadding(direction),
                                 end = 16.dp + padding.calculateEndPadding(direction),
-                                top = 8.dp + padding.calculateTopPadding(),
-                                bottom = 16.dp + padding.calculateBottomPadding(),
+                                top = 12.dp + padding.calculateTopPadding(),
+                                bottom = 20.dp + padding.calculateBottomPadding(),
                             ),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(11.dp),
                         ) {
                             items(state.visibleSessions, key = { it.id }) { session ->
                                 val rowModifier = Modifier
@@ -512,7 +509,7 @@ fun SessionListScreen(
                                         )
                                     }
                                 } else {
-                                    SwipeDeleteRow(
+                                    SwipeRevealRow(
                                         modifier = rowModifier,
                                         onDelete = {
                                             state.removeLocally(session.id)
@@ -524,12 +521,14 @@ fun SessionListScreen(
                                                 }
                                             }
                                         },
-                                    ) {
+                                    ) { revealed, closeReveal ->
                                         SessionCard(
                                             session = session,
                                             selecting = false,
                                             selected = false,
-                                            onClick = { onOpenSession(session) },
+                                            onClick = {
+                                                if (revealed) closeReveal() else onOpenSession(session)
+                                            },
                                         )
                                     }
                                 }
@@ -588,6 +587,68 @@ fun SessionListScreen(
                 }
             },
         )
+    }
+}
+
+/**
+ * 范围切换胶囊：玻璃顶栏内的双段开关，选中段品牌渐变实心 + 白字 + 轻投影（读作浮起的滑块），
+ * 未选中透明 + 次级色；切换时颜色动画过渡。比 Material3 SegmentedButton 更贴合品牌、玻璃底上更干净。
+ */
+@Composable
+private fun ScopeToggle(
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    val options = listOf("active" to "进行中", "history" to "历史会话")
+    val brand = WandColors.brand
+    Row(
+        modifier = Modifier
+            .clip(WandShapes.full)
+            .background(WandColors.textPrimary.copy(alpha = 0.05f))
+            .border(1.dp, WandColors.border, WandShapes.full)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        options.forEach { (value, label) ->
+            val active = value == selected
+            val bg by animateColorAsState(
+                if (active) brand else Color.Transparent,
+                label = "scopeToggleBg",
+            )
+            val fg by animateColorAsState(
+                if (active) Color.White else WandColors.textSecondary,
+                label = "scopeToggleFg",
+            )
+            val knobShadow = if (active) brand.copy(alpha = 0.38f) else Color.Transparent
+            Box(
+                modifier = Modifier
+                    .layeredShadow(WandShapes.full, if (active) 3.dp else 0.dp, knobShadow, knobShadow)
+                    .clip(WandShapes.full)
+                    .background(bg)
+                    // 选中段叠一层顶亮渐变，从平涂实色变成有受光的滑块。
+                    .then(
+                        if (active) {
+                            Modifier.background(
+                                Brush.verticalGradient(
+                                    listOf(lerp(brand, Color.White, 0.16f), brand),
+                                ),
+                                WandShapes.full,
+                            )
+                        } else Modifier
+                    )
+                    .clickable { onSelect(value) }
+                    .padding(horizontal = 18.dp, vertical = 7.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    fontSize = 13.sp,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                    color = fg,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
@@ -709,20 +770,20 @@ private fun HistoryList(
             contentPadding = PaddingValues(
                 start = 16.dp + padding.calculateStartPadding(direction),
                 end = 16.dp + padding.calculateEndPadding(direction),
-                top = 8.dp + padding.calculateTopPadding(),
-                bottom = 16.dp + padding.calculateBottomPadding(),
+                top = 12.dp + padding.calculateTopPadding(),
+                bottom = 20.dp + padding.calculateBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp),
         ) {
             items(visible, key = { it.id }) { history ->
-                SwipeDeleteRow(
+                SwipeRevealRow(
                     modifier = Modifier.animateItem(),
                     onDelete = { onDelete(history) },
-                ) {
+                ) { revealed, closeReveal ->
                     HistorySessionCard(
                         history = history,
                         enabled = !actionInProgress,
-                        onClick = { onResume(history) },
+                        onClick = { if (revealed) closeReveal() else onResume(history) },
                     )
                 }
             }
@@ -730,7 +791,10 @@ private fun HistoryList(
     }
 }
 
-/** 历史会话卡：时钟图标 + 首条用户消息 + provider/相对时间 + 紧凑路径 + 恢复按钮（对齐 iOS HistorySessionRow）。 */
+/**
+ * 历史会话卡：浮起的渐变头像（时钟图标）+ 首条用户消息 + 元信息行（provider 胶囊 + 相对时间）
+ * + 工作目录路径独占一行（对齐 iOS HistorySessionRow）。头像深度与 [ProviderMark] 一致。
+ */
 @Composable
 private fun HistorySessionCard(
     history: HistorySession,
@@ -739,82 +803,77 @@ private fun HistorySessionCard(
 ) {
     val isCodex = history.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
+    val shape = RoundedCornerShape(14.dp)
+    val (keyShadow, ambientShadow) = cardShadowColors()
     WandCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = if (enabled) onClick else null,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(16.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(WandShapes.md)
-                    .background(tint.copy(alpha = 0.13f))
-                    .border(1.dp, tint.copy(alpha = 0.24f), WandShapes.md),
+                    .size(48.dp)
+                    .layeredShadow(shape, 3.dp, keyShadow, ambientShadow)
+                    .clip(shape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(tint.copy(alpha = 0.26f), tint.copy(alpha = 0.10f)),
+                        ),
+                    )
+                    .background(surfaceSheenBrush(), shape)
+                    .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.35f), tint.copy(alpha = 0.12f)), shape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     WandIcons.history,
                     contentDescription = null,
                     tint = tint,
-                    modifier = Modifier.size(21.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
-            Spacer(modifier = Modifier.width(13.dp))
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 Text(
                     history.firstUserMessage.ifEmpty { "空会话" },
-                    fontSize = 15.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textPrimary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        if (isCodex) "Codex" else "Claude",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = tint,
+                    MetaChip(
+                        text = if (isCodex) "Codex" else "Claude",
+                        icon = WandIcons.history,
+                        tint = tint,
                     )
                     val relative = relativeTimeLabel(history.timestamp)
                     if (relative.isNotEmpty()) {
-                        Text(
-                            relative,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = WandColors.textSecondary,
-                        )
+                        MetaChip(text = relative, icon = WandIcons.clock)
                     }
                 }
-                val path = compactPath(history.cwd)
-                if (path.isNotEmpty()) {
+                val cwd = history.cwd
+                if (cwd.isNotEmpty()) {
                     Text(
-                        path,
-                        fontSize = 10.sp,
+                        middleTruncatePath(cwd),
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = WandColors.textSecondary,
+                        color = WandColors.textMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Icon(
-                WandIcons.refresh,
-                contentDescription = "恢复此会话",
-                tint = tint.copy(alpha = 0.8f),
-                modifier = Modifier.size(20.dp),
-            )
         }
     }
 }
@@ -835,64 +894,97 @@ private fun relativeTimeLabel(timestamp: String?): String {
     }
 }
 
-/** 路径超过 3 层时只留后 3 层（对齐 iOS compactPath）。 */
-private fun compactPath(cwd: String?): String {
-    if (cwd.isNullOrEmpty()) return ""
-    val components = cwd.split('/').filter { it.isNotEmpty() }
-    if (components.size <= 3) return cwd
-    return "…/" + components.takeLast(3).joinToString("/")
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 滑动揭示删除按钮（对齐 iOS swipeActions(allowsFullSwipe: false)）：
+ * 左滑露出右侧红色「删除」按钮，点按钮才真正删除；不会一滑到底直接删。
+ * content 收到 revealed/closeReveal，便于揭示态下点卡片先收起而非进入会话。
+ */
 @Composable
-private fun SwipeDeleteRow(
+private fun SwipeRevealRow(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
+    content: @Composable (revealed: Boolean, closeReveal: () -> Unit) -> Unit,
 ) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                onDelete()
-                true
-            } else {
-                false
-            }
-        },
-    )
-    SwipeToDismissBox(
-        state = dismissState,
-        modifier = modifier,
-        enableDismissFromStartToEnd = false,
-        backgroundContent = {
-            // 卡片玻璃化后是半透明的：静止时红底会透出来，
-            // 只有行真正位移时才绘制删除背景。
-            val offset = runCatching { dismissState.requireOffset() }.getOrDefault(0f)
-            if (abs(offset) > 1f) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val revealWidth = 84.dp
+    val revealPx = with(density) { revealWidth.toPx() }
+    val offsetX = remember { Animatable(0f) }
+    val revealed = offsetX.value <= -revealPx + 1f
+    val closeReveal: () -> Unit = { scope.launch { offsetX.animateTo(0f) } }
+
+    Box(modifier = modifier) {
+        // 揭示出的删除按钮：只在行有位移时绘制（玻璃卡片半透明，静止时红底会透出来）。
+        if (offsetX.value < -1f) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(WandShapes.md),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .clip(WandShapes.md)
-                        .background(WandColors.danger),
-                    contentAlignment = Alignment.CenterEnd,
+                        .fillMaxHeight()
+                        .width(revealWidth)
+                        .background(WandColors.danger)
+                        .clickable {
+                            closeReveal()
+                            onDelete()
+                        },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        WandIcons.delete,
-                        contentDescription = "删除",
-                        tint = MaterialTheme.colorScheme.onError,
-                        modifier = Modifier.padding(end = 20.dp),
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Icon(
+                            WandIcons.delete,
+                            contentDescription = "删除",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Text(
+                            "删除",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                    }
                 }
             }
-        },
-    ) {
-        content()
+        }
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            val next = (offsetX.value + dragAmount).coerceIn(-revealPx, 0f)
+                            scope.launch { offsetX.snapTo(next) }
+                        },
+                        onDragEnd = {
+                            val target = if (offsetX.value < -revealPx / 2) -revealPx else 0f
+                            scope.launch { offsetX.animateTo(target) }
+                        },
+                        onDragCancel = {
+                            val target = if (offsetX.value < -revealPx / 2) -revealPx else 0f
+                            scope.launch { offsetX.animateTo(target) }
+                        },
+                    )
+                },
+        ) {
+            content(revealed, closeReveal)
+        }
     }
 }
 
 /**
- * 单条会话卡片：助手图标 + 状态点 + 标题 + provider/runner + 紧凑路径 + 行尾 StatusBadge。
- * 多选模式时行首加 ○/✓ 指示（对齐 iOS SessionRow）。
+ * 单条会话卡片：左 provider 头像（浮起、叠状态点）+ 右内容列。
+ * 内容列层级：标题（16sp SemiBold）→ 元信息行（runner 类型胶囊 + 活跃态 StatusBadge + 相对时间）
+ * → 工作目录路径独占一行（弱化等宽、中段省略）。
+ * 抛弃旧 2×2 Grid 的 46dp 占位列对齐，改为头像左、内容列右的清爽布局。
+ * 多选模式时行首加 ○/✓ 指示。
  */
 @Composable
 private fun SessionCard(
@@ -906,12 +998,11 @@ private fun SessionCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         selected = selecting && selected,
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(16.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 40.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selecting) {
@@ -919,108 +1010,131 @@ private fun SessionCard(
                     if (selected) WandIcons.statusDone else WandIcons.statusPending,
                     contentDescription = if (selected) "已选中" else "未选中",
                     tint = if (selected) WandColors.brand else WandColors.textSecondary,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(22.dp),
                 )
-                Spacer(modifier = Modifier.width(12.dp))
             }
             ProviderMark(session = session, status = status)
-            Spacer(modifier = Modifier.width(12.dp))
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 Text(
                     session.displayTitle,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
                     color = WandColors.textPrimary,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // 元信息行：runner 类型 + 仅在「需关注」态下补一枚 StatusBadge（运行/思考/等待授权…）+ 相对时间。
                 Row(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text(
-                        session.providerLabel,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (session.provider == "codex") WandColors.info else WandColors.brand,
-                        maxLines = 1,
+                    MetaChip(
+                        text = if (session.isStructured) "聊天" else "终端",
+                        icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
                     )
-                    RunnerBadge(isStructured = session.isStructured)
+                    if (statusDeservesBadge(status)) {
+                        StatusBadge(status)
+                    }
+                    val relative = relativeTimeLabel(session.startedAt)
+                    if (relative.isNotEmpty()) {
+                        MetaChip(text = relative, icon = WandIcons.clock)
+                    }
                 }
-                val path = compactPath(session.cwd)
-                if (path.isNotEmpty()) {
+                val cwd = session.cwd
+                if (!cwd.isNullOrEmpty()) {
                     Text(
-                        path,
-                        fontSize = 10.sp,
+                        middleTruncatePath(cwd),
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = WandColors.textSecondary,
+                        color = WandColors.textMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            StatusBadge(status)
         }
     }
 }
 
-/** 左侧助手标识：按实际 CLI 显示品牌 logo——Claude 星芒（brand 色）/ Codex 六角结（info 色），右下角叠加实时状态。 */
+/**
+ * 左侧助手标识：品牌渐变圆角方块 + brand logo，右下角叠加实时状态点（对齐 iOS providerMark）。
+ * 视觉改造：48dp 头像加双层柔影「浮」在卡面之上，叠表面竖向微光 + 倒角描边读出体积，
+ * 状态点用更厚的卡色外环 + 描边，确保在任何卡色上都干净清晰。
+ */
 @Composable
 private fun ProviderMark(session: SessionSnapshot, status: String) {
     val isCodex = session.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
-    val background = if (isCodex) WandColors.infoSoft else WandColors.brandSoft
     val icon = if (isCodex) BrandLogos.codex else BrandLogos.claude
     val label = if (isCodex) "Codex" else "Claude"
+    val shape = RoundedCornerShape(14.dp)
+    val (keyShadow, ambientShadow) = cardShadowColors()
 
     Box(
         modifier = Modifier
-            .size(44.dp)
-            .clip(WandShapes.md)
-            .background(background)
-            .border(1.dp, tint.copy(alpha = 0.24f), WandShapes.md),
+            .size(48.dp)
+            .layeredShadow(shape, 3.dp, keyShadow, ambientShadow)
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    listOf(tint.copy(alpha = 0.26f), tint.copy(alpha = 0.10f)),
+                ),
+            )
+            // 表面微光：顶亮底暗，让头像读作受光的微曲面而非平涂方块。
+            .background(surfaceSheenBrush(), shape)
+            .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.35f), tint.copy(alpha = 0.12f)), shape),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             icon,
             contentDescription = "$label，${session.displayTitle}",
             tint = tint,
-            modifier = Modifier.size(21.dp),
+            modifier = Modifier.size(23.dp),
         )
+        // 状态点徽标：卡色实心外环 + 细描边，从头像右下「咬」出来，与背后头像清晰分离。
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .size(13.dp)
+                .offset(x = 3.dp, y = 3.dp)
+                .size(15.dp)
                 .clip(CircleShape)
                 .background(WandColors.surface)
-                .padding(2.dp),
+                .border(1.dp, WandColors.border, CircleShape)
+                .padding(3.dp),
             contentAlignment = Alignment.Center,
         ) {
-            StatusDot(status, modifier = Modifier.size(8.dp))
+            StatusDot(status, modifier = Modifier.fillMaxSize())
         }
     }
 }
 
-/** runner 类型徽章：聊天 brandSoft/brand，终端 infoSoft/info，11sp 弱底胶囊。 */
+/** 弱底胶囊徽章：图标 + 文字，统一次级色淡底（对齐 iOS metadataChip）。 */
 @Composable
-private fun RunnerBadge(isStructured: Boolean) {
-    val bg = if (isStructured) WandColors.brandSoft else WandColors.infoSoft
-    val fg = if (isStructured) WandColors.brand else WandColors.info
-    Text(
-        if (isStructured) "聊天" else "终端",
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Medium,
-        color = fg,
-        maxLines = 1,
+private fun MetaChip(
+    text: String,
+    icon: ImageVector,
+    tint: Color = WandColors.textSecondary,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .clip(WandShapes.full)
-            .background(bg)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-    )
+            .background(tint.copy(alpha = 0.10f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
+        Text(
+            text,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = tint,
+            maxLines = 1,
+        )
+    }
 }
 
 /**
@@ -1031,4 +1145,26 @@ private fun derivedStatus(session: SessionSnapshot): String = when {
     session.hasPendingPermission -> "permission"
     session.isResponding -> "thinking"
     else -> session.status ?: "idle"
+}
+
+/**
+ * 元信息行是否值得额外摆一枚状态徽章：仅「活跃 / 需关注」态（运行 / 思考 / 等待 / 重连 / 失败）
+ * 才补 StatusBadge —— 头像角标已经表达了状态，空闲 / 已退出 / 已停止等静止态不再重复占位。
+ */
+private fun statusDeservesBadge(status: String): Boolean = when (status.trim().lowercase()) {
+    "running", "thinking", "waiting-input", "waiting_input",
+    "permission", "reconnecting", "failed" -> true
+    else -> false
+}
+
+/**
+ * 中段省略长路径：保留头部与尾部、中间塞 "…"，比纯尾部省略更能同时看出「在哪个根目录、哪个项目」。
+ * 短路径原样返回；超长才折叠（阈值约一行等宽字符宽度）。
+ */
+private fun middleTruncatePath(path: String, max: Int = 38): String {
+    if (path.length <= max) return path
+    val keep = max - 1
+    val head = (keep + 1) / 2
+    val tail = keep - head
+    return path.take(head) + "…" + path.takeLast(tail)
 }

@@ -770,20 +770,24 @@ private fun MagneticDock(
         Spacer(Modifier.width(8.dp))
 
         // —— 发射区 ——
+        // 始终走 glassCard，与左侧力场同源浮起（rim 带 launchTone）；热区（拖入命中）
+        // 再覆盖一层 launchTone 强调底 + 高亮描边，明确「松手即执行」的落点。
+        val launchShape = RoundedCornerShape(14.dp)
         Column(
             verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .width(76.dp)
                 .fillMaxHeight()
-                .background(
-                    if (hot) launchTone.copy(alpha = 0.14f) else WandColors.card,
-                    RoundedCornerShape(14.dp),
-                )
-                .border(
-                    1.5.dp,
-                    launchTone.copy(alpha = if (hot) 0.85f else 0.3f),
-                    RoundedCornerShape(14.dp),
+                .glassCard(launchShape, rimTint = launchTone)
+                .then(
+                    if (hot) {
+                        Modifier
+                            .background(launchTone.copy(alpha = 0.14f), launchShape)
+                            .border(1.5.dp, launchTone.copy(alpha = 0.85f), launchShape)
+                    } else {
+                        Modifier
+                    }
                 )
                 .clickable(enabled = enabled) { onAction("commit", false) },
         ) {

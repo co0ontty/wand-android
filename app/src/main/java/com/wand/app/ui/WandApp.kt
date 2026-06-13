@@ -38,7 +38,12 @@ import com.wand.app.ui.screens.SettingsScreen
  * 冷启动后为空，所以每次启动都要重新登录），成功后进入会话列表。
  */
 @Composable
-fun WandApp(api: WandApi, actions: HomeActions, onAuthenticated: () -> Unit) {
+fun WandApp(
+    api: WandApi,
+    actions: HomeActions,
+    initialQuickAction: QuickAction? = null,
+    onAuthenticated: () -> Unit,
+) {
     var phase by remember { mutableStateOf<AuthPhase>(AuthPhase.Authenticating) }
     var retryKey by remember { mutableIntStateOf(0) }
 
@@ -75,7 +80,7 @@ fun WandApp(api: WandApi, actions: HomeActions, onAuthenticated: () -> Unit) {
                 onRetry = { retryKey++ },
                 onSwitchServer = actions.switchServer,
             )
-            is AuthPhase.Ready -> ReadyContent(api, actions)
+            is AuthPhase.Ready -> ReadyContent(api, actions, initialQuickAction)
         }
     }
 }
@@ -127,10 +132,24 @@ private fun AuthFailed(message: String, onRetry: () -> Unit, onSwitchServer: () 
 }
 
 @Composable
-private fun ReadyContent(api: WandApi, actions: HomeActions) {
+private fun ReadyContent(
+    api: WandApi,
+    actions: HomeActions,
+    initialQuickAction: QuickAction? = null,
+) {
     val nav = remember { NavState() }
     // 列表状态提升到这里：进聊天再返回时不丢已加载的会话与滚动位置。
     val listState = remember { SessionListState(api) }
+
+    // 认证就绪后消费一次长按图标快捷操作（对称 iOS consume）。
+    LaunchedEffect(Unit) {
+        when (val action = initialQuickAction) {
+            is QuickAction.NewSession -> nav.push(Screen.NewSession)
+            is QuickAction.OpenWeb -> actions.openWeb()
+            is QuickAction.OpenSession -> nav.push(Screen.Chat(action.sessionId))
+            null -> {}
+        }
+    }
 
     BackHandler(enabled = nav.stack.size > 1) { nav.pop() }
 

@@ -519,6 +519,14 @@ public class ConnectActivity extends AppCompatActivity {
         if (appToken != null) {
             intent.putExtra("app_token", appToken);
         }
+        // 透传长按图标快捷操作的 extra（WandShortcuts → ConnectActivity → HomeActivity）。
+        Intent source = getIntent();
+        if (source != null) {
+            String quickAction = source.getStringExtra(WandShortcuts.EXTRA_QUICK_ACTION);
+            String openSessionId = source.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID);
+            if (quickAction != null) intent.putExtra(WandShortcuts.EXTRA_QUICK_ACTION, quickAction);
+            if (openSessionId != null) intent.putExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID, openSessionId);
+        }
         startActivity(intent);
         finish();
     }

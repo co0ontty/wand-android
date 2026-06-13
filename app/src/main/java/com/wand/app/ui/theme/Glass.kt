@@ -86,6 +86,64 @@ fun GlassStyle.tinted(accent: Color, strength: Float = 0.16f): GlassStyle = copy
     rimShade = lerp(rimShade, accent, 0.40f),
 )
 
+// —— 立体感基元（视觉改造 v3：把"扁平半透明"升级为"浮起的实体卡"）——
+//
+// 三件套，组合出体积感，全 app 卡片/面板共用，换风格只改这里：
+//   1) layeredShadow —— 接触硬影 + 环境柔影双层投影（单层 shadow 太扁）
+//   2) Modifier.surfaceSheen —— 表面竖向微光（顶亮底暗，读作受光的微曲面）
+//   3) bevelRim —— 竖向渐变描边（顶高光、底背光，读作倒角斜面）
+// 暖棕调阴影而非纯黑：纯黑投在米色背景上会发灰发脏。
+
+/**
+ * 双层投影：大范围环境柔影（拉开与背景的距离）+ 紧贴接触硬影（咬合边缘）。
+ * elevation ≤ 0 时直接跳过。非 @Composable，颜色由调用方按主题传入。
+ */
+fun Modifier.layeredShadow(
+    shape: Shape,
+    elevation: Dp,
+    keyColor: Color,
+    ambientColor: Color,
+): Modifier {
+    if (elevation <= 0.dp) return this
+    return this
+        // 环境柔影：抬高、范围大、淡。
+        .shadow(elevation, shape, ambientColor = ambientColor, spotColor = ambientColor)
+        // 接触硬影：贴近、范围小、略实，让卡片"落"在背景上而非飘着。
+        .shadow(elevation * 0.42f, shape, ambientColor = keyColor, spotColor = keyColor)
+}
+
+/** 卡片层叠投影的暖色调（亮：暖棕；暗：黑），返回 (接触硬影色, 环境柔影色)。 */
+@Composable
+@ReadOnlyComposable
+fun cardShadowColors(): Pair<Color, Color> =
+    if (isSystemInDarkTheme()) {
+        Color.Black.copy(alpha = 0.50f) to Color.Black.copy(alpha = 0.32f)
+    } else {
+        Color(0xFF5A3A22).copy(alpha = 0.22f) to Color(0xFF5A3A22).copy(alpha = 0.13f)
+    }
+
+/**
+ * 表面微光：竖向渐变叠在底色之上 —— 顶端一抹高光、底端一抹阴影，
+ * 让平涂的卡面读出"受光的微曲面"。叠在 background(底色) 之后、border 之前。
+ */
+@Composable
+@ReadOnlyComposable
+fun surfaceSheenBrush(): Brush {
+    val dark = isSystemInDarkTheme()
+    return Brush.verticalGradient(
+        0f to (if (dark) Color.White.copy(alpha = 0.05f) else Color.White.copy(alpha = 0.45f)),
+        0.5f to Color.Transparent,
+        1f to (if (dark) Color.Black.copy(alpha = 0.12f) else Color(0xFF7D5B39).copy(alpha = 0.07f)),
+    )
+}
+
+/**
+ * 倒角描边：竖向渐变（顶高光 → 底背光），比四向均匀描边更有斜面立体感。
+ * rimLight/rimShade 取自 GlassStyle。
+ */
+fun bevelRimBrush(rimLight: Color, rimShade: Color): Brush =
+    Brush.verticalGradient(listOf(rimLight, rimShade))
+
 // —— 亮色玻璃 ——
 private val LightGlassRegular = GlassStyle(
     tint = Color(0xFFFFFAF2), tintAlpha = 0.55f, fallbackAlpha = 0.95f,
@@ -109,11 +167,11 @@ private val LightGlassAccent = GlassStyle(
     shadowElevation = 6.dp, shadowColor = Color(0xFFC5653D).copy(alpha = 0.38f),
 )
 private val LightGlassCard = GlassStyle(
-    tint = Color.White, tintAlpha = 0.45f, fallbackAlpha = 0.62f,
+    tint = Color.White, tintAlpha = 0.45f, fallbackAlpha = 0.74f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
-    rimLight = Color.White.copy(alpha = 0.72f),
-    rimShade = Color(0xFF7D5B39).copy(alpha = 0.16f),
-    shadowElevation = 1.5.dp, shadowColor = Color(0xFF5A3A22).copy(alpha = 0.12f),
+    rimLight = Color.White.copy(alpha = 0.90f),
+    rimShade = Color(0xFF7D5B39).copy(alpha = 0.22f),
+    shadowElevation = 7.dp, shadowColor = Color(0xFF5A3A22).copy(alpha = 0.18f),
 )
 
 // —— 暗色玻璃 ——
@@ -139,11 +197,11 @@ private val DarkGlassAccent = GlassStyle(
     shadowElevation = 6.dp, shadowColor = Color.Black.copy(alpha = 0.45f),
 )
 private val DarkGlassCard = GlassStyle(
-    tint = Color(0xFF2A2018), tintAlpha = 0.40f, fallbackAlpha = 0.60f,
+    tint = Color(0xFF2A2018), tintAlpha = 0.40f, fallbackAlpha = 0.72f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
-    rimLight = Color.White.copy(alpha = 0.10f),
-    rimShade = Color.Black.copy(alpha = 0.35f),
-    shadowElevation = 2.dp, shadowColor = Color.Black.copy(alpha = 0.30f),
+    rimLight = Color.White.copy(alpha = 0.16f),
+    rimShade = Color.Black.copy(alpha = 0.48f),
+    shadowElevation = 9.dp, shadowColor = Color.Black.copy(alpha = 0.46f),
 )
 
 /** 四档玻璃样式，按系统亮/暗自动切换（用法对齐 WandColors）。 */
@@ -280,16 +338,14 @@ fun Modifier.glassCard(
     var style = WandGlass.card
     if (rimTint != null) style = style.tinted(rimTint)
     val bg = tint ?: style.tint.copy(alpha = style.fallbackAlpha)
+    val (keyShadow, ambientShadow) = cardShadowColors()
+    val sheen = surfaceSheenBrush()
     return this
-        .shadow(
-            elevation = style.shadowElevation,
-            shape = shape,
-            ambientColor = style.shadowColor,
-            spotColor = style.shadowColor,
-        )
+        .layeredShadow(shape, style.shadowElevation, keyShadow, ambientShadow)
         .clip(shape)
         .background(bg)
-        .border(1.dp, Brush.linearGradient(listOf(style.rimLight, style.rimShade)), shape)
+        .background(sheen, shape)
+        .border(1.dp, bevelRimBrush(style.rimLight, style.rimShade), shape)
 }
 
 // —— 环境渐变背景 ——
