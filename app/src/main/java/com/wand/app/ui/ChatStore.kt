@@ -84,6 +84,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
 
     private val socket = WandSocket(api.baseUrl)
     private var started = false
+    private var queuePromotePending = false
 
     /** UI 主线程作用域；shutdown 时取消所有未完成请求。 */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -272,13 +273,20 @@ class ChatStore(val sessionId: String, val api: WandApi) {
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
-        // 乐观插入用户消息，等服务端推送修正。
+        val queueing = isStructured && isResponding && status == "running"
+        val previousMessages = messages
+        val previousQueue = queuedMessages
         if (isStructured) {
-            messages = messages + ConversationTurn(
-                role = "user",
-                content = listOf(com.wand.app.data.ContentBlock.Text(trimmed, null)),
-            )
-            isResponding = true
+            if (queueing) {
+                queuedMessages = queuedMessages + trimmed
+                toast = "已加入排队，等当前回复完成会自动发送。"
+            } else {
+                messages = messages + ConversationTurn(
+                    role = "user",
+                    content = listOf(com.wand.app.data.ContentBlock.Text(trimmed, null)),
+                )
+                isResponding = true
+            }
         }
         scope.launch {
             try {
@@ -289,7 +297,10 @@ class ChatStore(val sessionId: String, val api: WandApi) {
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "发送失败"
-                if (isStructured) isResponding = false
+                if (isStructured) {
+                    if (queueing) queuedMessages = previousQueue else messages = previousMessages
+                    if (!queueing) isResponding = false
+                }
             }
         }
     }
@@ -339,7 +350,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
 
     /** inFlight 判定：和 Web/iOS 保持一致 —— 结构化态在 running 且 inFlight。 */
     private val isInFlight: Boolean
-        get() = snapshot?.structuredState?.inFlight == true && status == "running"
+        get() = isStructured && isResponding && status == "running"
 
     /**
      * 把第 index 条排队消息「立即发送」。
@@ -347,20 +358,24 @@ class ChatStore(val sessionId: String, val api: WandApi) {
      * 失败回滚整段队列。对齐 Web queueBarPromoteIndex。
      */
     fun promoteQueued(index: Int) {
+        if (queuePromotePending) return
         val prev = queuedMessages
         if (index < 0 || index >= prev.size) return
         val picked = prev[index]
         val rest = prev.toMutableList().apply { removeAt(index) }
         val inFlight = isInFlight
+        queuePromotePending = true
         queuedMessages = rest
         toast = if (inFlight) "已请求中断当前回复，立即发送这条。" else "已立即发送这条消息。"
         scope.launch {
             try {
-                val snap = api.promoteQueued(sessionId, picked, inFlight)
+                val snap = api.promoteQueued(sessionId, index, picked)
                 apply(snap)
             } catch (e: Exception) {
                 queuedMessages = prev
                 toast = e.message ?: "立即发送失败"
+            } finally {
+                queuePromotePending = false
             }
         }
     }

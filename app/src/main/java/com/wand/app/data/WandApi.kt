@@ -142,25 +142,13 @@ class WandApi(baseUrl: String, val token: String?) {
 
     // MARK: - 排队消息（仅结构化会话）
 
-    /**
-     * 立刻发送第 index 条排队消息（前端已剥离这条）。
-     * inFlight 时带 interrupt+preserveQueue（中断当前回复，保留其余队列）；
-     * 否则当普通新消息发出。对齐 Web 端 queueBarPromoteIndex。
-     */
-    suspend fun promoteQueued(
-        id: String,
-        text: String,
-        inFlight: Boolean,
-    ): SessionSnapshot {
+    /** 由服务端按 index 摘掉队列项并立即发送，避免客户端与自动 flush 重复发送。 */
+    suspend fun promoteQueued(id: String, index: Int, expectedText: String): SessionSnapshot {
         val body = JSONObject()
-            .put("input", text)
+            .put("expectedText", expectedText)
             .put("idempotencyKey", java.util.UUID.randomUUID().toString())
-        if (inFlight) {
-            body.put("interrupt", true)
-            body.put("preserveQueue", true)
-        }
         return SessionSnapshot.parse(
-            requestObject("POST", "/api/structured-sessions/$id/messages", body)
+            requestObject("POST", "/api/structured-sessions/$id/queued/$index/promote", body)
         )
     }
 

@@ -80,7 +80,6 @@ import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
-import com.wand.app.ui.components.StatusBadge
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
@@ -980,10 +979,8 @@ private fun SwipeRevealRow(
 }
 
 /**
- * 单条会话卡片：左 provider 头像（浮起、叠状态点）+ 右内容列。
- * 内容列层级：标题（16sp SemiBold）→ 元信息行（runner 类型胶囊 + 活跃态 StatusBadge + 相对时间）
- * → 工作目录路径独占一行（弱化等宽、中段省略）。
- * 抛弃旧 2×2 Grid 的 46dp 占位列对齐，改为头像左、内容列右的清爽布局。
+ * 单条会话卡片：左侧身份列（provider logo + 会话类型），右侧内容列（标题 + 路径/运行时长）。
+ * 实时状态只由 logo 右下角圆点表达，避免状态徽章与状态点重复抢占视觉空间。
  * 多选模式时行首加 ○/✓ 指示。
  */
 @Composable
@@ -998,12 +995,12 @@ private fun SessionCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         selected = selecting && selected,
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
         ) {
             if (selecting) {
                 Icon(
@@ -1013,10 +1010,19 @@ private fun SessionCard(
                     modifier = Modifier.size(22.dp),
                 )
             }
-            ProviderMark(session = session, status = status)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ProviderMark(session = session, status = status)
+                MetaChip(
+                    text = if (session.isStructured) "聊天" else "终端",
+                    icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
+                )
+            }
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
                     session.displayTitle,
@@ -1026,33 +1032,42 @@ private fun SessionCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // 元信息行：runner 类型 + 仅在「需关注」态下补一枚 StatusBadge（运行/思考/等待授权…）+ 相对时间。
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    MetaChip(
-                        text = if (session.isStructured) "聊天" else "终端",
-                        icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
-                    )
-                    if (statusDeservesBadge(status)) {
-                        StatusBadge(status)
-                    }
-                    val relative = relativeTimeLabel(session.startedAt)
-                    if (relative.isNotEmpty()) {
-                        MetaChip(text = relative, icon = WandIcons.clock)
-                    }
-                }
-                val cwd = session.cwd
-                if (!cwd.isNullOrEmpty()) {
+                    val cwd = session.cwd.orEmpty()
                     Text(
-                        middleTruncatePath(cwd),
+                        if (cwd.isEmpty()) "未设置工作目录" else middleTruncatePath(cwd, 44),
+                        modifier = Modifier.weight(1f),
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         color = WandColors.textMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    val duration = sessionDurationLabel(session)
+                    if (duration.isNotEmpty()) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                WandIcons.clock,
+                                contentDescription = null,
+                                tint = WandColors.textMuted,
+                                modifier = Modifier.size(11.dp),
+                            )
+                            Text(
+                                duration,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = WandColors.textMuted,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1061,8 +1076,7 @@ private fun SessionCard(
 
 /**
  * 左侧助手标识：品牌渐变圆角方块 + brand logo，右下角叠加实时状态点（对齐 iOS providerMark）。
- * 视觉改造：48dp 头像加双层柔影「浮」在卡面之上，叠表面竖向微光 + 倒角描边读出体积，
- * 状态点用更厚的卡色外环 + 描边，确保在任何卡色上都干净清晰。
+ * 44dp 头像放在不裁切的外层容器中，状态点轻贴右下角；柔和半透明外环避免切出醒目的白色缺口。
  */
 @Composable
 private fun ProviderMark(session: SessionSnapshot, status: String) {
@@ -1073,37 +1087,36 @@ private fun ProviderMark(session: SessionSnapshot, status: String) {
     val shape = RoundedCornerShape(14.dp)
     val (keyShadow, ambientShadow) = cardShadowColors()
 
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .layeredShadow(shape, 3.dp, keyShadow, ambientShadow)
-            .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(tint.copy(alpha = 0.26f), tint.copy(alpha = 0.10f)),
-                ),
+    Box(modifier = Modifier.size(48.dp)) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .size(44.dp)
+                .layeredShadow(shape, 3.dp, keyShadow, ambientShadow)
+                .clip(shape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(tint.copy(alpha = 0.18f), tint.copy(alpha = 0.07f)),
+                    ),
+                )
+                .background(surfaceSheenBrush(), shape)
+                .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.24f), tint.copy(alpha = 0.08f)), shape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = "$label，${session.displayTitle}",
+                tint = tint.copy(alpha = 0.88f),
+                modifier = Modifier.size(20.dp),
             )
-            // 表面微光：顶亮底暗，让头像读作受光的微曲面而非平涂方块。
-            .background(surfaceSheenBrush(), shape)
-            .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.35f), tint.copy(alpha = 0.12f)), shape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = "$label，${session.displayTitle}",
-            tint = tint,
-            modifier = Modifier.size(23.dp),
-        )
-        // 状态点徽标：卡色实心外环 + 细描边，从头像右下「咬」出来，与背后头像清晰分离。
+        }
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = 3.dp, y = 3.dp)
-                .size(15.dp)
+                .size(12.dp)
                 .clip(CircleShape)
-                .background(WandColors.surface)
-                .border(1.dp, WandColors.border, CircleShape)
-                .padding(3.dp),
+                .background(WandColors.surface.copy(alpha = 0.82f))
+                .padding(2.dp),
             contentAlignment = Alignment.Center,
         ) {
             StatusDot(status, modifier = Modifier.fillMaxSize())
@@ -1124,12 +1137,12 @@ private fun MetaChip(
         modifier = Modifier
             .clip(WandShapes.full)
             .background(tint.copy(alpha = 0.10f))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .padding(horizontal = 7.dp, vertical = 2.dp),
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
         Text(
             text,
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
             color = tint,
             maxLines = 1,
@@ -1147,14 +1160,20 @@ private fun derivedStatus(session: SessionSnapshot): String = when {
     else -> session.status ?: "idle"
 }
 
-/**
- * 元信息行是否值得额外摆一枚状态徽章：仅「活跃 / 需关注」态（运行 / 思考 / 等待 / 重连 / 失败）
- * 才补 StatusBadge —— 头像角标已经表达了状态，空闲 / 已退出 / 已停止等静止态不再重复占位。
- */
-private fun statusDeservesBadge(status: String): Boolean = when (status.trim().lowercase()) {
-    "running", "thinking", "waiting-input", "waiting_input",
-    "permission", "reconnecting", "failed" -> true
-    else -> false
+/** 会话从启动到当前（或结束）的持续时间。列表每 10 秒刷新，运行态会自然更新。 */
+private fun sessionDurationLabel(session: SessionSnapshot): String {
+    val started = try {
+        session.startedAt?.let(Instant::parse)?.toEpochMilli()
+    } catch (_: Exception) {
+        null
+    } ?: return ""
+    val ended = try {
+        session.endedAt?.let(Instant::parse)?.toEpochMilli()
+    } catch (_: Exception) {
+        null
+    }
+    val seconds = ((ended ?: System.currentTimeMillis()) - started).coerceAtLeast(0L) / 1000L
+    return DateUtils.formatElapsedTime(seconds)
 }
 
 /**
