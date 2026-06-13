@@ -41,6 +41,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +56,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -73,8 +80,15 @@ import com.wand.app.ui.components.StatusBadge
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.glassBackdropSource
+import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.rememberGlassBackdrop
+import kotlin.math.abs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -188,10 +202,14 @@ fun SessionListScreen(
         state.load(silent = true)
     }
 
+    // 液态玻璃：列表是 backdrop 捕获源，顶栏/多选栏悬浮其上采样模糊。
+    val glassBackdrop = rememberGlassBackdrop()
+    val barGlass = WandGlass.regular.copy(refractionHeight = 0.dp)
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
+                modifier = Modifier.glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass),
                 title = {
                     if (isSelecting) {
                         Text(
@@ -211,7 +229,8 @@ fun SessionListScreen(
                                         colors = SegmentedButtonDefaults.colors(
                                             activeContainerColor = WandColors.brandSoft,
                                             activeContentColor = WandColors.brand,
-                                            inactiveContainerColor = WandColors.surface,
+                                            // 透明非选中底：分段开关嵌在玻璃顶栏里，让玻璃自己透出来。
+                                            inactiveContainerColor = Color.Transparent,
                                             inactiveContentColor = WandColors.textSecondary,
                                         ),
                                         icon = {},
@@ -302,13 +321,15 @@ fun SessionListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                 ),
             )
         },
         bottomBar = {
             if (isSelecting) {
                 SelectionBar(
+                    backdrop = glassBackdrop,
                     selectedCount = selectedIds.size,
                     totalCount = state.visibleSessions.size,
                     onToggleAll = {
@@ -333,20 +354,29 @@ fun SessionListScreen(
             }
         },
     ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+        // 捕获层：环境渐变背景 + 列表，整体作为玻璃顶栏/多选栏的采样源。
+        // 全幅布局，innerPadding 移到各 LazyColumn 的 contentPadding —— 卡片从玻璃栏下滚过。
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .glassBackdropSource(glassBackdrop),
+        ) {
+            AmbientBackground(Modifier.fillMaxSize())
             when {
                 state.loading && state.sessions.isEmpty() && state.historySessions.isEmpty() -> {
-                    LoadingState("正在加载会话…")
+                    LoadingState("正在加载会话…", Modifier.padding(padding))
                 }
                 state.loadError != null && state.sessions.isEmpty() &&
                     state.historySessions.isEmpty() -> {
                     ErrorState(
                         message = state.loadError ?: "加载失败",
                         onRetry = { scope.launch { state.load() } },
+                        modifier = Modifier.padding(padding),
                     )
                 }
                 listScope == "history" -> HistoryList(
                     state = state,
+                    padding = padding,
                     refreshing = refreshing,
                     actionInProgress = historyActionInProgress,
                     onRefresh = {
@@ -387,11 +417,15 @@ fun SessionListScreen(
                         subtitle = "新建一个会话，开始与 AI 协作",
                         actionText = "创建第一个会话",
                         onAction = onNewSession,
+                        modifier = Modifier.padding(padding),
                     )
                 }
                 else -> {
+                    val pullState = rememberPullToRefreshState()
+                    val direction = LocalLayoutDirection.current
                     PullToRefreshBox(
                         isRefreshing = refreshing,
+                        state = pullState,
                         onRefresh = {
                             scope.launch {
                                 refreshing = true
@@ -399,14 +433,24 @@ fun SessionListScreen(
                                 refreshing = false
                             }
                         },
+                        // 自定义指示器：列表全幅垫到玻璃顶栏下后，spinner 要从顶栏下方探出。
+                        indicator = {
+                            PullToRefreshDefaults.Indicator(
+                                state = pullState,
+                                isRefreshing = refreshing,
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(top = padding.calculateTopPadding()),
+                            )
+                        },
                     ) {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(
-                                start = 16.dp,
-                                end = 16.dp,
-                                top = 8.dp,
-                                bottom = 16.dp,
+                                start = 16.dp + padding.calculateStartPadding(direction),
+                                end = 16.dp + padding.calculateEndPadding(direction),
+                                top = 8.dp + padding.calculateTopPadding(),
+                                bottom = 16.dp + padding.calculateBottomPadding(),
                             ),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
@@ -556,6 +600,7 @@ private fun nearestRowId(rowBounds: Map<String, Rect>, pointerY: Float): String?
 /** 多选底部工具栏：[全选] [删除 N] [完成]（对齐 iOS selectionBar）。 */
 @Composable
 private fun SelectionBar(
+    backdrop: GlassBackdrop,
     selectedCount: Int,
     totalCount: Int,
     onToggleAll: () -> Unit,
@@ -565,7 +610,11 @@ private fun SelectionBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(WandColors.surface)
+            .glassSurface(
+                backdrop,
+                RoundedCornerShape(0.dp),
+                WandGlass.regular.copy(refractionHeight = 0.dp),
+            )
             .navigationBarsPadding(),
     ) {
         HorizontalDivider(thickness = 1.dp, color = WandColors.border)
@@ -618,9 +667,11 @@ private fun SelectionBar(
 
 // MARK: - 历史会话列表
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HistoryList(
     state: SessionListState,
+    padding: PaddingValues,
     refreshing: Boolean,
     actionInProgress: Boolean,
     onRefresh: () -> Unit,
@@ -633,14 +684,34 @@ private fun HistoryList(
             icon = WandIcons.history,
             title = "没有历史会话",
             subtitle = "Claude 和 Codex 的本地历史会话会显示在这里",
+            modifier = Modifier.padding(padding),
         )
         return
     }
-    @OptIn(ExperimentalMaterial3Api::class)
-    PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh) {
+    val pullState = rememberPullToRefreshState()
+    val direction = LocalLayoutDirection.current
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        state = pullState,
+        onRefresh = onRefresh,
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pullState,
+                isRefreshing = refreshing,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = padding.calculateTopPadding()),
+            )
+        },
+    ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp + padding.calculateStartPadding(direction),
+                end = 16.dp + padding.calculateEndPadding(direction),
+                top = 8.dp + padding.calculateTopPadding(),
+                bottom = 16.dp + padding.calculateBottomPadding(),
+            ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(visible, key = { it.id }) { history ->
@@ -794,19 +865,24 @@ private fun SwipeDeleteRow(
         modifier = modifier,
         enableDismissFromStartToEnd = false,
         backgroundContent = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(WandShapes.md)
-                    .background(WandColors.danger),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Icon(
-                    WandIcons.delete,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onError,
-                    modifier = Modifier.padding(end = 20.dp),
-                )
+            // 卡片玻璃化后是半透明的：静止时红底会透出来，
+            // 只有行真正位移时才绘制删除背景。
+            val offset = runCatching { dismissState.requireOffset() }.getOrDefault(0f)
+            if (abs(offset) > 1f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(WandShapes.md)
+                        .background(WandColors.danger),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Icon(
+                        WandIcons.delete,
+                        contentDescription = "删除",
+                        tint = MaterialTheme.colorScheme.onError,
+                        modifier = Modifier.padding(end = 20.dp),
+                    )
+                }
             }
         },
     ) {
