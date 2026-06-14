@@ -595,6 +595,7 @@ private fun MagneticDock(
     val marginPx = with(density) { 8.dp.toPx() }
     val pickupRPx = with(density) { 58.dp.toPx() }
     val gapPx = with(density) { 5.dp.toPx() }
+    val stackStepPx = with(density) { 24.dp.toPx() }
     val clusterPadPx = with(density) { 7.dp.toPx() }
     val defaultChipWPx = with(density) { 86.dp.toPx() }
     val defaultChipHPx = with(density) { 38.dp.toPx() }
@@ -665,6 +666,7 @@ private fun MagneticDock(
                     allIds = allIds,
                     pickupRPx = pickupRPx,
                     gapPx = gapPx,
+                    stackStepPx = stackStepPx,
                     clusterPadPx = clusterPadPx,
                     cw = ::cw,
                     chipH = ::chipH,
@@ -817,6 +819,7 @@ private fun Modifier.pointerInputDock(
     allIds: List<String>,
     pickupRPx: Float,
     gapPx: Float,
+    stackStepPx: Float,
     clusterPadPx: Float,
     cw: (String) -> Float,
     chipH: () -> Float,
@@ -871,15 +874,16 @@ private fun Modifier.pointerInputDock(
                 }
             }
 
-            // 队伍按 Commit → Tag → Push → Sub 排成一行，居中跟随指尖。
+            // 拖动中的队伍层叠显示；标签无需完整可读，露出的前缘足以表示已吸附。
             val ids = allIds.filter { it in members }
-            val total = ids.map { cw(it) }.sum() + gapPx * (ids.size - 1).coerceAtLeast(0)
+            val widest = ids.maxOfOrNull { cw(it) } ?: 0f
+            val total = widest + stackStepPx * (ids.size - 1).coerceAtLeast(0)
             val fh = size.height.toFloat()
             val y = (pos.y - h / 2f).coerceIn(2f, (fh - h - 2f).coerceAtLeast(2f))
             var x = pos.x - total / 2f
             for (id in ids) {
                 snapTo(id, Offset(x, y))
-                x += cw(id) + gapPx
+                x += stackStepPx
             }
             setClusterRect(
                 if (ids.size > 1) {
