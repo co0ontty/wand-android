@@ -56,6 +56,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -265,7 +267,9 @@ fun ChatScreen(
 
     // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
     // 列表末尾有独立锚点，确保长消息增长时滚到真正底部而非最后一项顶部。
-    val bottomIndex = displayItems.size + if (store.isResponding) 1 else 0
+    // 顶部「加载更早」哨兵占一项，跟随到底时要把它算进去。
+    val bottomIndex = (if (store.canLoadEarlier) 1 else 0) +
+        displayItems.size + if (store.isResponding) 1 else 0
     LaunchedEffect(store.messages, store.isResponding, store.loading) {
         if (!store.loading && followsLatest) {
             listState.scrollToItem(bottomIndex)
@@ -393,6 +397,30 @@ fun ChatScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
+                        // 窗口化：顶部还有更早消息时放一个哨兵项。滚到顶进入视口即自动拉
+                        // 下一页（prepend）。初始固定在底部，哨兵不在视口，不会误触发。
+                        if (store.canLoadEarlier) {
+                            item(key = "chat-load-earlier") {
+                                LaunchedEffect(Unit) { store.loadEarlier() }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = WandColors.brand,
+                                    )
+                                    Spacer(Modifier.size(8.dp))
+                                    Text(
+                                        "加载更早的消息…",
+                                        fontSize = 12.sp,
+                                        color = WandColors.textSecondary,
+                                    )
+                                }
+                            }
+                        }
                         // key = index：流式原地替换最后一条时 key 不变不触发动画，
                         // 只有真正新增的消息才走 animateItem 淡入。
                         itemsIndexed(displayItems, key = { index, _ -> index }) { _, item ->
@@ -591,41 +619,49 @@ private fun SessionLaunchPanel(store: ChatStore) {
     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 360.dp)
-                .glassCard(RoundedCornerShape(20.dp))
-                .padding(horizontal = 22.dp, vertical = 24.dp),
+                .glassCard(RoundedCornerShape(24.dp))
+                .padding(horizontal = 20.dp, vertical = 24.dp),
         ) {
             // 标记 + 标题 + 副标题收成一个更紧凑的头部单元（彼此间距小），
             // 与下方设置组之间留出更大的呼吸位，强化「品牌头 → 操作区」的层次。
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp),
             ) {
-                WandBrandMark(size = 52)
+                WandBrandMark(size = 56)
                 Text(
                     store.snapshot?.providerLabel ?: "结构化会话",
-                    fontSize = 18.sp,
+                    fontSize = 19.sp,
                     fontWeight = FontWeight.Bold,
                     color = WandColors.textPrimary,
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    "发送第一条消息前，可确认本次对话使用的模型和思考深度",
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
+                    // 手动折成两行均衡的短句：原文自动换行会把末字「度」单独甩到第二行，
+                    // 留出难看的孤字；定行后两行字数接近，居中读起来更整齐。
+                    "发送第一条消息前\n可确认本次对话的模型与思考深度",
+                    fontSize = 12.5.sp,
+                    lineHeight = 19.sp,
                     color = WandColors.textSecondary,
                     // 居中对齐：居中布局里多行文案不再左对齐拉出参差的右缘。
                     textAlign = TextAlign.Center,
                 )
             }
+            // 两行设置收进同一张「内嵌分组卡」（iOS inset grouped 风格）：统一淡底 + 描边，
+            // 中缝用细分隔线分开，比两个各自描边的方框更整洁。
             Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(WandColors.surfaceSoft)
+                    .border(1.dp, WandColors.border, RoundedCornerShape(16.dp)),
             ) {
                 LaunchSettingPicker(
+                    icon = WandIcons.tune,
                     label = "模型",
                     value = modelDisplayLabel(store, store.selectedModel),
                     options = buildList {
@@ -637,7 +673,14 @@ private fun SessionLaunchPanel(store: ChatStore) {
                     selected = store.selectedModel?.takeUnless { it == "default" },
                     onSelect = store::setModel,
                 )
+                HorizontalDivider(
+                    thickness = 1.dp,
+                    color = WandColors.border,
+                    // 缩进到图标右缘，分隔线像分组列表而非把整卡切成两半。
+                    modifier = Modifier.padding(start = 60.dp),
+                )
                 LaunchSettingPicker(
+                    icon = WandIcons.thinking,
                     label = "思考深度",
                     value = thinkingLabel(store.thinkingEffort),
                     options = THINKING_LEVELS.map { it.first to it.second },
@@ -652,6 +695,7 @@ private fun SessionLaunchPanel(store: ChatStore) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LaunchSettingPicker(
+    icon: ImageVector,
     label: String,
     value: String,
     options: List<Pair<String?, String>>,
@@ -659,28 +703,40 @@ private fun LaunchSettingPicker(
     onSelect: (String?) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(WandColors.surfaceSoft)
-                .border(1.dp, WandColors.border, RoundedCornerShape(12.dp))
                 .clickable { expanded = true }
-                .padding(horizontal = 13.dp, vertical = 11.dp),
+                .padding(horizontal = 14.dp, vertical = 13.dp),
         ) {
+            // 左侧品牌色图标片，让两行各有清晰的身份（模型 / 思考深度）。
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(WandColors.brandSoft),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = WandColors.brand,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     label,
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textMuted,
                 )
                 Text(
                     value,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = WandColors.textPrimary,
                     maxLines = 1,
@@ -688,7 +744,7 @@ private fun LaunchSettingPicker(
                 )
             }
             Icon(
-                WandIcons.expand,
+                WandIcons.chevronRight,
                 contentDescription = "选择$label",
                 tint = WandColors.textMuted,
                 modifier = Modifier.size(18.dp),

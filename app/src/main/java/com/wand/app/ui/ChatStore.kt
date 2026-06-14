@@ -82,6 +82,17 @@ class ChatStore(val sessionId: String, val api: WandApi) {
     var askUserSelections by mutableStateOf<Map<String, AskUserSelectionState>>(emptyMap())
         private set
 
+    // 消息窗口化：messages 是完整历史的「后缀」，loadedOffset = messages[0] 的绝对下标，
+    // messageTotal = 完整 turn 数。loadedOffset > 0 表示顶部还有更早的可加载。
+    var loadedOffset by mutableStateOf(0)
+        private set
+    var messageTotal by mutableStateOf(0)
+        private set
+    var loadingEarlier by mutableStateOf(false)
+        private set
+    val canLoadEarlier: Boolean get() = loadedOffset > 0
+    private val earlierPageSize = 40
+
     private val socket = WandSocket(api.baseUrl)
     private var started = false
     private var queuePromotePending = false
@@ -123,9 +134,38 @@ class ChatStore(val sessionId: String, val api: WandApi) {
 
     // MARK: - 推送合流
 
+    /**
+     * 应用一份「窗口化」快照消息（init / 全量 output / ended / REST）。约束：
+     *   - 绝不用「空」覆盖「非空」（停止/重连/丢帧时服务端可能回推空 messages）。
+     *   - 不丢弃用户已翻页加载的更早消息：快照只含尾部窗口时，把本地更早的前缀拼回去。
+     */
+    private fun applyWindowedMessages(incoming: List<ConversationTurn>?, offset: Int?, total: Int?) {
+        if (incoming == null) return
+        val snapOffset = offset ?: 0
+        val snapTotal = total ?: maxOf(snapOffset + incoming.size, incoming.size)
+        if (incoming.isEmpty() && messages.isNotEmpty() && snapTotal == 0) return
+
+        when {
+            messages.isEmpty() -> {
+                messages = incoming
+                loadedOffset = snapOffset
+            }
+            loadedOffset <= snapOffset -> {
+                // 本地持有的 [loadedOffset, snapOffset) 是更早、已加载的前缀，保留它。
+                val keep = (snapOffset - loadedOffset).coerceIn(0, messages.size)
+                messages = messages.subList(0, keep) + incoming
+            }
+            else -> {
+                messages = incoming
+                loadedOffset = snapOffset
+            }
+        }
+        messageTotal = maxOf(snapTotal, loadedOffset + messages.size)
+    }
+
     private fun apply(snap: SessionSnapshot) {
         snapshot = snap
-        snap.messages?.let { messages = it }
+        applyWindowedMessages(snap.messages, snap.messageOffset, snap.messageTotal)
         status = snap.status ?: status
         isResponding = snap.isResponding
         queuedMessages = snap.queuedMessages ?: emptyList()
@@ -151,7 +191,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
             "ended" -> {
                 val data = event.data
                 if (data != null) {
-                    data.messages?.let { messages = it }
+                    applyWindowedMessages(data.messages, data.messageOffset, data.messageTotal)
                     status = data.status ?: "exited"
                     isResponding = false
                     applyCommonFields(data)
@@ -166,7 +206,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
 
     /** init 的 data 就是一份完整 SessionSnapshot（以 WsData 超集形状承接）。 */
     private fun applyWsSnapshot(data: WsData) {
-        data.messages?.let { messages = it }
+        applyWindowedMessages(data.messages, data.messageOffset, data.messageTotal)
         status = data.status ?: status
         data.structuredState?.let { isResponding = it.inFlight ?: false }
         applyCommonFields(data)
@@ -181,16 +221,18 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         val full = data.messages
         val incoming = data.lastMessage
         if (full != null) {
-            // 全量赢
-            messages = full
+            // 全量赢（窗口合并：空不覆盖非空、保留已加载的更早前缀）。
+            applyWindowedMessages(full, data.messageOffset, data.messageTotal)
         } else if (incremental && incoming != null) {
+            // expected 是完整历史总数；本地绝对条数 = loadedOffset + messages.size。
             val expected = data.messageCount ?: 0
             val last = messages.lastOrNull()
             if (last != null && last.role == incoming.role) {
                 messages = messages.dropLast(1) + incoming
-            } else if (messages.size < expected || expected == 0) {
+            } else if (loadedOffset + messages.size < expected || expected == 0) {
                 messages = messages + incoming
             }
+            if (expected > 0) messageTotal = maxOf(messageTotal, expected)
         }
         data.isResponding?.let { isResponding = it }
         applyCommonFields(data)
@@ -470,6 +512,31 @@ class ChatStore(val sessionId: String, val api: WandApi) {
                 toast = "会话已恢复"
             } catch (e: Exception) {
                 toast = e.message ?: "恢复失败"
+            }
+        }
+    }
+
+    /** 加载更早的一页消息（滚动到顶时触发），prepend 到 messages 并前移 loadedOffset。 */
+    fun loadEarlier() {
+        if (!canLoadEarlier || loadingEarlier) return
+        val currentOffset = loadedOffset
+        val newOffset = maxOf(0, currentOffset - earlierPageSize)
+        val limit = currentOffset - newOffset
+        if (limit <= 0) return
+        loadingEarlier = true
+        scope.launch {
+            try {
+                val page = api.fetchMessages(sessionId, newOffset, limit)
+                // 仅当起点未被其它更新改动时才 prepend，避免错位重复。
+                if (loadedOffset == currentOffset) {
+                    messages = page.messages + messages
+                    loadedOffset = newOffset
+                    messageTotal = maxOf(messageTotal, page.total)
+                }
+            } catch (e: Exception) {
+                toast = e.message ?: "加载更早消息失败"
+            } finally {
+                loadingEarlier = false
             }
         }
     }

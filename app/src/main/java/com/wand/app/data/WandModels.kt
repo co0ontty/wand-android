@@ -265,6 +265,10 @@ data class SessionSnapshot(
     val thinkingEffort: String?,
     val claudeSessionId: String?,
     val messages: List<ConversationTurn>?,
+    /** 窗口化：messages 是完整历史的「最近一窗」，messageOffset = 首条绝对下标，
+     *  messageTotal = 完整 turn 数。更早的按需翻页（GET /api/sessions/:id/messages）。 */
+    val messageOffset: Int? = null,
+    val messageTotal: Int? = null,
     val queuedMessages: List<String>?,
     val structuredState: StructuredSessionState?,
     val pendingEscalation: EscalationRequest?,
@@ -312,6 +316,8 @@ data class SessionSnapshot(
             thinkingEffort = o.str("thinkingEffort"),
             claudeSessionId = o.str("claudeSessionId"),
             messages = ConversationTurn.parseList(o.arr("messages")),
+            messageOffset = o.int("messageOffset"),
+            messageTotal = o.int("messageTotal"),
             queuedMessages = o.arr("queuedMessages")?.let { arr ->
                 (0 until arr.length()).mapNotNull { arr.optString(it) }
             },
@@ -485,6 +491,8 @@ data class WsData(
     val thinkingEffort: String?,
     val claudeSessionId: String?,
     val messages: List<ConversationTurn>?,
+    val messageOffset: Int? = null,
+    val messageTotal: Int? = null,
     val queuedMessages: List<String>?,
     val structuredState: StructuredSessionState?,
     val pendingEscalation: EscalationRequest?,
@@ -509,7 +517,9 @@ data class WsData(
             startedAt = startedAt, endedAt = endedAt, archived = archived, summary = summary,
             currentTaskTitle = currentTaskTitle, selectedModel = selectedModel,
             thinkingEffort = thinkingEffort,
-            claudeSessionId = claudeSessionId, messages = null, queuedMessages = queuedMessages,
+            claudeSessionId = claudeSessionId, messages = null,
+            messageOffset = messageOffset, messageTotal = messageTotal,
+            queuedMessages = queuedMessages,
             structuredState = structuredState, pendingEscalation = pendingEscalation,
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
         )
@@ -535,6 +545,8 @@ data class WsData(
             thinkingEffort = o.str("thinkingEffort"),
             claudeSessionId = o.str("claudeSessionId"),
             messages = ConversationTurn.parseList(o.arr("messages")),
+            messageOffset = o.int("messageOffset"),
+            messageTotal = o.int("messageTotal"),
             queuedMessages = o.arr("queuedMessages")?.let { arr ->
                 (0 until arr.length()).mapNotNull { arr.optString(it) }
             },
@@ -554,6 +566,21 @@ data class WsData(
             isResponding = o.bool("isResponding"),
             permissionRequest = PermissionRequestInfo.parse(o.obj("permissionRequest")),
             taskTitle = o.str("title"),
+        )
+    }
+}
+
+/** GET /api/sessions/:id/messages 的分页响应：完整历史的 [offset, offset+limit) 段 + 总数。 */
+data class MessagesPage(
+    val messages: List<ConversationTurn>,
+    val offset: Int,
+    val total: Int,
+) {
+    companion object {
+        fun parse(o: JSONObject): MessagesPage = MessagesPage(
+            messages = ConversationTurn.parseList(o.arr("messages")) ?: emptyList(),
+            offset = o.int("offset") ?: 0,
+            total = o.int("total") ?: 0,
         )
     }
 }

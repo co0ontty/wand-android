@@ -21,10 +21,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,8 +43,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -222,13 +222,72 @@ fun SessionListScreen(
 
     // 液态玻璃：列表是 backdrop 捕获源，顶栏/多选栏悬浮其上采样模糊。
     val glassBackdrop = rememberGlassBackdrop()
-    val barGlass = WandGlass.regular.copy(refractionHeight = 0.dp)
+    // 顶栏玻璃去掉厚重投影：全幅栏的大软影只在底缘可见，糊成一道脏脏的「接缝」。
+    // 改用一道发丝分隔线收边，顶栏读作干净的玻璃表面而非浮在内容上的色块。
+    val barGlass = WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp)
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                modifier = Modifier.glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass),
-                title = {
+            // 紧凑自定义顶栏（替代 64dp 固定高的 Material3 TopAppBar）：玻璃底铺到状态栏下，
+            // 内容区压到 46dp，仅留下导航 / 范围切换 / 操作三栏，底缘以发丝线收口。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass),
+            ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .height(46.dp)
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "菜单",
+                            tint = WandColors.textSecondary,
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("设置") },
+                            leadingIcon = {
+                                Icon(
+                                    WandIcons.settings,
+                                    contentDescription = null,
+                                    tint = WandColors.textSecondary,
+                                )
+                            },
+                            onClick = { menuOpen = false; onOpenSettings() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("打开网页版") },
+                            leadingIcon = {
+                                Icon(
+                                    WandIcons.web,
+                                    contentDescription = null,
+                                    tint = WandColors.textSecondary,
+                                )
+                            },
+                            onClick = { menuOpen = false; onOpenWeb() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("切换服务器") },
+                            leadingIcon = {
+                                Icon(
+                                    WandIcons.swapServer,
+                                    contentDescription = null,
+                                    tint = WandColors.textSecondary,
+                                )
+                            },
+                            onClick = { menuOpen = false; onSwitchServer() },
+                        )
+                    }
+                }
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     if (isSelecting) {
                         Text(
                             "已选择 ${selectedIds.size} 项",
@@ -242,91 +301,41 @@ fun SessionListScreen(
                             onSelect = { listScope = it },
                         )
                     }
-                },
-                navigationIcon = {
-                    Box {
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(
-                                Icons.Default.MoreVert,
-                                contentDescription = "菜单",
-                                tint = WandColors.textSecondary,
-                            )
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("设置") },
-                                leadingIcon = {
-                                    Icon(
-                                        WandIcons.settings,
-                                        contentDescription = null,
-                                        tint = WandColors.textSecondary,
-                                    )
-                                },
-                                onClick = { menuOpen = false; onOpenSettings() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("打开网页版") },
-                                leadingIcon = {
-                                    Icon(
-                                        WandIcons.web,
-                                        contentDescription = null,
-                                        tint = WandColors.textSecondary,
-                                    )
-                                },
-                                onClick = { menuOpen = false; onOpenWeb() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("切换服务器") },
-                                leadingIcon = {
-                                    Icon(
-                                        WandIcons.swapServer,
-                                        contentDescription = null,
-                                        tint = WandColors.textSecondary,
-                                    )
-                                },
-                                onClick = { menuOpen = false; onSwitchServer() },
-                            )
-                        }
+                }
+                // 右上角按模式切换：多选 ✕ 退出 / 历史 🗑 清空 / 进行中 + 新建（对齐 iOS）。
+                when {
+                    isSelecting -> IconButton(onClick = { endSelection() }) {
+                        Icon(
+                            WandIcons.close,
+                            contentDescription = "退出多选",
+                            tint = WandColors.brand,
+                        )
                     }
-                },
-                actions = {
-                    // 右上角按模式切换：多选 ✕ 退出 / 历史 🗑 清空 / 进行中 + 新建（对齐 iOS）。
-                    when {
-                        isSelecting -> IconButton(onClick = { endSelection() }) {
-                            Icon(
-                                WandIcons.close,
-                                contentDescription = "退出多选",
-                                tint = WandColors.brand,
-                            )
-                        }
-                        listScope == "history" -> IconButton(
-                            onClick = { showClearHistoryConfirmation = true },
-                            enabled = state.visibleHistorySessions.isNotEmpty(),
-                        ) {
-                            Icon(
-                                WandIcons.delete,
-                                contentDescription = "清空历史会话",
-                                tint = if (state.visibleHistorySessions.isEmpty()) {
-                                    WandColors.textMuted
-                                } else {
-                                    WandColors.danger
-                                },
-                            )
-                        }
-                        else -> IconButton(onClick = onNewSession) {
-                            Icon(
-                                WandIcons.add,
-                                contentDescription = "新建会话",
-                                tint = WandColors.brand,
-                            )
-                        }
+                    listScope == "history" -> IconButton(
+                        onClick = { showClearHistoryConfirmation = true },
+                        enabled = state.visibleHistorySessions.isNotEmpty(),
+                    ) {
+                        Icon(
+                            WandIcons.delete,
+                            contentDescription = "清空历史会话",
+                            tint = if (state.visibleHistorySessions.isEmpty()) {
+                                WandColors.textMuted
+                            } else {
+                                WandColors.danger
+                            },
+                        )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                ),
-            )
+                    else -> IconButton(onClick = onNewSession) {
+                        Icon(
+                            WandIcons.add,
+                            contentDescription = "新建会话",
+                            tint = WandColors.brand,
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+            }
         },
         bottomBar = {
             if (isSelecting) {
@@ -642,12 +651,12 @@ private fun ScopeToggle(
                         } else Modifier
                     )
                     .clickable { onSelect(value) }
-                    .padding(horizontal = 18.dp, vertical = 7.dp),
+                    .padding(horizontal = 15.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     label,
-                    fontSize = 13.sp,
+                    fontSize = 12.5.sp,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                     color = fg,
                     maxLines = 1,

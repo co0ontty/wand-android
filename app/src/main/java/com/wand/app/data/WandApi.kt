@@ -125,6 +125,10 @@ class WandApi(baseUrl: String, val token: String?) {
     suspend fun getSession(id: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("GET", "/api/sessions/$id?format=chat"))
 
+    /** 历史消息分页：返回完整历史的 [offset, offset+limit) 段 + 总数。 */
+    suspend fun fetchMessages(id: String, offset: Int, limit: Int): MessagesPage =
+        MessagesPage.parse(requestObject("GET", "/api/sessions/$id/messages?offset=$offset&limit=$limit"))
+
     suspend fun sendInput(
         id: String,
         input: String,

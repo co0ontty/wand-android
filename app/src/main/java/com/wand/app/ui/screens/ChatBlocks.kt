@@ -2473,8 +2473,15 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
     val completed = todos.count { it.status == "completed" }
     // 1-indexed「正在干第 N 个」：completed+1 封顶（对齐 Web currentStep）。
     val currentStep = minOf(completed + 1, todos.size)
-    val activeTask = todos.firstOrNull { it.status == "in_progress" }
-        ?.let { it.activeForm?.ifEmpty { null } ?: it.content } ?: ""
+    // 右侧当前步骤描述：优先取首个 in_progress 的 activeForm / content；
+    // 没有进行中项时（模型已标完上一步、还没标下一步 in_progress），回退到首个
+    // pending 任务的描述；都没有再兜底「准备中…」——保证右侧空白区始终有内容
+    // （对齐 Web / macOS fallback）。
+    fun TodoEntry.label(): String? =
+        (activeForm?.ifEmpty { null } ?: content).ifEmpty { null }
+    val activeTask = todos.firstOrNull { it.status == "in_progress" }?.label()
+        ?: todos.firstOrNull { it.status == "pending" }?.label()
+        ?: "准备中…"
     var expanded by remember { mutableStateOf(false) }
     val ringColor = WandColors.brand
     val trackColor = WandColors.border
@@ -2528,18 +2535,14 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
                 fontFamily = FontFamily.Monospace,
                 color = WandColors.brand,
             )
-            if (activeTask.isNotEmpty()) {
-                Text(
-                    activeTask,
-                    fontSize = 12.sp,
-                    color = WandColors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                Spacer(modifier = Modifier.weight(1f))
-            }
+            Text(
+                activeTask,
+                fontSize = 12.sp,
+                color = WandColors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
             Icon(
                 WandIcons.expand,
                 contentDescription = if (expanded) "收起" else "展开",
