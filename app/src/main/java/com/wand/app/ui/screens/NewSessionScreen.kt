@@ -836,7 +836,12 @@ fun DirectoryBrowserScreen(
         modifier = Modifier.ambientBackground(),
         topBar = {
             TopAppBar(
-                modifier = Modifier.glassSurface(null, RoundedCornerShape(0.dp), secondaryBarGlass),
+                modifier = Modifier.glassSurface(
+                    null,
+                    RoundedCornerShape(0.dp),
+                    secondaryBarGlass,
+                    edgeToEdge = true,
+                ),
                 title = { Text("选择目录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     TextButton(onClick = onCancel) {

@@ -296,7 +296,12 @@ fun ChatScreen(
             // 右侧是 Git 变更统计 + 会话设置菜单（仅结构化会话）。
             // 透明容器 + 玻璃表面：消息流从栏下滚过时可见模糊层次。
             CenterAlignedTopAppBar(
-                modifier = Modifier.glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass),
+                modifier = Modifier.glassSurface(
+                    glassBackdrop,
+                    RoundedCornerShape(0.dp),
+                    barGlass,
+                    edgeToEdge = true,
+                ),
                 title = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(

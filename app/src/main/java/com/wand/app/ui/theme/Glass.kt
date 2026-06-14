@@ -271,11 +271,15 @@ fun Modifier.glassBackdropSource(backdrop: GlassBackdrop): Modifier {
  *   的弹层），永远走降级半透明路径。
  * @param shape 必须是圆角矩形族（lens 折射只支持 CornerBasedShape；
  *   矩形栏请用 RoundedCornerShape(0.dp) 而不是 RectangleShape）。
+ * @param edgeToEdge 全幅贴边栏（顶栏 / 底栏，shape 为 RoundedCornerShape(0.dp)）置 true：
+ *   去掉四周的玻璃高光 / rim 描边 —— 这道亮边在贴着屏幕边沿的栏上会描出一条难看的白边。
+ *   栏与内容的分隔交给软阴影或发丝分隔线，不靠 rim。
  */
 fun Modifier.glassSurface(
     backdrop: GlassBackdrop?,
     shape: Shape,
     style: GlassStyle,
+    edgeToEdge: Boolean = false,
 ): Modifier {
     val layer = backdrop?.layer
     return if (layer != null && glassBlurSupported) {
@@ -289,7 +293,8 @@ fun Modifier.glassSurface(
                     lens(style.refractionHeight.toPx(), style.refractionAmount.toPx())
                 }
             },
-            highlight = { Highlight.Default },
+            // 贴边栏不画边缘高光：高光沿屏幕边沿会糊出一道白边。
+            highlight = if (edgeToEdge) null else ({ Highlight.Default }),
             shadow = if (style.shadowElevation > 0.dp) {
                 { BackdropShadow(radius = style.shadowElevation * 2.5f, color = style.shadowColor) }
             } else null,
@@ -309,7 +314,15 @@ fun Modifier.glassSurface(
             )
             .clip(shape)
             .background(style.tint.copy(alpha = style.fallbackAlpha))
-            .border(1.dp, Brush.linearGradient(listOf(style.rimLight, style.rimShade)), shape)
+            // 降级路径同理：贴边栏跳过 rim 描边（白色 rimLight 贴边即白边）。
+            .then(
+                if (edgeToEdge) Modifier
+                else Modifier.border(
+                    1.dp,
+                    Brush.linearGradient(listOf(style.rimLight, style.rimShade)),
+                    shape,
+                )
+            )
     }
 }
 

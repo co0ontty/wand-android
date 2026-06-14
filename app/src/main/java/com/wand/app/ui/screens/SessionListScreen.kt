@@ -233,7 +233,7 @@ fun SessionListScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass),
+                    .glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass, edgeToEdge = true),
             ) {
             Row(
                 modifier = Modifier
@@ -689,6 +689,7 @@ private fun SelectionBar(
                 backdrop,
                 RoundedCornerShape(0.dp),
                 WandGlass.regular.copy(refractionHeight = 0.dp),
+                edgeToEdge = true,
             )
             .navigationBarsPadding(),
     ) {

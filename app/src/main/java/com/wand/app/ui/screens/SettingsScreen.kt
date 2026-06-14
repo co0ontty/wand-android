@@ -138,6 +138,7 @@ fun SettingsScreen(
                     glassBackdrop,
                     RoundedCornerShape(0.dp),
                     WandGlass.regular.copy(refractionHeight = 0.dp),
+                    edgeToEdge = true,
                 ),
                 title = {
                     Text(
