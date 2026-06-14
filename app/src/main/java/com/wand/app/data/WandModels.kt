@@ -623,12 +623,16 @@ data class RecentPath(
 data class ServerConfigInfo(
     val defaultCwd: String?,
     val defaultMode: String?,
+    val defaultModel: String?,
+    val defaultThinkingEffort: String?,
     val currentVersion: String?,
 ) {
     companion object {
         fun parse(o: JSONObject): ServerConfigInfo = ServerConfigInfo(
             defaultCwd = o.str("defaultCwd"),
             defaultMode = o.str("defaultMode"),
+            defaultModel = o.str("defaultModel"),
+            defaultThinkingEffort = o.str("defaultThinkingEffort"),
             currentVersion = o.str("currentVersion"),
         )
     }

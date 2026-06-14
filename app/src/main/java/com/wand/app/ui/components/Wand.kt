@@ -254,7 +254,7 @@ fun EmptyState(
     }
 }
 
-/** 区块标题：13sp SemiBold textSecondary，letterSpacing 0.5sp，上 20dp 下 8dp。 */
+/** 区块标题：13sp SemiBold textSecondary，letterSpacing 0.5sp，上 16dp 下 8dp。 */
 @Composable
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -263,7 +263,7 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
         fontWeight = FontWeight.SemiBold,
         color = WandColors.textSecondary,
         letterSpacing = 0.5.sp,
-        modifier = modifier.padding(top = 20.dp, bottom = 8.dp),
+        modifier = modifier.padding(top = 16.dp, bottom = 8.dp),
     )
 }
 

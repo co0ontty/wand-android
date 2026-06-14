@@ -128,12 +128,19 @@ fun cardShadowColors(): Pair<Color, Color> =
  */
 @Composable
 @ReadOnlyComposable
-fun surfaceSheenBrush(): Brush {
+fun surfaceSheenBrush(highlightScale: Float = 1f): Brush {
     val dark = isSystemInDarkTheme()
+    // 顶端高光收得很淡、只占上沿一小条（而非压满上半张卡）——之前亮色 0.45 的白
+    // 铺到卡片中部，在暖米底上糊成一团「白色阴影」。参考 iOS 材质：卡面基本平整，
+    // 仅留一丝受光感。
+    // highlightScale：受光高光按卡面「实心度」缩放 —— 半透明着色卡（如 info 弱底子
+    // 代理卡）没有实底可承光，满 alpha 的白会糊成一层「白色印子」浮在蓝底上，
+    // 故此处随底色不透明度衰减到 0，只有近实心的白卡才保留完整受光感。
+    val topWhite = (if (dark) 0.04f else 0.12f) * highlightScale.coerceIn(0f, 1f)
     return Brush.verticalGradient(
-        0f to (if (dark) Color.White.copy(alpha = 0.05f) else Color.White.copy(alpha = 0.45f)),
-        0.5f to Color.Transparent,
-        1f to (if (dark) Color.Black.copy(alpha = 0.12f) else Color(0xFF7D5B39).copy(alpha = 0.07f)),
+        0f to Color.White.copy(alpha = topWhite),
+        0.32f to Color.Transparent,
+        1f to (if (dark) Color.Black.copy(alpha = 0.12f) else Color(0xFF7D5B39).copy(alpha = 0.05f)),
     )
 }
 
@@ -169,7 +176,8 @@ private val LightGlassAccent = GlassStyle(
 private val LightGlassCard = GlassStyle(
     tint = Color.White, tintAlpha = 0.45f, fallbackAlpha = 0.74f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
-    rimLight = Color.White.copy(alpha = 0.90f),
+    // 顶沿白描边从 0.90 收到 0.72：配合更淡的 sheen，整卡不再「过白」。
+    rimLight = Color.White.copy(alpha = 0.72f),
     rimShade = Color(0xFF7D5B39).copy(alpha = 0.22f),
     shadowElevation = 7.dp, shadowColor = Color(0xFF5A3A22).copy(alpha = 0.18f),
 )
@@ -339,13 +347,17 @@ fun Modifier.glassCard(
     if (rimTint != null) style = style.tinted(rimTint)
     val bg = tint ?: style.tint.copy(alpha = style.fallbackAlpha)
     val (keyShadow, ambientShadow) = cardShadowColors()
-    val sheen = surfaceSheenBrush()
+    // 实心度：近实心白卡（默认底 ≈0.74）保留完整受光高光与白 rim；半透明着色卡
+    // （info/success 弱底 ≈0.12）把白高光、白 rim 一并衰减掉，避免「白色印子」浮在彩底上。
+    val solidity = ((bg.alpha - 0.2f) / 0.6f).coerceIn(0f, 1f)
+    val sheen = surfaceSheenBrush(highlightScale = solidity)
+    val rimLight = style.rimLight.copy(alpha = style.rimLight.alpha * solidity)
     return this
         .layeredShadow(shape, style.shadowElevation, keyShadow, ambientShadow)
         .clip(shape)
         .background(bg)
         .background(sheen, shape)
-        .border(1.dp, bevelRimBrush(style.rimLight, style.rimShade), shape)
+        .border(1.dp, bevelRimBrush(rimLight, style.rimShade), shape)
 }
 
 // —— 环境渐变背景 ——

@@ -75,6 +75,11 @@ import com.wand.app.data.arrayField
 import com.wand.app.data.str
 import com.wand.app.data.summaryText
 import com.wand.app.ui.AskUserSelectionState
+import com.wand.app.ui.LocalServerBaseUrl
+import com.wand.app.ui.WandAsyncImage
+import com.wand.app.ui.WandFileChip
+import com.wand.app.ui.WandImage
+import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.toolIcon
@@ -371,7 +376,9 @@ private fun SubagentPanel(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(WandColors.surface.copy(alpha = 0.72f))
+                    // 用暖中性页底做下沉内容井，而非纯白 surface —— 白底叠在半透明蓝卡上会
+                    // 在蓝头下方糊出一块「白色印子」，改用 bgPrimary 让内容区读作递进的暖色凹槽。
+                    .background(WandColors.bgPrimary.copy(alpha = 0.55f))
                     .padding(12.dp),
             ) {
                 content()
@@ -382,57 +389,79 @@ private fun SubagentPanel(
 
 @Composable
 private fun UserBubble(turn: ConversationTurn) {
-    val text = turn.content
+    val rawText = turn.content
         .filterIsInstance<ContentBlock.Text>()
         .joinToString("\n") { it.text }
+    // 剥离「[附件已上传，请查看以下文件:…]」前缀：图片渲缩略图、其余渲文件块，正文留在气泡里。
+    // 无前缀时 paths 为空、body 即原文，行为与旧版完全一致（对齐网页 renderUserText）。
+    val parsed = remember(rawText) { parseUserAttachmentText(rawText) }
+    val baseUrl = LocalServerBaseUrl.current
     val bubbleShape = RoundedCornerShape(
         topStart = WandShapes.radiusLg,
         topEnd = WandShapes.radiusLg,
         bottomEnd = WandShapes.radiusXs, // 右下小圆角"尾巴"
         bottomStart = WandShapes.radiusLg,
     )
-    Row(
+    Column(
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 44.dp),
-        horizontalArrangement = Arrangement.End,
     ) {
-        SelectionContainer {
-            // 玻璃质感气泡：品牌色纵向渐变（上浅下深）+ 顶缘受光 rim + 品牌色软阴影。
-            val brand = WandColors.brand
-            Text(
-                text,
-                fontSize = 15.sp,
-                lineHeight = 21.sp,
-                color = Color.White,
-                modifier = Modifier
-                    .shadow(
-                        elevation = 2.dp,
-                        shape = bubbleShape,
-                        ambientColor = brand.copy(alpha = 0.45f),
-                        spotColor = brand.copy(alpha = 0.45f),
-                    )
-                    .clip(bubbleShape)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                lerp(brand, Color.White, 0.10f),
-                                lerp(brand, Color.Black, 0.10f),
+        // 附件缩略图 / 文件块：右对齐贴在气泡上方（对齐网页 user-attachments 块在正文之上）。
+        if (parsed.paths.isNotEmpty() && baseUrl.isNotEmpty()) {
+            parsed.paths.forEach { path ->
+                if (WandImage.isImagePath(path)) {
+                    WandAsyncImage(path = path, baseUrl = baseUrl)
+                } else {
+                    WandFileChip(path = path)
+                }
+            }
+        }
+        if (parsed.body.isNotBlank()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                SelectionContainer {
+                    // 玻璃质感气泡：品牌色纵向渐变（上浅下深）+ 顶缘受光 rim + 品牌色软阴影。
+                    val brand = WandColors.brand
+                    Text(
+                        parsed.body,
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp,
+                        color = Color.White,
+                        modifier = Modifier
+                            .shadow(
+                                elevation = 2.dp,
+                                shape = bubbleShape,
+                                ambientColor = brand.copy(alpha = 0.45f),
+                                spotColor = brand.copy(alpha = 0.45f),
                             )
-                        )
-                    )
-                    .border(
-                        1.dp,
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.White.copy(alpha = 0.32f),
-                                Color.White.copy(alpha = 0.02f),
+                            .clip(bubbleShape)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        lerp(brand, Color.White, 0.10f),
+                                        lerp(brand, Color.Black, 0.10f),
+                                    )
+                                )
                             )
-                        ),
-                        bubbleShape,
+                            .border(
+                                1.dp,
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.White.copy(alpha = 0.32f),
+                                        Color.White.copy(alpha = 0.02f),
+                                    )
+                                ),
+                                bubbleShape,
+                            )
+                            .padding(horizontal = 13.dp, vertical = 8.dp),
                     )
-                    .padding(horizontal = 13.dp, vertical = 8.dp),
-            )
+                }
+            }
         }
     }
 }
@@ -498,7 +527,7 @@ private fun explorationToolsOnly(turn: ConversationTurn): List<ExplorationToolIt
     for (item in pairToolBlocks(turn.content)) {
         when {
             item is DisplayItem.Exploration -> tools += item.tools
-            item is DisplayItem.Tool && isExplorationTool(item.use.name) ->
+            item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use) ->
                 tools += ExplorationToolItem(item.use, item.result)
             else -> return null
         }
@@ -520,6 +549,17 @@ private fun isExplorationTool(name: String): Boolean {
 }
 
 /**
+ * 工具是否参与探索分组折叠。对齐网页 isGroupableToolBlock：
+ * 读图的 Read 单独成卡（缩略图常驻可见），不并入默认折叠的探索组，
+ * 否则 body 整体折叠会把内联缩略图一起藏掉。
+ */
+private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse): Boolean {
+    if (!isExplorationTool(use.name)) return false
+    if (use.name == "Read" && readImagePath(use.input) != null) return false
+    return true
+}
+
+/**
  * 连续读取、搜索、网页获取通常只是模型探索上下文，不需要逐张占满对话流。
  * 至少连续两次才合并，单次操作仍保留完整工具卡（对齐 iOS collapseConsecutiveExplorationTools）。
  */
@@ -537,7 +577,7 @@ private fun collapseConsecutiveExplorationTools(paired: List<DisplayItem>): List
     }
 
     for (item in paired) {
-        if (item is DisplayItem.Tool && isExplorationTool(item.use.name)) {
+        if (item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use)) {
             exploration.add(ExplorationToolItem(item.use, item.result))
         } else {
             flushExploration()
@@ -1233,6 +1273,19 @@ fun ToolCard(
                 }
             }
         }
+        // Read 读到图片：始终内联缩略图（对齐网页 inline-tool-image，不藏在展开区里），
+        // 点击放大。加载失败由 WandAsyncImage 自行隐藏。
+        if (use.name == "Read") {
+            val imgPath = readImagePath(use.input)
+            val baseUrl = LocalServerBaseUrl.current
+            if (imgPath != null && baseUrl.isNotEmpty()) {
+                WandAsyncImage(
+                    path = imgPath,
+                    baseUrl = baseUrl,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                )
+            }
+        }
         if (expanded && result != null) {
             HorizontalDivider(
                 thickness = 1.dp,
@@ -1245,6 +1298,12 @@ fun ToolCard(
             )
         }
     }
+}
+
+/** 从 Read 工具入参取图片路径（file_path / path），非图片返回 null（对齐网页 inline-tool-image 判定）。 */
+private fun readImagePath(input: JSONObject): String? {
+    val path = (input.str("file_path") ?: input.str("path"))?.takeIf { it.isNotEmpty() } ?: return null
+    return if (WandImage.isImagePath(path)) path else null
 }
 
 /** 工具卡左侧 34dp 状态图标框：运行中转圈，否则显示传入图标（对齐 iOS 头部 ZStack）。 */

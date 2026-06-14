@@ -289,10 +289,14 @@ class WandApi(baseUrl: String, val token: String?) {
         mode: String?,
         prompt: String?,
         provider: String = "claude",
+        model: String? = null,
+        thinkingEffort: String? = null,
     ): SessionSnapshot {
         val body = JSONObject().put("cwd", cwd).put("provider", provider)
         if (provider == "codex") body.put("runner", "codex-cli-exec")
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
+        if (!model.isNullOrEmpty()) body.put("model", model)
+        if (!thinkingEffort.isNullOrEmpty()) body.put("thinkingEffort", thinkingEffort)
         if (!prompt.isNullOrEmpty()) body.put("prompt", prompt)
         return SessionSnapshot.parse(requestObject("POST", "/api/structured-sessions", body))
     }
@@ -303,11 +307,28 @@ class WandApi(baseUrl: String, val token: String?) {
         mode: String?,
         initialInput: String?,
         provider: String = "claude",
+        model: String? = null,
+        thinkingEffort: String? = null,
     ): SessionSnapshot {
         val body = JSONObject().put("command", provider).put("provider", provider).put("cwd", cwd)
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
+        if (!model.isNullOrEmpty()) body.put("model", model)
+        if (!thinkingEffort.isNullOrEmpty()) body.put("thinkingEffort", thinkingEffort)
         if (!initialInput.isNullOrEmpty()) body.put("initialInput", initialInput)
         return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
+    }
+
+    /** 持久化「新建会话」默认项（对齐 iOS updateNewSessionDefaults → POST /api/settings/config）。 */
+    suspend fun updateNewSessionDefaults(
+        mode: String? = null,
+        model: String? = null,
+        thinkingEffort: String? = null,
+    ) {
+        val body = JSONObject()
+        if (mode != null) body.put("defaultMode", mode)
+        if (model != null) body.put("defaultModel", model)
+        if (thinkingEffort != null) body.put("defaultThinkingEffort", thinkingEffort)
+        requestData("POST", "/api/settings/config", body)
     }
 
     // MARK: - Git 快速提交

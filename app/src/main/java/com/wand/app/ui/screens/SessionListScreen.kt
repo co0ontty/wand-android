@@ -3,9 +3,13 @@ package com.wand.app.ui.screens
 import android.text.format.DateUtils
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -87,6 +92,7 @@ import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.bevelRimBrush
 import com.wand.app.ui.theme.cardShadowColors
@@ -824,7 +830,8 @@ private fun HistorySessionCard(
                             listOf(tint.copy(alpha = 0.26f), tint.copy(alpha = 0.10f)),
                         ),
                     )
-                    .background(surfaceSheenBrush(), shape)
+                    // 半透明彩色图标片：满白受光高光会在彩底上糊出白印，几乎抹掉只留彩色本身。
+                    .background(surfaceSheenBrush(highlightScale = 0.1f), shape)
                     .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.35f), tint.copy(alpha = 0.12f)), shape),
                 contentAlignment = Alignment.Center,
             ) {
@@ -906,27 +913,51 @@ private fun SwipeRevealRow(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val revealWidth = 84.dp
+    // 滑动行程：留出按钮宽度 + 两侧呼吸间距，让删除键像「浮起」的独立按钮而非贴边红块。
+    val buttonWidth = 64.dp
+    val gap = 10.dp
+    val revealWidth = buttonWidth + gap * 2
     val revealPx = with(density) { revealWidth.toPx() }
     val offsetX = remember { Animatable(0f) }
     val revealed = offsetX.value <= -revealPx + 1f
-    val closeReveal: () -> Unit = { scope.launch { offsetX.animateTo(0f) } }
+    val snapSpec = WandMotion.springSpec<Float>()
+    val closeReveal: () -> Unit = { scope.launch { offsetX.animateTo(0f, snapSpec) } }
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.9f else 1f,
+        animationSpec = WandMotion.springSpec(),
+        label = "deletePress",
+    )
 
     Box(modifier = modifier) {
-        // 揭示出的删除按钮：只在行有位移时绘制（玻璃卡片半透明，静止时红底会透出来）。
+        // 揭示出的删除按钮：右侧浮起的圆角红键，只在行有位移时绘制
+        // （玻璃卡片半透明，静止时红底会透出来）。随滑动进度淡入 + 轻微放大，避免硬切。
         if (offsetX.value < -1f) {
             Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clip(WandShapes.md),
+                modifier = Modifier.matchParentSize(),
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Box(
                     modifier = Modifier
+                        .padding(horizontal = gap, vertical = 4.dp)
                         .fillMaxHeight()
-                        .width(revealWidth)
+                        .width(buttonWidth)
+                        .graphicsLayer {
+                            val progress = (-offsetX.value / revealPx).coerceIn(0f, 1f)
+                            val enter = 0.82f + 0.18f * progress
+                            val s = enter * pressScale
+                            scaleX = s
+                            scaleY = s
+                            alpha = progress
+                        }
+                        .clip(WandShapes.md)
                         .background(WandColors.danger)
-                        .clickable {
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = LocalIndication.current,
+                        ) {
                             closeReveal()
                             onDelete()
                         },
@@ -934,17 +965,17 @@ private fun SwipeRevealRow(
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
                         Icon(
                             WandIcons.delete,
                             contentDescription = "删除",
                             tint = Color.White,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(22.dp),
                         )
                         Text(
                             "删除",
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
                         )
@@ -964,11 +995,11 @@ private fun SwipeRevealRow(
                         },
                         onDragEnd = {
                             val target = if (offsetX.value < -revealPx / 2) -revealPx else 0f
-                            scope.launch { offsetX.animateTo(target) }
+                            scope.launch { offsetX.animateTo(target, snapSpec) }
                         },
                         onDragCancel = {
                             val target = if (offsetX.value < -revealPx / 2) -revealPx else 0f
-                            scope.launch { offsetX.animateTo(target) }
+                            scope.launch { offsetX.animateTo(target, snapSpec) }
                         },
                     )
                 },
@@ -1099,7 +1130,8 @@ private fun ProviderMark(session: SessionSnapshot, status: String) {
                         listOf(tint.copy(alpha = 0.18f), tint.copy(alpha = 0.07f)),
                     ),
                 )
-                .background(surfaceSheenBrush(), shape)
+                // 半透明彩色图标片：底色比上者更淡，白受光高光全部抹掉，避免白印浮在彩底上。
+                .background(surfaceSheenBrush(highlightScale = 0f), shape)
                 .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.24f), tint.copy(alpha = 0.08f)), shape),
             contentAlignment = Alignment.Center,
         ) {

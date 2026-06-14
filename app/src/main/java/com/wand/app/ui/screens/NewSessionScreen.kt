@@ -1,16 +1,9 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,22 +21,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,18 +56,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.data.ModelInfo
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
-import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
@@ -80,20 +75,19 @@ import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
-import com.wand.app.ui.theme.ambientBackground
-import com.wand.app.ui.theme.glassCard
-import com.wand.app.ui.theme.glassSurface
-import com.wand.app.ui.theme.secondaryBarGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.ambientBackground
+import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.secondaryBarGlass
 import kotlinx.coroutines.launch
 
 /**
- * 新建会话 —— 选项与区块顺序对齐 Web 端「新对话」弹窗（renderSessionModal）：
- * Provider（Claude / Codex，品牌 logo 卡）→ 会话类型（结构化 / PTY）→ 模式
- * （托管 / 全权限 / 自动编辑 / 标准 / 原生，codex 锁定全权限）→ 工作目录
- * （最近路径 / 内置目录浏览器）；Android 额外保留「首条消息」快捷输入。
- * 视觉：区块卡片化 + mode-card 选择器 + 动态 hint 文案 + 底部通栏创建按钮。
+ * 新建会话 —— **逐像素对齐 iOS NewSessionView**（区块顺序与控件形态完全一致）：
+ * Provider（分段控件）→ 会话类型（分段控件）→ 模型与思考（两张菜单卡）→
+ * 模式（两列网格，5 选 1，末张半宽）→ 工作目录（路径输入 + 内嵌浏览按钮 + 最近路径）
+ * → 首条消息（可选）。卡片是 iOS 风格的**纯色 surface 平面卡**（无玻璃微光/投影），
+ * 选中切 brand 软底 + brand 描边。底部通栏「创建会话」+ 顶栏「创建」双入口同 iOS。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,24 +104,40 @@ fun NewSessionScreen(
     var isStructured by remember { mutableStateOf(true) }
     // 默认托管模式（claude 全自动完成）；codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
+    var availableModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
+    var codexModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
+    var selectedModel by remember { mutableStateOf("") }
+    var thinkingEffort by remember { mutableStateOf("off") }
     var firstMessage by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
 
+    val providerModels = if (provider == "codex") codexModels else availableModels
+    val supportedModes = supportedModeIds(provider)
+
     LaunchedEffect(Unit) {
+        val config = try {
+            api.serverConfig()
+        } catch (_: Exception) {
+            null
+        }
+        mode = supportedModeFor(config?.defaultMode ?: "managed", provider)
+        selectedModel = config?.defaultModel ?: ""
+        thinkingEffort = config?.defaultThinkingEffort ?: "off"
+        try {
+            val response = api.models()
+            availableModels = response.models
+            codexModels = response.codexModels
+        } catch (_: Exception) {
+        }
         recentPaths = try {
             api.recentPaths()
         } catch (_: Exception) {
             emptyList()
         }
         if (cwd.isEmpty()) {
-            cwd = recentPaths.firstOrNull()?.path
-                ?: try {
-                    api.serverConfig().defaultCwd ?: ""
-                } catch (_: Exception) {
-                    ""
-                }
+            cwd = recentPaths.firstOrNull()?.path ?: config?.defaultCwd ?: ""
         }
     }
 
@@ -146,6 +156,17 @@ fun NewSessionScreen(
 
     val canCreate = cwd.trim().isNotEmpty() && !creating
 
+    // 持久化默认项（对齐 iOS saveDefaults，失败仅记错不打断选择）。
+    fun persistDefaults(mode: String? = null, model: String? = null, thinkingEffort: String? = null) {
+        scope.launch {
+            try {
+                api.updateNewSessionDefaults(mode = mode, model = model, thinkingEffort = thinkingEffort)
+            } catch (e: Exception) {
+                errorMessage = e.message
+            }
+        }
+    }
+
     fun create() {
         if (!canCreate) return
         creating = true
@@ -154,12 +175,27 @@ fun NewSessionScreen(
         val prompt = firstMessage.trim().ifEmpty { null }
         // codex 仅支持 full-access，对齐 Web getSafeModeForTool 的 clamp。
         val effectiveMode = if (provider == "codex") "full-access" else mode
+        val model = selectedModel.ifEmpty { null }
         scope.launch {
             try {
                 val snapshot = if (isStructured) {
-                    api.createStructuredSession(path, effectiveMode, prompt, provider)
+                    api.createStructuredSession(
+                        cwd = path,
+                        mode = effectiveMode,
+                        prompt = prompt,
+                        provider = provider,
+                        model = model,
+                        thinkingEffort = thinkingEffort,
+                    )
                 } else {
-                    api.createPtySession(path, effectiveMode, prompt, provider)
+                    api.createPtySession(
+                        cwd = path,
+                        mode = effectiveMode,
+                        initialInput = prompt,
+                        provider = provider,
+                        model = model,
+                        thinkingEffort = thinkingEffort,
+                    )
                 }
                 creating = false
                 onCreated(snapshot)
@@ -170,28 +206,22 @@ fun NewSessionScreen(
         }
     }
 
-    // 退场动画期间 errorMessage 已变 null，缓存最后一条文案避免内容闪空。
-    var lastErrorText by remember { mutableStateOf("") }
-    LaunchedEffect(errorMessage) {
-        errorMessage?.let { lastErrorText = it }
+    val selectedModelLabel = if (selectedModel.isEmpty() || selectedModel == "default") {
+        "默认"
+    } else {
+        providerModels.firstOrNull { it.id == selectedModel }?.label ?: selectedModel
     }
+    val thinkingLabel = THINKING_LEVELS.firstOrNull { it.first == thinkingEffort }?.second ?: "关闭"
 
     Scaffold(
-        containerColor = Color.Transparent,
-        modifier = Modifier
-            .ambientBackground()
-            .imePadding(),
+        containerColor = WandColors.bgPrimary,
+        modifier = Modifier.imePadding(),
         topBar = {
-            TopAppBar(
-                modifier = Modifier.glassSurface(null, RoundedCornerShape(0.dp), secondaryBarGlass),
+            CenterAlignedTopAppBar(
                 title = { Text("新建会话", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = WandColors.textSecondary,
-                        )
+                    TextButton(onClick = onBack) {
+                        Text("取消", fontSize = 16.sp, color = WandColors.textSecondary)
                     }
                 },
                 actions = {
@@ -207,35 +237,43 @@ fun NewSessionScreen(
                                 "创建",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (canCreate) WandColors.brand else WandColors.textMuted,
+                                color = if (canCreate) WandColors.brand else WandColors.textSecondary,
                             )
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
+                    containerColor = WandColors.bgPrimary,
+                    scrolledContainerColor = WandColors.bgPrimary,
                 ),
             )
         },
         bottomBar = {
-            Column(
+            // 底部通栏创建按钮（对齐 iOS createBar）。
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .background(WandColors.bgPrimary)
                     .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Button(
                     onClick = { create() },
-                    enabled = cwd.trim().isNotEmpty(),
-                    shape = WandShapes.lg,
+                    enabled = canCreate,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = WandColors.brand,
+                        disabledContainerColor = WandColors.brand.copy(alpha = 0.4f),
+                        contentColor = Color.White,
+                        disabledContentColor = Color.White,
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
                 ) {
                     if (creating) {
                         CircularProgressIndicator(
-                            color = LocalContentColor.current,
+                            color = Color.White,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(18.dp),
                         )
@@ -255,64 +293,60 @@ fun NewSessionScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
         ) {
-            // —— Provider（对齐 Web：按实际使用的 CLI 选择）——
+            // —— Provider（分段控件）——
             SectionHeader("Provider")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ProviderCard(
-                    logo = BrandLogos.claude,
-                    accent = WandColors.brand,
-                    accentSoft = WandColors.brandSoft,
-                    label = "Claude",
-                    description = "完整 Claude 会话能力",
-                    selected = provider == "claude",
-                    onClick = {
-                        provider = "claude"
-                        // 切回 claude 恢复默认托管模式（codex 把它 clamp 成了全权限）。
-                        mode = "managed"
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                ProviderCard(
-                    logo = BrandLogos.codex,
-                    accent = WandColors.info,
-                    accentSoft = WandColors.infoSoft,
-                    label = "Codex",
-                    description = "结构化 JSONL 或 PTY 会话",
-                    selected = provider == "codex",
-                    onClick = {
-                        provider = "codex"
-                        // codex 仅支持全权限，切换时同步 clamp 选中态。
-                        mode = "full-access"
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            WandSegmented(
+                options = listOf("claude" to "Claude", "codex" to "Codex"),
+                selected = provider,
+                onSelect = { newProvider ->
+                    provider = newProvider
+                    mode = supportedModeFor(mode, newProvider)
+                },
+            )
 
-            // —— 会话类型 ——
+            // —— 会话类型（分段控件）——
             SectionHeader("会话类型")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SessionTypeCard(
-                    icon = WandIcons.chat,
-                    label = "结构化",
-                    description = "智能对话模式",
-                    selected = isStructured,
-                    onClick = { isStructured = true },
-                    modifier = Modifier.weight(1f),
-                )
-                SessionTypeCard(
-                    icon = WandIcons.terminal,
-                    label = "PTY",
-                    description = "交互式终端会话",
-                    selected = !isStructured,
-                    onClick = { isStructured = false },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            WandSegmented(
+                options = listOf(true to "结构化", false to "PTY"),
+                selected = isStructured,
+                onSelect = { isStructured = it },
+            )
             FieldHint(sessionKindHint(provider, isStructured))
 
-            // —— 模式（5 选 1，两列网格；codex 锁定全权限）——
+            // —— 模型与思考（两张菜单卡）——
+            SectionHeader("模型与思考")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OptionMenuCard(
+                    title = "模型",
+                    value = selectedModelLabel,
+                    icon = Icons.Outlined.Memory,
+                    options = buildList {
+                        add("" to "默认")
+                        providerModels.filter { it.id != "default" }.forEach { add(it.id to it.label) }
+                    },
+                    selectedId = selectedModel,
+                    onSelect = {
+                        selectedModel = it
+                        persistDefaults(model = it)
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                OptionMenuCard(
+                    title = "思考深度",
+                    value = thinkingLabel,
+                    icon = WandIcons.thinking,
+                    options = THINKING_LEVELS,
+                    selectedId = thinkingEffort,
+                    onSelect = {
+                        thinkingEffort = it
+                        persistDefaults(thinkingEffort = it)
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            // —— 模式（两列网格，5 选 1；末张半宽，对齐 iOS LazyVGrid）——
             SectionHeader("模式")
-            val supportedModes = supportedModeIds(provider)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SESSION_MODES.chunked(2).forEach { rowModes ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -322,7 +356,10 @@ fun NewSessionScreen(
                                 description = m.desc,
                                 selected = mode == m.id,
                                 enabled = m.id in supportedModes,
-                                onClick = { mode = m.id },
+                                onClick = {
+                                    mode = m.id
+                                    persistDefaults(mode = m.id)
+                                },
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -336,116 +373,21 @@ fun NewSessionScreen(
 
             // —— 工作目录 ——
             SectionHeader("工作目录")
-            WandCard(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(12.dp),
-            ) {
-                CwdTextField(value = cwd, onValueChange = { cwd = it })
-                Spacer(modifier = Modifier.size(10.dp))
-                FilledTonalButton(
-                    onClick = { showBrowser = true },
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = WandColors.brandSoft,
-                        contentColor = WandColors.brand,
-                    ),
-                ) {
-                    Icon(
-                        WandIcons.folder,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(modifier = Modifier.size(6.dp))
-                    Text("浏览目录", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                }
-                if (recentPaths.isNotEmpty()) {
-                    Spacer(modifier = Modifier.size(12.dp))
-                    Text(
-                        "最近使用",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = WandColors.textMuted,
-                    )
-                    Spacer(modifier = Modifier.size(6.dp))
-                    // 最近路径是工作目录卡内部的分组子区，不再用 WandCard 嵌套
-                    // （会与外层卡叠出双层投影发闷）；改用 surfaceSoft 内凹平面 + 细描边。
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(WandShapes.sm)
-                            .background(WandColors.surfaceSoft)
-                            .border(1.dp, WandColors.border, WandShapes.sm),
-                    ) {
-                        val shown = recentPaths.take(5)
-                        shown.forEachIndexed { index, recent ->
-                            RecentPathRow(
-                                recent = recent,
-                                selected = cwd == recent.path,
-                                onClick = { cwd = recent.path },
-                            )
-                            if (index < shown.lastIndex) {
-                                HorizontalDivider(
-                                    color = WandColors.border,
-                                    thickness = 0.5.dp,
-                                    modifier = Modifier.padding(start = 40.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // —— 首条消息 ——
-            SectionHeader("首条消息（可选）")
-            OutlinedTextField(
-                value = firstMessage,
-                onValueChange = { firstMessage = it },
-                placeholder = {
-                    Text("想让它做什么…", fontSize = 15.sp, color = WandColors.textMuted)
-                },
-                textStyle = TextStyle(fontSize = 15.sp),
-                minLines = 1,
-                maxLines = 4,
-                shape = WandShapes.md,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WandColors.brand,
-                    unfocusedBorderColor = WandColors.border,
-                    cursorColor = WandColors.brand,
-                    focusedContainerColor = WandColors.surface,
-                    unfocusedContainerColor = WandColors.surface,
-                ),
-                modifier = Modifier.fillMaxWidth(),
+            CwdCard(
+                cwd = cwd,
+                onCwdChange = { cwd = it },
+                recentPaths = recentPaths,
+                onBrowse = { showBrowser = true },
+                onPickRecent = { cwd = it },
             )
 
+            // —— 首条消息（可选）——
+            SectionHeader("首条消息（可选）")
+            FirstMessageCard(value = firstMessage, onValueChange = { firstMessage = it })
+
             // —— 错误提示 ——
-            AnimatedVisibility(
-                visible = errorMessage != null,
-                enter = fadeIn(WandMotion.tweenNormal()) + expandVertically(WandMotion.tweenNormal()),
-                exit = fadeOut(WandMotion.tweenNormal()) + shrinkVertically(WandMotion.tweenNormal()),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .padding(top = 16.dp)
-                        .fillMaxWidth()
-                        // 语义弱底错误卡：经 glassCard 继承统一层叠投影 + 倒角描边，
-                        // 与聊天页 error/info 卡同源，不再是贴平的纯色条。
-                        .glassCard(WandShapes.md, tint = WandColors.dangerSoft, rimTint = WandColors.danger)
-                        .padding(12.dp),
-                ) {
-                    Icon(
-                        WandIcons.error,
-                        contentDescription = null,
-                        tint = WandColors.danger,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        errorMessage ?: lastErrorText,
-                        fontSize = 13.sp,
-                        color = WandColors.danger,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+            if (errorMessage != null) {
+                ErrorBanner(errorMessage ?: "")
             }
 
             Spacer(modifier = Modifier.size(24.dp))
@@ -453,212 +395,164 @@ fun NewSessionScreen(
     }
 }
 
-/** 工作目录输入框：聚焦时 brand 边框 + 外圈 focusRing 光晕。 */
+/** iOS 风格选择卡底：纯色 surface 平面 + 1pt 描边；选中切 brand 软底 + brand 1.5pt 描边。 */
 @Composable
-private fun CwdTextField(value: String, onValueChange: (String) -> Unit) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val focused by interactionSource.collectIsFocusedAsState()
-    val ringColor by animateColorAsState(
-        if (focused) WandColors.focusRing else Color.Transparent,
-        WandMotion.tweenFast(),
-        label = "cwdRing",
-    )
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(2.dp, ringColor, RoundedCornerShape(WandShapes.radiusSm + 3.dp))
-            .padding(3.dp),
-    ) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            placeholder = {
-                Text(
-                    "/path/to/project",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 14.sp,
-                    color = WandColors.textMuted,
-                )
-            },
-            textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp),
-            singleLine = true,
-            shape = WandShapes.sm,
-            interactionSource = interactionSource,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = WandColors.brand,
-                unfocusedBorderColor = WandColors.border,
-                cursorColor = WandColors.brand,
-                focusedContainerColor = WandColors.surface,
-                unfocusedContainerColor = WandColors.surfaceSoft,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-/** 最近路径行：History 图标 + 目录名（粗）+ 完整路径（mono muted），选中 brandSoft 底 + 行尾勾。 */
-@Composable
-private fun RecentPathRow(
-    recent: RecentPath,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
+private fun Modifier.selectCard(selected: Boolean): Modifier {
+    val shape = RoundedCornerShape(14.dp)
     val bg by animateColorAsState(
-        if (selected) WandColors.brandSoft else Color.Transparent,
+        if (selected) WandColors.brand.copy(alpha = 0.10f) else WandColors.surface,
         WandMotion.tweenFast(),
-        label = "recentBg",
+        label = "selectCardBg",
     )
+    val borderColor by animateColorAsState(
+        if (selected) WandColors.brand else WandColors.border,
+        WandMotion.tweenFast(),
+        label = "selectCardBorder",
+    )
+    return this
+        .clip(shape)
+        .background(bg)
+        .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
+}
+
+/**
+ * iOS 风格分段控件（对齐 SwiftUI `.pickerStyle(.segmented)`）：
+ * 弱底轨道 + 选中段为浮起的 surface 胶囊（brand 文字），未选中透明（次级文字）。
+ */
+@Composable
+private fun <T> WandSegmented(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(10.dp))
+            .background(WandColors.textPrimary.copy(alpha = 0.06f))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Icon(
-            WandIcons.history,
-            contentDescription = null,
-            tint = if (selected) WandColors.brand else WandColors.textMuted,
-            modifier = Modifier.size(18.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                recent.displayName,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (selected) WandColors.brand else WandColors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        options.forEach { (value, label) ->
+            val isSelected = value == selected
+            val bg by animateColorAsState(
+                if (isSelected) WandColors.surface else Color.Transparent,
+                WandMotion.tweenFast(),
+                label = "segBg",
             )
-            Text(
-                recent.path,
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            val fg by animateColorAsState(
+                if (isSelected) WandColors.brand else WandColors.textSecondary,
+                WandMotion.tweenFast(),
+                label = "segFg",
             )
-        }
-        if (selected) {
-            Icon(
-                WandIcons.check,
-                contentDescription = "已选中",
-                tint = WandColors.brand,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-    }
-}
-
-/** 会话类型 mode-card（2 张横排，竖向内容居中）。 */
-@Composable
-private fun SessionTypeCard(
-    icon: ImageVector,
-    label: String,
-    description: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val labelColor by animateColorAsState(
-        if (selected) WandColors.brand else WandColors.textPrimary,
-        WandMotion.tweenFast(),
-        label = "typeLabel",
-    )
-    val iconTint by animateColorAsState(
-        if (selected) WandColors.brand else WandColors.textSecondary,
-        WandMotion.tweenFast(),
-        label = "typeIcon",
-    )
-    WandCard(
-        modifier = modifier,
-        onClick = onClick,
-        selected = selected,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = iconTint,
-                modifier = Modifier.size(22.dp),
-            )
-            Text(label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = labelColor)
-            Text(
-                description,
-                fontSize = 12.sp,
-                color = WandColors.textMuted,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/** Provider 选择卡：品牌 logo（圆形软底）+ 名称 + 一句话说明，2 张横排。 */
-@Composable
-private fun ProviderCard(
-    logo: ImageVector,
-    accent: Color,
-    accentSoft: Color,
-    label: String,
-    description: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val labelColor by animateColorAsState(
-        if (selected) WandColors.brand else WandColors.textPrimary,
-        WandMotion.tweenFast(),
-        label = "providerLabel",
-    )
-    WandCard(
-        modifier = modifier,
-        onClick = onClick,
-        selected = selected,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
             Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(accentSoft),
                 contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(bg)
+                    .clickable { onSelect(value) }
+                    .padding(vertical = 7.dp),
             ) {
-                Icon(
-                    logo,
-                    contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(20.dp),
+                Text(
+                    label,
+                    fontSize = 14.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = fg,
                 )
             }
-            Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = labelColor)
-            Text(
-                description,
-                fontSize = 11.sp,
-                color = WandColors.textMuted,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
 
-/** 模式 mode-card（两列网格单元，标签 + 一句话说明），不支持的模式降透明度且不可点。 */
+/**
+ * 模型 / 思考深度菜单卡（对齐 iOS optionMenuCard）：
+ * brand 软底圆形图标 + 标题（11）/ 当前值（13 半粗）+ 上下箭头；点开下拉选项。
+ */
+@Composable
+private fun OptionMenuCard(
+    title: String,
+    value: String,
+    icon: ImageVector,
+    options: List<Pair<String, String>>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .selectCard(selected = false)
+                .clickable { expanded = true }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(WandColors.brand.copy(alpha = 0.10f)),
+            ) {
+                Icon(icon, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(15.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = WandColors.textSecondary)
+                Text(
+                    value,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.Outlined.UnfoldMore,
+                contentDescription = null,
+                tint = WandColors.textSecondary,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            containerColor = WandColors.surface,
+        ) {
+            options.forEach { (id, label) ->
+                val isSel = selectedId == id || (selectedId == "default" && id == "")
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            label,
+                            fontSize = 14.sp,
+                            fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (isSel) WandColors.brand else WandColors.textPrimary,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            if (isSel) WandIcons.check else Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = null,
+                            tint = if (isSel) WandColors.brand else WandColors.textMuted,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    },
+                    onClick = {
+                        onSelect(id)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** 模式卡（对齐 iOS modeCard）：标签 + 一句话说明，纯色平面卡；不支持的模式降透明度且不可点。 */
 @Composable
 private fun ModeCard(
     label: String,
@@ -668,42 +562,187 @@ private fun ModeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val labelColor by animateColorAsState(
-        if (selected) WandColors.brand else WandColors.textPrimary,
-        WandMotion.tweenFast(),
-        label = "modeCardLabel",
-    )
-    WandCard(
-        modifier = modifier.alpha(if (enabled) 1f else 0.4f),
-        onClick = if (enabled) onClick else null,
-        selected = selected,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
+    Column(
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = modifier
+            .alpha(if (enabled) 1f else 0.4f)
+            .selectCard(selected)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 11.dp, vertical = 8.dp),
     ) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = labelColor, maxLines = 1)
-            Text(
-                description,
-                fontSize = 11.sp,
-                color = WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        Text(
+            label,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (selected) WandColors.brand else WandColors.textPrimary,
+            maxLines = 1,
+        )
+        Text(
+            description,
+            fontSize = 11.sp,
+            color = WandColors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 工作目录卡（对齐 iOS cwdCard）：路径输入 + 右侧浏览按钮 + 最近路径，整体一张平面卡。 */
+@Composable
+private fun CwdCard(
+    cwd: String,
+    onCwdChange: (String) -> Unit,
+    recentPaths: List<RecentPath>,
+    onBrowse: () -> Unit,
+    onPickRecent: (String) -> Unit,
+) {
+    Column(modifier = Modifier.selectCard(selected = false)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                value = cwd,
+                onValueChange = onCwdChange,
+                textStyle = TextStyle(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp,
+                    color = WandColors.textPrimary,
+                ),
+                singleLine = true,
+                cursorBrush = SolidColor(WandColors.brand),
+                decorationBox = { inner ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (cwd.isEmpty()) {
+                            Text(
+                                "/path/to/project",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 14.sp,
+                                color = WandColors.textMuted,
+                            )
+                        }
+                        inner()
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp, top = 11.dp, bottom = 11.dp),
             )
+            IconButton(onClick = onBrowse, modifier = Modifier.size(44.dp)) {
+                Icon(
+                    WandIcons.folder,
+                    contentDescription = "浏览目录",
+                    tint = WandColors.brand,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        if (recentPaths.isNotEmpty()) {
+            HorizontalDivider(color = WandColors.border, thickness = 0.5.dp)
+            recentPaths.take(5).forEach { recent ->
+                val isSelected = cwd == recent.path
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPickRecent(recent.path) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        WandIcons.clock,
+                        contentDescription = null,
+                        tint = if (isSelected) WandColors.brand else WandColors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            recent.displayName,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isSelected) WandColors.brand else WandColors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            recent.path,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = WandColors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (isSelected) {
+                        Icon(
+                            WandIcons.check,
+                            contentDescription = "已选中",
+                            tint = WandColors.brand,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
-/** 区块下方的说明文案，对应 Web 的 .field-hint。 */
+/** 首条消息输入卡（对齐 iOS firstMessageCard）：纯色平面卡内的无边框输入。 */
+@Composable
+private fun FirstMessageCard(value: String, onValueChange: (String) -> Unit) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        textStyle = TextStyle(fontSize = 15.sp, color = WandColors.textPrimary),
+        cursorBrush = SolidColor(WandColors.brand),
+        maxLines = 4,
+        decorationBox = { inner ->
+            Box(
+                contentAlignment = Alignment.CenterStart,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectCard(selected = false)
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+            ) {
+                if (value.isEmpty()) {
+                    Text("想让它做什么…", fontSize = 15.sp, color = WandColors.textMuted)
+                }
+                inner()
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** 错误提示条（对齐 iOS errorBanner）：danger 软底 + 三角图标 + 文案。 */
+@Composable
+private fun ErrorBanner(message: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .padding(top = 16.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(WandColors.danger.copy(alpha = 0.10f))
+            .padding(12.dp),
+    ) {
+        Icon(
+            WandIcons.error,
+            contentDescription = null,
+            tint = WandColors.danger,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(message, fontSize = 13.sp, color = WandColors.danger, modifier = Modifier.weight(1f))
+    }
+}
+
+/** 区块下方的说明文案（对齐 iOS fieldHint）。 */
 @Composable
 private fun FieldHint(text: String) {
     Text(
         text,
         fontSize = 12.sp,
         lineHeight = 17.sp,
-        color = WandColors.textMuted,
-        modifier = Modifier.padding(top = 8.dp),
+        color = WandColors.textSecondary.copy(alpha = 0.85f),
+        modifier = Modifier.padding(top = 6.dp),
     )
 }
 
@@ -718,10 +757,24 @@ private val SESSION_MODES = listOf(
     SessionMode("native", "原生", "原生结构化输出"),
 )
 
+/** 思考深度档位（对齐 iOS thinkingLevels）：id 与服务端一致，标签同 iOS 中文。 */
+private val THINKING_LEVELS = listOf(
+    "off" to "关闭",
+    "standard" to "标准",
+    "deep" to "深入",
+    "max" to "最大",
+)
+
 /** codex 仅支持 full-access，对齐 Web getSupportedModes。 */
 private fun supportedModeIds(provider: String): Set<String> =
     if (provider == "codex") setOf("full-access")
     else SESSION_MODES.mapTo(mutableSetOf()) { it.id }
+
+/** 切换 provider 时把当前 mode clamp 到该 provider 支持的集合（对齐 iOS supportedMode）。 */
+private fun supportedModeFor(value: String, provider: String): String {
+    if (provider == "codex") return "full-access"
+    return if (SESSION_MODES.any { it.id == value }) value else "managed"
+}
 
 /** 会话类型动态说明，文案对齐 Web getSessionKindHint。 */
 private fun sessionKindHint(provider: String, structured: Boolean): String =

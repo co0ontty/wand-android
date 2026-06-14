@@ -67,6 +67,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -98,6 +99,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -113,6 +115,7 @@ import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
+import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
@@ -281,6 +284,7 @@ fun ChatScreen(
     val glassBackdrop = rememberGlassBackdrop()
     // 全宽栏只要模糊不要 lens 折射（折射是给悬浮小元素的；折射在直角栏边缘会出现拉丝）。
     val barGlass = WandGlass.regular.copy(refractionHeight = 0.dp)
+    CompositionLocalProvider(LocalServerBaseUrl provides api.baseUrl) {
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
@@ -520,6 +524,7 @@ fun ChatScreen(
             }
         }
     }
+    }
 }
 
 /** innerPadding 与列表内边距合并（玻璃化后 padding 从容器移到 contentPadding 用）。 */
@@ -597,7 +602,7 @@ private fun SessionLaunchPanel(store: ChatStore) {
             // 与下方设置组之间留出更大的呼吸位，强化「品牌头 → 操作区」的层次。
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 WandBrandMark(size = 52)
                 Text(
@@ -605,12 +610,15 @@ private fun SessionLaunchPanel(store: ChatStore) {
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = WandColors.textPrimary,
+                    textAlign = TextAlign.Center,
                 )
                 Text(
                     "发送第一条消息前，可确认本次对话使用的模型和思考深度",
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     color = WandColors.textSecondary,
+                    // 居中对齐：居中布局里多行文案不再左对齐拉出参差的右缘。
+                    textAlign = TextAlign.Center,
                 )
             }
             Column(

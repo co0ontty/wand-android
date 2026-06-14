@@ -131,6 +131,8 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
     // REST + WebSocket client for the native session protocol
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // Compose 图片加载（聊天内联缩略图 / 全屏预览）：用 WandHttp.client 走自签证书 + cookie 鉴权。
+    implementation 'io.coil-kt:coil-compose:2.7.0'
     // 端侧语音识别（sherpa-onnx，static-link onnxruntime 版 AAR）。
     // 提交在 libs/ 而不走仓库依赖：JitPack 对 k2-fsa 最新 tag 构建失败、
     // 国内可达性不可控；钉本地文件保证三种构建（本地/publish.sh/CI）确定一致。
