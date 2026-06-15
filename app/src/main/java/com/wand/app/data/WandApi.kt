@@ -193,6 +193,15 @@ class WandApi(baseUrl: String, val token: String?) {
             )
         )
 
+    suspend fun setMode(id: String, mode: String): SessionSnapshot =
+        SessionSnapshot.parse(
+            requestObject(
+                "POST",
+                "/api/sessions/$id/mode",
+                JSONObject().put("mode", mode),
+            )
+        )
+
     // MARK: - 附件上传
 
     /**

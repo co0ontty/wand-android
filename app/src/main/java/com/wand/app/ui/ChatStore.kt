@@ -74,6 +74,9 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         private set
     var thinkingEffort by mutableStateOf("off")
         private set
+    /** 当前执行模式（managed / full-access / auto-edit / default / native）。输入栏模式徽标读它，可中途切换。 */
+    var mode by mutableStateOf("default")
+        private set
 
     /**
      * AskUserQuestion 卡片的选择状态（toolUseId → 各题已选项 + 是否已提交）。
@@ -174,6 +177,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         currentTaskTitle = snap.currentTaskTitle
         selectedModel = snap.selectedModel
         thinkingEffort = snap.thinkingEffort ?: "off"
+        mode = snap.mode ?: mode
         if (snap.pendingEscalation != null) legacyPermissionPrompt = null
     }
 
@@ -266,6 +270,7 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         data.currentTaskTitle?.let { currentTaskTitle = it }
         data.selectedModel?.let { selectedModel = it }
         data.thinkingEffort?.let { thinkingEffort = it }
+        data.mode?.let { mode = it }
     }
 
     // MARK: - 模型与思考深度（对齐 iOS setModel / setThinkingEffort：乐观更新 + 失败回滚）
@@ -294,6 +299,21 @@ class ChatStore(val sessionId: String, val api: WandApi) {
             } catch (e: Exception) {
                 thinkingEffort = previous
                 toast = e.message ?: "调整思考深度失败"
+            }
+        }
+    }
+
+    /** 中途切换执行模式（乐观更新 + 失败回滚）。codex 会话固定 full-access，调用方负责拦。 */
+    fun chooseMode(newMode: String) {
+        val previous = mode
+        mode = newMode
+        scope.launch {
+            try {
+                val snap = api.setMode(sessionId, newMode)
+                apply(snap)
+            } catch (e: Exception) {
+                mode = previous
+                toast = e.message ?: "切换模式失败"
             }
         }
     }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,6 +83,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -329,10 +331,9 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // 模型 / 思考深度 / 模式开关已下沉到输入栏展开态的控制行（对齐 Codex App），
+                    // 顶栏右侧只留 Git 变更入口。
                     GitChangesButton(quickCommit) { quickCommit.openPanel() }
-                    if (store.isStructured) {
-                        SessionSettingsMenu(store)
-                    }
                     Spacer(modifier = Modifier.size(6.dp))
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -812,90 +813,29 @@ private fun modelDisplayLabel(store: ChatStore, id: String?): String {
     return store.availableModels.firstOrNull { it.id == effectiveId }?.label ?: effectiveId
 }
 
-/**
- * 会话设置菜单（对齐 iOS sessionSettingsMenu）：
- * 顶栏齿轮图标 → 「模型 / 思考深度」两级菜单，实时切换进行中的会话参数。
- */
-@Composable
-private fun SessionSettingsMenu(store: ChatStore) {
-    var menu by remember { mutableStateOf<String?>(null) }
-    Box {
-        IconButton(onClick = { menu = "root" }) {
-            Icon(
-                WandIcons.tune,
-                contentDescription = "会话设置",
-                tint = WandColors.brand,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        DropdownMenu(
-            expanded = menu != null,
-            onDismissRequest = { menu = null },
-            containerColor = WandColors.surface,
-        ) {
-            when (menu) {
-                "model" -> {
-                    SettingsMenuOption(
-                        "默认 · ${modelDisplayLabel(store, null)}",
-                        selected = store.selectedModel == null || store.selectedModel == "default",
-                    ) {
-                        store.setModel(null)
-                        menu = null
-                    }
-                    store.availableModels.filter { it.id != "default" }.forEach { model ->
-                        SettingsMenuOption(model.label, selected = store.selectedModel == model.id) {
-                            store.setModel(model.id)
-                            menu = null
-                        }
-                    }
-                }
-                "thinking" -> THINKING_LEVELS.forEach { (id, label) ->
-                    SettingsMenuOption(label, selected = store.thinkingEffort == id) {
-                        store.chooseThinkingEffort(id)
-                        menu = null
-                    }
-                }
-                else -> {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "模型 · ${modelDisplayLabel(store, store.selectedModel)}",
-                                fontSize = 13.sp,
-                                color = WandColors.textPrimary,
-                            )
-                        },
-                        trailingIcon = {
-                            Icon(
-                                WandIcons.chevronRight,
-                                contentDescription = null,
-                                tint = WandColors.textMuted,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        },
-                        onClick = { menu = "model" },
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "思考深度 · ${thinkingLabel(store.thinkingEffort)}",
-                                fontSize = 13.sp,
-                                color = WandColors.textPrimary,
-                            )
-                        },
-                        trailingIcon = {
-                            Icon(
-                                WandIcons.chevronRight,
-                                contentDescription = null,
-                                tint = WandColors.textMuted,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        },
-                        onClick = { menu = "thinking" },
-                    )
-                }
-            }
-        }
-    }
+/** 执行模式档位（对齐 iOS sessionModes / NewSessionView）。codex 锁 full-access。 */
+private val SESSION_MODES = listOf(
+    "managed" to "托管",
+    "full-access" to "全权限",
+    "auto-edit" to "自动编辑",
+    "default" to "标准",
+    "native" to "原生",
+)
+
+private fun modeLabel(id: String): String =
+    SESSION_MODES.firstOrNull { it.first == id }?.second ?: "标准"
+
+/** 控制行徽标用的精简模型名：去掉「opus（最新 Opus）」括号补充（全角/半角都吃），只留主名。 */
+private fun shortModelLabel(store: ChatStore): String {
+    val full = modelDisplayLabel(store, store.selectedModel)
+    val idx = full.indexOfFirst { it == '（' || it == '(' }
+    return if (idx > 0) full.substring(0, idx).trimEnd() else full
+}
+
+private fun modelThinkingText(store: ChatStore): String {
+    val model = shortModelLabel(store)
+    return if (store.thinkingEffort == "off") model
+    else "$model · ${thinkingLabel(store.thinkingEffort)}"
 }
 
 @Composable
@@ -1314,6 +1254,8 @@ private fun InputBar(
     var refocusAfterSend by remember { mutableStateOf(false) }
     // 停止任务二次确认弹窗开关：点停止按钮先弹确认，避免误触中断正在跑的任务。
     var showStopConfirm by remember { mutableStateOf(false) }
+    // 文本框是否聚焦：驱动「胶囊 ↔ 卡片」两态切换（对齐 Codex App）。
+    var isFocused by remember { mutableStateOf(false) }
     LaunchedEffect(voiceMode, focusAfterExit) {
         if (!voiceMode && focusAfterExit) {
             focusAfterExit = false
@@ -1327,27 +1269,17 @@ private fun InputBar(
             runCatching { focusRequester.requestFocus() }
         }
     }
-    // 布局对齐 iOS inputBar：[+ 菜单] [输入框（麦克风嵌右下角）] [停止?] [发送]。
-    Row(
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        ComposerActionsMenu(
-            backdrop = backdrop,
-            uploading = uploading,
-            onPickPhoto = onPickPhoto,
-            onPickFile = onPickFile,
-        )
+    // 展开态（聚焦 / 语音模式 / 有草稿）：长成卡片，底部多一条控制行；否则收成单行胶囊。
+    val expanded = isFocused || voiceMode || draft.isNotBlank()
+
+    // 顶部内容：键盘模式是自增高文本框，语音模式是「按住说话」面板。背景/描边交给外层卡片。
+    val inputContent: @Composable RowScope.() -> Unit = {
         Box(
-            contentAlignment = Alignment.BottomEnd,
+            contentAlignment = Alignment.CenterStart,
             modifier = Modifier.weight(1f),
         ) {
             if (voiceMode) {
                 VoiceHoldField(
-                    backdrop = backdrop,
                     draft = draft,
                     voice = voice,
                     onMicDown = onMicDown,
@@ -1355,9 +1287,7 @@ private fun InputBar(
                         focusAfterExit = true
                         onVoiceModeChange(false)
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 0.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             } else {
                 BasicTextField(
@@ -1370,7 +1300,7 @@ private fun InputBar(
                     ),
                     cursorBrush = SolidColor(WandColors.brand),
                     minLines = 1,
-                    maxLines = 5,
+                    maxLines = 6,
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Sentences,
                     ),
@@ -1379,8 +1309,7 @@ private fun InputBar(
                             contentAlignment = Alignment.CenterStart,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .glassSurface(backdrop, RoundedCornerShape(20.dp), WandGlass.regular)
-                                .padding(start = 14.dp, end = 48.dp, top = 9.dp, bottom = 9.dp),
+                                .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
                         ) {
                             if (draft.isEmpty()) {
                                 Text("发消息…", fontSize = 16.sp, color = WandColors.textMuted)
@@ -1390,51 +1319,82 @@ private fun InputBar(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 38.dp, max = 128.dp)
-                        .focusRequester(focusRequester),
-                )
-            }
-            VoiceMicButton(
-                voice = voice,
-                voiceMode = voiceMode,
-                onToggleMode = { onVoiceModeChange(!voiceMode) },
-                onMicDown = onMicDown,
-                modifier = Modifier.padding(end = 4.dp, bottom = 3.dp),
-            )
-        }
-        if (store.isResponding) {
-            ComposerIconButton(
-                backdrop = backdrop,
-                style = WandGlass.accent.copy(tint = WandColors.danger),
-                enabled = true,
-                onClick = { showStopConfirm = true },
-            ) {
-                Icon(
-                    WandIcons.stop,
-                    contentDescription = "停止回复",
-                    tint = Color.White,
-                    modifier = Modifier.size(17.dp),
+                        .heightIn(min = 34.dp, max = 132.dp)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { isFocused = it.isFocused },
                 )
             }
         }
-        ComposerIconButton(
+    }
+
+    val plusMenu: @Composable () -> Unit = {
+        ComposerActionsMenu(
             backdrop = backdrop,
-            // 不可发送时压低 tint 浓度，两条渲染路径都呈现「半透明禁用」观感。
-            style = if (canSend) WandGlass.accent
-                else WandGlass.accent.copy(tintAlpha = 0.35f, fallbackAlpha = 0.4f),
-            enabled = canSend,
-            onClick = {
+            uploading = uploading,
+            onPickPhoto = onPickPhoto,
+            onPickFile = onPickFile,
+        )
+    }
+    val mic: @Composable () -> Unit = {
+        VoiceMicButton(
+            voice = voice,
+            voiceMode = voiceMode,
+            onToggleMode = { onVoiceModeChange(!voiceMode) },
+            onMicDown = onMicDown,
+        )
+    }
+    val trailing: @Composable () -> Unit = {
+        TrailingSendStop(
+            backdrop = backdrop,
+            store = store,
+            canSend = canSend,
+            onStop = { showStopConfirm = true },
+            onSend = {
                 onSend()
-                // 标记「需要重新聚焦」，由上面 LaunchedEffect 在安全条件下真正拉焦点。
                 refocusAfterSend = true
             },
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .glassSurface(backdrop, RoundedCornerShape(24.dp), WandGlass.regular)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(if (expanded) 8.dp else 0.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(
-                WandIcons.arrowUp,
-                contentDescription = "发送",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp),
-            )
+            if (!expanded) plusMenu()
+            inputContent()
+            if (!expanded) {
+                mic()
+                trailing()
+            }
+        }
+        if (expanded) {
+            // 控制行：+ / 模式徽标 / 模型·思考徽标 / 话筒 / 发送·停止。
+            // 把原本散落在顶栏右上角的模型 + 思考深度，连同模式开关全部收拢到这里。
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                plusMenu()
+                if (store.isStructured) {
+                    ModeChip(store)
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                if (store.isStructured) {
+                    ModelThinkingChip(store)
+                }
+                mic()
+                trailing()
+            }
         }
     }
     if (showStopConfirm) {
@@ -1465,6 +1425,185 @@ private fun InputBar(
 }
 
 /**
+ * 发送 / 停止按钮组（对齐 iOS trailingButtons）：
+ * - 运行中且无草稿 → 唯一按钮是白底停止（Codex 白圆黑方块）；
+ * - 有草稿 → 发送按钮（运行中时左侧追加一个红色停止，可一边排队一边停）。
+ */
+@Composable
+private fun TrailingSendStop(
+    backdrop: GlassBackdrop,
+    store: ChatStore,
+    canSend: Boolean,
+    onStop: () -> Unit,
+    onSend: () -> Unit,
+) {
+    if (store.isResponding && !canSend) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(Color.White)
+                .border(0.5.dp, WandColors.border, CircleShape)
+                .clickable(onClick = onStop),
+        ) {
+            Icon(
+                WandIcons.stop,
+                contentDescription = "停止任务",
+                tint = Color.Black,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+        return
+    }
+    if (store.isResponding) {
+        ComposerIconButton(
+            backdrop = backdrop,
+            style = WandGlass.accent.copy(tint = WandColors.danger),
+            enabled = true,
+            onClick = onStop,
+        ) {
+            Icon(
+                WandIcons.stop,
+                contentDescription = "停止任务",
+                tint = Color.White,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+    }
+    ComposerIconButton(
+        backdrop = backdrop,
+        style = if (canSend) WandGlass.accent
+            else WandGlass.accent.copy(tintAlpha = 0.35f, fallbackAlpha = 0.4f),
+        enabled = canSend,
+        onClick = onSend,
+    ) {
+        Icon(
+            WandIcons.arrowUp,
+            contentDescription = "发送",
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/** 控制行通用胶囊徽标：图标 + 文字 + 弱色底 + 下拉箭头。 */
+@Composable
+private fun ControlChip(
+    icon: ImageVector,
+    text: String,
+    tint: Color,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(tint.copy(alpha = 0.10f))
+            .border(1.dp, tint.copy(alpha = 0.22f), CircleShape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(13.dp))
+        Text(
+            text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 130.dp),
+        )
+        Icon(WandIcons.expand, contentDescription = null, tint = tint.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
+    }
+}
+
+/** 控制行下拉菜单内的分组标题（模型 / 思考深度）。 */
+@Composable
+private fun MenuSectionHeader(text: String) {
+    Text(
+        text,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = WandColors.textMuted,
+        modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 4.dp),
+    )
+}
+
+/** 执行模式徽标 + 下拉菜单（中途切换 managed/full-access/...）。codex 锁 full-access。 */
+@Composable
+private fun ModeChip(store: ChatStore) {
+    val isCodex = store.snapshot?.provider == "codex"
+    var open by remember { mutableStateOf(false) }
+    // 高权限模式（托管 / 全权限）用橙色提示，其余用次要色。
+    val tint = if (store.mode == "full-access" || store.mode == "managed")
+        WandColors.warning else WandColors.textSecondary
+    Box {
+        ControlChip(
+            icon = WandIcons.permission,
+            text = modeLabel(store.mode),
+            tint = tint,
+            enabled = !isCodex,
+        ) { open = true }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = WandColors.surface,
+        ) {
+            SESSION_MODES.forEach { (id, label) ->
+                SettingsMenuOption(label, selected = store.mode == id) {
+                    store.chooseMode(id)
+                    open = false
+                }
+            }
+        }
+    }
+}
+
+/** 模型 · 思考深度合并徽标 + 下拉菜单（对齐 iOS modelThinkingChip）。 */
+@Composable
+private fun ModelThinkingChip(store: ChatStore) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        ControlChip(
+            icon = WandIcons.tune,
+            text = modelThinkingText(store),
+            tint = WandColors.brand,
+        ) { open = true }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = WandColors.surface,
+        ) {
+            MenuSectionHeader("模型")
+            SettingsMenuOption(
+                "默认 · ${modelDisplayLabel(store, null)}",
+                selected = store.selectedModel == null || store.selectedModel == "default",
+            ) {
+                store.setModel(null)
+                open = false
+            }
+            store.availableModels.filter { it.id != "default" }.forEach { model ->
+                SettingsMenuOption(model.label, selected = store.selectedModel == model.id) {
+                    store.setModel(model.id)
+                    open = false
+                }
+            }
+            HorizontalDivider(color = WandColors.border)
+            MenuSectionHeader("思考深度")
+            THINKING_LEVELS.forEach { (id, label) ->
+                SettingsMenuOption(label, selected = store.thinkingEffort == id) {
+                    store.chooseThinkingEffort(id)
+                    open = false
+                }
+            }
+        }
+    }
+}
+
+/**
  * 输入栏左侧「更多操作」按钮（对齐 iOS composerActionsMenu）：
  * 圆形 + 号，点开菜单「从相册选择 / 从文件选择」两项；上传中显示转圈。
  */
@@ -1480,8 +1619,8 @@ private fun ComposerActionsMenu(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(38.dp)
-                .glassSurface(backdrop, CircleShape, WandGlass.clear)
+                .size(34.dp)
+                .clip(CircleShape)
                 .clickable(enabled = !uploading) { open = true },
         ) {
             if (uploading) {
@@ -1491,11 +1630,12 @@ private fun ComposerActionsMenu(
                     modifier = Modifier.size(18.dp),
                 )
             } else {
+                // 卡片内的「+」走极简：无玻璃圆底，仅图标（对齐 Codex / iOS）。
                 Icon(
                     WandIcons.add,
                     contentDescription = "更多操作",
                     tint = WandColors.textSecondary,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
@@ -1660,7 +1800,6 @@ private fun VoiceMicButton(
  */
 @Composable
 private fun VoiceHoldField(
-    backdrop: GlassBackdrop,
     draft: String,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
@@ -1669,11 +1808,11 @@ private fun VoiceHoldField(
 ) {
     val currentOnExit by rememberUpdatedState(onExitVoiceMode)
     val currentOnMicDown by rememberUpdatedState(onMicDown)
-    // 玻璃表面之上叠按住/取消状态色罩（空闲时透明，玻璃自己说话）。
+    // 背景/描边交给外层输入卡片；这里只在按住时叠一层淡淡的状态色罩。
     val stateTint by androidx.compose.animation.animateColorAsState(
         when {
-            voice.pressed && voice.canceling -> WandColors.danger.copy(alpha = 0.20f)
-            voice.pressed -> WandColors.brand.copy(alpha = 0.16f)
+            voice.pressed && voice.canceling -> WandColors.danger.copy(alpha = 0.18f)
+            voice.pressed -> WandColors.brand.copy(alpha = 0.14f)
             else -> Color.Transparent
         },
         WandMotion.tweenFast(),
@@ -1682,8 +1821,8 @@ private fun VoiceHoldField(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .heightIn(min = 38.dp)
-            .glassSurface(backdrop, RoundedCornerShape(20.dp), WandGlass.regular)
+            .heightIn(min = 34.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(stateTint)
             .pointerInput(voice) {
                 voiceTapOrHoldGesture(
@@ -1692,7 +1831,7 @@ private fun VoiceHoldField(
                     onHoldStart = { currentOnMicDown() },
                 )
             }
-            .padding(start = 14.dp, end = 48.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 8.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
     ) {
         when {
             voice.pressed && voice.canceling -> Text(
