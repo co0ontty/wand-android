@@ -364,7 +364,14 @@ fun Modifier.glassCard(
     // （info/success 弱底 ≈0.12）把白高光、白 rim 一并衰减掉，避免「白色印子」浮在彩底上。
     val solidity = ((bg.alpha - 0.2f) / 0.6f).coerceIn(0f, 1f)
     val sheen = surfaceSheenBrush(highlightScale = solidity)
-    val rimLight = style.rimLight.copy(alpha = style.rimLight.alpha * solidity)
+    // 顶沿描边：实心白卡用受光白高光（随实心度衰减，避免白色印子）。但半透明语义着色卡
+    // （如子代理 info 弱底）实心度≈0，若白高光衰减到透明，描边就只剩底边、四周无界，整卡
+    // 塌成一块无修饰的平涂方块——正是「漂浮的白方块」观感。这类卡改用语义色兜底顶沿，
+    // 恢复「info rim 让子任务语义蓝保持清晰」的本意：彩色描边不会糊白印，又给卡片清晰轮廓。
+    val rimLight = if (rimTint != null)
+        lerp(rimTint.copy(alpha = 0.55f), style.rimLight, solidity)
+    else
+        style.rimLight.copy(alpha = style.rimLight.alpha * solidity)
     return this
         .layeredShadow(shape, style.shadowElevation, keyShadow, ambientShadow)
         .clip(shape)

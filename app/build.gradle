@@ -71,6 +71,15 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.wand
+            // 分发的就是 debug 变体（CI / publish.sh 都跑 assembleDebug）。未裁剪时
+            // material-icons-extended 的 ~5000 图标 + 全量 Compose 全进 dex，APK 膨到 ~75MB。
+            // 仅在「带版本号的分发构建」（CI / publish.sh 传 -PAPP_VERSION_NAME）启用 R8 + 资源裁剪，
+            // 把分发包压到 ~15MB；裸 `./gradlew assembleDebug` 仍不裁剪，保证本地迭代快。
+            // 复用 release 的 proguard 规则（sherpa-onnx JNI 必须 keep，见 proguard-rules.pro）。
+            def distributionBuild = project.hasProperty('APP_VERSION_NAME')
+            minifyEnabled distributionBuild
+            shrinkResources distributionBuild
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         release {
             signingConfig signingConfigs.wand
@@ -108,7 +117,6 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.webkit:webkit:1.9.0'
-    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
     implementation 'androidx.core:core:1.18.0'
     // QR scanner — wraps ZXing for camera-based decoding
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'

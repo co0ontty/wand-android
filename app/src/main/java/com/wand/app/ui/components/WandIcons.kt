@@ -36,7 +36,6 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SystemUpdate
@@ -99,9 +98,6 @@ object WandIcons {
 
     /** 权限审批。 */
     val permission: ImageVector = Icons.Outlined.Lock
-
-    /** 权限审批备选（盾牌）。 */
-    val shield: ImageVector = Icons.Outlined.Shield
 
     /** 工具结果。 */
     val toolResult: ImageVector = Icons.AutoMirrored.Outlined.Notes
