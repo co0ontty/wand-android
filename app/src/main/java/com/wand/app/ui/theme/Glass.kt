@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -358,11 +359,14 @@ fun Modifier.glassCard(
 ): Modifier {
     var style = WandGlass.card
     if (rimTint != null) style = style.tinted(rimTint)
-    val bg = tint ?: style.tint.copy(alpha = style.fallbackAlpha)
+    // 半透明语义色直接作为容器底时，部分 Android GPU 会让子 compositing layer 的白色
+    // 缓冲区透出来，形成卡片内部的矩形白块。先与页面底合成稳定的不透明语义底。
+    val bg = tint?.compositeOver(WandColors.bgPrimary)
+        ?: style.tint.copy(alpha = style.fallbackAlpha)
     val (keyShadow, ambientShadow) = cardShadowColors()
     // 实心度：近实心白卡（默认底 ≈0.74）保留完整受光高光与白 rim；半透明着色卡
     // （info/success 弱底 ≈0.12）把白高光、白 rim 一并衰减掉，避免「白色印子」浮在彩底上。
-    val solidity = ((bg.alpha - 0.2f) / 0.6f).coerceIn(0f, 1f)
+    val solidity = if (tint != null) 0f else ((bg.alpha - 0.2f) / 0.6f).coerceIn(0f, 1f)
     val sheen = surfaceSheenBrush(highlightScale = solidity)
     // 顶沿描边：实心白卡用受光白高光（随实心度衰减，避免白色印子）。但半透明语义着色卡
     // （如子代理 info 弱底）实心度≈0，若白高光衰减到透明，描边就只剩底边、四周无界，整卡

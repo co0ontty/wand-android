@@ -82,6 +82,7 @@ import com.wand.app.ui.WandImage
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.components.toolIcon
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
@@ -303,20 +304,21 @@ private fun SubagentPanel(
         label = "subagentArrow",
     )
 
-    // 子代理面板是一张可折叠卡片：走 glassCard 继承统一立体感，
-    // info 弱底 + info rim 让"子任务"语义蓝保持清晰。
+    // 只让标题保持子代理语义卡；展开内容回归普通消息流，避免长任务被一条
+    // 贯穿多屏的蓝色大边框包住。
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassCard(WandShapes.lg, tint = WandColors.infoSoft, rimTint = WandColors.info)
             .animateContentSize(WandMotion.tweenNormal()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .glassCard(WandShapes.lg, tint = WandColors.infoSoft, rimTint = WandColors.info)
+                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 11.dp),
         ) {
             Box(
@@ -372,14 +374,10 @@ private fun SubagentPanel(
             )
         }
         if (expanded) {
-            HorizontalDivider(color = WandColors.info.copy(alpha = 0.18f))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // 用暖中性页底做下沉内容井，而非纯白 surface —— 白底叠在半透明蓝卡上会
-                    // 在蓝头下方糊出一块「白色印子」，改用 bgPrimary 让内容区读作递进的暖色凹槽。
-                    .background(WandColors.bgPrimary.copy(alpha = 0.55f))
-                    .padding(12.dp),
+                    .padding(horizontal = 2.dp),
             ) {
                 content()
             }
@@ -685,23 +683,20 @@ private fun SubagentTag(meta: SubagentMeta?) {
     if (meta == null) return
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .clip(WandShapes.full)
-            .background(WandColors.infoSoft)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier.padding(start = 2.dp, top = 1.dp, bottom = 2.dp),
     ) {
         Icon(
             WandIcons.agent,
             contentDescription = null,
-            tint = WandColors.info,
-            modifier = Modifier.size(12.dp),
+            tint = WandColors.info.copy(alpha = 0.82f),
+            modifier = Modifier.size(11.dp),
         )
         Text(
             meta.taskDescription ?: meta.agentType ?: "子任务",
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
-            color = WandColors.info,
+            color = WandColors.info.copy(alpha = 0.82f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -729,6 +724,7 @@ private sealed class MarkdownBlock {
 @Composable
 fun MarkdownText(text: String) {
     val blocks = remember(text) { parseMarkdownBlocks(text) }
+    val subtleInset = WandColors.textPrimary.copy(alpha = 0.045f)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { block ->
             when (block) {
@@ -785,9 +781,7 @@ fun MarkdownText(text: String) {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(WandShapes.xs)
-                        .background(WandColors.surfaceSoft)
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(start = 2.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
                 ) {
                     Box(
                         modifier = Modifier
@@ -809,8 +803,7 @@ fun MarkdownText(text: String) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(WandShapes.sm)
-                        .background(WandColors.surfaceSoft)
-                        .border(1.dp, WandColors.border, WandShapes.sm),
+                        .background(subtleInset),
                 ) {
                     if (!block.language.isNullOrEmpty()) {
                         Text(
@@ -1051,7 +1044,7 @@ private fun isTableSeparator(line: String, columnCount: Int): Boolean {
 @Composable
 private fun inlineMarkdown(raw: String): AnnotatedString {
     val linkColor = WandColors.info
-    val codeBackground = WandColors.surfaceSoft
+    val codeColor = WandColors.brand.copy(alpha = 0.82f)
     return buildAnnotatedString {
         var i = 0
         while (i < raw.length) {
@@ -1090,9 +1083,10 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                     if (end > i + 1) {
                         withStyle(
                             SpanStyle(
+                                color = codeColor,
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp,
-                                background = codeBackground,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
                             )
                         ) {
                             append(raw.substring(i + 1, end))
@@ -1211,7 +1205,7 @@ fun ToolCard(
             horizontalArrangement = Arrangement.spacedBy(11.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (hasBody) Modifier.clickable { expanded = !expanded } else Modifier)
+                .then(if (hasBody) Modifier.clickableWithoutRipple { expanded = !expanded } else Modifier)
                 .padding(horizontal = 11.dp, vertical = 10.dp),
         ) {
             ToolStatusIconBox(statusColor = statusColor, running = running) {
@@ -1349,7 +1343,9 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassCard(WandShapes.md, rimTint = if (failedCount > 0) tint else null)
+            .clip(WandShapes.md)
+            .background(WandColors.textPrimary.copy(alpha = 0.035f))
+            .border(1.dp, tint.copy(alpha = 0.20f), WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -1357,7 +1353,7 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
             horizontalArrangement = Arrangement.spacedBy(11.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 11.dp, vertical = 10.dp),
         ) {
             ToolStatusIconBox(statusColor = tint, running = running) {
@@ -1520,7 +1516,7 @@ private fun ToolResultBody(result: ContentBlock.ToolResult, modifier: Modifier =
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(WandShapes.sm)
-                .background(WandColors.surfaceSoft)
+                .background(WandColors.textPrimary.copy(alpha = 0.045f))
                 .horizontalScroll(rememberScrollState())
                 .padding(10.dp),
         ) {
@@ -1564,7 +1560,7 @@ private fun OrphanResultBlock(result: ContentBlock.ToolResult) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.clickable { expanded = !expanded },
+            modifier = Modifier.clickableWithoutRipple { expanded = !expanded },
         ) {
             Icon(
                 if (result.isError) WandIcons.error else WandIcons.toolResult,
@@ -1624,7 +1620,7 @@ private fun ThinkingBlock(text: String, streaming: Boolean = false) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.clickable { expanded = !expanded },
+            modifier = Modifier.clickableWithoutRipple { expanded = !expanded },
         ) {
             Icon(
                 WandIcons.thinking,
@@ -1901,7 +1897,7 @@ fun AskUserQuestionCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
             Icon(
@@ -2147,7 +2143,7 @@ fun DiffCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 9.dp),
         ) {
             Icon(
@@ -2296,7 +2292,7 @@ fun TerminalCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 9.dp),
         ) {
             if (running) {
@@ -2503,7 +2499,7 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Canvas(modifier = Modifier.size(18.dp)) {

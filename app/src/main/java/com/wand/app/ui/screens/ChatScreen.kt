@@ -31,8 +31,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -97,7 +95,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -125,6 +122,7 @@ import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.GlassStyle
@@ -286,22 +284,15 @@ fun ChatScreen(
 
     // 液态玻璃：内容区是 backdrop 捕获源，顶栏/输入栏/FAB 悬浮其上采样模糊+折射。
     val glassBackdrop = rememberGlassBackdrop()
-    // 全宽栏只要模糊不要 lens 折射（折射是给悬浮小元素的；折射在直角栏边缘会出现拉丝）。
-    val barGlass = WandGlass.regular.copy(refractionHeight = 0.dp)
     CompositionLocalProvider(LocalServerBaseUrl provides api.baseUrl) {
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
             // 顶栏对齐 iOS navigationStatus：居中显示最新一条用户消息 + 完整工作目录，
             // 右侧是 Git 变更统计 + 会话设置菜单（仅结构化会话）。
-            // 透明容器 + 玻璃表面：消息流从栏下滚过时可见模糊层次。
+            // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
             CenterAlignedTopAppBar(
-                modifier = Modifier.glassSurface(
-                    glassBackdrop,
-                    RoundedCornerShape(0.dp),
-                    barGlass,
-                    edgeToEdge = true,
-                ),
+                modifier = Modifier.background(WandColors.bgPrimary.copy(alpha = 0.98f)),
                 title = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
@@ -373,10 +364,8 @@ fun ChatScreen(
             store.send(text)
         } },
     ) { padding ->
-        // 捕获层：环境渐变背景 + 消息流，整体作为玻璃 chrome 的采样源。
-        // 注意它是全幅的（不吃 innerPadding）——消息要从顶栏/输入栏「下面」滚过；
-        // innerPadding 移到 LazyColumn 的 contentPadding，几何总量与旧版一致，
-        // 滚动锚定与 IME 行为不变。
+        // 捕获层：环境渐变背景全幅铺开，消息流只在顶栏与输入栏之间滚动，
+        // 避免正文被玻璃栏遮挡或透进状态栏。
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -396,9 +385,14 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
+                            .padding(padding)
+                            .padding(bottom = if (followsLatest) 0.dp else 50.dp)
                             .nestedScroll(followPauseConnection),
-                        contentPadding = padding.plus(
-                            PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 6.dp),
+                        contentPadding = PaddingValues(
+                            start = 14.dp,
+                            end = 14.dp,
+                            top = 8.dp,
+                            bottom = 18.dp,
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -558,18 +552,6 @@ fun ChatScreen(
         }
     }
     }
-}
-
-/** innerPadding 与列表内边距合并（玻璃化后 padding 从容器移到 contentPadding 用）。 */
-@Composable
-private fun PaddingValues.plus(other: PaddingValues): PaddingValues {
-    val direction = LocalLayoutDirection.current
-    return PaddingValues(
-        start = calculateStartPadding(direction) + other.calculateStartPadding(direction),
-        top = calculateTopPadding() + other.calculateTopPadding(),
-        end = calculateEndPadding(direction) + other.calculateEndPadding(direction),
-        bottom = calculateBottomPadding() + other.calculateBottomPadding(),
-    )
 }
 
 /** 顶栏左侧 provider 小徽标：品牌色弱底圆角方块 + 品牌 logo，标明当前 Claude / Codex。 */
@@ -1038,7 +1020,7 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .clickable { expanded = !expanded }
+                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 4.dp, vertical = 2.dp),
         ) {
             Icon(

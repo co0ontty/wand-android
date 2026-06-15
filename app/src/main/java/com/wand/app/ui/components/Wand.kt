@@ -59,6 +59,13 @@ import com.wand.app.ui.theme.surfaceSheenBrush
  * 与客户端派生态（thinking/permission/waiting-input/reconnecting/archived），未知值走灰色兜底。
  */
 
+/** 用于卡片内部折叠标题行，避免默认 ripple 在圆角卡片里扩散成白色矩形。 */
+@Composable
+fun Modifier.clickableWithoutRipple(onClick: () -> Unit): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    return clickable(interactionSource = interaction, indication = null, onClick = onClick)
+}
+
 /** 状态 → 语义色。 */
 @Composable
 private fun statusColor(status: String): Color = when (status.trim().lowercase()) {
