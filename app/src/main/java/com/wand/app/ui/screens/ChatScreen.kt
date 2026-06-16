@@ -182,6 +182,8 @@ fun ChatScreen(
     }
 
     var draft by remember { mutableStateOf("") }
+    // 抽纸式跟随：true = 自动把最新一轮（最后一条用户消息 + 其上方折叠摘要卡）钉到页面顶端，
+    // 回复在下方展开；用户手动滚动后置 false（露出「回到最新」浮钮）。语义已从「贴底」改为「钉顶」。
     var followsLatest by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
@@ -208,8 +210,8 @@ fun ChatScreen(
         }
     }
 
-    // 仅用户明确向下拖动、准备查看更早消息时暂停跟随（阈值 18dp，对齐 iOS）。
-    // 轻微触摸或收键盘不会误关跟随，新回复仍自动贴底。
+    // 仅用户明确向上滚动（拉出更早内容）时暂停贴底跟随（阈值 18dp）。轻微触摸 / 收键盘
+    // 不误关，新回复仍自动贴在输入框上方。程序化滚动 source != UserInput，不会误触发。
     val density = LocalDensity.current
     val followPauseConnection = remember(density) {
         val thresholdPx = with(density) { 18.dp.toPx() }
@@ -230,31 +232,12 @@ fun ChatScreen(
     }
 
     // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
-    val baseItems = remember(store.messages) { groupExplorationTurns(store.messages) }
-    // 历史折叠：记录当前被展开的那条历史摘要卡的边界（= 最后一条用户消息下标）。
-    // 发新消息后边界前移，nil != 新边界 → 历史默认重新折叠（对齐 Web / iOS）。
-    var expandedHistoryBoundary by remember { mutableStateOf<Int?>(null) }
+    // 历史不再折成单张「展开历史对话」摘要卡，改为每条助手回复各自带折叠头
+    // （头像 + 名字 + 折叠开关，见 TurnView / AssistantReplyHeader）：旧回复默认折起、当前展开，
+    // 像抽纸一样一截一截往上收。
+    val displayItems = remember(store.messages) { groupExplorationTurns(store.messages) }
     val lastUserTurnIndex = remember(store.messages) {
         store.messages.indexOfLast { it.role == "user" }
-    }
-    val displayItems = remember(baseItems, lastUserTurnIndex, expandedHistoryBoundary) {
-        // 至少要折叠一整轮（≥2 条历史 turn）才出摘要卡。
-        if (lastUserTurnIndex < 2) {
-            baseItems
-        } else {
-            val history = baseItems.filter { messageItemTurnIndex(it) < lastUserTurnIndex }
-            val current = baseItems.filter { messageItemTurnIndex(it) >= lastUserTurnIndex }
-            if (history.isEmpty()) {
-                baseItems
-            } else {
-                val stats = computeHistoryStats(store.messages, lastUserTurnIndex)
-                buildList {
-                    if (expandedHistoryBoundary == lastUserTurnIndex) addAll(history)
-                    add(MessageDisplayItem.HistorySummary(stats, lastUserTurnIndex))
-                    addAll(current)
-                }
-            }
-        }
     }
 
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
@@ -291,13 +274,22 @@ fun ChatScreen(
     ) { uris -> uploadUris(uris) }
 
     // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
-    // 列表末尾有独立锚点，确保长消息增长时滚到真正底部而非最后一项顶部。
-    // 顶部「加载更早」哨兵占一项，跟随到底时要把它算进去。
-    val bottomIndex = (if (store.canLoadEarlier) 1 else 0) +
-        displayItems.size + if (store.isResponding) 1 else 0
+    // 顶部「加载更早」哨兵占一项，索引计算时要算进去；bottomIndex 是末尾锚点（贴底用）。
+    val headerOffset = if (store.canLoadEarlier) 1 else 0
+    val bottomIndex = headerOffset + displayItems.size + if (store.isResponding) 1 else 0
     LaunchedEffect(store.messages, store.isResponding, store.loading) {
         if (!store.loading && followsLatest) {
+            // 贴底跟随：最新一轮回复结束在输入框上方一点，更早的回复各自折进折叠头里、不占屏。
             listState.scrollToItem(bottomIndex)
+        }
+    }
+    // 展开某条折叠回复时，把它的「头（第一行）」滚到顶部区域来读，且不被顶出屏幕上沿；
+    // 同时暂停贴底跟随，免得流式刷新又把视图拽回底部。
+    val scrollReplyToTop: (Int) -> Unit = { turnIdx ->
+        followsLatest = false
+        scrollScope.launch {
+            val p = displayItems.indexOfFirst { messageItemTurnIndex(it) == turnIdx }
+            if (p >= 0) listState.animateScrollToItem(headerOffset + p)
         }
     }
 
@@ -382,7 +374,7 @@ fun ChatScreen(
             },
             onPickFile = { attachmentPicker.launch(arrayOf("*/*")) },
         ) {
-            // 发送回调（带触感反馈）；发送后立即恢复贴底跟随（对齐 iOS sendDraft）。
+            // 发送回调（带触感反馈）；发送后恢复钉顶跟随，让新消息升到页面顶端、旧对话折起。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val text = draft
             draft = ""
@@ -455,6 +447,9 @@ fun ChatScreen(
                                         item.turn,
                                         isLastTurn = item.index == store.messages.lastIndex,
                                         isResponding = store.isResponding,
+                                        turnIndex = item.index,
+                                        historyBoundary = lastUserTurnIndex,
+                                        onUserExpand = { scrollReplyToTop(item.index) },
                                         askSelections = store.askUserSelections,
                                         onAskToggle = { toolUseId, qIdx, optIdx, multi ->
                                             store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
@@ -469,15 +464,6 @@ fun ChatScreen(
                                         running = store.isResponding &&
                                             item.lastTurnIndex == store.messages.lastIndex &&
                                             item.tools.any { it.result == null },
-                                    )
-                                    is MessageDisplayItem.HistorySummary -> HistorySummaryCard(
-                                        stats = item.stats,
-                                        expanded = expandedHistoryBoundary == item.boundary,
-                                        onToggle = {
-                                            expandedHistoryBoundary =
-                                                if (expandedHistoryBoundary == item.boundary) null
-                                                else item.boundary
-                                        },
                                     )
                                 }
                             }
@@ -509,7 +495,7 @@ fun ChatScreen(
                 visible = !store.connected,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
-            // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。
+            // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。用户上滚后点它，回到最新一轮（贴底）。
             AnimatedVisibility(
                 visible = !store.loading && store.loadError == null && !followsLatest,
                 enter = fadeIn(WandMotion.tweenFast()) +
@@ -1418,13 +1404,18 @@ private fun InputBar(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                plusMenu()
-                if (store.isStructured) {
-                    ModeChip(store)
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                if (store.isStructured) {
-                    ModelThinkingChip(store)
+                // 左侧 + / 模式 / 模型徽标群占据弹性空间：空间不足时模型徽标缩列省略号，
+                // 而不是把右侧的话筒 / 发送按钮挤出屏幕（聚焦时发送按钮消失的根因）。
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    plusMenu()
+                    if (store.isStructured) {
+                        ModeChip(store)
+                        ModelThinkingChip(store, modifier = Modifier.weight(1f, fill = false))
+                    }
                 }
                 mic()
                 trailing()
@@ -1528,12 +1519,13 @@ private fun ControlChip(
     text: String,
     tint: Color,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
+        modifier = modifier
             .clip(CircleShape)
             .background(tint.copy(alpha = 0.10f))
             .border(1.dp, tint.copy(alpha = 0.22f), CircleShape)
@@ -1548,7 +1540,8 @@ private fun ControlChip(
             color = tint,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 130.dp),
+            // 取可用宽度但允许收缩：空间紧张时省略号缩列，而非撑出固定 130dp 把按钮挤掉。
+            modifier = Modifier.weight(1f, fill = false),
         )
         Icon(WandIcons.expand, contentDescription = null, tint = tint.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
     }
@@ -1598,9 +1591,9 @@ private fun ModeChip(store: ChatStore) {
 
 /** 模型 · 思考深度合并徽标 + 下拉菜单（对齐 iOS modelThinkingChip）。 */
 @Composable
-private fun ModelThinkingChip(store: ChatStore) {
+private fun ModelThinkingChip(store: ChatStore, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
-    Box {
+    Box(modifier = modifier) {
         ControlChip(
             icon = WandIcons.tune,
             text = modelThinkingText(store),

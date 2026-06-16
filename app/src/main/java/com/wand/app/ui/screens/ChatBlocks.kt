@@ -110,18 +110,41 @@ fun TurnView(
     turn: ConversationTurn,
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
+    turnIndex: Int = -1,
+    historyBoundary: Int = -1,
+    onUserExpand: () -> Unit = {},
     askSelections: Map<String, AskUserSelectionState> = emptyMap(),
     onAskToggle: (String, Int, Int, Boolean) -> Unit = { _, _, _, _ -> },
     onAskSubmit: (String, String) -> Unit = { _, _ -> },
 ) {
     if (turn.role == "user") {
         UserTurnView(turn)
-    } else {
-        val segments = remember(turn.content) { splitBySubagent(turn.content) }
-        Column(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+        return
+    }
+    val segments = remember(turn.content) { splitBySubagent(turn.content) }
+    val preview = remember(turn.content) { replyPreview(turn.content) }
+    // 抽纸折叠：历史回复（位于最后一条用户消息之前）默认折起，当前一轮展开。
+    // historyBoundary 变化（= 发了新消息）即按新归属重置：旧回复自动折回去、丢弃手动展开。
+    val defaultCollapsed = turnIndex in 0 until historyBoundary
+    var collapsed by remember(historyBoundary) { mutableStateOf(defaultCollapsed) }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
+        // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
+        AssistantReplyHeader(
+            collapsed = collapsed,
+            preview = preview,
+            onToggle = {
+                val next = !collapsed
+                collapsed = next
+                if (!next) onUserExpand()
+            },
+        )
+        if (!collapsed) {
             segments.forEachIndexed { segmentIndex, segment ->
                 if (segment.subagent == null) {
                     SegmentBlocks(
@@ -151,6 +174,94 @@ fun TurnView(
             }
         }
     }
+}
+
+/**
+ * 助手回复折叠头（用户诉求「抽纸效应」）：左上角「头像 + 名字 + 折叠开关」，开关与「收起
+ * 临界线」都落在这一行 —— 收起时只留这一行（名字后跟一行正文预览，给「折进去的是什么」的线索），
+ * 展开时正文接在临界线下方。历史回复一截一截往上收，盒口（这一行）始终露着。
+ */
+@Composable
+private fun AssistantReplyHeader(
+    collapsed: Boolean,
+    preview: String,
+    onToggle: () -> Unit,
+) {
+    val arrow by animateFloatAsState(
+        if (collapsed) 0f else 180f,
+        WandMotion.tweenNormal(),
+        label = "replyArrow",
+    )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(WandShapes.full)
+                .clickableWithoutRipple { onToggle() }
+                .padding(vertical = 3.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(WandColors.brand.copy(alpha = 0.14f)),
+            ) {
+                Icon(
+                    WandIcons.sparkle,
+                    contentDescription = null,
+                    tint = WandColors.brand,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+            Text(
+                "Wand",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+            )
+            if (collapsed && preview.isNotBlank()) {
+                Text(
+                    preview,
+                    fontSize = 12.sp,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (collapsed) "展开回复" else "收起回复",
+                tint = WandColors.textSecondary,
+                modifier = Modifier
+                    .size(15.dp)
+                    .graphicsLayer { rotationZ = arrow },
+            )
+        }
+        // 收起临界线：分隔「头」与「正文」的细线，落在头像 / 名字这一行下沿。
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(WandColors.border.copy(alpha = 0.6f)),
+        )
+    }
+}
+
+/** 折叠态下名字后的一行正文预览：优先取文本，纯工具调用时给「N 个工具调用」线索。 */
+private fun replyPreview(content: List<ContentBlock>): String {
+    val text = content.filterIsInstance<ContentBlock.Text>()
+        .joinToString(" ") { it.text }
+        .trim()
+        .replace(Regex("\\s+"), " ")
+    if (text.isNotEmpty()) return text
+    val toolCount = content.count { it is ContentBlock.ToolUse }
+    return if (toolCount > 0) "$toolCount 个工具调用" else ""
 }
 
 /** user turn 也可能携带 Task tool_result；保留普通用户气泡，并把子代理回包独立成面板。 */
@@ -485,60 +596,12 @@ sealed class MessageDisplayItem {
         val tools: List<ExplorationToolItem>,
         val lastTurnIndex: Int,
     ) : MessageDisplayItem()
-
-    /** 历史折叠摘要卡：折叠"最后一条用户消息"之前的全部历史，boundary = 该用户消息下标。 */
-    data class HistorySummary(val stats: HistoryStats, val boundary: Int) : MessageDisplayItem()
 }
 
-/** 被折叠历史区间的统计：轮次 / 工具调用 / 子代理 / 失败（对齐 iOS HistoryStats）。 */
-data class HistoryStats(
-    val rounds: Int,
-    val tools: Int,
-    val agents: Int,
-    val errors: Int,
-)
-
-/** 取出一个 MessageDisplayItem 归属的 turn 下标，用于按历史边界分区。 */
+/** 取出一个 MessageDisplayItem 归属的 turn 下标，用于钉顶定位等。 */
 fun messageItemTurnIndex(item: MessageDisplayItem): Int = when (item) {
     is MessageDisplayItem.Turn -> item.index
     is MessageDisplayItem.Exploration -> item.lastTurnIndex
-    is MessageDisplayItem.HistorySummary -> item.boundary
-}
-
-/** 统计被折叠历史区间（turns[0 until boundary]）里的轮次 / 工具 / 子代理 / 失败数量。 */
-fun computeHistoryStats(turns: List<ConversationTurn>, boundary: Int): HistoryStats {
-    var rounds = 0
-    var tools = 0
-    var errors = 0
-    val agentIds = mutableSetOf<String>()
-    val upper = minOf(boundary, turns.size)
-    for (idx in 0 until upper) {
-        val turn = turns[idx]
-        if (turn.role == "user") rounds++
-        for (block in turn.content) {
-            when (block) {
-                is ContentBlock.ToolUse -> {
-                    tools++
-                    val tid = block.subagent?.taskId
-                    if (!tid.isNullOrEmpty()) {
-                        agentIds.add(tid)
-                    } else if (block.name == "Task" || block.name == "Agent" ||
-                        !block.input.str("subagent_type").isNullOrEmpty()
-                    ) {
-                        if (block.id.isNotEmpty()) agentIds.add(block.id)
-                    }
-                }
-                is ContentBlock.ToolResult -> {
-                    if (block.isError) errors++
-                    block.subagent?.taskId?.let { if (it.isNotEmpty()) agentIds.add(it) }
-                }
-                is ContentBlock.Text -> block.subagent?.taskId?.let { if (it.isNotEmpty()) agentIds.add(it) }
-                is ContentBlock.Thinking -> block.subagent?.taskId?.let { if (it.isNotEmpty()) agentIds.add(it) }
-                ContentBlock.Unknown -> {}
-            }
-        }
-    }
-    return HistoryStats(rounds, tools, agentIds.size, errors)
 }
 
 /**
@@ -1523,72 +1586,6 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
                 }
             }
         }
-    }
-}
-
-/**
- * 历史折叠摘要卡。发新消息后，"最后一条用户消息"之前的历史折叠成这张分隔卡，
- * 展示被折叠区间里的轮次 / 工具调用 / 子代理 / 失败数量，点一下展开（对齐 Web / iOS）。
- * 展开 / 收起状态由上层 ChatScreen 的 expandedHistoryBoundary 驱动。
- */
-@Composable
-fun HistorySummaryCard(
-    stats: HistoryStats,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-) {
-    val meta = buildList {
-        add("${stats.rounds} 轮对话")
-        if (stats.tools > 0) add("${stats.tools} 次工具调用")
-        if (stats.agents > 0) add("${stats.agents} 个子代理")
-        if (stats.errors > 0) add("${stats.errors} 个失败")
-    }.joinToString(" · ")
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(WandShapes.full)
-            .background(WandColors.textPrimary.copy(alpha = 0.035f))
-            .border(1.dp, WandColors.border.copy(alpha = 0.7f), WandShapes.full)
-            .clickableWithoutRipple { onToggle() }
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-    ) {
-        Icon(
-            WandIcons.refresh,
-            contentDescription = null,
-            tint = WandColors.textSecondary,
-            modifier = Modifier.size(15.dp),
-        )
-        Column(
-            verticalArrangement = Arrangement.spacedBy(1.dp),
-            modifier = Modifier.weight(1f),
-        ) {
-            Text(
-                if (expanded) "收起历史对话" else "展开历史对话",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
-            )
-            Text(
-                meta,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            WandIcons.expand,
-            contentDescription = if (expanded) "收起" else "展开",
-            tint = WandColors.textSecondary,
-            modifier = Modifier
-                .size(14.dp)
-                .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
-        )
     }
 }
 
