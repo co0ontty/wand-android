@@ -2,10 +2,11 @@ package com.wand.app.ui
 
 import androidx.compose.runtime.mutableStateListOf
 
-/** 原生界面的页面栈。结构化对话原生承载，PTY 由独立 WebView Activity 承载。 */
+/** 原生界面的页面栈。结构化对话原生承载，PTY 套在原生头部里嵌一层终端 WebView。 */
 sealed class Screen {
     data object SessionList : Screen()
     data class Chat(val sessionId: String) : Screen()
+    data class PtyTerminal(val sessionId: String) : Screen()
     data object NewSession : Screen()
     data object Settings : Screen()
 }

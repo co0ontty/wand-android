@@ -28,6 +28,7 @@ import com.wand.app.data.WandApi
 import com.wand.app.data.WandAuth
 import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.NewSessionScreen
+import com.wand.app.ui.screens.PtyTerminalScreen
 import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
 import com.wand.app.ui.screens.SettingsScreen
@@ -160,7 +161,7 @@ private fun ReadyContent(
                 if (session.isStructured) {
                     nav.push(Screen.Chat(session.id))
                 } else {
-                    actions.openWebSession(session.id)
+                    nav.push(Screen.PtyTerminal(session.id))
                 }
             },
             onNewSession = { nav.push(Screen.NewSession) },
@@ -174,6 +175,11 @@ private fun ReadyContent(
             isHapticEnabled = actions.isHapticEnabled,
             onBack = { nav.pop() },
         )
+        is Screen.PtyTerminal -> PtyTerminalScreen(
+            api = api,
+            sessionId = screen.sessionId,
+            onBack = { nav.pop() },
+        )
         is Screen.NewSession -> NewSessionScreen(
             api = api,
             onBack = { nav.pop() },
@@ -183,7 +189,7 @@ private fun ReadyContent(
                 if (snapshot.isStructured) {
                     nav.push(Screen.Chat(snapshot.id))
                 } else {
-                    actions.openWebSession(snapshot.id)
+                    nav.push(Screen.PtyTerminal(snapshot.id))
                 }
             },
         )
