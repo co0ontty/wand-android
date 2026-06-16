@@ -485,6 +485,60 @@ sealed class MessageDisplayItem {
         val tools: List<ExplorationToolItem>,
         val lastTurnIndex: Int,
     ) : MessageDisplayItem()
+
+    /** 历史折叠摘要卡：折叠"最后一条用户消息"之前的全部历史，boundary = 该用户消息下标。 */
+    data class HistorySummary(val stats: HistoryStats, val boundary: Int) : MessageDisplayItem()
+}
+
+/** 被折叠历史区间的统计：轮次 / 工具调用 / 子代理 / 失败（对齐 iOS HistoryStats）。 */
+data class HistoryStats(
+    val rounds: Int,
+    val tools: Int,
+    val agents: Int,
+    val errors: Int,
+)
+
+/** 取出一个 MessageDisplayItem 归属的 turn 下标，用于按历史边界分区。 */
+fun messageItemTurnIndex(item: MessageDisplayItem): Int = when (item) {
+    is MessageDisplayItem.Turn -> item.index
+    is MessageDisplayItem.Exploration -> item.lastTurnIndex
+    is MessageDisplayItem.HistorySummary -> item.boundary
+}
+
+/** 统计被折叠历史区间（turns[0 until boundary]）里的轮次 / 工具 / 子代理 / 失败数量。 */
+fun computeHistoryStats(turns: List<ConversationTurn>, boundary: Int): HistoryStats {
+    var rounds = 0
+    var tools = 0
+    var errors = 0
+    val agentIds = mutableSetOf<String>()
+    val upper = minOf(boundary, turns.size)
+    for (idx in 0 until upper) {
+        val turn = turns[idx]
+        if (turn.role == "user") rounds++
+        for (block in turn.content) {
+            when (block) {
+                is ContentBlock.ToolUse -> {
+                    tools++
+                    val tid = block.subagent?.taskId
+                    if (!tid.isNullOrEmpty()) {
+                        agentIds.add(tid)
+                    } else if (block.name == "Task" || block.name == "Agent" ||
+                        !block.input.str("subagent_type").isNullOrEmpty()
+                    ) {
+                        if (block.id.isNotEmpty()) agentIds.add(block.id)
+                    }
+                }
+                is ContentBlock.ToolResult -> {
+                    if (block.isError) errors++
+                    block.subagent?.taskId?.let { if (it.isNotEmpty()) agentIds.add(it) }
+                }
+                is ContentBlock.Text -> block.subagent?.taskId?.let { if (it.isNotEmpty()) agentIds.add(it) }
+                is ContentBlock.Thinking -> block.subagent?.taskId?.let { if (it.isNotEmpty()) agentIds.add(it) }
+                ContentBlock.Unknown -> {}
+            }
+        }
+    }
+    return HistoryStats(rounds, tools, agentIds.size, errors)
 }
 
 /**
@@ -1469,6 +1523,72 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
                 }
             }
         }
+    }
+}
+
+/**
+ * 历史折叠摘要卡。发新消息后，"最后一条用户消息"之前的历史折叠成这张分隔卡，
+ * 展示被折叠区间里的轮次 / 工具调用 / 子代理 / 失败数量，点一下展开（对齐 Web / iOS）。
+ * 展开 / 收起状态由上层 ChatScreen 的 expandedHistoryBoundary 驱动。
+ */
+@Composable
+fun HistorySummaryCard(
+    stats: HistoryStats,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val meta = buildList {
+        add("${stats.rounds} 轮对话")
+        if (stats.tools > 0) add("${stats.tools} 次工具调用")
+        if (stats.agents > 0) add("${stats.agents} 个子代理")
+        if (stats.errors > 0) add("${stats.errors} 个失败")
+    }.joinToString(" · ")
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.full)
+            .background(WandColors.textPrimary.copy(alpha = 0.035f))
+            .border(1.dp, WandColors.border.copy(alpha = 0.7f), WandShapes.full)
+            .clickableWithoutRipple { onToggle() }
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
+        Icon(
+            WandIcons.refresh,
+            contentDescription = null,
+            tint = WandColors.textSecondary,
+            modifier = Modifier.size(15.dp),
+        )
+        Column(
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(
+                if (expanded) "收起历史对话" else "展开历史对话",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+            )
+            Text(
+                meta,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            WandIcons.expand,
+            contentDescription = if (expanded) "收起" else "展开",
+            tint = WandColors.textSecondary,
+            modifier = Modifier
+                .size(14.dp)
+                .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+        )
     }
 }
 

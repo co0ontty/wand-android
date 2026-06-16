@@ -230,7 +230,32 @@ fun ChatScreen(
     }
 
     // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
-    val displayItems = remember(store.messages) { groupExplorationTurns(store.messages) }
+    val baseItems = remember(store.messages) { groupExplorationTurns(store.messages) }
+    // 历史折叠：记录当前被展开的那条历史摘要卡的边界（= 最后一条用户消息下标）。
+    // 发新消息后边界前移，nil != 新边界 → 历史默认重新折叠（对齐 Web / iOS）。
+    var expandedHistoryBoundary by remember { mutableStateOf<Int?>(null) }
+    val lastUserTurnIndex = remember(store.messages) {
+        store.messages.indexOfLast { it.role == "user" }
+    }
+    val displayItems = remember(baseItems, lastUserTurnIndex, expandedHistoryBoundary) {
+        // 至少要折叠一整轮（≥2 条历史 turn）才出摘要卡。
+        if (lastUserTurnIndex < 2) {
+            baseItems
+        } else {
+            val history = baseItems.filter { messageItemTurnIndex(it) < lastUserTurnIndex }
+            val current = baseItems.filter { messageItemTurnIndex(it) >= lastUserTurnIndex }
+            if (history.isEmpty()) {
+                baseItems
+            } else {
+                val stats = computeHistoryStats(store.messages, lastUserTurnIndex)
+                buildList {
+                    if (expandedHistoryBoundary == lastUserTurnIndex) addAll(history)
+                    add(MessageDisplayItem.HistorySummary(stats, lastUserTurnIndex))
+                    addAll(current)
+                }
+            }
+        }
+    }
 
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
     // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
@@ -444,6 +469,15 @@ fun ChatScreen(
                                         running = store.isResponding &&
                                             item.lastTurnIndex == store.messages.lastIndex &&
                                             item.tools.any { it.result == null },
+                                    )
+                                    is MessageDisplayItem.HistorySummary -> HistorySummaryCard(
+                                        stats = item.stats,
+                                        expanded = expandedHistoryBoundary == item.boundary,
+                                        onToggle = {
+                                            expandedHistoryBoundary =
+                                                if (expandedHistoryBoundary == item.boundary) null
+                                                else item.boundary
+                                        },
                                     )
                                 }
                             }
