@@ -1203,28 +1203,8 @@ private fun BottomBar(
         if (store.queuedMessages.isNotEmpty()) {
             QueueBar(store = store, backdrop = backdrop)
         }
-        if (store.sessionEnded) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                    // 玻璃面板已带层叠投影，内边距给足一点纵向呼吸位，
-                    // 让「浮起」读作有意为之而非紧贴按钮。
-                    .glassSurface(backdrop, RoundedCornerShape(14.dp), WandGlass.regular)
-                    .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-            ) {
-                Text(
-                    "会话已结束",
-                    fontSize = 12.sp,
-                    color = WandColors.textMuted,
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                OutlinedButton(onClick = { store.resume() }) {
-                    Text("恢复会话", fontSize = 13.sp, color = WandColors.brand)
-                }
-            }
-        }
+        // 结构化会话没有「会话已结束 / 恢复会话」的概念：一个回合结束后只是回到 idle，
+        // 直接继续输入即可（服务端 sendMessage 自动 --resume 续接）。不再渲染结束态横幅。
         // 按住说话实时转写气泡（按住期间悬浮在输入栏上方）。
         if (voice.pressed) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
@@ -1265,7 +1245,9 @@ private fun InputBar(
     onPickFile: () -> Unit,
     onSend: () -> Unit,
 ) {
-    val canSend = draft.isNotBlank() && !store.sessionEnded
+    // 结构化会话不存在「已结束」终止态（停止只回到 idle，真失败也能再发消息触发
+    // 服务端 --resume 续接），所以发送按钮只看草稿是否非空，不再被 sessionEnded 卡死。
+    val canSend = draft.isNotBlank()
     // 从语音模式轻点切回键盘时自动聚焦文本框，键盘直接弹起。
     val focusRequester = remember { FocusRequester() }
     var focusAfterExit by remember { mutableStateOf(false) }
