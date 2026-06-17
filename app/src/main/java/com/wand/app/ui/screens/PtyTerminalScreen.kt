@@ -176,7 +176,18 @@ private fun PtyTerminalWebView(serverUrl: String, sessionId: String) {
                             "r.style.setProperty('--app-inset-top','0px');" +
                             "r.style.setProperty('--app-inset-bottom','0px');" +
                             "r.style.setProperty('--app-inset-left','0px');" +
-                            "r.style.setProperty('--app-inset-right','0px');}catch(e){}})();",
+                            "r.style.setProperty('--app-inset-right','0px');" +
+                            "if(!document.getElementById('wand-native-terminal-compact-style')){" +
+                            "var s=document.createElement('style');" +
+                            "s.id='wand-native-terminal-compact-style';" +
+                            "s.textContent='" +
+                            ".is-wand-embed-terminal .terminal-scale-overlay{transform:scale(.86);transform-origin:top right;opacity:.24;transition:opacity .16s ease,transform .16s ease;}" +
+                            ".is-wand-embed-terminal .terminal-scale-overlay:hover,.is-wand-embed-terminal .terminal-scale-overlay:focus-within,.is-wand-embed-terminal .terminal-scale-overlay:active{opacity:1;transform:scale(.94);}" +
+                            ".is-wand-embed-terminal .wand-joystick-root{opacity:.26;transform:scale(.82);transform-origin:bottom right;transition:opacity .16s ease,transform .16s ease;}" +
+                            ".is-wand-embed-terminal .wand-joystick-root:has(.panel-open),.is-wand-embed-terminal .wand-joystick-root:active{opacity:1;transform:scale(.94);}" +
+                            "';" +
+                            "document.head.appendChild(s);}" +
+                            "}catch(e){}})();",
                         null,
                     )
                 }

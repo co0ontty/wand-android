@@ -62,7 +62,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     private String appToken;
     private String sessionId;
     private boolean hasLoadedPage = false;
-    private boolean updateCheckDone = false;
     private boolean lastLoadFailed = false;
     private ValueCallback<Uri[]> pendingFileChooserCallback;
     private boolean keepAliveRunning = false;
@@ -243,17 +242,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                 hideError();
                 hideLoadingOverlay();
                 injectNativeInsetsMarker();
-                if (!updateCheckDone) {
-                    updateCheckDone = true;
-                    updateManager.checkForUpdate((cv, lv, dl, fn, sz, src, notes) -> {
-                        notificationHelper.sendNotification(
-                                "Wand 发现新版本",
-                                "当前 " + cv + " → 最新 " + lv,
-                                "update:wand-update",
-                                buildSelfPendingIntent(0), serverStore);
-                        updateManager.showUpdateDialog(cv, lv, dl, fn, sz, src, notes);
-                    });
-                }
             }
 
             @Override

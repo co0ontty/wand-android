@@ -27,6 +27,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -302,9 +304,15 @@ fun ChatScreen(
     }
     val latestAnchorIndex = headerOffset + visibleHistoryCount
     val bottomIndex = headerOffset + visibleHistoryCount + currentItems.size + if (store.isResponding) 1 else 0
-    LaunchedEffect(store.messages, store.isResponding, store.loading) {
+    LaunchedEffect(store.messages, store.isResponding, store.loading, latestAnchorIndex, bottomIndex) {
         if (!store.loading && followsLatest) {
-            listState.scrollToItem(if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex)
+            val target = if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex
+            listState.scrollToItem(target)
+            for (waitMs in listOf(50L, 150L, 350L, 700L)) {
+                delay(waitMs)
+                if (!followsLatest) break
+                listState.scrollToItem(target)
+            }
         }
     }
     // 展开某条折叠回复时，把它的「头（第一行）」滚到顶部区域来读，且不被顶出屏幕上沿；
@@ -430,11 +438,20 @@ fun ChatScreen(
                         SessionLaunchPanel(store)
                     }
                 else -> {
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                    ) {
+                    val pinSpacerHeight = if (followsLatest && lastUserTurnIndex >= 0 && !historyExpanded) {
+                        maxHeight
+                    } else {
+                        0.dp
+                    }
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(padding)
                             .padding(bottom = if (followsLatest) 0.dp else 50.dp)
                             .nestedScroll(followPauseConnection),
                         contentPadding = PaddingValues(
@@ -556,6 +573,16 @@ fun ChatScreen(
                         item(key = "chat-bottom") {
                             Spacer(modifier = Modifier.size(1.dp))
                         }
+                        if (pinSpacerHeight > 0.dp) {
+                            item(key = "chat-pin-spacer") {
+                                Spacer(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(pinSpacerHeight),
+                                )
+                            }
+                        }
+                    }
                     }
                 }
             }

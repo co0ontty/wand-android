@@ -98,11 +98,6 @@ class HomeActivity : AppCompatActivity() {
                         // 认证成功后启动会话通知中枢（全局 WS → 进度/完成/授权通知）。
                         // start 幂等，Activity 重建时复用既有连接。
                         SessionWatcher.start(this, api.baseUrl, appToken)
-                        // 每个进程只在首次认证成功后静默检查一次更新（从 WebView 首屏迁来）。
-                        if (!updateCheckedThisProcess) {
-                            updateCheckedThisProcess = true
-                            checkUpdate(manager)
-                        }
                     },
                 )
             }
@@ -169,9 +164,5 @@ class HomeActivity : AppCompatActivity() {
             }
         } catch (_: Exception) {
         }
-    }
-
-    companion object {
-        private var updateCheckedThisProcess = false
     }
 }

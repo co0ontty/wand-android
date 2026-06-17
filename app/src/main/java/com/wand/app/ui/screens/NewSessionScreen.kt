@@ -87,7 +87,7 @@ import kotlinx.coroutines.launch
  * Provider（分段控件）→ 会话类型（分段控件）→ 模型与思考（两张菜单卡）→
  * 模式（两列网格，5 选 1，末张半宽）→ 工作目录（路径输入 + 内嵌浏览按钮 + 最近路径）
  * → 首条消息（可选）。卡片是 iOS 风格的**纯色 surface 平面卡**（无玻璃微光/投影），
- * 选中切 brand 软底 + brand 描边。底部通栏「创建会话」+ 顶栏「创建」双入口同 iOS。
+ * 选中切 brand 软底 + brand 描边。底部通栏「创建会话」作为唯一主操作，避免上下重复。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -224,24 +224,7 @@ fun NewSessionScreen(
                         Text("取消", fontSize = 16.sp, color = WandColors.textSecondary)
                     }
                 },
-                actions = {
-                    if (creating) {
-                        CircularProgressIndicator(
-                            color = WandColors.brand,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.padding(end = 16.dp).size(20.dp),
-                        )
-                    } else {
-                        TextButton(onClick = { create() }, enabled = canCreate) {
-                            Text(
-                                "创建",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (canCreate) WandColors.brand else WandColors.textSecondary,
-                            )
-                        }
-                    }
-                },
+                actions = {},
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = WandColors.bgPrimary,
                     scrolledContainerColor = WandColors.bgPrimary,
@@ -390,7 +373,7 @@ fun NewSessionScreen(
                 ErrorBanner(errorMessage ?: "")
             }
 
-            Spacer(modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.size(40.dp))
         }
     }
 }

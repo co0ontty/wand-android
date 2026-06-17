@@ -184,7 +184,7 @@ fun SettingsScreen(
             WandCard(modifier = Modifier.fillMaxWidth()) {
                 InfoRow("地址", actions.serverUrl, mono = true)
                 RowDivider()
-                InfoRow("认证方式", if (actions.hasToken) "连接码" else "无密码")
+                InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定")
                 serverVersion?.let {
                     RowDivider()
                     InfoRow("服务端版本", "v$it", mono = true)
@@ -460,8 +460,7 @@ private fun SttModelSection() {
             }
         }
         Text(
-            "识别完全在本机离线运行。中英混合模型针对中英夹杂口述（含编程词汇热词增强），" +
-                "内存占用较高，建议 6 GB 以上内存的设备使用。",
+            "离线识别；中英混合模型更适合编程口述，内存占用较高。",
             fontSize = 11.sp,
             color = WandColors.textMuted,
             modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),

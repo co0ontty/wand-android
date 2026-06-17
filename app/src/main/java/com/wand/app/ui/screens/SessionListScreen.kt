@@ -1066,7 +1066,7 @@ private fun SessionCard(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    session.displayTitle,
+                    sessionListTitle(session),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textPrimary,
@@ -1115,6 +1115,13 @@ private fun SessionCard(
     }
 }
 
+private fun sessionListTitle(session: SessionSnapshot): String {
+    val hasSemanticTitle = !session.summary.isNullOrBlank() || !session.currentTaskTitle.isNullOrBlank()
+    if (hasSemanticTitle) return session.displayTitle
+    val kind = if (session.isStructured) "聊天" else "终端"
+    return "$kind · ${session.displayTitle}"
+}
+
 /**
  * 左侧助手标识：品牌渐变圆角方块 + brand logo，右下角叠加实时状态点（对齐 iOS providerMark）。
  * 44dp 头像放在不裁切的外层容器中，状态点轻贴右下角；柔和半透明外环避免切出醒目的白色缺口。
@@ -1147,7 +1154,7 @@ private fun ProviderMark(session: SessionSnapshot, status: String) {
         ) {
             Icon(
                 icon,
-                contentDescription = "$label，${session.displayTitle}",
+                contentDescription = "$label，${sessionListTitle(session)}",
                 tint = tint.copy(alpha = 0.88f),
                 modifier = Modifier.size(20.dp),
             )
