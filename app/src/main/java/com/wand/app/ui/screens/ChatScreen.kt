@@ -239,6 +239,24 @@ fun ChatScreen(
     val lastUserTurnIndex = remember(store.messages) {
         store.messages.indexOfLast { it.role == "user" }
     }
+    var historyExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
+    val historyItems = remember(displayItems, lastUserTurnIndex) {
+        if (lastUserTurnIndex > 0) {
+            displayItems.filter { messageItemTurnIndex(it) < lastUserTurnIndex }
+        } else {
+            emptyList()
+        }
+    }
+    val currentItems = remember(displayItems, lastUserTurnIndex) {
+        if (lastUserTurnIndex >= 0) {
+            displayItems.filter { messageItemTurnIndex(it) >= lastUserTurnIndex }
+        } else {
+            displayItems
+        }
+    }
+    LaunchedEffect(lastUserTurnIndex) {
+        historyExpanded = false
+    }
 
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
     // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
@@ -274,13 +292,19 @@ fun ChatScreen(
     ) { uris -> uploadUris(uris) }
 
     // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
-    // 顶部「加载更早」哨兵占一项，索引计算时要算进去；bottomIndex 是末尾锚点（贴底用）。
+    // 顶部「加载更早」哨兵与历史折叠条都占项；跟随最新时锚到最后一条用户消息，
+    // 让「用户消息 + 当前回复折叠头」稳定停在内容区顶部，回复正文只向下展开一屏。
     val headerOffset = if (store.canLoadEarlier) 1 else 0
-    val bottomIndex = headerOffset + displayItems.size + if (store.isResponding) 1 else 0
+    val visibleHistoryCount = when {
+        historyItems.isEmpty() -> 0
+        historyExpanded -> historyItems.size
+        else -> 1
+    }
+    val latestAnchorIndex = headerOffset + visibleHistoryCount
+    val bottomIndex = headerOffset + visibleHistoryCount + currentItems.size + if (store.isResponding) 1 else 0
     LaunchedEffect(store.messages, store.isResponding, store.loading) {
         if (!store.loading && followsLatest) {
-            // 贴底跟随：最新一轮回复结束在输入框上方一点，更早的回复各自折进折叠头里、不占屏。
-            listState.scrollToItem(bottomIndex)
+            listState.scrollToItem(if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex)
         }
     }
     // 展开某条折叠回复时，把它的「头（第一行）」滚到顶部区域来读，且不被顶出屏幕上沿；
@@ -288,8 +312,14 @@ fun ChatScreen(
     val scrollReplyToTop: (Int) -> Unit = { turnIdx ->
         followsLatest = false
         scrollScope.launch {
-            val p = displayItems.indexOfFirst { messageItemTurnIndex(it) == turnIdx }
-            if (p >= 0) listState.animateScrollToItem(headerOffset + p)
+            val visibleItems = if (historyExpanded) historyItems + currentItems else currentItems
+            val baseOffset = headerOffset + when {
+                historyItems.isEmpty() -> 0
+                historyExpanded -> 0
+                else -> 1
+            }
+            val p = visibleItems.indexOfFirst { messageItemTurnIndex(it) == turnIdx }
+            if (p >= 0) listState.animateScrollToItem(baseOffset + p)
         }
     }
 
@@ -379,6 +409,7 @@ fun ChatScreen(
             val text = draft
             draft = ""
             followsLatest = true
+            historyExpanded = false
             store.send(text)
         } },
     ) { padding ->
@@ -440,7 +471,54 @@ fun ChatScreen(
                         }
                         // key = index：流式原地替换最后一条时 key 不变不触发动画，
                         // 只有真正新增的消息才走 animateItem 淡入。
-                        itemsIndexed(displayItems, key = { index, _ -> index }) { _, item ->
+                        if (historyItems.isNotEmpty()) {
+                            if (historyExpanded) {
+                                itemsIndexed(
+                                    historyItems,
+                                    key = { _, item -> "history-${messageItemKey(item)}" },
+                                ) { _, item ->
+                                    Box(modifier = Modifier.animateItem()) {
+                                        when (item) {
+                                            is MessageDisplayItem.Turn -> TurnView(
+                                                item.turn,
+                                                isLastTurn = false,
+                                                isResponding = false,
+                                                turnIndex = item.index,
+                                                historyBoundary = lastUserTurnIndex,
+                                                onUserExpand = { scrollReplyToTop(item.index) },
+                                                askSelections = store.askUserSelections,
+                                                onAskToggle = { toolUseId, qIdx, optIdx, multi ->
+                                                    store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
+                                                },
+                                                onAskSubmit = { toolUseId, answerText ->
+                                                    followsLatest = true
+                                                    store.submitAskUser(toolUseId, answerText)
+                                                },
+                                            )
+                                            is MessageDisplayItem.Exploration -> ExplorationGroupCard(
+                                                tools = item.tools,
+                                                running = false,
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                item(key = "history-summary") {
+                                    HistorySummaryStrip(
+                                        count = historyItems.size,
+                                        preview = historyPreview(store.messages, lastUserTurnIndex),
+                                        onExpand = {
+                                            followsLatest = false
+                                            historyExpanded = true
+                                            scrollScope.launch {
+                                                listState.animateScrollToItem(headerOffset)
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        itemsIndexed(currentItems, key = { _, item -> "current-${messageItemKey(item)}" }) { _, item ->
                             Box(modifier = Modifier.animateItem()) {
                                 when (item) {
                                     is MessageDisplayItem.Turn -> TurnView(
@@ -513,7 +591,10 @@ fun ChatScreen(
                         .glassSurface(glassBackdrop, CircleShape, WandGlass.accent)
                         .clickable {
                             followsLatest = true
-                            scrollScope.launch { listState.animateScrollToItem(bottomIndex) }
+                            historyExpanded = false
+                            scrollScope.launch {
+                                listState.animateScrollToItem(if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex)
+                            }
                         },
                 ) {
                     Icon(
@@ -619,6 +700,77 @@ private fun middleTruncate(text: String, maxChars: Int): String {
     val head = (maxChars - 1) / 2
     val tail = maxChars - 1 - head
     return text.take(head) + "…" + text.takeLast(tail)
+}
+
+@Composable
+private fun HistorySummaryStrip(
+    count: Int,
+    preview: String,
+    onExpand: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(CircleShape)
+            .background(WandColors.surfaceSoft)
+            .border(1.dp, WandColors.border, CircleShape)
+            .clickable(onClick = onExpand)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Icon(
+            WandIcons.expand,
+            contentDescription = null,
+            tint = WandColors.textMuted,
+            modifier = Modifier
+                .size(15.dp)
+                .graphicsLayer { rotationZ = -90f },
+        )
+        Text(
+            "已收起 $count 段上文",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textSecondary,
+            maxLines = 1,
+        )
+        if (preview.isNotBlank()) {
+            Text(
+                preview,
+                fontSize = 12.sp,
+                color = WandColors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+        Text(
+            "展开",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = WandColors.brand,
+        )
+    }
+}
+
+private fun historyPreview(messages: List<ConversationTurn>, beforeTurnIndex: Int): String {
+    if (beforeTurnIndex <= 0) return ""
+    for (turn in messages.take(beforeTurnIndex).asReversed()) {
+        val text = turn.content
+            .filterIsInstance<ContentBlock.Text>()
+            .joinToString(" ") { it.text }
+            .trim()
+            .replace(Regex("\\s+"), " ")
+        if (text.isNotEmpty()) return text
+    }
+    return ""
+}
+
+private fun messageItemKey(item: MessageDisplayItem): String = when (item) {
+    is MessageDisplayItem.Turn -> "turn-${item.index}"
+    is MessageDisplayItem.Exploration -> "explore-${item.lastTurnIndex}"
 }
 
 /** 空结构化会话的居中启动卡：在首条消息前直接确认并修改模型与思考深度。 */
