@@ -79,16 +79,32 @@ public class ServerStore {
         return prefs.getString("skipped_apk_version", "");
     }
 
+    public String getSkippedVersion(String channel) {
+        return prefs.getString(channelKey("skipped_apk_version", channel), "");
+    }
+
     public void setSkippedVersion(String version) {
         prefs.edit().putString("skipped_apk_version", version).apply();
+    }
+
+    public void setSkippedVersion(String version, String channel) {
+        prefs.edit().putString(channelKey("skipped_apk_version", channel), version).apply();
     }
 
     public String getDownloadedApkVersion() {
         return prefs.getString("downloaded_apk_version", "");
     }
 
+    public String getDownloadedApkVersion(String channel) {
+        return prefs.getString(channelKey("downloaded_apk_version", channel), "");
+    }
+
     public void setDownloadedApkVersion(String version) {
         prefs.edit().putString("downloaded_apk_version", version).apply();
+    }
+
+    public void setDownloadedApkVersion(String version, String channel) {
+        prefs.edit().putString(channelKey("downloaded_apk_version", channel), version).apply();
     }
 
     public String getAppToken() {
@@ -142,5 +158,10 @@ public class ServerStore {
 
     public void setBetaChannel(boolean enabled) {
         prefs.edit().putBoolean(KEY_BETA_CHANNEL, enabled).apply();
+    }
+
+    private static String channelKey(String base, String channel) {
+        String normalized = "beta".equals(channel) ? "beta" : "stable";
+        return base + "_" + normalized;
     }
 }

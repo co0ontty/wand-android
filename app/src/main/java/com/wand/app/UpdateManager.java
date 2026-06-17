@@ -49,7 +49,7 @@ final class UpdateManager {
     interface UpdateFoundCallback {
         void onUpdateFound(String currentVersion, String latestVersion,
                            String downloadUrl, String fileName, long size,
-                           String source, String releaseNotes);
+                           String source, String releaseNotes, String channel);
     }
 
     void checkForUpdate(UpdateFoundCallback callback) {
@@ -102,13 +102,13 @@ final class UpdateManager {
                 String releaseNotes = data.optString("releaseNotes", "");
 
                 if (latestVersion.isEmpty() || downloadUrl.isEmpty()) return;
-                if (latestVersion.equals(serverStore.getSkippedVersion())) return;
-                if (latestVersion.equals(serverStore.getDownloadedApkVersion())) return;
+                if (latestVersion.equals(serverStore.getSkippedVersion(channel))) return;
+                if (latestVersion.equals(serverStore.getDownloadedApkVersion(channel))) return;
 
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
                     callback.onUpdateFound(currentVersion, latestVersion,
-                            downloadUrl, fileName, size, source, releaseNotes);
+                            downloadUrl, fileName, size, source, releaseNotes, channel);
                 });
 
             } catch (Exception ignored) {}
@@ -118,27 +118,34 @@ final class UpdateManager {
     @SuppressLint("DefaultLocale")
     void showUpdateDialog(String currentVer, String latestVer,
                           String downloadUrl, String fileName, long size,
-                          String source, String releaseNotes) {
+                          String source, String releaseNotes, String channel) {
         String sizeText = size > 0 ? "\n文件大小: " + formatSize(size) : "";
         String sourceText = "github".equals(source) ? "\n来源: GitHub Release" : "";
+        String channelText = "beta".equals(channel) ? "\n通道: Beta" : "\n通道: Stable";
         String notesText = (releaseNotes != null && !releaseNotes.isEmpty())
                 ? "\n\n更新内容:\n" + releaseNotes : "";
 
         new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
                 .setTitle(R.string.update_title)
                 .setMessage("当前版本: " + currentVer + "\n最新版本: " + latestVer
-                        + sizeText + sourceText + notesText)
+                        + channelText + sizeText + sourceText + notesText)
                 .setPositiveButton(R.string.update_now, (dialog, which) ->
-                        downloadAndInstall(downloadUrl, fileName, source, latestVer))
+                        downloadAndInstall(downloadUrl, fileName, source, latestVer, channel))
                 .setNegativeButton(R.string.remind_later, null)
                 .setNeutralButton(R.string.skip_version, (dialog, which) ->
-                        serverStore.setSkippedVersion(latestVer))
+                        serverStore.setSkippedVersion(latestVer, channel))
                 .setCancelable(true)
                 .show();
     }
 
     void downloadAndInstall(String downloadUrl, String fileName,
                             String source, String latestVersion) {
+        downloadAndInstall(downloadUrl, fileName, source, latestVersion,
+                serverStore.isBetaChannel() ? "beta" : "stable");
+    }
+
+    void downloadAndInstall(String downloadUrl, String fileName,
+                            String source, String latestVersion, String channel) {
         if (downloadUrl == null || downloadUrl.isEmpty()) {
             Toast.makeText(activity, "下载地址为空", Toast.LENGTH_LONG).show();
             return;
@@ -262,7 +269,7 @@ final class UpdateManager {
                 String versionToRecord = latestVersion != null
                         ? latestVersion : extractVersionFromFileName(safeFileName);
                 if (versionToRecord != null) {
-                    serverStore.setDownloadedApkVersion(versionToRecord);
+                    serverStore.setDownloadedApkVersion(versionToRecord, channel);
                 }
 
                 activity.runOnUiThread(() -> {
@@ -281,7 +288,7 @@ final class UpdateManager {
                         .setTitle("下载失败")
                         .setMessage(errMsg)
                         .setPositiveButton("重试", (d, w) ->
-                                downloadAndInstall(downloadUrl, safeFileName, source, latestVersion))
+                                downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel))
                         .setNegativeButton(android.R.string.cancel, null)
                         .show();
                 });

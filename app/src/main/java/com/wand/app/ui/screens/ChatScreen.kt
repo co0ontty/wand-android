@@ -870,7 +870,7 @@ private fun SessionLaunchPanel(store: ChatStore) {
                     icon = WandIcons.thinking,
                     label = "思考深度",
                     value = thinkingLabel(store.thinkingEffort),
-                    options = THINKING_LEVELS.map { it.first to it.second },
+                    options = THINKING_LEVELS.map { it.id to it.menuLabel },
                     selected = store.thinkingEffort,
                     onSelect = { it?.let(store::chooseThinkingEffort) },
                 )
@@ -995,16 +995,26 @@ private fun LaunchSettingPicker(
     }
 }
 
+private data class ThinkingLevel(
+    val id: String,
+    val label: String,
+    val shortLabel: String,
+    val menuLabel: String,
+)
+
 /** 思考深度档位（对齐 iOS thinkingLevels / 服务端 thinking-effort 端点）。 */
 private val THINKING_LEVELS = listOf(
-    "off" to "off",
-    "standard" to "think",
-    "deep" to "think hard",
-    "max" to "ultrathink",
+    ThinkingLevel("off", "关闭", "关", "关闭"),
+    ThinkingLevel("standard", "低", "低", "低（think）"),
+    ThinkingLevel("deep", "中", "中", "中（think hard）"),
+    ThinkingLevel("max", "高", "高", "高（ultrathink）"),
 )
 
 private fun thinkingLabel(id: String): String =
-    THINKING_LEVELS.firstOrNull { it.first == id }?.second ?: "off"
+    THINKING_LEVELS.firstOrNull { it.id == id }?.label ?: "关闭"
+
+private fun thinkingShortLabel(id: String): String =
+    THINKING_LEVELS.firstOrNull { it.id == id }?.shortLabel ?: "关"
 
 private fun modelDisplayLabel(store: ChatStore, id: String?): String {
     val effectiveId = id?.takeIf { it != "default" } ?: store.defaultModel
@@ -1027,14 +1037,25 @@ private fun modeLabel(id: String): String =
 /** 控制行徽标用的精简模型名：去掉「opus（最新 Opus）」括号补充（全角/半角都吃），只留主名。 */
 private fun shortModelLabel(store: ChatStore): String {
     val full = modelDisplayLabel(store, store.selectedModel)
+    if (full == "跟随服务端默认" || full == "默认") return "默认"
     val idx = full.indexOfFirst { it == '（' || it == '(' }
-    return if (idx > 0) full.substring(0, idx).trimEnd() else full
+    val clean = if (idx > 0) full.substring(0, idx).trimEnd() else full
+    val leaf = clean.substringAfterLast('/').trim()
+    val lower = leaf.lowercase()
+    return when {
+        "opus" in lower -> "Opus"
+        "sonnet" in lower -> "Sonnet"
+        "haiku" in lower -> "Haiku"
+        "gpt-5" in lower -> "GPT-5"
+        "gpt-4" in lower -> "GPT-4"
+        leaf.length > 12 -> leaf.take(10) + "…"
+        else -> leaf
+    }
 }
 
 private fun modelThinkingText(store: ChatStore): String {
     val model = shortModelLabel(store)
-    return if (store.thinkingEffort == "off") model
-    else "$model · ${thinkingLabel(store.thinkingEffort)}"
+    return "$model · ${thinkingShortLabel(store.thinkingEffort)}"
 }
 
 @Composable
@@ -1452,12 +1473,27 @@ private fun InputBar(
     }
     // 展开态（聚焦 / 语音模式 / 有草稿）：长成卡片，底部多一条控制行；否则收成单行胶囊。
     val expanded = isFocused || voiceMode || draft.isNotBlank()
+    val composerShape = RoundedCornerShape(if (expanded) 24.dp else 28.dp)
+    val collapsedInputShape = RoundedCornerShape(18.dp)
 
     // 顶部内容：键盘模式是自增高文本框，语音模式是「按住说话」面板。背景/描边交给外层卡片。
     val inputContent: @Composable RowScope.() -> Unit = {
         Box(
             contentAlignment = Alignment.CenterStart,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 34.dp)
+                .then(
+                    if (!expanded) {
+                        Modifier
+                            .clip(collapsedInputShape)
+                            .background(WandColors.surfaceSoft.copy(alpha = 0.52f))
+                            .border(1.dp, WandColors.border.copy(alpha = 0.28f), collapsedInputShape)
+                            .clickableWithoutRipple { runCatching { focusRequester.requestFocus() } }
+                    } else {
+                        Modifier
+                    },
+                ),
         ) {
             if (voiceMode) {
                 VoiceHoldField(
@@ -1492,7 +1528,7 @@ private fun InputBar(
                                 .fillMaxWidth()
                                 .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
                         ) {
-                            if (draft.isEmpty()) {
+                            if (draft.isEmpty() && expanded) {
                                 Text("发消息…", fontSize = 16.sp, color = WandColors.textMuted)
                             }
                             innerTextField()
@@ -1541,16 +1577,26 @@ private fun InputBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp)
-            .glassSurface(backdrop, RoundedCornerShape(24.dp), WandGlass.regular)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .glassSurface(backdrop, composerShape, WandGlass.regular)
+            .padding(horizontal = if (expanded) 8.dp else 7.dp, vertical = if (expanded) 6.dp else 5.dp),
         verticalArrangement = Arrangement.spacedBy(if (expanded) 8.dp else 0.dp),
     ) {
         Row(
-            verticalAlignment = Alignment.Bottom,
+            verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            if (!expanded) plusMenu()
+            if (!expanded) {
+                plusMenu()
+                if (store.isStructured) {
+                    ModeChip(store, compact = true)
+                    ModelThinkingChip(
+                        store,
+                        compact = true,
+                        modifier = Modifier.widthIn(max = 112.dp),
+                    )
+                }
+            }
             inputContent()
             if (!expanded) {
                 mic()
@@ -1680,6 +1726,7 @@ private fun ControlChip(
     text: String,
     tint: Color,
     enabled: Boolean = true,
+    showText: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -1691,20 +1738,22 @@ private fun ControlChip(
             .background(tint.copy(alpha = 0.10f))
             .border(1.dp, tint.copy(alpha = 0.22f), CircleShape)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 6.dp),
+            .padding(horizontal = if (showText) 9.dp else 8.dp, vertical = 6.dp),
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(13.dp))
-        Text(
-            text,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = tint,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            // 取可用宽度但允许收缩：空间紧张时省略号缩列，而非撑出固定 130dp 把按钮挤掉。
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        Icon(WandIcons.expand, contentDescription = null, tint = tint.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
+        if (showText) {
+            Text(
+                text,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = tint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                // 取可用宽度但允许收缩：空间紧张时省略号缩列，而非撑出固定 130dp 把按钮挤掉。
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Icon(WandIcons.expand, contentDescription = null, tint = tint.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
+        }
     }
 }
 
@@ -1722,7 +1771,7 @@ private fun MenuSectionHeader(text: String) {
 
 /** 执行模式徽标 + 下拉菜单（中途切换 managed/full-access/...）。codex 锁 full-access。 */
 @Composable
-private fun ModeChip(store: ChatStore) {
+private fun ModeChip(store: ChatStore, compact: Boolean = false) {
     val isCodex = store.snapshot?.provider == "codex"
     var open by remember { mutableStateOf(false) }
     // 高权限模式（托管 / 全权限）用橙色提示，其余用次要色。
@@ -1734,6 +1783,7 @@ private fun ModeChip(store: ChatStore) {
             text = modeLabel(store.mode),
             tint = tint,
             enabled = !isCodex,
+            showText = !compact,
         ) { open = true }
         DropdownMenu(
             expanded = open,
@@ -1752,13 +1802,25 @@ private fun ModeChip(store: ChatStore) {
 
 /** 模型 · 思考深度合并徽标 + 下拉菜单（对齐 iOS modelThinkingChip）。 */
 @Composable
-private fun ModelThinkingChip(store: ChatStore, modifier: Modifier = Modifier) {
+private fun ModelThinkingChip(
+    store: ChatStore,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     var open by remember { mutableStateOf(false) }
+    val tint = when (store.thinkingEffort) {
+        "standard" -> Color(0xFF5D8A66)
+        "deep" -> WandColors.warning
+        "max" -> WandColors.danger
+        else -> WandColors.brand
+    }
     Box(modifier = modifier) {
         ControlChip(
             icon = WandIcons.tune,
             text = modelThinkingText(store),
-            tint = WandColors.brand,
+            tint = tint,
+            showText = !compact,
+            modifier = if (compact) Modifier.widthIn(max = 112.dp) else Modifier,
         ) { open = true }
         DropdownMenu(
             expanded = open,
@@ -1781,9 +1843,9 @@ private fun ModelThinkingChip(store: ChatStore, modifier: Modifier = Modifier) {
             }
             HorizontalDivider(color = WandColors.border)
             MenuSectionHeader("思考深度")
-            THINKING_LEVELS.forEach { (id, label) ->
-                SettingsMenuOption(label, selected = store.thinkingEffort == id) {
-                    store.chooseThinkingEffort(id)
+            THINKING_LEVELS.forEach { level ->
+                SettingsMenuOption(level.menuLabel, selected = store.thinkingEffort == level.id) {
+                    store.chooseThinkingEffort(level.id)
                     open = false
                 }
             }

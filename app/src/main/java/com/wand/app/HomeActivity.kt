@@ -118,8 +118,8 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun checkUpdate(manager: UpdateManager) {
-        manager.checkForUpdate { cur, latest, url, file, size, source, notes ->
-            manager.showUpdateDialog(cur, latest, url, file, size, source, notes)
+        manager.checkForUpdate { cur, latest, url, file, size, source, notes, channel ->
+            manager.showUpdateDialog(cur, latest, url, file, size, source, notes, channel)
         }
     }
 

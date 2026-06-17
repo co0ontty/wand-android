@@ -743,9 +743,9 @@ private val SESSION_MODES = listOf(
 /** 思考深度档位（对齐 iOS thinkingLevels）：id 与服务端一致，标签同 iOS 中文。 */
 private val THINKING_LEVELS = listOf(
     "off" to "关闭",
-    "standard" to "标准",
-    "deep" to "深入",
-    "max" to "最大",
+    "standard" to "低",
+    "deep" to "中",
+    "max" to "高",
 )
 
 /** codex 仅支持 full-access，对齐 Web getSupportedModes。 */

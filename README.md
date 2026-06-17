@@ -6,27 +6,45 @@
 
 - Android 工程代码放在此目录中。
 - APK 构建产物**不要提交到仓库**。
-- 页面下载入口使用的是 wand 运行时配置目录中的 APK，而不是本目录下的文件。
+- 本地 debug 分发包默认放在 `dist/apk/`，服务端通过 `config.json` 里的 `android.apkDir` 指向它。
 
 ## 本地分发流程
 
-1. 在 `android/` 中完成客户端打包。
-2. 将生成的 APK 手工复制到 wand 配置目录下的 Android 工件目录。
-   - 默认目录：`<configDir>/android/`
-   - 默认 `configDir` 通常是 `~/.wand/`
-3. 如需固定当前下载文件名，可在 `config.json` 中设置：
+1. 在 `android/` 中完成客户端打包：
+
+```bash
+./debug.sh
+# 或只产出本地分发包、不安装到设备：
+SKIP_INSTALL=1 ./debug.sh
+```
+
+`debug.sh` 会生成：
+
+```text
+dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
+```
+
+其中 `X.Y.Z` 来自当前仓库最新的 `v*` tag，和线上 GitHub Action 的正式版本基准保持一致。
+
+2. 在 wand 服务端 `config.json` 中打开 Android APK 分发，并把目录指向本子模块的 `dist/apk/`：
 
 ```json
 {
   "android": {
     "enabled": true,
-    "apkDir": "android",
-    "currentApkFile": "your-app.apk"
+    "apkDir": "/Users/you/path/to/wand/android/dist/apk",
+    "currentApkFile": ""
   }
 }
 ```
 
-4. 启动 wand 后，设置页“关于”中会显示 APK 下载入口。
+`apkDir` 也可以写相对路径；相对路径会按 wand 的配置目录解析。
+
+3. 启动 wand 后，设置页“关于”中会显示 APK 下载入口。
+
+4. Android App 设置页开启“Beta 通道”后，会接收 `-debug.*` 本地构建；关闭后只提示正式 `X.Y.Z` 包。版本排序与 `app/build.gradle` 的 `versionCode` 一致：`X.Y.Z < X.Y.Z-debug.* < X.Y.(Z+1)`，也就是当前线上 tag 后的新 commit 用本地 dev 版本测试，后续下一个线上 tag 仍能正常覆盖升级。
+
+如需固定当前下载文件名，可设置 `currentApkFile`；一般本地测试保持空字符串，让服务端自动扫描目录中版本号最新的 APK。
 
 ## 按住说话（端侧语音识别）
 

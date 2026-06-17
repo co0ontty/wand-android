@@ -5,6 +5,7 @@
 # 用法：
 #   ./debug.sh                 # 编译 + 推送到所有在线设备
 #   SKIP_BUILD=1 ./debug.sh    # 跳过编译，直接安装现有 APK 到所有设备
+#   SKIP_INSTALL=1 ./debug.sh  # 只编译并复制分发 APK，不安装到设备
 #   LAUNCH=1 ./debug.sh        # 安装后顺带拉起 Wand
 #   EMULATOR=1 ./debug.sh      # 特殊模式：启动/复用本机模拟器并安装+启动
 #   AVD_NAME=pixel_9 EMULATOR=1 ./debug.sh
@@ -24,6 +25,7 @@ cd "$(dirname "$0")"
 # JAVA_HOME：优先用环境已设的；否则按 brew openjdk@21 → @17 兜底。
 if [[ -z "${JAVA_HOME:-}" || ! -x "${JAVA_HOME:-}/bin/java" ]]; then
   for cand in \
+    /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home \
     /opt/homebrew/opt/openjdk@21 \
     /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
     /opt/homebrew/opt/openjdk@17; do
@@ -37,6 +39,8 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:
 AVD_NAME="${AVD_NAME:-wand_debug}"
 APP_ID="com.wand.app"
 APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+APK_DIST_DIR="${APK_DIST_DIR:-dist/apk}"
+STAMP_FILE="$APK_DIST_DIR/.last-debug-version"
 
 if [[ -z "${JAVA_HOME:-}" || ! -x "$JAVA_HOME/bin/java" ]]; then
   echo "错误：找不到可用 JDK。先 brew install openjdk@21（或设置 JAVA_HOME）。" >&2
@@ -50,16 +54,63 @@ if [[ ! -f local.properties ]]; then
   echo "sdk.dir=$ANDROID_HOME" > local.properties
 fi
 
+repair_build_permissions() {
+  local target="$1"
+  [[ -e "$target" ]] || return 0
+  if find "$target" -maxdepth 3 \( ! -user "$(id -u)" -o ! -group "$(id -g)" \) -print -quit | grep -q .; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "错误：$target 含有非当前用户拥有的构建文件，但找不到 sudo。" >&2
+      echo "请手动执行：chown -R $(id -un):$(id -gn) $target" >&2
+      exit 1
+    fi
+    if [[ ! -t 0 ]] && ! sudo -n true 2>/dev/null; then
+      echo "错误：$target 含有非当前用户拥有的构建文件，当前环境又不能输入 sudo 密码。" >&2
+      echo "请在终端执行：sudo chown -R $(id -un):$(id -gn) $PWD/$target" >&2
+      exit 1
+    fi
+    echo "==> 修复 $target 权限"
+    sudo chown -R "$(id -u):$(id -g)" "$target"
+  fi
+}
+
+latest_tag_version() {
+  local tag
+  tag="$(git tag --sort=-v:refname --list 'v*' | head -1 | sed 's/^v//' || true)"
+  if [[ -z "$tag" ]]; then
+    tag="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+  fi
+  echo "${tag:-0.0.0}"
+}
+
 # 1. 编译
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
-  VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.0.0)"
+  repair_build_permissions "app/build"
+  VERSION="$(latest_tag_version)"
   STAMP="${VERSION}-debug.$(date +%m%d%H%M)"
   echo "==> 编译 debug APK（${STAMP}）"
   ./gradlew assembleDebug -PAPP_VERSION_NAME="$STAMP"
+else
+  if [[ -f "$STAMP_FILE" ]]; then
+    STAMP="$(cat "$STAMP_FILE")"
+  else
+    STAMP="$(latest_tag_version)-debug.local"
+  fi
 fi
 if [[ ! -f "$APK_PATH" ]]; then
   echo "错误：没有找到 $APK_PATH，先跑一次 ./gradlew assembleDebug。" >&2
   exit 1
+fi
+
+mkdir -p "$APK_DIST_DIR"
+DIST_APK="$APK_DIST_DIR/wand-v${STAMP}.apk"
+cp "$APK_PATH" "$DIST_APK"
+printf '%s\n' "$STAMP" > "$STAMP_FILE"
+echo "==> 本地分发 APK: $DIST_APK"
+echo "    服务端 config.json 可配置 android.apkDir = $(cd "$APK_DIST_DIR" && pwd)"
+
+if [[ "${SKIP_INSTALL:-0}" == "1" ]]; then
+  echo "完成：已跳过安装。"
+  exit 0
 fi
 
 install_to() {
