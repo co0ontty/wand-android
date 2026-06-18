@@ -266,11 +266,11 @@ fun EmptyState(
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
-        fontSize = 13.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
-        color = WandColors.textSecondary,
-        letterSpacing = 0.5.sp,
-        modifier = modifier.padding(top = 16.dp, bottom = 8.dp),
+        color = WandColors.textMuted,
+        letterSpacing = 0.sp,
+        modifier = modifier.padding(top = 18.dp, bottom = 7.dp),
     )
 }
 
@@ -286,7 +286,7 @@ fun WandCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     selected: Boolean = false,
-    shape: Shape = WandShapes.md,
+    shape: Shape = RoundedCornerShape(12.dp),
     containerColor: Color? = null,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
@@ -311,10 +311,10 @@ fun WandCard(
         Column(
             modifier = modifier
                 .graphicsLayer { scaleX = scale; scaleY = scale }
-                .layeredShadow(shape, 3.5.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
+                .layeredShadow(shape, 1.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
                 .clip(shape)
                 .background(bg)
-                .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
+                .border(if (selected) 1.dp else 0.55.dp, borderColor.copy(alpha = if (selected) 1f else 0.82f), shape)
                 .then(
                     if (onClick != null) {
                         Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
@@ -329,10 +329,10 @@ fun WandCard(
     val brand = WandColors.brand
     val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
     // 选中态抬得更高、按压回落，双层投影 + 表面微光 + 倒角描边 = 浮起的实体卡。
-    val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.35f, t) * (1f - 0.5f * pressDepth)
-    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.18f), t)
-    val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.85f), t)
-    val rimShade = lerp(style.rimShade, brand.copy(alpha = 0.55f), t)
+    val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.2f, t) * (1f - 0.5f * pressDepth)
+    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.12f), t)
+    val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.48f), t)
+    val rimShade = lerp(style.rimShade, brand.copy(alpha = 0.28f), t)
     Column(
         modifier = modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
@@ -340,7 +340,7 @@ fun WandCard(
             .clip(shape)
             .background(bg)
             .background(surfaceSheenBrush(), shape)
-            .border(lerpDp(1.dp, 1.5.dp, t), bevelRimBrush(rimLight, rimShade), shape)
+            .border(lerpDp(0.55.dp, 1.dp, t), bevelRimBrush(rimLight, rimShade), shape)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
@@ -364,11 +364,11 @@ fun WandChromeIconButton(
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .size(40.dp)
+            .size(36.dp)
             .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
             .clip(CircleShape)
-            .background(WandColors.surface.copy(alpha = 0.58f))
-            .border(1.dp, WandColors.border.copy(alpha = 0.75f), CircleShape)
+            .background(WandColors.surface.copy(alpha = 0.28f))
+            .border(0.55.dp, WandColors.border.copy(alpha = 0.54f), CircleShape)
             .clickable(
                 enabled = enabled,
                 interactionSource = interaction,
@@ -381,7 +381,7 @@ fun WandChromeIconButton(
             icon,
             contentDescription = contentDescription,
             tint = tint,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(18.dp),
         )
     }
 }
@@ -389,21 +389,21 @@ fun WandChromeIconButton(
 /** Wand 品牌标记：品牌渐变圆角方块 + 白色星芒图标（对称 iOS Theme.WandBrandMark）。 */
 @Composable
 fun WandBrandMark(size: Int = 64) {
-    val corner = RoundedCornerShape((size * 0.28f).dp)
+    val corner = RoundedCornerShape((size * 0.26f).dp)
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(size.dp)
             .shadow(
-                elevation = (size * 0.18f).dp,
+                elevation = (size * 0.10f).dp,
                 shape = corner,
-                ambientColor = WandColors.brand.copy(alpha = 0.35f),
-                spotColor = WandColors.brand.copy(alpha = 0.35f),
+                ambientColor = WandColors.brand.copy(alpha = 0.18f),
+                spotColor = WandColors.brand.copy(alpha = 0.18f),
             )
             .clip(corner)
             .background(
                 Brush.linearGradient(
-                    listOf(WandColors.brand, lerp(WandColors.brand, Color.Black, 0.18f))
+                    listOf(lerp(WandColors.brand, Color.White, 0.08f), lerp(WandColors.brand, Color.Black, 0.10f))
                 )
             ),
     ) {

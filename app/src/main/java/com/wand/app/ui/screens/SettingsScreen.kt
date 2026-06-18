@@ -74,6 +74,7 @@ import com.wand.app.ui.components.WandIcons
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
+import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.glassBackdropSource
@@ -101,6 +102,7 @@ fun SettingsScreen(
     var appIcon by remember { mutableStateOf(actions.getAppIcon()) }
     var keepAlive by remember { mutableStateOf(false) }
     var betaChannel by remember { mutableStateOf(actions.isBetaChannel()) }
+    var appearanceMode by remember { mutableStateOf(actions.getAppearanceMode()) }
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -163,6 +165,18 @@ fun SettingsScreen(
                 appVersion = actions.appVersion,
                 serverVersion = serverVersion,
             )
+
+            // —— 外观 ——
+            SectionHeader("外观")
+            WandCard(modifier = Modifier.fillMaxWidth()) {
+                AppearanceModePicker(
+                    selected = appearanceMode,
+                    onSelected = { mode ->
+                        appearanceMode = mode
+                        actions.setAppearanceMode(mode)
+                    },
+                )
+            }
 
             // —— 服务器 ——
             SectionHeader("连接")
@@ -340,6 +354,43 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.size(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppearanceModePicker(
+    selected: WandAppearanceMode,
+    onSelected: (WandAppearanceMode) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("选择明亮、黑暗，或跟随系统外观。", fontSize = 12.sp, color = WandColors.textMuted)
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            val options = listOf(
+                WandAppearanceMode.Light to "明亮",
+                WandAppearanceMode.Dark to "黑暗",
+                WandAppearanceMode.System to "跟随系统",
+            )
+            options.forEachIndexed { index, (mode, label) ->
+                SegmentedButton(
+                    selected = selected == mode,
+                    onClick = { onSelected(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = WandColors.brandSoft,
+                        activeContentColor = WandColors.brand,
+                        activeBorderColor = WandColors.brand,
+                        inactiveContainerColor = Color.Transparent,
+                        inactiveContentColor = WandColors.textSecondary,
+                        inactiveBorderColor = WandColors.border,
+                    ),
+                ) { Text(label, fontSize = 12.sp, maxLines = 1) }
             }
         }
     }

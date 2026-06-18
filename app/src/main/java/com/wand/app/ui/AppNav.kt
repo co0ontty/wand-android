@@ -1,6 +1,7 @@
 package com.wand.app.ui
 
 import androidx.compose.runtime.mutableStateListOf
+import com.wand.app.ui.theme.WandAppearanceMode
 
 /** 原生界面的页面栈。结构化对话原生承载，PTY 套在原生头部里嵌一层终端 WebView。 */
 sealed class Screen {
@@ -58,4 +59,6 @@ class HomeActions(
     val isHapticEnabled: () -> Boolean,
     val setHapticEnabled: (Boolean) -> Unit,
     val setKeepAlive: (Boolean) -> Unit,
+    val getAppearanceMode: () -> WandAppearanceMode,
+    val setAppearanceMode: (WandAppearanceMode) -> Unit,
 )

@@ -15,6 +15,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -85,9 +87,7 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
-import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
-import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
@@ -371,12 +371,12 @@ fun SessionListScreen(
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(
-                                start = 16.dp + padding.calculateStartPadding(direction),
-                                end = 16.dp + padding.calculateEndPadding(direction),
-                                top = 12.dp + padding.calculateTopPadding(),
+                                start = 14.dp + padding.calculateStartPadding(direction),
+                                end = 14.dp + padding.calculateEndPadding(direction),
+                                top = 10.dp + padding.calculateTopPadding(),
                                 bottom = 20.dp + padding.calculateBottomPadding(),
                             ),
-                            verticalArrangement = Arrangement.spacedBy(11.dp),
+                            verticalArrangement = Arrangement.spacedBy(9.dp),
                         ) {
                             items(state.visibleSessions, key = { it.id }) { session ->
                                 val rowModifier = Modifier
@@ -537,77 +537,36 @@ private fun SessionListTopBar(
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
 ) {
-    val title = "会话"
-    val countLabel = if (listScope == "history") "历史 · $historyCount 条可恢复" else "进行中 · $activeCount 个活跃"
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .glassSurface(backdrop, RoundedCornerShape(0.dp), barGlass, edgeToEdge = true),
     ) {
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .height(52.dp)
+                .height(48.dp)
                 .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (isSelecting) {
-                WandChromeIconButton(
+                Text(
+                    "已选择 $selectedCount 项",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+                SessionToolbarIconButton(
                     icon = WandIcons.close,
                     contentDescription = "退出多选",
                     tint = WandColors.brand,
                     onClick = onExitSelection,
+                    modifier = Modifier.align(Alignment.CenterEnd),
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "批量选择",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
-                    )
-                    Text(
-                        "已选择 $selectedCount 项",
-                        fontSize = 11.sp,
-                        color = WandColors.textMuted,
-                    )
-                }
             } else {
-                WandBrandMark(size = 32)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        title,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
-                        maxLines = 1,
-                    )
-                    Text(
-                        countLabel,
-                        fontSize = 11.sp,
-                        color = WandColors.textMuted,
-                        maxLines = 1,
-                    )
-                }
-                if (listScope == "history") {
-                    WandChromeIconButton(
-                        icon = WandIcons.delete,
-                        contentDescription = "清空历史会话",
-                        tint = if (canClearHistory) WandColors.danger else WandColors.textMuted,
-                        enabled = canClearHistory,
-                        onClick = onClearHistory,
-                    )
-                } else {
-                    WandChromeIconButton(
-                        icon = WandIcons.add,
-                        contentDescription = "新建会话",
-                        tint = WandColors.brand,
-                        onClick = onNewSession,
-                    )
-                }
-                Box {
-                    WandChromeIconButton(
+                Box(modifier = Modifier.align(Alignment.CenterStart)) {
+                    SessionToolbarIconButton(
                         icon = Icons.Default.MoreVert,
                         contentDescription = "菜单",
                         onClick = { onMenuOpenChange(true) },
@@ -639,75 +598,107 @@ private fun SessionListTopBar(
                         )
                     }
                 }
-            }
-        }
-        if (!isSelecting) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                ScopeToggle(selected = listScope, onSelect = onSelectScope)
+                ScopeToggle(
+                    selected = listScope,
+                    onSelect = onSelectScope,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .width(176.dp),
+                )
+                Row(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (listScope == "history") {
+                        SessionToolbarIconButton(
+                            icon = WandIcons.delete,
+                            contentDescription = "清空历史会话",
+                            tint = if (canClearHistory) WandColors.danger else WandColors.textMuted,
+                            enabled = canClearHistory,
+                            onClick = onClearHistory,
+                        )
+                    } else {
+                        SessionToolbarIconButton(
+                            icon = WandIcons.add,
+                            contentDescription = "新建会话",
+                            tint = WandColors.brand,
+                            onClick = onNewSession,
+                        )
+                    }
+                }
             }
         }
         HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
     }
 }
 
-/**
- * 范围切换胶囊：玻璃顶栏内的双段开关，选中段品牌渐变实心 + 白字 + 轻投影（读作浮起的滑块），
- * 未选中透明 + 次级色；切换时颜色动画过渡。比 Material3 SegmentedButton 更贴合品牌、玻璃底上更干净。
- */
+@Composable
+private fun SessionToolbarIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color = WandColors.textSecondary,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
 @Composable
 private fun ScopeToggle(
     selected: String,
     onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val options = listOf("active" to "进行中", "history" to "历史会话")
     val brand = WandColors.brand
     Row(
-        modifier = Modifier
-            .clip(WandShapes.full)
-            .background(WandColors.textPrimary.copy(alpha = 0.05f))
-            .border(1.dp, WandColors.border, WandShapes.full)
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
+            .border(0.7.dp, WandColors.border, RoundedCornerShape(10.dp))
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         options.forEach { (value, label) ->
             val active = value == selected
             val bg by animateColorAsState(
-                if (active) brand else Color.Transparent,
+                if (active) WandColors.surface else Color.Transparent,
                 label = "scopeToggleBg",
             )
             val fg by animateColorAsState(
-                if (active) Color.White else WandColors.textSecondary,
+                if (active) brand else WandColors.textSecondary,
                 label = "scopeToggleFg",
             )
-            val knobShadow = if (active) brand.copy(alpha = 0.38f) else Color.Transparent
+            val knobShadow = if (active) Color.Black.copy(alpha = 0.10f) else Color.Transparent
             Box(
                 modifier = Modifier
-                    .layeredShadow(WandShapes.full, if (active) 3.dp else 0.dp, knobShadow, knobShadow)
-                    .clip(WandShapes.full)
+                    .weight(1f)
+                    .layeredShadow(RoundedCornerShape(8.dp), if (active) 1.dp else 0.dp, knobShadow, knobShadow)
+                    .clip(RoundedCornerShape(8.dp))
                     .background(bg)
-                    // 选中段叠一层顶亮渐变，从平涂实色变成有受光的滑块。
-                    .then(
-                        if (active) {
-                            Modifier.background(
-                                Brush.verticalGradient(
-                                    listOf(lerp(brand, Color.White, 0.16f), brand),
-                                ),
-                                WandShapes.full,
-                            )
-                        } else Modifier
-                    )
                     .clickable { onSelect(value) }
-                    .padding(horizontal = 15.dp, vertical = 5.dp),
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     label,
-                    fontSize = 12.5.sp,
+                    fontSize = 11.5.sp,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                     color = fg,
                     maxLines = 1,
@@ -834,12 +825,12 @@ private fun HistoryList(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 16.dp + padding.calculateStartPadding(direction),
-                end = 16.dp + padding.calculateEndPadding(direction),
-                top = 12.dp + padding.calculateTopPadding(),
+                start = 14.dp + padding.calculateStartPadding(direction),
+                end = 14.dp + padding.calculateEndPadding(direction),
+                top = 10.dp + padding.calculateTopPadding(),
                 bottom = 20.dp + padding.calculateBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(11.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             items(visible, key = { it.id }) { history ->
                 SwipeRevealRow(
@@ -874,16 +865,16 @@ private fun HistorySessionCard(
     WandCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = if (enabled) onClick else null,
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(14.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
         ) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(44.dp)
                     .layeredShadow(shape, 3.dp, keyShadow, ambientShadow)
                     .clip(shape)
                     .background(
@@ -900,16 +891,16 @@ private fun HistorySessionCard(
                     WandIcons.history,
                     contentDescription = null,
                     tint = tint,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
                     history.firstUserMessage.ifEmpty { "空会话" },
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textPrimary,
                     maxLines = 2,
@@ -1087,12 +1078,14 @@ private fun SessionCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         selected = selecting && selected,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            verticalAlignment = Alignment.Top,
         ) {
             if (selecting) {
                 Icon(
@@ -1102,42 +1095,48 @@ private fun SessionCard(
                     modifier = Modifier.size(22.dp),
                 )
             }
-            ProviderMark(session = session, status = status)
+            SessionMetaRail(session = session, status = status)
             Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
-                    sessionListTitle(session),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val cwd = session.cwd.orEmpty()
-                Text(
-                    if (cwd.isEmpty()) "未设置工作目录" else middleTruncatePath(cwd, 48),
-                    modifier = Modifier.fillMaxWidth(),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment = Alignment.Top,
                 ) {
-                    MetaChip(
-                        text = if (session.isStructured) "聊天" else "终端",
-                        icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
+                    Text(
+                        sessionListTitle(session),
+                        modifier = Modifier.weight(1f),
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     val duration = sessionDurationLabel(session)
                     if (duration.isNotEmpty()) {
                         MetaChip(text = duration, icon = WandIcons.clock)
                     }
+                }
+                val cwd = session.cwd.orEmpty()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        if (cwd.isEmpty()) "未设置工作目录" else middleTruncatePath(cwd, 48),
+                        modifier = Modifier.fillMaxWidth(),
+                        fontSize = 10.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -1147,6 +1146,55 @@ private fun SessionCard(
 private fun sessionListTitle(session: SessionSnapshot): String {
     return session.displayTitle.ifBlank {
         if (session.isStructured) "聊天会话" else "终端会话"
+    }
+}
+
+@Composable
+private fun SessionMetaRail(session: SessionSnapshot, status: String) {
+    Column(
+        modifier = Modifier
+            .widthIn(min = 58.dp)
+            .fillMaxHeight(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        ProviderMark(session = session, status = status)
+        Box(
+            modifier = Modifier.height(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            SessionModeChip(session)
+        }
+    }
+}
+
+@Composable
+private fun SessionModeChip(session: SessionSnapshot) {
+    val mode = if (session.isStructured) "聊天" else "终端"
+    val tint = WandColors.textSecondary
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .widthIn(max = 96.dp)
+            .clip(WandShapes.full)
+            .background(tint.copy(alpha = 0.075f))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Icon(
+            if (session.isStructured) WandIcons.chat else WandIcons.terminal,
+            contentDescription = null,
+            tint = tint.copy(alpha = 0.88f),
+            modifier = Modifier.size(11.dp),
+        )
+        Text(
+            mode,
+            fontSize = 9.8.sp,
+            fontWeight = FontWeight.Medium,
+            color = tint.copy(alpha = 0.92f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1160,40 +1208,40 @@ private fun ProviderMark(session: SessionSnapshot, status: String) {
     val tint = if (isCodex) WandColors.info else WandColors.brand
     val icon = if (isCodex) BrandLogos.codex else BrandLogos.claude
     val label = if (isCodex) "Codex" else "Claude"
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(12.dp)
     val (keyShadow, ambientShadow) = cardShadowColors()
 
-    Box(modifier = Modifier.size(48.dp)) {
+    Box(modifier = Modifier.size(44.dp)) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .size(44.dp)
-                .layeredShadow(shape, 3.dp, keyShadow, ambientShadow)
+                .size(40.dp)
+                .layeredShadow(shape, 1.2.dp, keyShadow, ambientShadow)
                 .clip(shape)
                 .background(
                     Brush.linearGradient(
-                        listOf(tint.copy(alpha = 0.18f), tint.copy(alpha = 0.07f)),
+                        listOf(tint.copy(alpha = 0.14f), tint.copy(alpha = 0.055f)),
                     ),
                 )
                 // 半透明彩色图标片：底色比上者更淡，白受光高光全部抹掉，避免白印浮在彩底上。
                 .background(surfaceSheenBrush(highlightScale = 0f), shape)
-                .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.24f), tint.copy(alpha = 0.08f)), shape),
+                .border(0.8.dp, bevelRimBrush(tint.copy(alpha = 0.20f), tint.copy(alpha = 0.07f)), shape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 icon,
                 contentDescription = "$label，${sessionListTitle(session)}",
-                tint = tint.copy(alpha = 0.88f),
-                modifier = Modifier.size(20.dp),
+                tint = tint.copy(alpha = 0.82f),
+                modifier = Modifier.size(18.dp),
             )
         }
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .size(12.dp)
+                .size(10.dp)
                 .clip(CircleShape)
-                .background(WandColors.surface.copy(alpha = 0.82f))
-                .padding(2.dp),
+                .background(WandColors.surface.copy(alpha = 0.86f))
+                .padding(1.7.dp),
             contentAlignment = Alignment.Center,
         ) {
             StatusDot(status, modifier = Modifier.fillMaxSize())
@@ -1213,15 +1261,15 @@ private fun MetaChip(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .clip(WandShapes.full)
-            .background(tint.copy(alpha = 0.10f))
+            .background(tint.copy(alpha = 0.075f))
             .padding(horizontal = 7.dp, vertical = 2.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
+        Icon(icon, contentDescription = null, tint = tint.copy(alpha = 0.88f), modifier = Modifier.size(11.dp))
         Text(
             text,
-            fontSize = 10.sp,
+            fontSize = 9.8.sp,
             fontWeight = FontWeight.Medium,
-            color = tint,
+            color = tint.copy(alpha = 0.92f),
             maxLines = 1,
         )
     }
@@ -1250,7 +1298,13 @@ private fun sessionDurationLabel(session: SessionSnapshot): String {
         null
     }
     val seconds = ((ended ?: System.currentTimeMillis()) - started).coerceAtLeast(0L) / 1000L
-    return DateUtils.formatElapsedTime(seconds)
+    val minutes = seconds / 60
+    if (minutes < 1) return "刚刚"
+    val hours = minutes / 60
+    if (hours < 1) return "${minutes}分钟"
+    val days = hours / 24
+    if (days < 1) return "${hours}小时"
+    return "${days}天"
 }
 
 /**

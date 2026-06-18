@@ -17,7 +17,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
@@ -34,62 +36,62 @@ import androidx.compose.ui.unit.dp
 
 // —— 亮色 Token ——
 private object LightTokens {
-    val bgPrimary = Color(0xFFF6F1E8)
-    val bgElevated = Color(0xFFFFFAF2)
+    val bgPrimary = Color(0xFFF8F6F2)
+    val bgElevated = Color(0xFFFFFFFF)
     val surface = Color(0xFFFFFFFF)
-    val surfaceSoft = Color(0xFFFDFAF5)
-    val textPrimary = Color(0xFF2A1F16)
-    val textSecondary = Color(0xFF5A4535)
-    val textMuted = Color(0xFF8C735F)
-    val brand = Color(0xFFC5653D)
-    val brandSoft = Color(0xFFC5653D).copy(alpha = 0.12f)
-    val border = Color(0xFF7D5B39).copy(alpha = 0.18f)
-    val borderStrong = Color(0xFF7D5B39).copy(alpha = 0.40f)
-    val focusRing = Color(0xFFC5653D).copy(alpha = 0.45f)
+    val surfaceSoft = Color(0xFFF0ECE6)
+    val textPrimary = Color(0xFF201A16)
+    val textSecondary = Color(0xFF655A50)
+    val textMuted = Color(0xFF958A7F)
+    val brand = Color(0xFFBF6A43)
+    val brandSoft = Color(0xFFBF6A43).copy(alpha = 0.10f)
+    val border = Color(0xFF1F1A16).copy(alpha = 0.10f)
+    val borderStrong = Color(0xFF1F1A16).copy(alpha = 0.22f)
+    val focusRing = Color(0xFFBF6A43).copy(alpha = 0.36f)
 
     // 语义色
-    val success = Color(0xFF4F7A58)
-    val successSoft = Color(0xFF4F7A58).copy(alpha = 0.12f)
-    val warning = Color(0xFFA96A2F)
-    val warningSoft = Color(0xFFA96A2F).copy(alpha = 0.14f)
-    val danger = Color(0xFFB24F45)
-    val dangerSoft = Color(0xFFB24F45).copy(alpha = 0.14f)
-    val permission = Color(0xFFD18B00)
-    val permissionSoft = Color(0xFFD18B00).copy(alpha = 0.14f)
-    val info = Color(0xFF4A6FA5)
-    val infoSoft = Color(0xFF4A6FA5).copy(alpha = 0.12f)
-    val thinking = Color(0xFF8080B8)
-    val thinkingSoft = Color(0xFF8080B8).copy(alpha = 0.07f)
+    val success = Color(0xFF3F7A55)
+    val successSoft = Color(0xFF3F7A55).copy(alpha = 0.10f)
+    val warning = Color(0xFFAC7335)
+    val warningSoft = Color(0xFFAC7335).copy(alpha = 0.12f)
+    val danger = Color(0xFFB25247)
+    val dangerSoft = Color(0xFFB25247).copy(alpha = 0.11f)
+    val permission = Color(0xFFC28A20)
+    val permissionSoft = Color(0xFFC28A20).copy(alpha = 0.11f)
+    val info = Color(0xFF4E73A8)
+    val infoSoft = Color(0xFF4E73A8).copy(alpha = 0.10f)
+    val thinking = Color(0xFF7776A9)
+    val thinkingSoft = Color(0xFF7776A9).copy(alpha = 0.08f)
 }
 
 // —— 暗色 Token ——
 private object DarkTokens {
-    val bgPrimary = Color(0xFF1A1410)
-    val bgElevated = Color(0xFF241C15)
-    val surface = Color(0xFF2A2018)
-    val surfaceSoft = Color(0xFF251D16)
-    val textPrimary = Color(0xFFF0E6D8)
-    val textSecondary = Color(0xFFB5A593)
-    val textMuted = Color(0xFF7A6A5A)
-    val brand = Color(0xFFD97A4F)
-    val brandSoft = Color(0xFFD97A4F).copy(alpha = 0.18f)
-    val border = Color(0xFFF0E6D8).copy(alpha = 0.14f)
-    val borderStrong = Color(0xFFF0E6D8).copy(alpha = 0.28f)
-    val focusRing = Color(0xFFD97A4F).copy(alpha = 0.50f)
+    val bgPrimary = Color(0xFF121416)
+    val bgElevated = Color(0xFF1D2024)
+    val surface = Color(0xFF22262B)
+    val surfaceSoft = Color(0xFF2B3036)
+    val textPrimary = Color(0xFFEDE7DE)
+    val textSecondary = Color(0xFFC0B8AD)
+    val textMuted = Color(0xFF867D73)
+    val brand = Color(0xFFD47A52)
+    val brandSoft = Color(0xFFD47A52).copy(alpha = 0.16f)
+    val border = Color(0xFFEDE7DE).copy(alpha = 0.11f)
+    val borderStrong = Color(0xFFEDE7DE).copy(alpha = 0.22f)
+    val focusRing = Color(0xFFD47A52).copy(alpha = 0.42f)
 
     // 语义色
-    val success = Color(0xFF7FB389)
-    val successSoft = Color(0xFF7FB389).copy(alpha = 0.14f)
-    val warning = Color(0xFFC98B4B)
-    val warningSoft = Color(0xFFC98B4B).copy(alpha = 0.14f)
-    val danger = Color(0xFFD9776D)
-    val dangerSoft = Color(0xFFD9776D).copy(alpha = 0.14f)
-    val permission = Color(0xFFE8A93D)
-    val permissionSoft = Color(0xFFE8A93D).copy(alpha = 0.14f)
-    val info = Color(0xFF7E9CC4)
-    val infoSoft = Color(0xFF7E9CC4).copy(alpha = 0.14f)
-    val thinking = Color(0xFF9D9DCC)
-    val thinkingSoft = Color(0xFF9D9DCC).copy(alpha = 0.08f)
+    val success = Color(0xFF78B184)
+    val successSoft = Color(0xFF78B184).copy(alpha = 0.13f)
+    val warning = Color(0xFFD39A56)
+    val warningSoft = Color(0xFFD39A56).copy(alpha = 0.13f)
+    val danger = Color(0xFFE07C72)
+    val dangerSoft = Color(0xFFE07C72).copy(alpha = 0.13f)
+    val permission = Color(0xFFE3AF4A)
+    val permissionSoft = Color(0xFFE3AF4A).copy(alpha = 0.13f)
+    val info = Color(0xFF84A7D5)
+    val infoSoft = Color(0xFF84A7D5).copy(alpha = 0.13f)
+    val thinking = Color(0xFFA4A1D2)
+    val thinkingSoft = Color(0xFFA4A1D2).copy(alpha = 0.09f)
 }
 
 private val LightScheme: ColorScheme = lightColorScheme(
@@ -140,10 +142,27 @@ private val DarkScheme: ColorScheme = darkColorScheme(
     surfaceContainerLowest = DarkTokens.surface,
 )
 
+enum class WandAppearanceMode(val storageValue: String) {
+    Light("light"),
+    Dark("dark"),
+    System("system");
+
+    companion object {
+        fun fromStorageValue(value: String?): WandAppearanceMode =
+            entries.firstOrNull { it.storageValue == value } ?: System
+    }
+}
+
+private val LocalWandDark = compositionLocalOf { false }
+
 @Composable
 @ReadOnlyComposable
 private fun pick(light: Color, dark: Color): Color =
-    if (isSystemInDarkTheme()) dark else light
+    if (LocalWandDark.current) dark else light
+
+@Composable
+@ReadOnlyComposable
+fun isWandDarkTheme(): Boolean = LocalWandDark.current
 
 /**
  * 屏幕代码里直接取用的完整色板（对称 iOS Theme.swift 的便捷访问）。
@@ -319,9 +338,20 @@ object WandShapes {
 }
 
 @Composable
-fun WandTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkScheme else LightScheme,
-        content = content,
-    )
+fun WandTheme(
+    appearanceMode: WandAppearanceMode = WandAppearanceMode.System,
+    content: @Composable () -> Unit,
+) {
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (appearanceMode) {
+        WandAppearanceMode.Light -> false
+        WandAppearanceMode.Dark -> true
+        WandAppearanceMode.System -> systemDark
+    }
+    CompositionLocalProvider(LocalWandDark provides dark) {
+        MaterialTheme(
+            colorScheme = if (dark) DarkScheme else LightScheme,
+            content = content,
+        )
+    }
 }

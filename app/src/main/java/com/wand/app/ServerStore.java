@@ -23,6 +23,7 @@ public class ServerStore {
     private static final String KEY_NOTIFICATION_VOLUME = "notification_volume";
     private static final String KEY_HAPTIC_ENABLED = "haptic_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
+    private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
     private static final int MAX_RECENT = 5;
 
     private final SharedPreferences prefs;
@@ -158,6 +159,20 @@ public class ServerStore {
 
     public void setBetaChannel(boolean enabled) {
         prefs.edit().putBoolean(KEY_BETA_CHANNEL, enabled).apply();
+    }
+
+    public String getAppearanceMode() {
+        return prefs.getString(KEY_APPEARANCE_MODE, "system");
+    }
+
+    public void setAppearanceMode(String mode) {
+        String normalized;
+        if ("light".equals(mode) || "dark".equals(mode) || "system".equals(mode)) {
+            normalized = mode;
+        } else {
+            normalized = "system";
+        }
+        prefs.edit().putString(KEY_APPEARANCE_MODE, normalized).apply();
     }
 
     private static String channelKey(String base, String channel) {

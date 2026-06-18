@@ -7,10 +7,14 @@ import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.wand.app.data.WandApi
 import com.wand.app.ui.HomeActions
 import com.wand.app.ui.QuickAction
 import com.wand.app.ui.WandApp
+import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.WandTheme
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -47,6 +51,9 @@ class HomeActivity : AppCompatActivity() {
         }
 
         val serverStore = ServerStore(this)
+        var appearanceMode by mutableStateOf(
+            WandAppearanceMode.fromStorageValue(serverStore.appearanceMode)
+        )
         val notificationHelper = NotificationHelper(this).also { it.createChannels() }
         updateExecutor = Executors.newSingleThreadExecutor()
         val manager = UpdateManager(this, serverStore, updateExecutor, serverUrl)
@@ -85,11 +92,16 @@ class HomeActivity : AppCompatActivity() {
             isHapticEnabled = { serverStore.isHapticEnabled },
             setHapticEnabled = { serverStore.setHapticEnabled(it) },
             setKeepAlive = { enabled -> setKeepAlive(enabled, serverUrl, appToken) },
+            getAppearanceMode = { appearanceMode },
+            setAppearanceMode = { mode ->
+                appearanceMode = mode
+                serverStore.appearanceMode = mode.storageValue
+            },
         )
 
         enableEdgeToEdge()
         setContent {
-            WandTheme {
+            WandTheme(appearanceMode = appearanceMode) {
                 WandApp(
                     api = api,
                     actions = actions,

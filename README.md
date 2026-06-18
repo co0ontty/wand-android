@@ -8,6 +8,10 @@
 - APK 构建产物**不要提交到仓库**。
 - 本地 debug 分发包默认放在 `dist/apk/`，服务端通过 `config.json` 里的 `android.apkDir` 指向它。
 
+## 参考文档
+
+- [同步 iOS 移动端体验改动（2026-06-18）](docs/ios-mobile-updates-reference-2026-06-18.md)：PTY 原生壳、快速提交入口、外观三段式设置、WebView/embed 协议的 Android 实现参考。
+
 ## 本地分发流程
 
 1. 在 `android/` 中完成客户端打包：

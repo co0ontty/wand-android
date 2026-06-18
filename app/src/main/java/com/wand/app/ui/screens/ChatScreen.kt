@@ -1086,48 +1086,6 @@ private fun SettingsMenuOption(label: String, selected: Boolean, onClick: () -> 
     )
 }
 
-/**
- * Git 变更统计按钮（对齐 iOS gitChangesButton）：~修改 -删除 +新增，
- * 点击打开快速提交面板。
- */
-@Composable
-private fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
-    var modified = 0
-    var deleted = 0
-    var added = 0
-    quickCommit.status?.files.orEmpty().forEach { file ->
-        val status = file.status.uppercase()
-        when {
-            status.contains("?") || status.contains("A") -> added++
-            status.contains("D") -> deleted++
-            else -> modified++
-        }
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
-    ) {
-        Icon(
-            WandIcons.commit,
-            contentDescription = "Git 变更",
-            tint = WandColors.textSecondary,
-            modifier = Modifier.size(15.dp),
-        )
-        val countStyle = TextStyle(
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = FontFamily.Monospace,
-        )
-        Text("~$modified", style = countStyle, color = WandColors.textSecondary)
-        Text("-$deleted", style = countStyle, color = WandColors.danger)
-        Text("+$added", style = countStyle, color = WandColors.success)
-    }
-}
-
 /** 从 content Uri 读出 (文件名, 字节)，供 multipart 上传。 */
 private fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray> {
     var name = "attachment"

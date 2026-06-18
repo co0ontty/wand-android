@@ -9,6 +9,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,12 +17,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,20 +40,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
+import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
@@ -59,6 +69,8 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
@@ -73,11 +85,22 @@ import com.wand.app.ui.theme.rememberGlassBackdrop
 fun PtyTerminalScreen(
     api: WandApi,
     sessionId: String,
+    isHapticEnabled: () -> Boolean,
     onBack: () -> Unit,
     onOpenWebSession: (String) -> Unit,
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
     var reloadKey by remember(sessionId) { mutableStateOf(0) }
+    var draft by remember(sessionId) { mutableStateOf("") }
+    var sending by remember(sessionId) { mutableStateOf(false) }
+    var toast by remember(sessionId) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val quickCommit = remember(sessionId) {
+        QuickCommitStore(sessionId, api) { msg -> toast = msg }
+    }
+    DisposableEffect(quickCommit) {
+        onDispose { quickCommit.shutdown() }
+    }
 
     // 仅为顶栏拉一次会话快照（标题 / provider / 工作目录）；失败就退化成最简头部。
     LaunchedEffect(sessionId) {
@@ -85,6 +108,14 @@ fun PtyTerminalScreen(
             api.getSession(sessionId)
         } catch (_: Exception) {
             null
+        }
+        quickCommit.loadStatus(force = true)
+    }
+
+    LaunchedEffect(toast) {
+        if (toast != null) {
+            delay(2_600)
+            toast = null
         }
     }
 
@@ -95,9 +126,41 @@ fun PtyTerminalScreen(
             PtyTopBar(
                 backdrop = glassBackdrop,
                 snapshot = snapshot,
+                quickCommit = quickCommit,
                 onBack = onBack,
                 onReload = { reloadKey++ },
+                onOpenQuickCommit = { quickCommit.openPanel() },
                 onOpenWeb = { onOpenWebSession(sessionId) },
+            )
+        },
+        bottomBar = {
+            PtyNativeInputBar(
+                backdrop = glassBackdrop,
+                draft = draft,
+                sending = sending,
+                onDraftChange = { draft = it },
+                onSend = {
+                    val text = draft.trim()
+                    if (text.isEmpty() || sending) return@PtyNativeInputBar
+                    draft = ""
+                    sending = true
+                    scope.launch {
+                        try {
+                            api.sendInput(sessionId, text, view = "chat")
+                            delay(30)
+                            api.sendInput(
+                                id = sessionId,
+                                input = "\r",
+                                view = "chat",
+                                shortcutKey = "enter_text",
+                            )
+                        } catch (e: Exception) {
+                            toast = e.message ?: "发送失败"
+                            draft = text
+                        }
+                        sending = false
+                    }
+                },
             )
         },
     ) { padding ->
@@ -112,11 +175,7 @@ fun PtyTerminalScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(horizontal = 10.dp, vertical = 10.dp)
-                    // 终端输入栏要避开软键盘：imePadding 让 WebView 在键盘弹起时收缩，
-                    // 网页据更新后的 window.innerHeight 把输入栏顶到键盘上方。
-                    .imePadding()
-                    .navigationBarsPadding()
+                    .padding(horizontal = 6.dp, vertical = 8.dp)
                     .clip(terminalShape)
                     .background(Color.Black)
                     .border(1.dp, WandColors.border.copy(alpha = 0.72f), terminalShape),
@@ -127,6 +186,28 @@ fun PtyTerminalScreen(
                     reloadKey = reloadKey,
                 )
             }
+            if (quickCommit.panelOpen) {
+                QuickCommitSheet(
+                    qc = quickCommit,
+                    isHapticEnabled = isHapticEnabled,
+                    onDismiss = { quickCommit.closePanel() },
+                )
+            }
+            toast?.let { message ->
+                Text(
+                    message,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(padding)
+                        .padding(top = 10.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
         }
     }
 }
@@ -135,8 +216,10 @@ fun PtyTerminalScreen(
 private fun PtyTopBar(
     backdrop: GlassBackdrop,
     snapshot: SessionSnapshot?,
+    quickCommit: QuickCommitStore,
     onBack: () -> Unit,
     onReload: () -> Unit,
+    onOpenQuickCommit: () -> Unit,
     onOpenWeb: () -> Unit,
 ) {
     Column(
@@ -182,6 +265,7 @@ private fun PtyTopBar(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            GitChangesButton(quickCommit) { onOpenQuickCommit() }
             WandChromeIconButton(
                 icon = WandIcons.refresh,
                 contentDescription = "刷新终端",
@@ -195,6 +279,78 @@ private fun PtyTopBar(
             )
         }
         HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+    }
+}
+
+@Composable
+private fun PtyNativeInputBar(
+    backdrop: GlassBackdrop,
+    draft: String,
+    sending: Boolean,
+    onDraftChange: (String) -> Unit,
+    onSend: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(
+                backdrop,
+                RoundedCornerShape(0.dp),
+                WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
+                edgeToEdge = true,
+            )
+            .imePadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        BasicTextField(
+            value = draft,
+            onValueChange = onDraftChange,
+            enabled = !sending,
+            textStyle = TextStyle(
+                color = WandColors.textPrimary,
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+            ),
+            cursorBrush = SolidColor(WandColors.brand),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 40.dp, max = 108.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(WandColors.surface.copy(alpha = 0.72f))
+                .border(0.7.dp, WandColors.border, RoundedCornerShape(16.dp))
+                .padding(horizontal = 13.dp, vertical = 9.dp),
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (draft.isEmpty()) {
+                        Text(
+                            "输入到终端会话",
+                            fontSize = 15.sp,
+                            color = WandColors.textMuted,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(if (draft.isBlank() || sending) WandColors.surfaceSoft.copy(alpha = 0.72f) else WandColors.brand)
+                .clickable(enabled = draft.isNotBlank() && !sending, onClick = onSend),
+        ) {
+            Icon(
+                WandIcons.arrowUp,
+                contentDescription = "发送",
+                tint = if (draft.isBlank() || sending) WandColors.textMuted else Color.White,
+                modifier = Modifier.size(19.dp),
+            )
+        }
     }
 }
 
@@ -245,6 +401,7 @@ private fun PtyTerminalWebView(serverUrl: String, sessionId: String, reloadKey: 
                             ".is-wand-embed-terminal .terminal-scale-overlay:hover,.is-wand-embed-terminal .terminal-scale-overlay:focus-within,.is-wand-embed-terminal .terminal-scale-overlay:active{opacity:1;transform:scale(.94);}" +
                             ".is-wand-embed-terminal .wand-joystick-root{opacity:.26;transform:scale(.82);transform-origin:bottom right;transition:opacity .16s ease,transform .16s ease;}" +
                             ".is-wand-embed-terminal .wand-joystick-root:has(.panel-open),.is-wand-embed-terminal .wand-joystick-root:active{opacity:1;transform:scale(.94);}" +
+                            ".is-wand-embed-terminal .terminal-scroll-wrap{padding:8px 4px 6px!important;--term-font-family:\\\"Roboto Mono\\\",\\\"Droid Sans Mono\\\",\\\"Noto Sans Mono\\\",\\\"Noto Sans Symbols 2\\\",\\\"Noto Sans Symbols\\\",monospace!important;--term-font-size:10px!important;--term-row-height:15px!important;}" +
                             ".is-wand-embed-terminal .input-panel{padding:7px 10px!important;padding-bottom:calc(8px + var(--input-safe-bottom,var(--safe-bottom,0px)) + var(--keyboard-offset,0px))!important;border-top:1px solid rgba(240,230,216,.14)!important;background:linear-gradient(180deg,rgba(23,18,15,0) 0%,rgba(23,18,15,.82) 28%,rgba(23,18,15,.96) 100%),#17120f!important;backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%);}" +
                             ".is-wand-embed-terminal .terminal-container{margin:0!important;border-left:0!important;border-right:0!important;border-radius:0!important;box-shadow:none!important;}" +
                             ".is-wand-embed-terminal .input-composer{border-radius:999px!important;border-color:rgba(240,230,216,.16)!important;background:rgba(42,32,24,.88)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 10px 28px rgba(0,0,0,.24)!important;}" +
@@ -259,6 +416,8 @@ private fun PtyTerminalWebView(serverUrl: String, sessionId: String, reloadKey: 
                             ".is-wand-embed-terminal .input-composer:not(:focus-within):not(.has-text) .input-textarea::placeholder{opacity:0!important;}" +
                             "';" +
                             "document.head.appendChild(s);}" +
+                            "function fit(){try{window.dispatchEvent(new Event('resize'));var o=document.getElementById('output');if(o){var w=o.style.width;o.style.width='calc(100% - 0.01px)';void o.offsetWidth;o.style.width=w;}}catch(e){}}" +
+                            "[0,80,220,520].forEach(function(d){setTimeout(fit,d);});" +
                             "}catch(e){}})();",
                         null,
                     )
@@ -286,6 +445,7 @@ private fun buildEmbedTerminalUrl(serverUrl: String, sessionId: String): String 
     Uri.parse(serverUrl).buildUpon()
         .appendQueryParameter("session", sessionId)
         .appendQueryParameter("embed", "terminal")
+        .appendQueryParameter("nativeInput", "1")
         .build()
         .toString()
 

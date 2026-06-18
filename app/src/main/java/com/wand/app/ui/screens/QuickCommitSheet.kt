@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +74,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -80,6 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.glassCard
 import kotlinx.coroutines.launch
@@ -140,6 +143,50 @@ fun GitTopBarBadge(qc: QuickCommitStore, onClick: () -> Unit) {
     }
 }
 
+/**
+ * Git 变更统计按钮（对齐 iOS gitChangesButton）：~修改 -删除 +新增，
+ * 点击打开快速提交面板。
+ */
+@Composable
+fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
+    val status = quickCommit.status ?: return
+    if (!status.isGit) return
+    var modified = 0
+    var deleted = 0
+    var added = 0
+    status.files.orEmpty().forEach { file ->
+        val fileStatus = file.status.uppercase()
+        when {
+            fileStatus.contains("?") || fileStatus.contains("A") -> added++
+            fileStatus.contains("D") -> deleted++
+            else -> modified++
+        }
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            WandIcons.commit,
+            contentDescription = "Git 变更",
+            tint = WandColors.textSecondary,
+            modifier = Modifier.size(15.dp),
+        )
+        val countStyle = TextStyle(
+            fontSize = 9.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = FontFamily.Monospace,
+        )
+        Text("~$modified", style = countStyle, color = WandColors.textSecondary)
+        Text("-$deleted", style = countStyle, color = WandColors.danger)
+        Text("+$added", style = countStyle, color = WandColors.success)
+    }
+}
+
 /** 极简 git branch 图标（对齐网页 svg：两个节点 + 分叉到右侧节点）。 */
 @Composable
 private fun GitBranchIcon(tint: Color) {
@@ -171,7 +218,7 @@ fun QuickCommitSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true,
+        skipPartiallyExpanded = false,
         // 提交 / 推送进行中禁止下滑收起，防止误关后丢失结果面板。
         confirmValueChange = { value -> value != SheetValue.Hidden || !qc.inFlight },
     )
@@ -181,6 +228,7 @@ fun QuickCommitSheet(
         // ModalBottomSheet 是独立 window，采样不到 app 的 backdrop 层，
         // 永远走降级玻璃：近实底 bgElevated（保证 dock 画布与文字对比度）。
         containerColor = WandColors.bgElevated.copy(alpha = 0.98f),
+        dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
         Column(
             verticalArrangement = Arrangement.spacedBy(14.dp),

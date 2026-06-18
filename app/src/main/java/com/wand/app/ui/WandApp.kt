@@ -178,6 +178,7 @@ private fun ReadyContent(
         is Screen.PtyTerminal -> PtyTerminalScreen(
             api = api,
             sessionId = screen.sessionId,
+            isHapticEnabled = actions.isHapticEnabled,
             onBack = { nav.pop() },
             onOpenWebSession = actions.openWebSession,
         )
