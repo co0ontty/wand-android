@@ -9,26 +9,26 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -50,7 +50,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.ui.components.BrandLogos
+import com.wand.app.ui.components.WandChromeIconButton
+import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.glassBackdropSource
+import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.rememberGlassBackdrop
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
@@ -66,8 +74,10 @@ fun PtyTerminalScreen(
     api: WandApi,
     sessionId: String,
     onBack: () -> Unit,
+    onOpenWebSession: (String) -> Unit,
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
+    var reloadKey by remember(sessionId) { mutableStateOf(0) }
 
     // 仅为顶栏拉一次会话快照（标题 / provider / 工作目录）；失败就退化成最简头部。
     LaunchedEffect(sessionId) {
@@ -78,68 +88,118 @@ fun PtyTerminalScreen(
         }
     }
 
+    val glassBackdrop = rememberGlassBackdrop()
     Scaffold(
-        containerColor = WandColors.bgPrimary,
+        containerColor = Color.Transparent,
         topBar = {
-            CenterAlignedTopAppBar(
-                modifier = Modifier.background(WandColors.bgPrimary.copy(alpha = 0.98f)),
-                title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            snapshot?.displayTitle ?: "终端会话",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 190.dp),
-                        )
-                        Text(
-                            ptyMiddleTruncate(snapshot?.cwd ?: "未设置工作目录", 44),
-                            fontSize = 8.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = WandColors.textSecondary,
-                            maxLines = 1,
-                            modifier = Modifier.widthIn(max = 190.dp),
-                        )
-                    }
-                },
-                navigationIcon = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "返回",
-                                tint = WandColors.textSecondary,
-                            )
-                        }
-                        PtyProviderBadge(snapshot?.provider)
-                    }
-                },
-                actions = { Spacer(modifier = Modifier.size(48.dp)) },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                ),
+            PtyTopBar(
+                backdrop = glassBackdrop,
+                snapshot = snapshot,
+                onBack = onBack,
+                onReload = { reloadKey++ },
+                onOpenWeb = { onOpenWebSession(sessionId) },
             )
         },
     ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                // 终端输入栏要避开软键盘：imePadding 让 WebView 在键盘弹起时收缩，
-                // 网页据更新后的 window.innerHeight 把输入栏顶到键盘上方。
-                .imePadding()
-                .navigationBarsPadding(),
+                .glassBackdropSource(glassBackdrop),
         ) {
-            PtyTerminalWebView(serverUrl = api.baseUrl, sessionId = sessionId)
+            AmbientBackground(Modifier.fillMaxSize())
+            val terminalShape = RoundedCornerShape(18.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                    // 终端输入栏要避开软键盘：imePadding 让 WebView 在键盘弹起时收缩，
+                    // 网页据更新后的 window.innerHeight 把输入栏顶到键盘上方。
+                    .imePadding()
+                    .navigationBarsPadding()
+                    .clip(terminalShape)
+                    .background(Color.Black)
+                    .border(1.dp, WandColors.border.copy(alpha = 0.72f), terminalShape),
+            ) {
+                PtyTerminalWebView(
+                    serverUrl = api.baseUrl,
+                    sessionId = sessionId,
+                    reloadKey = reloadKey,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun PtyTerminalWebView(serverUrl: String, sessionId: String) {
+private fun PtyTopBar(
+    backdrop: GlassBackdrop,
+    snapshot: SessionSnapshot?,
+    onBack: () -> Unit,
+    onReload: () -> Unit,
+    onOpenWeb: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(
+                backdrop,
+                RoundedCornerShape(0.dp),
+                WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
+                edgeToEdge = true,
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(58.dp)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            WandChromeIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+            )
+            PtyProviderBadge(snapshot?.provider)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    snapshot?.displayTitle ?: "终端会话",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    ptyMiddleTruncate(snapshot?.cwd ?: "未设置工作目录", 44),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            WandChromeIconButton(
+                icon = WandIcons.refresh,
+                contentDescription = "刷新终端",
+                onClick = onReload,
+            )
+            WandChromeIconButton(
+                icon = WandIcons.web,
+                contentDescription = "打开网页版",
+                tint = WandColors.brand,
+                onClick = onOpenWeb,
+            )
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+    }
+}
+
+@Composable
+private fun PtyTerminalWebView(serverUrl: String, sessionId: String, reloadKey: Int) {
     val context = LocalContext.current
     val webView = remember {
         @SuppressLint("SetJavaScriptEnabled")
@@ -206,6 +266,10 @@ private fun PtyTerminalWebView(serverUrl: String, sessionId: String) {
             }
             loadUrl(buildEmbedTerminalUrl(serverUrl, sessionId))
         }
+    }
+
+    LaunchedEffect(reloadKey) {
+        if (reloadKey > 0) webView.reload()
     }
 
     DisposableEffect(Unit) {

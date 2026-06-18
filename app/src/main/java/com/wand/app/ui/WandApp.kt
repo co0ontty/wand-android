@@ -179,6 +179,7 @@ private fun ReadyContent(
             api = api,
             sessionId = screen.sessionId,
             onBack = { nav.pop() },
+            onOpenWebSession = actions.openWebSession,
         )
         is Screen.NewSession -> NewSessionScreen(
             api = api,

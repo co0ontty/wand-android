@@ -39,7 +39,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -86,10 +85,13 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
+import com.wand.app.ui.theme.GlassStyle
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
@@ -228,114 +230,25 @@ fun SessionListScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            // 紧凑自定义顶栏（替代 64dp 固定高的 Material3 TopAppBar）：玻璃底铺到状态栏下，
-            // 内容区压到 46dp，仅留下导航 / 范围切换 / 操作三栏，底缘以发丝线收口。
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .glassSurface(glassBackdrop, RoundedCornerShape(0.dp), barGlass, edgeToEdge = true),
-            ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .height(46.dp)
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box {
-                    IconButton(onClick = { menuOpen = true }) {
-                        Icon(
-                            Icons.Default.MoreVert,
-                            contentDescription = "菜单",
-                            tint = WandColors.textSecondary,
-                        )
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("设置") },
-                            leadingIcon = {
-                                Icon(
-                                    WandIcons.settings,
-                                    contentDescription = null,
-                                    tint = WandColors.textSecondary,
-                                )
-                            },
-                            onClick = { menuOpen = false; onOpenSettings() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("打开网页版") },
-                            leadingIcon = {
-                                Icon(
-                                    WandIcons.web,
-                                    contentDescription = null,
-                                    tint = WandColors.textSecondary,
-                                )
-                            },
-                            onClick = { menuOpen = false; onOpenWeb() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("切换服务器") },
-                            leadingIcon = {
-                                Icon(
-                                    WandIcons.swapServer,
-                                    contentDescription = null,
-                                    tint = WandColors.textSecondary,
-                                )
-                            },
-                            onClick = { menuOpen = false; onSwitchServer() },
-                        )
-                    }
-                }
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    if (isSelecting) {
-                        Text(
-                            "已选择 ${selectedIds.size} 项",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textPrimary,
-                        )
-                    } else {
-                        ScopeToggle(
-                            selected = listScope,
-                            onSelect = { listScope = it },
-                        )
-                    }
-                }
-                // 右上角按模式切换：多选 ✕ 退出 / 历史 🗑 清空 / 进行中 + 新建（对齐 iOS）。
-                when {
-                    isSelecting -> IconButton(onClick = { endSelection() }) {
-                        Icon(
-                            WandIcons.close,
-                            contentDescription = "退出多选",
-                            tint = WandColors.brand,
-                        )
-                    }
-                    listScope == "history" -> IconButton(
-                        onClick = { showClearHistoryConfirmation = true },
-                        enabled = state.visibleHistorySessions.isNotEmpty(),
-                    ) {
-                        Icon(
-                            WandIcons.delete,
-                            contentDescription = "清空历史会话",
-                            tint = if (state.visibleHistorySessions.isEmpty()) {
-                                WandColors.textMuted
-                            } else {
-                                WandColors.danger
-                            },
-                        )
-                    }
-                    else -> IconButton(onClick = onNewSession) {
-                        Icon(
-                            WandIcons.add,
-                            contentDescription = "新建会话",
-                            tint = WandColors.brand,
-                        )
-                    }
-                }
-            }
-            HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
-            }
+            SessionListTopBar(
+                backdrop = glassBackdrop,
+                barGlass = barGlass,
+                menuOpen = menuOpen,
+                onMenuOpenChange = { menuOpen = it },
+                isSelecting = isSelecting,
+                selectedCount = selectedIds.size,
+                listScope = listScope,
+                activeCount = state.visibleSessions.size,
+                historyCount = state.visibleHistorySessions.size,
+                canClearHistory = state.visibleHistorySessions.isNotEmpty(),
+                onSelectScope = { listScope = it },
+                onNewSession = onNewSession,
+                onClearHistory = { showClearHistoryConfirmation = true },
+                onExitSelection = { endSelection() },
+                onOpenSettings = onOpenSettings,
+                onOpenWeb = onOpenWeb,
+                onSwitchServer = onSwitchServer,
+            )
         },
         bottomBar = {
             if (isSelecting) {
@@ -601,6 +514,144 @@ fun SessionListScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun SessionListTopBar(
+    backdrop: GlassBackdrop,
+    barGlass: GlassStyle,
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
+    isSelecting: Boolean,
+    selectedCount: Int,
+    listScope: String,
+    activeCount: Int,
+    historyCount: Int,
+    canClearHistory: Boolean,
+    onSelectScope: (String) -> Unit,
+    onNewSession: () -> Unit,
+    onClearHistory: () -> Unit,
+    onExitSelection: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenWeb: () -> Unit,
+    onSwitchServer: () -> Unit,
+) {
+    val title = "会话"
+    val countLabel = if (listScope == "history") "历史 · $historyCount 条可恢复" else "进行中 · $activeCount 个活跃"
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(backdrop, RoundedCornerShape(0.dp), barGlass, edgeToEdge = true),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(52.dp)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (isSelecting) {
+                WandChromeIconButton(
+                    icon = WandIcons.close,
+                    contentDescription = "退出多选",
+                    tint = WandColors.brand,
+                    onClick = onExitSelection,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "批量选择",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                    )
+                    Text(
+                        "已选择 $selectedCount 项",
+                        fontSize = 11.sp,
+                        color = WandColors.textMuted,
+                    )
+                }
+            } else {
+                WandBrandMark(size = 32)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                        maxLines = 1,
+                    )
+                    Text(
+                        countLabel,
+                        fontSize = 11.sp,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                    )
+                }
+                if (listScope == "history") {
+                    WandChromeIconButton(
+                        icon = WandIcons.delete,
+                        contentDescription = "清空历史会话",
+                        tint = if (canClearHistory) WandColors.danger else WandColors.textMuted,
+                        enabled = canClearHistory,
+                        onClick = onClearHistory,
+                    )
+                } else {
+                    WandChromeIconButton(
+                        icon = WandIcons.add,
+                        contentDescription = "新建会话",
+                        tint = WandColors.brand,
+                        onClick = onNewSession,
+                    )
+                }
+                Box {
+                    WandChromeIconButton(
+                        icon = Icons.Default.MoreVert,
+                        contentDescription = "菜单",
+                        onClick = { onMenuOpenChange(true) },
+                    )
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { onMenuOpenChange(false) },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("设置") },
+                            leadingIcon = {
+                                Icon(WandIcons.settings, contentDescription = null, tint = WandColors.textSecondary)
+                            },
+                            onClick = { onMenuOpenChange(false); onOpenSettings() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("打开网页版") },
+                            leadingIcon = {
+                                Icon(WandIcons.web, contentDescription = null, tint = WandColors.textSecondary)
+                            },
+                            onClick = { onMenuOpenChange(false); onOpenWeb() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("切换服务器") },
+                            leadingIcon = {
+                                Icon(WandIcons.swapServer, contentDescription = null, tint = WandColors.textSecondary)
+                            },
+                            onClick = { onMenuOpenChange(false); onSwitchServer() },
+                        )
+                    }
+                }
+            }
+        }
+        if (!isSelecting) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                ScopeToggle(selected = listScope, onSelect = onSelectScope)
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
     }
 }
 
@@ -1036,12 +1087,12 @@ private fun SessionCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         selected = selecting && selected,
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.Top,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selecting) {
                 Icon(
@@ -1051,19 +1102,10 @@ private fun SessionCard(
                     modifier = Modifier.size(22.dp),
                 )
             }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                ProviderMark(session = session, status = status)
-                MetaChip(
-                    text = if (session.isStructured) "聊天" else "终端",
-                    icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
-                )
-            }
+            ProviderMark(session = session, status = status)
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 Text(
                     sessionListTitle(session),
@@ -1073,41 +1115,28 @@ private fun SessionCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                val cwd = session.cwd.orEmpty()
+                Text(
+                    if (cwd.isEmpty()) "未设置工作目录" else middleTruncatePath(cwd, 48),
+                    modifier = Modifier.fillMaxWidth(),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val cwd = session.cwd.orEmpty()
-                    Text(
-                        if (cwd.isEmpty()) "未设置工作目录" else middleTruncatePath(cwd, 44),
-                        modifier = Modifier.weight(1f),
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = WandColors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    MetaChip(
+                        text = if (session.isStructured) "聊天" else "终端",
+                        icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
                     )
                     val duration = sessionDurationLabel(session)
                     if (duration.isNotEmpty()) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                WandIcons.clock,
-                                contentDescription = null,
-                                tint = WandColors.textMuted,
-                                modifier = Modifier.size(11.dp),
-                            )
-                            Text(
-                                duration,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = WandColors.textMuted,
-                                maxLines = 1,
-                            )
-                        }
+                        MetaChip(text = duration, icon = WandIcons.clock)
                     }
                 }
             }
@@ -1116,10 +1145,9 @@ private fun SessionCard(
 }
 
 private fun sessionListTitle(session: SessionSnapshot): String {
-    val hasSemanticTitle = !session.summary.isNullOrBlank() || !session.currentTaskTitle.isNullOrBlank()
-    if (hasSemanticTitle) return session.displayTitle
-    val kind = if (session.isStructured) "聊天" else "终端"
-    return "$kind · ${session.displayTitle}"
+    return session.displayTitle.ifBlank {
+        if (session.isStructured) "聊天会话" else "终端会话"
+    }
 }
 
 /**

@@ -351,6 +351,41 @@ fun WandCard(
     )
 }
 
+/** 顶栏 / 悬浮 chrome 里的统一圆形图标按钮。 */
+@Composable
+fun WandChromeIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = WandColors.textSecondary,
+    enabled: Boolean = true,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
+            .clip(CircleShape)
+            .background(WandColors.surface.copy(alpha = 0.58f))
+            .border(1.dp, WandColors.border.copy(alpha = 0.75f), CircleShape)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interaction,
+                indication = ripple(bounded = true),
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
 /** Wand 品牌标记：品牌渐变圆角方块 + 白色星芒图标（对称 iOS Theme.WandBrandMark）。 */
 @Composable
 fun WandBrandMark(size: Int = 64) {

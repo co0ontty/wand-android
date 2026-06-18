@@ -121,7 +121,11 @@ fun TurnView(
         UserTurnView(turn)
         return
     }
-    val segments = remember(turn.content) { splitBySubagent(turn.content) }
+    val shouldFoldCurrentReply = isLastTurn && turnIndex > historyBoundary
+    val currentFold = remember(turn.content, shouldFoldCurrentReply) {
+        if (shouldFoldCurrentReply) foldCurrentReplyTail(turn.content) else CurrentReplyFold(turn.content, "")
+    }
+    val segments = remember(currentFold.blocks) { splitBySubagent(currentFold.blocks) }
     val preview = remember(turn.content) { replyPreview(turn.content) }
     // 抽纸折叠：历史回复（位于最后一条用户消息之前）默认折起，当前一轮展开。
     // historyBoundary 变化（= 发了新消息）即按新归属重置：旧回复自动折回去、丢弃手动展开。
@@ -138,6 +142,7 @@ fun TurnView(
         AssistantReplyHeader(
             collapsed = collapsed,
             preview = preview,
+            summary = currentFold.summary,
             onToggle = {
                 val next = !collapsed
                 collapsed = next
@@ -185,6 +190,7 @@ fun TurnView(
 private fun AssistantReplyHeader(
     collapsed: Boolean,
     preview: String,
+    summary: String,
     onToggle: () -> Unit,
 ) {
     val arrow by animateFloatAsState(
@@ -231,6 +237,15 @@ private fun AssistantReplyHeader(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+            } else if (!collapsed && summary.isNotBlank()) {
+                Text(
+                    summary,
+                    fontSize = 11.sp,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
             } else {
                 Spacer(modifier = Modifier.weight(1f))
             }
@@ -262,6 +277,88 @@ private fun replyPreview(content: List<ContentBlock>): String {
     if (text.isNotEmpty()) return text
     val toolCount = content.count { it is ContentBlock.ToolUse }
     return if (toolCount > 0) "$toolCount 个工具调用" else ""
+}
+
+private const val CURRENT_REPLY_TAIL_UNITS = 8
+
+private data class CurrentReplyFold(
+    val blocks: List<ContentBlock>,
+    val summary: String,
+)
+
+private data class ReplyFoldUnit(
+    val blockIndex: Int,
+    val text: String?,
+)
+
+/**
+ * 当前最新回复的抽纸折叠：真实用户消息和助手头部固定在上方，回复正文只保留尾部。
+ * 旧段落折进助手头部摘要，避免当前回复超过一屏时首屏停在第 01 段。
+ */
+private fun foldCurrentReplyTail(content: List<ContentBlock>): CurrentReplyFold {
+    if (content.any { it is ContentBlock.ToolUse && it.name == "AskUserQuestion" }) {
+        return CurrentReplyFold(content, "")
+    }
+
+    val units = mutableListOf<ReplyFoldUnit>()
+    content.forEachIndexed { blockIndex, block ->
+        when (block) {
+            is ContentBlock.Text -> splitReplyTextUnits(block.text).forEach { units += ReplyFoldUnit(blockIndex, it) }
+            is ContentBlock.Thinking,
+            is ContentBlock.ToolUse,
+            is ContentBlock.ToolResult -> units += ReplyFoldUnit(blockIndex, null)
+            is ContentBlock.Unknown -> Unit
+        }
+    }
+
+    if (units.size <= CURRENT_REPLY_TAIL_UNITS) return CurrentReplyFold(content, "")
+
+    val keepStart = units.size - CURRENT_REPLY_TAIL_UNITS
+    val keepByBlock = mutableMapOf<Int, MutableList<String>>()
+    val keepWholeBlocks = mutableSetOf<Int>()
+    for (i in keepStart until units.size) {
+        val unit = units[i]
+        if (unit.text == null) keepWholeBlocks += unit.blockIndex
+        else keepByBlock.getOrPut(unit.blockIndex) { mutableListOf() } += unit.text
+    }
+
+    val visible = mutableListOf<ContentBlock>()
+    content.forEachIndexed { blockIndex, block ->
+        when (block) {
+            is ContentBlock.Text -> {
+                val keptText = keepByBlock[blockIndex]?.joinToString("\n\n")?.trim().orEmpty()
+                if (keptText.isNotBlank()) visible += block.copy(text = keptText)
+            }
+            is ContentBlock.Thinking,
+            is ContentBlock.ToolUse,
+            is ContentBlock.ToolResult -> if (blockIndex in keepWholeBlocks) visible += block
+            is ContentBlock.Unknown -> Unit
+        }
+    }
+
+    val hidden = keepStart
+    val latest = units.asReversed().firstNotNullOfOrNull { it.text?.trim()?.takeIf { text -> text.isNotEmpty() } }
+        ?.replace(Regex("\\s+"), " ")
+        ?.let { if (it.length > 48) it.take(45) + "..." else it }
+        .orEmpty()
+    val summary = if (latest.isNotBlank()) "已收起 $hidden 条 · 最新：$latest" else "已收起 $hidden 条"
+    return CurrentReplyFold(visible.ifEmpty { content.takeLast(1) }, summary)
+}
+
+private fun splitReplyTextUnits(text: String): List<String> {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return emptyList()
+    val paragraphs = trimmed
+        .split(Regex("\\n\\s*\\n+"))
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+    if (paragraphs.size > 1) return paragraphs
+    return trimmed
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .toList()
+        .ifEmpty { listOf(trimmed) }
 }
 
 /** user turn 也可能携带 Task tool_result；保留普通用户气泡，并把子代理回包独立成面板。 */

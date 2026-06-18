@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,10 +16,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -28,7 +31,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -40,8 +42,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,9 +68,12 @@ import com.wand.app.speech.SttModelManager
 import com.wand.app.ui.HomeActions
 import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandBrandMark
+import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.glassBackdropSource
@@ -133,34 +136,10 @@ fun SettingsScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                modifier = Modifier.glassSurface(
-                    glassBackdrop,
-                    RoundedCornerShape(0.dp),
-                    WandGlass.regular.copy(refractionHeight = 0.dp),
-                    edgeToEdge = true,
-                ),
-                title = {
-                    Text(
-                        "设置",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = WandColors.textSecondary,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                ),
+            SettingsTopBar(
+                backdrop = glassBackdrop,
+                onBack = onBack,
+                onOpenWeb = actions.openWeb,
             )
         },
     ) { padding ->
@@ -177,19 +156,20 @@ fun SettingsScreen(
                     // padding 放在 verticalScroll 之后：顶部留白随内容滚动，
                     // 内容从玻璃顶栏下面滑过。
                     .padding(padding)
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 14.dp),
             ) {
+            Spacer(modifier = Modifier.height(12.dp))
+            SettingsHero(
+                appVersion = actions.appVersion,
+                serverVersion = serverVersion,
+            )
+
             // —— 服务器 ——
-            SectionHeader("服务器")
+            SectionHeader("连接")
             WandCard(modifier = Modifier.fillMaxWidth()) {
-                InfoRow("地址", actions.serverUrl, mono = true)
+                InfoRow("服务器地址", actions.serverUrl, icon = WandIcons.web, mono = true)
                 RowDivider()
-                InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定")
-                serverVersion?.let {
-                    RowDivider()
-                    InfoRow("服务端版本", "v$it", mono = true)
-                }
-                RowDivider()
+                InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定", icon = WandIcons.permission)
                 ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
                 RowDivider()
                 ActionRow("断开连接", WandIcons.logout, danger = true) {
@@ -274,7 +254,7 @@ fun SettingsScreen(
                     )
                 }
                 RowDivider()
-                SwitchRow("振动反馈", hapticEnabled) {
+                SwitchRow("振动反馈", hapticEnabled, WandIcons.settings) {
                     hapticEnabled = it
                     actions.setHapticEnabled(it)
                 }
@@ -317,7 +297,7 @@ fun SettingsScreen(
             // —— 后台 ——
             SectionHeader("后台")
             WandCard(modifier = Modifier.fillMaxWidth()) {
-                SwitchRow("后台保活（常驻通知）", keepAlive) { enabled ->
+                SwitchRow("后台保活（常驻通知）", keepAlive, WandIcons.refresh) { enabled ->
                     keepAlive = enabled
                     if (enabled && Build.VERSION.SDK_INT >= 33) {
                         notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -339,7 +319,7 @@ fun SettingsScreen(
             // —— 更新 ——
             SectionHeader("更新")
             WandCard(modifier = Modifier.fillMaxWidth()) {
-                SwitchRow("Beta 通道", betaChannel) {
+                SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
                     betaChannel = it
                     actions.setBetaChannel(it)
                 }
@@ -357,13 +337,129 @@ fun SettingsScreen(
             SectionHeader("更多")
             WandCard(modifier = Modifier.fillMaxWidth()) {
                 ActionRow("打开网页版（完整功能）", WandIcons.web) { actions.openWeb() }
-                RowDivider()
-                InfoRow("App 版本", "v${actions.appVersion}", mono = true)
             }
 
             Spacer(modifier = Modifier.size(32.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsTopBar(
+    backdrop: GlassBackdrop,
+    onBack: () -> Unit,
+    onOpenWeb: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(
+                backdrop,
+                RoundedCornerShape(0.dp),
+                WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
+                edgeToEdge = true,
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(54.dp)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            WandChromeIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "设置",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                )
+                Text(
+                    "连接、通知、语音与更新",
+                    fontSize = 11.sp,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                )
+            }
+            WandChromeIconButton(
+                icon = WandIcons.web,
+                contentDescription = "打开网页版",
+                tint = WandColors.brand,
+                onClick = onOpenWeb,
+            )
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+    }
+}
+
+@Composable
+private fun SettingsHero(
+    appVersion: String,
+    serverVersion: String?,
+) {
+    WandCard(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            WandBrandMark(size = 46)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Text(
+                    "Wand 控制台",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                )
+                Text(
+                    "原生控制台",
+                    fontSize = 11.sp,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    SettingPill("App v$appVersion", WandIcons.settings)
+                    serverVersion?.let { SettingPill("Server v$it", WandIcons.update) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingPill(text: String, icon: ImageVector, tint: Color = WandColors.textSecondary) {
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(tint.copy(alpha = 0.10f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
+        Text(
+            text,
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Medium,
+            color = tint,
+            maxLines = 1,
+        )
     }
 }
 
@@ -480,15 +576,21 @@ private fun RowDivider() {
 
 /** 信息行：标签 + 右对齐值（textSecondary，可选 mono）。 */
 @Composable
-private fun InfoRow(label: String, value: String, mono: Boolean = false) {
+private fun InfoRow(label: String, value: String, icon: ImageVector? = null, mono: Boolean = false) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 44.dp)
+            .heightIn(min = 54.dp)
             .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
-        Text(label, fontSize = 14.sp, color = WandColors.textPrimary)
+        if (icon != null) {
+            SettingsIconBadge(icon = icon)
+            Spacer(modifier = Modifier.size(10.dp))
+        }
+        Column {
+            Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = WandColors.textPrimary)
+        }
         Spacer(modifier = Modifier.weight(1f))
         Text(
             value,
@@ -499,6 +601,23 @@ private fun InfoRow(label: String, value: String, mono: Boolean = false) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 16.dp),
         )
+    }
+}
+
+@Composable
+private fun SettingsIconBadge(
+    icon: ImageVector,
+    tint: Color = WandColors.brand,
+) {
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(tint.copy(alpha = 0.11f))
+            .border(1.dp, tint.copy(alpha = 0.18f), RoundedCornerShape(10.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
     }
 }
 
@@ -519,12 +638,7 @@ private fun ActionRow(
             .heightIn(min = 52.dp)
             .padding(horizontal = 14.dp),
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(20.dp),
-        )
+        SettingsIconBadge(icon = icon, tint = tint)
         Text(
             label,
             fontSize = 15.sp,
@@ -543,15 +657,27 @@ private fun ActionRow(
 
 /** 开关行：标签 + 行尾 brand 色 Switch，行高 ≥52dp。 */
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(
+    label: String,
+    checked: Boolean,
+    icon: ImageVector,
+    onChange: (Boolean) -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
+            .heightIn(min = 56.dp)
             .padding(horizontal = 14.dp),
     ) {
-        Text(label, fontSize = 14.sp, color = WandColors.textPrimary)
+        SettingsIconBadge(icon = icon)
+        Text(
+            label,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = WandColors.textPrimary,
+            modifier = Modifier.padding(start = 12.dp),
+        )
         Spacer(modifier = Modifier.weight(1f))
         Switch(
             checked = checked,

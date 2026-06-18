@@ -125,6 +125,7 @@ import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBrandMark
+import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
@@ -184,8 +185,8 @@ fun ChatScreen(
     }
 
     var draft by remember { mutableStateOf("") }
-    // 抽纸式跟随：true = 自动把最新一轮（最后一条用户消息 + 其上方折叠摘要卡）钉到页面顶端，
-    // 回复在下方展开；用户手动滚动后置 false（露出「回到最新」浮钮）。语义已从「贴底」改为「钉顶」。
+    // 抽纸式跟随：true = 把真实的最新一轮（用户消息 + 助手头部）钉在页面上方；
+    // 助手正文的旧段落折进头部摘要，只在下方显示最新尾部。用户手动滚动后置 false。
     var followsLatest by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
@@ -294,8 +295,8 @@ fun ChatScreen(
     ) { uris -> uploadUris(uris) }
 
     // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
-    // 顶部「加载更早」哨兵与历史折叠条都占项；跟随最新时锚到最后一条用户消息，
-    // 让「用户消息 + 当前回复折叠头」稳定停在内容区顶部，回复正文只向下展开一屏。
+    // 顶部「加载更早」哨兵与历史折叠条都占项；跟随最新时锚到最后一条用户消息。
+    // 当前助手回复内部会把旧正文折进头部摘要，所以锚点不需要跟到整条消息尾部。
     val headerOffset = if (store.canLoadEarlier) 1 else 0
     val visibleHistoryCount = when {
         historyItems.isEmpty() -> 0
@@ -349,7 +350,12 @@ fun ChatScreen(
             // 右侧是 Git 变更统计 + 会话设置菜单（仅结构化会话）。
             // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
             CenterAlignedTopAppBar(
-                modifier = Modifier.background(WandColors.bgPrimary.copy(alpha = 0.98f)),
+                modifier = Modifier.glassSurface(
+                    glassBackdrop,
+                    RoundedCornerShape(0.dp),
+                    WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
+                    edgeToEdge = true,
+                ),
                 title = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
@@ -374,14 +380,16 @@ fun ChatScreen(
                 },
                 navigationIcon = {
                     // 返回箭头 + 当前 provider 小徽标（紧贴 title 起始侧）。
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "返回",
-                                tint = WandColors.textSecondary,
-                            )
-                        }
+                    Row(
+                        modifier = Modifier.padding(start = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        WandChromeIconButton(
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回",
+                            onClick = onBack,
+                        )
                         ChatProviderBadge(store.snapshot?.provider)
                     }
                 },
@@ -412,7 +420,7 @@ fun ChatScreen(
             },
             onPickFile = { attachmentPicker.launch(arrayOf("*/*")) },
         ) {
-            // 发送回调（带触感反馈）；发送后恢复钉顶跟随，让新消息升到页面顶端、旧对话折起。
+            // 发送回调（带触感反馈）；发送后恢复当前轮次钉顶，让旧对话折起。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val text = draft
             draft = ""
