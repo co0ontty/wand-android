@@ -75,7 +75,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -163,31 +162,31 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
             else -> modified++
         }
     }
+    val total = modified + deleted + added
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         modifier = Modifier
-            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .clip(CircleShape)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.46f))
-            .border(0.55.dp, WandColors.border.copy(alpha = 0.54f), CircleShape)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.28f))
+            .border(0.45.dp, WandColors.border.copy(alpha = 0.38f), CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 7.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
         Icon(
             WandIcons.commit,
             contentDescription = "Git 变更",
             tint = WandColors.textSecondary,
-            modifier = Modifier.size(15.dp),
+            modifier = Modifier.size(16.dp),
         )
-        val countStyle = TextStyle(
-            fontSize = 9.sp,
+        Text(
+            if (total > 0) total.toString() else "✓",
+            fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             fontFamily = FontFamily.Monospace,
+            color = if (total > 0) WandColors.textSecondary else WandColors.running,
         )
-        Text("~$modified", style = countStyle, color = WandColors.textSecondary)
-        Text("-$deleted", style = countStyle, color = WandColors.danger)
-        Text("+$added", style = countStyle, color = WandColors.success)
     }
 }
 

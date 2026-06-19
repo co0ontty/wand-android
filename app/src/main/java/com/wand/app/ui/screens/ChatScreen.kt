@@ -125,7 +125,6 @@ import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBrandMark
-import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
@@ -137,6 +136,7 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -242,6 +242,9 @@ fun ChatScreen(
     val lastUserTurnIndex = remember(store.messages) {
         store.messages.indexOfLast { it.role == "user" }
     }
+    val absoluteLastUserTurnIndex = remember(store.loadedOffset, lastUserTurnIndex) {
+        if (lastUserTurnIndex >= 0) store.loadedOffset + lastUserTurnIndex else -1
+    }
     var historyExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
     val historyItems = remember(displayItems, lastUserTurnIndex) {
         if (lastUserTurnIndex > 0) {
@@ -257,9 +260,14 @@ fun ChatScreen(
             displayItems
         }
     }
-    LaunchedEffect(lastUserTurnIndex) {
+    LaunchedEffect(absoluteLastUserTurnIndex) {
         historyExpanded = false
     }
+    val unloadedHistoryCount = remember(store.loadedOffset, absoluteLastUserTurnIndex) {
+        if (absoluteLastUserTurnIndex > 0) minOf(store.loadedOffset, absoluteLastUserTurnIndex) else 0
+    }
+    val hasCollapsedHistory = historyItems.isNotEmpty() || unloadedHistoryCount > 0
+    val collapsedHistoryCount = historyItems.size + unloadedHistoryCount
 
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
     // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
@@ -299,8 +307,8 @@ fun ChatScreen(
     // 当前助手回复内部会把旧正文折进头部摘要，所以锚点不需要跟到整条消息尾部。
     val headerOffset = if (store.canLoadEarlier) 1 else 0
     val visibleHistoryCount = when {
-        historyItems.isEmpty() -> 0
-        historyExpanded -> historyItems.size
+        !hasCollapsedHistory -> 0
+        historyExpanded -> historyItems.size + 1
         else -> 1
     }
     val latestAnchorIndex = headerOffset + visibleHistoryCount
@@ -342,6 +350,7 @@ fun ChatScreen(
 
     // 液态玻璃：内容区是 backdrop 捕获源，顶栏/输入栏/FAB 悬浮其上采样模糊+折射。
     val glassBackdrop = rememberGlassBackdrop()
+    var composerExpanded by remember { mutableStateOf(false) }
     CompositionLocalProvider(LocalServerBaseUrl provides api.baseUrl) {
     Scaffold(
         containerColor = Color.Transparent,
@@ -357,41 +366,42 @@ fun ChatScreen(
                     edgeToEdge = true,
                 ),
                 title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            latestUserMessage(store.messages)
-                                ?: store.snapshot?.displayTitle ?: "对话详情",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 190.dp),
-                        )
-                        Text(
-                            middleTruncate(store.snapshot?.cwd ?: "未设置工作目录", 44),
-                            fontSize = 8.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = WandColors.textSecondary,
-                            maxLines = 1,
-                            modifier = Modifier.widthIn(max = 190.dp),
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp),
+                    ) {
+                        ChatProviderBadge(store.snapshot?.provider)
+                        Column(
+                            horizontalAlignment = Alignment.Start,
+                            modifier = Modifier.widthIn(max = 220.dp),
+                        ) {
+                            Text(
+                                latestUserMessage(store.messages)
+                                    ?: store.snapshot?.displayTitle ?: "对话详情",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WandColors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                middleTruncate(store.snapshot?.cwd ?: "未设置工作目录", 42),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = WandColors.textMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 },
                 navigationIcon = {
-                    // 返回箭头 + 当前 provider 小徽标（紧贴 title 起始侧）。
-                    Row(
-                        modifier = Modifier.padding(start = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        WandChromeIconButton(
-                            icon = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            onClick = onBack,
-                        )
-                        ChatProviderBadge(store.snapshot?.provider)
-                    }
+                    QuietTopIconButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回",
+                        onClick = onBack,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
                 },
                 actions = {
                     // 模型 / 思考深度 / 模式开关已下沉到输入栏展开态的控制行（对齐 Codex App），
@@ -419,6 +429,7 @@ fun ChatScreen(
                 )
             },
             onPickFile = { attachmentPicker.launch(arrayOf("*/*")) },
+            onExpandedChange = { composerExpanded = it },
         ) {
             // 发送回调（带触感反馈）；发送后恢复当前轮次钉顶，让旧对话折起。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -443,7 +454,7 @@ fun ChatScreen(
                     ErrorState(store.loadError ?: "加载失败", modifier = Modifier.padding(padding))
                 store.isStructured && store.messages.isEmpty() && !store.isResponding ->
                     Box(Modifier.padding(padding)) {
-                        SessionLaunchPanel(store)
+                        SessionLaunchPanel(store, showSettings = !composerExpanded)
                     }
                 else -> {
                     BoxWithConstraints(
@@ -496,8 +507,8 @@ fun ChatScreen(
                         }
                         // key = index：流式原地替换最后一条时 key 不变不触发动画，
                         // 只有真正新增的消息才走 animateItem 淡入。
-                        if (historyItems.isNotEmpty()) {
-                            if (historyExpanded) {
+                        if (hasCollapsedHistory) {
+                            if (historyExpanded && historyItems.isNotEmpty()) {
                                 itemsIndexed(
                                     historyItems,
                                     key = { _, item -> "history-${messageItemKey(item)}" },
@@ -527,19 +538,42 @@ fun ChatScreen(
                                         }
                                     }
                                 }
-                            } else {
-                                item(key = "history-summary") {
-                                    HistorySummaryStrip(
-                                        count = historyItems.size,
-                                        preview = historyPreview(store.messages, lastUserTurnIndex),
-                                        onExpand = {
-                                            followsLatest = false
-                                            historyExpanded = true
-                                            scrollScope.launch {
-                                                listState.animateScrollToItem(headerOffset)
-                                            }
-                                        },
-                                    )
+                            }
+                            item(key = "history-summary") {
+                                HistorySummaryStrip(
+                                    count = collapsedHistoryCount,
+                                    preview = historyPreview(store.messages, lastUserTurnIndex),
+                                    expanded = historyExpanded,
+                                    onToggle = {
+                                        followsLatest = false
+                                        val next = !historyExpanded
+                                        historyExpanded = next
+                                        if (next) store.loadEarlier()
+                                        scrollScope.launch {
+                                            listState.animateScrollToItem(headerOffset)
+                                        }
+                                    },
+                                )
+                            }
+                            if (historyExpanded && store.loadingEarlier && historyItems.isEmpty()) {
+                                item(key = "history-loading-earlier") {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = WandColors.brand,
+                                        )
+                                        Spacer(Modifier.size(8.dp))
+                                        Text(
+                                            "正在展开历史消息…",
+                                            fontSize = 12.sp,
+                                            color = WandColors.textSecondary,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -691,6 +725,26 @@ fun ChatScreen(
     }
 }
 
+@Composable
+private fun QuietTopIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier.size(48.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = WandColors.textSecondary,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
 /** 顶栏左侧 provider 小徽标：品牌色弱底圆角方块 + 品牌 logo，标明当前 Claude / Codex。 */
 @Composable
 private fun ChatProviderBadge(provider: String?) {
@@ -741,7 +795,8 @@ private fun middleTruncate(text: String, maxChars: Int): String {
 private fun HistorySummaryStrip(
     count: Int,
     preview: String,
-    onExpand: () -> Unit,
+    expanded: Boolean,
+    onToggle: () -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -751,7 +806,7 @@ private fun HistorySummaryStrip(
             .clip(CircleShape)
             .background(WandColors.surfaceSoft)
             .border(1.dp, WandColors.border, CircleShape)
-            .clickable(onClick = onExpand)
+            .clickable(onClick = onToggle)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Icon(
@@ -760,7 +815,7 @@ private fun HistorySummaryStrip(
             tint = WandColors.textMuted,
             modifier = Modifier
                 .size(15.dp)
-                .graphicsLayer { rotationZ = -90f },
+                .graphicsLayer { rotationZ = if (expanded) 90f else -90f },
         )
         Text(
             "已收起 $count 段上文",
@@ -782,7 +837,7 @@ private fun HistorySummaryStrip(
             Spacer(modifier = Modifier.weight(1f))
         }
         Text(
-            "展开",
+            if (expanded) "收起" else "展开",
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             color = WandColors.brand,
@@ -808,9 +863,9 @@ private fun messageItemKey(item: MessageDisplayItem): String = when (item) {
     is MessageDisplayItem.Exploration -> "explore-${item.lastTurnIndex}"
 }
 
-/** 空结构化会话的居中启动卡：在首条消息前直接确认并修改模型与思考深度。 */
+/** 空结构化会话的居中启动卡：首条消息前显示模型/思考深度，发送后自然消失。 */
 @Composable
-private fun SessionLaunchPanel(store: ChatStore) {
+private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -836,52 +891,48 @@ private fun SessionLaunchPanel(store: ChatStore) {
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    // 手动折成两行均衡的短句：原文自动换行会把末字「度」单独甩到第二行，
-                    // 留出难看的孤字；定行后两行字数接近，居中读起来更整齐。
-                    "发送第一条消息前\n可确认本次对话的模型与思考深度",
+                    "输入消息，让它帮你完成任务",
                     fontSize = 12.5.sp,
                     lineHeight = 19.sp,
                     color = WandColors.textSecondary,
-                    // 居中对齐：居中布局里多行文案不再左对齐拉出参差的右缘。
                     textAlign = TextAlign.Center,
                 )
             }
-            // 两行设置收进同一张「内嵌分组卡」（iOS inset grouped 风格）：统一淡底 + 描边，
-            // 中缝用细分隔线分开，比两个各自描边的方框更整洁。
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(WandColors.surfaceSoft)
-                    .border(1.dp, WandColors.border, RoundedCornerShape(16.dp)),
-            ) {
-                LaunchSettingPicker(
-                    icon = WandIcons.tune,
-                    label = "模型",
-                    value = modelDisplayLabel(store, store.selectedModel),
-                    options = buildList {
-                        add(null to "默认 · ${modelDisplayLabel(store, null)}")
-                        store.availableModels
-                            .filter { it.id != "default" }
-                            .forEach { add(it.id to it.label) }
-                    },
-                    selected = store.selectedModel?.takeUnless { it == "default" },
-                    onSelect = store::setModel,
-                )
-                HorizontalDivider(
-                    thickness = 1.dp,
-                    color = WandColors.border,
-                    // 缩进到图标右缘，分隔线像分组列表而非把整卡切成两半。
-                    modifier = Modifier.padding(start = 60.dp),
-                )
-                LaunchSettingPicker(
-                    icon = WandIcons.thinking,
-                    label = "思考深度",
-                    value = thinkingLabel(store.thinkingEffort),
-                    options = THINKING_LEVELS.map { it.id to it.menuLabel },
-                    selected = store.thinkingEffort,
-                    onSelect = { it?.let(store::chooseThinkingEffort) },
-                )
+            if (showSettings) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
+                        .border(1.dp, WandColors.border, RoundedCornerShape(16.dp)),
+                ) {
+                    LaunchSettingPicker(
+                        icon = WandIcons.tune,
+                        label = "模型",
+                        value = modelDisplayLabel(store, store.selectedModel),
+                        options = buildList {
+                            add(null to "默认 · ${modelDisplayLabel(store, null)}")
+                            store.availableModels
+                                .filter { it.id != "default" }
+                                .forEach { add(it.id to it.label) }
+                        },
+                        selected = store.selectedModel?.takeUnless { it == "default" },
+                        onSelect = store::setModel,
+                    )
+                    HorizontalDivider(
+                        thickness = 1.dp,
+                        color = WandColors.border,
+                        modifier = Modifier.padding(start = 60.dp),
+                    )
+                    LaunchSettingPicker(
+                        icon = WandIcons.thinking,
+                        label = "思考深度",
+                        value = thinkingLabel(store.thinkingEffort),
+                        options = THINKING_LEVELS.map { it.id to it.menuLabel },
+                        selected = store.thinkingEffort,
+                        onSelect = { it?.let(store::chooseThinkingEffort) },
+                    )
+                }
             }
         }
     }
@@ -1322,6 +1373,7 @@ private fun BottomBar(
     uploading: Boolean,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
+    onExpandedChange: (Boolean) -> Unit,
     onSend: () -> Unit,
 ) {
     Column(
@@ -1391,6 +1443,7 @@ private fun BottomBar(
             uploading = uploading,
             onPickPhoto = onPickPhoto,
             onPickFile = onPickFile,
+            onExpandedChange = onExpandedChange,
             onSend = onSend,
         )
     }
@@ -1409,6 +1462,7 @@ private fun InputBar(
     uploading: Boolean,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
+    onExpandedChange: (Boolean) -> Unit,
     onSend: () -> Unit,
 ) {
     // 结构化会话不存在「已结束」终止态（停止只回到 idle，真失败也能再发消息触发
@@ -1439,8 +1493,32 @@ private fun InputBar(
     }
     // 展开态（聚焦 / 语音模式 / 有草稿）：长成卡片，底部多一条控制行；否则收成单行胶囊。
     val expanded = isFocused || voiceMode || draft.isNotBlank()
+    LaunchedEffect(expanded) {
+        onExpandedChange(expanded)
+    }
     val composerShape = RoundedCornerShape(if (expanded) 24.dp else 28.dp)
-    val collapsedInputShape = RoundedCornerShape(18.dp)
+    val darkGlass = isWandDarkTheme()
+    val composerGlass = if (expanded) {
+        WandGlass.regular.copy(
+            tintAlpha = if (darkGlass) 0.62f else 0.46f,
+            fallbackAlpha = if (darkGlass) 0.92f else 0.84f,
+            blurRadius = 20.dp,
+            refractionHeight = 6.dp,
+            refractionAmount = 10.dp,
+            shadowElevation = 8.dp,
+            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.34f else 0.14f),
+        )
+    } else {
+        WandGlass.regular.copy(
+            tintAlpha = if (darkGlass) 0.56f else 0.34f,
+            fallbackAlpha = if (darkGlass) 0.88f else 0.78f,
+            blurRadius = 18.dp,
+            refractionHeight = 3.dp,
+            refractionAmount = 8.dp,
+            shadowElevation = 3.dp,
+            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.28f else 0.10f),
+        )
+    }
 
     // 顶部内容：键盘模式是自增高文本框，语音模式是「按住说话」面板。背景/描边交给外层卡片。
     val inputContent: @Composable RowScope.() -> Unit = {
@@ -1451,11 +1529,7 @@ private fun InputBar(
                 .heightIn(min = 34.dp)
                 .then(
                     if (!expanded) {
-                        Modifier
-                            .clip(collapsedInputShape)
-                            .background(WandColors.surfaceSoft.copy(alpha = 0.52f))
-                            .border(1.dp, WandColors.border.copy(alpha = 0.28f), collapsedInputShape)
-                            .clickableWithoutRipple { runCatching { focusRequester.requestFocus() } }
+                        Modifier.clickableWithoutRipple { runCatching { focusRequester.requestFocus() } }
                     } else {
                         Modifier
                     },
@@ -1494,8 +1568,14 @@ private fun InputBar(
                                 .fillMaxWidth()
                                 .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
                         ) {
-                            if (draft.isEmpty() && expanded) {
-                                Text("发消息…", fontSize = 16.sp, color = WandColors.textMuted)
+                            if (draft.isEmpty()) {
+                                Text(
+                                    if (store.messages.isEmpty()) "发消息…" else "跟进",
+                                    fontSize = 16.sp,
+                                    color = WandColors.textMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                             innerTextField()
                         }
@@ -1539,59 +1619,59 @@ private fun InputBar(
         )
     }
 
-    Column(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .glassSurface(backdrop, composerShape, WandGlass.regular)
-            .padding(horizontal = if (expanded) 8.dp else 7.dp, vertical = if (expanded) 6.dp else 5.dp),
-        verticalArrangement = Arrangement.spacedBy(if (expanded) 8.dp else 0.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Row(
-            verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth(),
+        val controlsCompact = maxWidth < 360.dp
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassSurface(backdrop, composerShape, composerGlass)
+                .padding(horizontal = if (expanded) 8.dp else 9.dp, vertical = if (expanded) 6.dp else 4.dp),
+            verticalArrangement = Arrangement.spacedBy(if (expanded) 8.dp else 0.dp),
         ) {
-            if (!expanded) {
-                plusMenu()
-                if (store.isStructured) {
-                    ModeChip(store, compact = true)
-                    ModelThinkingChip(
-                        store,
-                        compact = true,
-                        modifier = Modifier.widthIn(max = 112.dp),
-                    )
-                }
-            }
-            inputContent()
-            if (!expanded) {
-                mic()
-                trailing()
-            }
-        }
-        if (expanded) {
-            // 控制行：+ / 模式徽标 / 模型·思考徽标 / 话筒 / 发送·停止。
-            // 把原本散落在顶栏右上角的模型 + 思考深度，连同模式开关全部收拢到这里。
             Row(
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                // 左侧 + / 模式 / 模型徽标群占据弹性空间：空间不足时模型徽标缩列省略号，
-                // 而不是把右侧的话筒 / 发送按钮挤出屏幕（聚焦时发送按钮消失的根因）。
+                if (!expanded) {
+                    plusMenu()
+                }
+                inputContent()
+                if (!expanded) {
+                    mic()
+                    trailing()
+                }
+            }
+            if (expanded) {
+                // 控制行：+ / 模式徽标 / 模型·思考徽标 / 话筒 / 发送·停止。
+                // 窄屏时退成图标芯片，右侧按钮始终保留固定空间。
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    plusMenu()
-                    if (store.isStructured) {
-                        ModeChip(store)
-                        ModelThinkingChip(store, modifier = Modifier.weight(1f, fill = false))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        plusMenu()
+                        if (store.isStructured) {
+                            ModeChip(store, compact = controlsCompact)
+                            ModelThinkingChip(
+                                store,
+                                compact = controlsCompact,
+                                modifier = if (controlsCompact) Modifier else Modifier.weight(1f),
+                            )
+                        }
                     }
+                    mic()
+                    trailing()
                 }
-                mic()
-                trailing()
             }
         }
     }
@@ -1624,7 +1704,7 @@ private fun InputBar(
 
 /**
  * 发送 / 停止按钮组（对齐 iOS trailingButtons）：
- * - 运行中且无草稿 → 唯一按钮是白底停止（Codex 白圆黑方块）；
+ * - 运行中且无草稿 → 唯一按钮是黑底停止（对齐 Codex collapsed composer）；
  * - 有草稿 → 发送按钮（运行中时左侧追加一个红色停止，可一边排队一边停）。
  */
 @Composable
@@ -1641,14 +1721,14 @@ private fun TrailingSendStop(
             modifier = Modifier
                 .size(38.dp)
                 .clip(CircleShape)
-                .background(Color.White)
-                .border(0.5.dp, WandColors.border, CircleShape)
+                .background(WandColors.textPrimary)
+                .border(0.5.dp, WandColors.border.copy(alpha = 0.25f), CircleShape)
                 .clickable(onClick = onStop),
         ) {
             Icon(
                 WandIcons.stop,
                 contentDescription = "停止任务",
-                tint = Color.Black,
+                tint = WandColors.surface,
                 modifier = Modifier.size(15.dp),
             )
         }
@@ -1671,15 +1751,28 @@ private fun TrailingSendStop(
     }
     ComposerIconButton(
         backdrop = backdrop,
-        style = if (canSend) WandGlass.accent
-            else WandGlass.accent.copy(tintAlpha = 0.35f, fallbackAlpha = 0.4f),
+        style = if (canSend) {
+            WandGlass.accent.copy(
+                tint = WandColors.textPrimary,
+                tintAlpha = 0.92f,
+                fallbackAlpha = 1f,
+                shadowElevation = 0.dp,
+            )
+        } else {
+            WandGlass.clear.copy(
+                tint = WandColors.textMuted,
+                tintAlpha = 0.10f,
+                fallbackAlpha = 0.14f,
+                shadowElevation = 0.dp,
+            )
+        },
         enabled = canSend,
         onClick = onSend,
     ) {
         Icon(
             WandIcons.arrowUp,
             contentDescription = "发送",
-            tint = Color.White,
+            tint = if (canSend) WandColors.surface else WandColors.textMuted.copy(alpha = 0.55f),
             modifier = Modifier.size(18.dp),
         )
     }

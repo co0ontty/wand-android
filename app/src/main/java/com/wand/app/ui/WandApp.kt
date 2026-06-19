@@ -180,7 +180,6 @@ private fun ReadyContent(
             sessionId = screen.sessionId,
             isHapticEnabled = actions.isHapticEnabled,
             onBack = { nav.pop() },
-            onOpenWebSession = actions.openWebSession,
         )
         is Screen.NewSession -> NewSessionScreen(
             api = api,
