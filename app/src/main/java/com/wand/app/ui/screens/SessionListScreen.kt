@@ -644,7 +644,7 @@ private fun SessionToolbarIconButton(
 ) {
     Box(
         modifier = modifier
-            .size(34.dp)
+            .size(44.dp)
             .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
             .clip(CircleShape)
             .clickable(enabled = enabled, onClick = onClick),
@@ -654,7 +654,7 @@ private fun SessionToolbarIconButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = tint,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(21.dp),
         )
     }
 }

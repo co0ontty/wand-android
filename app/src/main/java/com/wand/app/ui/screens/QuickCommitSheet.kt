@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -166,9 +167,12 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
+            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
             .clip(CircleShape)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.46f))
+            .border(0.55.dp, WandColors.border.copy(alpha = 0.54f), CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 7.dp),
     ) {
         Icon(
             WandIcons.commit,

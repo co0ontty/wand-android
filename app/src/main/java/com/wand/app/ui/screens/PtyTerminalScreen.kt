@@ -339,7 +339,7 @@ private fun PtyNativeInputBar(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(40.dp)
+                .size(44.dp)
                 .clip(CircleShape)
                 .background(if (draft.isBlank() || sending) WandColors.surfaceSoft.copy(alpha = 0.72f) else WandColors.brand)
                 .clickable(enabled = draft.isNotBlank() && !sending, onClick = onSend),
@@ -348,7 +348,7 @@ private fun PtyNativeInputBar(
                 WandIcons.arrowUp,
                 contentDescription = "发送",
                 tint = if (draft.isBlank() || sending) WandColors.textMuted else Color.White,
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(20.dp),
             )
         }
     }
@@ -401,19 +401,9 @@ private fun PtyTerminalWebView(serverUrl: String, sessionId: String, reloadKey: 
                             ".is-wand-embed-terminal .terminal-scale-overlay:hover,.is-wand-embed-terminal .terminal-scale-overlay:focus-within,.is-wand-embed-terminal .terminal-scale-overlay:active{opacity:1;transform:scale(.94);}" +
                             ".is-wand-embed-terminal .wand-joystick-root{opacity:.26;transform:scale(.82);transform-origin:bottom right;transition:opacity .16s ease,transform .16s ease;}" +
                             ".is-wand-embed-terminal .wand-joystick-root:has(.panel-open),.is-wand-embed-terminal .wand-joystick-root:active{opacity:1;transform:scale(.94);}" +
-                            ".is-wand-embed-terminal .terminal-scroll-wrap{padding:8px 4px 6px!important;--term-font-family:\\\"Roboto Mono\\\",\\\"Droid Sans Mono\\\",\\\"Noto Sans Mono\\\",\\\"Noto Sans Symbols 2\\\",\\\"Noto Sans Symbols\\\",monospace!important;--term-font-size:10px!important;--term-row-height:15px!important;}" +
-                            ".is-wand-embed-terminal .input-panel{padding:7px 10px!important;padding-bottom:calc(8px + var(--input-safe-bottom,var(--safe-bottom,0px)) + var(--keyboard-offset,0px))!important;border-top:1px solid rgba(240,230,216,.14)!important;background:linear-gradient(180deg,rgba(23,18,15,0) 0%,rgba(23,18,15,.82) 28%,rgba(23,18,15,.96) 100%),#17120f!important;backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%);}" +
+                            ".is-wand-embed-terminal .terminal-scroll-wrap{padding:8px 4px 8px!important;--term-font-family:\\\"Roboto Mono\\\",\\\"Droid Sans Mono\\\",\\\"Noto Sans Mono\\\",\\\"Noto Sans Symbols 2\\\",\\\"Noto Sans Symbols\\\",monospace!important;--term-font-size:10px!important;--term-row-height:15px!important;}" +
+                            ".is-wand-embed-terminal .input-panel{display:none!important;}" +
                             ".is-wand-embed-terminal .terminal-container{margin:0!important;border-left:0!important;border-right:0!important;border-radius:0!important;box-shadow:none!important;}" +
-                            ".is-wand-embed-terminal .input-composer{border-radius:999px!important;border-color:rgba(240,230,216,.16)!important;background:rgba(42,32,24,.88)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 10px 28px rgba(0,0,0,.24)!important;}" +
-                            ".is-wand-embed-terminal .input-composer:focus-within,.is-wand-embed-terminal .input-composer.has-text{border-radius:18px!important;border-color:rgba(217,122,79,.58)!important;background:rgba(35,27,22,.96)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 0 0 2px rgba(217,122,79,.16),0 12px 32px rgba(0,0,0,.28)!important;}" +
-                            ".is-wand-embed-terminal .composer-main-row{min-height:48px!important;padding:5px 8px!important;gap:6px!important;}" +
-                            ".is-wand-embed-terminal .composer-inline-config{display:none!important;}" +
-                            ".is-wand-embed-terminal .composer-input-wrap{min-height:34px!important;border-radius:17px!important;background:rgba(255,255,255,.055)!important;border:1px solid rgba(240,230,216,.10)!important;}" +
-                            ".is-wand-embed-terminal .input-composer:focus-within .composer-input-wrap,.is-wand-embed-terminal .input-composer.has-text .composer-input-wrap{background:rgba(255,255,255,.08)!important;border-color:rgba(240,230,216,.16)!important;}" +
-                            ".is-wand-embed-terminal .input-textarea{color:#f4e8da!important;caret-color:#d97a4f!important;padding:7px 10px!important;min-height:34px!important;font-size:16px!important;line-height:1.35!important;}" +
-                            ".is-wand-embed-terminal .input-textarea::placeholder{color:rgba(244,232,218,.52)!important;}" +
-                            ".is-wand-embed-terminal .input-composer:not(:focus-within):not(.has-text) .input-textarea{color:transparent!important;caret-color:transparent!important;}" +
-                            ".is-wand-embed-terminal .input-composer:not(:focus-within):not(.has-text) .input-textarea::placeholder{opacity:0!important;}" +
                             "';" +
                             "document.head.appendChild(s);}" +
                             "function fit(){try{window.dispatchEvent(new Event('resize'));var o=document.getElementById('output');if(o){var w=o.style.width;o.style.width='calc(100% - 0.01px)';void o.offsetWidth;o.style.width=w;}}catch(e){}}" +

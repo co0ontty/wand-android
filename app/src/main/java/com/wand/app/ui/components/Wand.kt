@@ -364,7 +364,7 @@ fun WandChromeIconButton(
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .size(36.dp)
+            .size(44.dp)
             .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
             .clip(CircleShape)
             .background(WandColors.surface.copy(alpha = 0.28f))
@@ -381,7 +381,7 @@ fun WandChromeIconButton(
             icon,
             contentDescription = contentDescription,
             tint = tint,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(19.dp),
         )
     }
 }

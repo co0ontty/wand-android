@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -73,6 +74,7 @@ public class ConnectActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_connect);
+        applyLightSystemBars();
 
         serverStore = new ServerStore(this);
         networkExecutor = Executors.newSingleThreadExecutor();
@@ -128,6 +130,17 @@ public class ConnectActivity extends AppCompatActivity {
             }
             return false;
         });
+    }
+
+    private void applyLightSystemBars() {
+        getWindow().setStatusBarColor(getColor(R.color.background));
+        getWindow().setNavigationBarColor(getColor(R.color.background));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        }
     }
 
     private void requestQrScan() {
@@ -576,8 +589,9 @@ public class ConnectActivity extends AppCompatActivity {
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(0, dpToPx(8), 0, dpToPx(8));
+            row.setMinimumHeight(dpToPx(56));
 
-            // Left column: primary URL + optional secondary "\ud83d\udd11 \u5df2\u7ed1\u5b9a\u8fde\u63a5\u7801" label.
+            // Left column: primary URL + optional bound-code label.
             LinearLayout textColumn = new LinearLayout(this);
             textColumn.setOrientation(LinearLayout.VERTICAL);
             LinearLayout.LayoutParams columnParams = new LinearLayout.LayoutParams(
@@ -598,7 +612,7 @@ public class ConnectActivity extends AppCompatActivity {
 
             if (decoded != null) {
                 TextView tag = new TextView(this);
-                tag.setText("\ud83d\udd11 \u5df2\u7ed1\u5b9a\u8fde\u63a5\u7801");
+                tag.setText("\u5df2\u7ed1\u5b9a\u8fde\u63a5\u7801");
                 tag.setTextSize(11f);
                 tag.setTextColor(getColor(R.color.text_secondary));
                 tag.setPadding(0, dpToPx(2), 0, 0);

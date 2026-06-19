@@ -119,16 +119,42 @@ fun SettingsScreen(
     if (showDisconnectConfirm) {
         AlertDialog(
             onDismissRequest = { showDisconnectConfirm = false },
-            title = { Text("断开连接") },
-            text = { Text("将清除已保存的服务器与连接码，返回连接页。") },
+            containerColor = WandColors.bgElevated,
+            icon = {
+                SettingsIconBadge(icon = WandIcons.logout, tint = WandColors.danger)
+            },
+            title = {
+                Text(
+                    "断开当前服务器？",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                )
+            },
+            text = {
+                Text(
+                    "会清除本机保存的服务器地址和连接码，并返回连接页。正在运行的服务器端任务不会被删除。",
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = WandColors.textSecondary,
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showDisconnectConfirm = false
                     actions.disconnect()
-                }) { Text("断开", color = WandColors.danger) }
+                }) {
+                    Text(
+                        "断开连接",
+                        color = WandColors.danger,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             },
             dismissButton = {
-                TextButton(onClick = { showDisconnectConfirm = false }) { Text("取消") }
+                TextButton(onClick = { showDisconnectConfirm = false }) {
+                    Text("取消", color = WandColors.textSecondary)
+                }
             },
         )
     }
@@ -160,200 +186,142 @@ fun SettingsScreen(
                     .padding(padding)
                     .padding(horizontal = 14.dp),
             ) {
-            Spacer(modifier = Modifier.height(12.dp))
-            SettingsHero(
-                appVersion = actions.appVersion,
-                serverVersion = serverVersion,
-            )
+                Spacer(modifier = Modifier.height(10.dp))
 
-            // —— 外观 ——
-            SectionHeader("外观")
-            WandCard(modifier = Modifier.fillMaxWidth()) {
-                AppearanceModePicker(
-                    selected = appearanceMode,
-                    onSelected = { mode ->
-                        appearanceMode = mode
-                        actions.setAppearanceMode(mode)
+                // —— 高频偏好 ——
+                SectionHeader("外观")
+                WandCard(modifier = Modifier.fillMaxWidth()) {
+                    AppearanceModePicker(
+                        selected = appearanceMode,
+                        onSelected = { mode ->
+                            appearanceMode = mode
+                            actions.setAppearanceMode(mode)
+                        },
+                    )
+                }
+
+                // —— 通知与反馈 ——
+                SectionHeader("通知与反馈")
+                NotificationFeedbackSection(
+                    selectedSound = selectedSound,
+                    volume = volume,
+                    hapticEnabled = hapticEnabled,
+                    onSoundSelected = { id ->
+                        selectedSound = id
+                        actions.setNotificationSound(id)
+                        actions.previewSound(id)
+                    },
+                    onVolumeChange = { volume = it },
+                    onVolumeCommit = {
+                        actions.setNotificationVolume(volume.toInt())
+                        actions.previewSound(selectedSound)
+                    },
+                    onHapticChange = {
+                        hapticEnabled = it
+                        actions.setHapticEnabled(it)
                     },
                 )
-            }
 
-            // —— 服务器 ——
-            SectionHeader("连接")
-            WandCard(modifier = Modifier.fillMaxWidth()) {
-                InfoRow("服务器地址", actions.serverUrl, icon = WandIcons.web, mono = true)
-                RowDivider()
-                InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定", icon = WandIcons.permission)
-                ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
-                RowDivider()
-                ActionRow("断开连接", WandIcons.logout, danger = true) {
-                    showDisconnectConfirm = true
-                }
-            }
+                // —— 语音输入 ——
+                SectionHeader("语音输入")
+                SttModelSection()
 
-            // —— 通知与反馈 ——
-            SectionHeader("通知与反馈")
-            WandCard(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text("提示音", fontSize = 14.sp, color = WandColors.textPrimary)
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        // 与 NotificationHelper.SOUND_PRESETS 对齐。
-                        val presets = listOf(
-                            "chime" to "叮咚",
-                            "bubble" to "气泡",
-                            "meow" to "喵~",
-                            "bell" to "铃声",
-                        )
-                        presets.forEachIndexed { index, (id, label) ->
-                            SegmentedButton(
-                                selected = selectedSound == id,
-                                onClick = {
-                                    selectedSound = id
-                                    actions.setNotificationSound(id)
-                                    actions.previewSound(id)
-                                },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = presets.size,
-                                ),
-                                colors = SegmentedButtonDefaults.colors(
-                                    activeContainerColor = WandColors.brandSoft,
-                                    activeContentColor = WandColors.brand,
-                                    activeBorderColor = WandColors.brand,
-                                    inactiveContainerColor = Color.Transparent,
-                                    inactiveContentColor = WandColors.textSecondary,
-                                    inactiveBorderColor = WandColors.border,
-                                ),
-                            ) { Text(label, fontSize = 12.sp, maxLines = 1) }
+                // —— 后台 ——
+                SectionHeader("后台运行")
+                WandCard(modifier = Modifier.fillMaxWidth()) {
+                    SwitchRow("后台保活", keepAlive, WandIcons.refresh) { enabled ->
+                        keepAlive = enabled
+                        if (enabled && Build.VERSION.SDK_INT >= 33) {
+                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
+                        actions.setKeepAlive(enabled)
                     }
-                }
-                RowDivider()
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 52.dp)
-                        .padding(horizontal = 14.dp),
-                ) {
-                    Text("音量", fontSize = 14.sp, color = WandColors.textPrimary)
-                    Slider(
-                        value = volume,
-                        onValueChange = { volume = it },
-                        onValueChangeFinished = {
-                            actions.setNotificationVolume(volume.toInt())
-                            actions.previewSound(selectedSound)
-                        },
-                        valueRange = 0f..100f,
-                        colors = SliderDefaults.colors(
-                            thumbColor = WandColors.brand,
-                            activeTrackColor = WandColors.brand,
-                            inactiveTrackColor = WandColors.brandSoft,
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 12.dp),
-                    )
                     Text(
-                        "${volume.toInt()}",
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
+                        "保持与服务器的连接，便于任务在后台继续推进。",
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
                         color = WandColors.textMuted,
-                        modifier = Modifier.padding(start = 8.dp),
+                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
                     )
                 }
-                RowDivider()
-                SwitchRow("振动反馈", hapticEnabled, WandIcons.settings) {
-                    hapticEnabled = it
-                    actions.setHapticEnabled(it)
-                }
-            }
 
-            // —— 应用图标 ——
-            SectionHeader("应用图标")
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                AppIconCard(
-                    name = "赛博虎妞",
-                    backgroundRes = R.drawable.ic_launcher_background,
-                    foregroundRes = R.drawable.ic_launcher_foreground,
-                    selected = appIcon == "shorthair",
-                    modifier = Modifier.weight(1f),
-                ) {
-                    appIcon = "shorthair"
-                    actions.setAppIcon("shorthair")
-                }
-                AppIconCard(
-                    name = "勤劳初二",
-                    backgroundRes = R.drawable.ic_launcher_background_garfield,
-                    foregroundRes = R.drawable.ic_launcher_foreground_garfield,
-                    selected = appIcon == "garfield",
-                    modifier = Modifier.weight(1f),
-                ) {
-                    appIcon = "garfield"
-                    actions.setAppIcon("garfield")
-                }
-            }
-            Text(
-                "切换后桌面图标会变化，部分启动器需要几秒生效。",
-                fontSize = 11.sp,
-                color = WandColors.textMuted,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-
-            // —— 后台 ——
-            SectionHeader("后台")
-            WandCard(modifier = Modifier.fillMaxWidth()) {
-                SwitchRow("后台保活（常驻通知）", keepAlive, WandIcons.refresh) { enabled ->
-                    keepAlive = enabled
-                    if (enabled && Build.VERSION.SDK_INT >= 33) {
-                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                // —— 更新 ——
+                SectionHeader("更新")
+                WandCard(modifier = Modifier.fillMaxWidth()) {
+                    ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
+                    RowDivider()
+                    SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
+                        betaChannel = it
+                        actions.setBetaChannel(it)
                     }
-                    actions.setKeepAlive(enabled)
+                    Text(
+                        "开启后接收最新开发构建；关闭只提示正式版。",
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        color = WandColors.textMuted,
+                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
+                    )
+                }
+
+                // —— 连接 ——
+                SectionHeader("连接与服务器")
+                WandCard(modifier = Modifier.fillMaxWidth()) {
+                    InfoRow("服务器地址", actions.serverUrl, icon = WandIcons.web, mono = true)
+                    RowDivider()
+                    InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定", icon = WandIcons.permission)
+                    RowDivider()
+                    ActionRow("打开网页版", WandIcons.web) { actions.openWeb() }
+                    RowDivider()
+                    ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
+                    RowDivider()
+                    ActionRow("断开连接", WandIcons.logout, danger = true) {
+                        showDisconnectConfirm = true
+                    }
+                }
+
+                // —— 低频个性化 ——
+                SectionHeader("应用图标")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    AppIconCard(
+                        name = "赛博虎妞",
+                        backgroundRes = R.drawable.ic_launcher_background,
+                        foregroundRes = R.drawable.ic_launcher_foreground,
+                        selected = appIcon == "shorthair",
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        appIcon = "shorthair"
+                        actions.setAppIcon("shorthair")
+                    }
+                    AppIconCard(
+                        name = "勤劳初二",
+                        backgroundRes = R.drawable.ic_launcher_background_garfield,
+                        foregroundRes = R.drawable.ic_launcher_foreground_garfield,
+                        selected = appIcon == "garfield",
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        appIcon = "garfield"
+                        actions.setAppIcon("garfield")
+                    }
                 }
                 Text(
-                    "保持与服务器的连接，便于任务在后台继续推进。",
+                    "切换后桌面图标会变化，部分启动器需要几秒生效。",
                     fontSize = 11.sp,
+                    lineHeight = 16.sp,
                     color = WandColors.textMuted,
-                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                    modifier = Modifier.padding(top = 8.dp),
                 )
-            }
 
-            // —— 语音输入 ——
-            SectionHeader("语音输入")
-            SttModelSection()
-
-            // —— 更新 ——
-            SectionHeader("更新")
-            WandCard(modifier = Modifier.fillMaxWidth()) {
-                SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
-                    betaChannel = it
-                    actions.setBetaChannel(it)
-                }
-                Text(
-                    "开启后接收最新开发构建（-debug 版本，可能不稳定）；关闭只提示正式版。",
-                    fontSize = 11.sp,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
+                // —— 关于 ——
+                SectionHeader("关于")
+                SettingsAboutSection(
+                    appVersion = actions.appVersion,
+                    serverVersion = serverVersion,
                 )
-                RowDivider()
-                ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
-            }
 
-            // —— 更多 ——
-            SectionHeader("更多")
-            WandCard(modifier = Modifier.fillMaxWidth()) {
-                ActionRow("打开网页版（完整功能）", WandIcons.web) { actions.openWeb() }
-            }
-
-            Spacer(modifier = Modifier.size(32.dp))
+                Spacer(modifier = Modifier.size(32.dp))
             }
         }
     }
@@ -397,6 +365,98 @@ private fun AppearanceModePicker(
 }
 
 @Composable
+private fun NotificationFeedbackSection(
+    selectedSound: String,
+    volume: Float,
+    hapticEnabled: Boolean,
+    onSoundSelected: (String) -> Unit,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeCommit: () -> Unit,
+    onHapticChange: (Boolean) -> Unit,
+) {
+    WandCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                "提示音",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WandColors.textPrimary,
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                // 与 NotificationHelper.SOUND_PRESETS 对齐。
+                val presets = listOf(
+                    "chime" to "叮咚",
+                    "bubble" to "气泡",
+                    "meow" to "喵~",
+                    "bell" to "铃声",
+                )
+                presets.forEachIndexed { index, (id, label) ->
+                    SegmentedButton(
+                        selected = selectedSound == id,
+                        onClick = { onSoundSelected(id) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = presets.size,
+                        ),
+                        colors = SegmentedButtonDefaults.colors(
+                            activeContainerColor = WandColors.brandSoft,
+                            activeContentColor = WandColors.brand,
+                            activeBorderColor = WandColors.brand,
+                            inactiveContainerColor = Color.Transparent,
+                            inactiveContentColor = WandColors.textSecondary,
+                            inactiveBorderColor = WandColors.border,
+                        ),
+                    ) { Text(label, fontSize = 12.sp, maxLines = 1) }
+                }
+            }
+        }
+        RowDivider()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 14.dp),
+        ) {
+            Text(
+                "音量",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WandColors.textPrimary,
+            )
+            Slider(
+                value = volume,
+                onValueChange = onVolumeChange,
+                onValueChangeFinished = onVolumeCommit,
+                valueRange = 0f..100f,
+                colors = SliderDefaults.colors(
+                    thumbColor = WandColors.brand,
+                    activeTrackColor = WandColors.brand,
+                    inactiveTrackColor = WandColors.brandSoft,
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp),
+            )
+            Text(
+                "${volume.toInt()}",
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.textMuted,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+        RowDivider()
+        SwitchRow("振动反馈", hapticEnabled, WandIcons.settings, onHapticChange)
+    }
+}
+
+@Composable
 private fun SettingsTopBar(
     backdrop: GlassBackdrop,
     onBack: () -> Unit,
@@ -435,7 +495,7 @@ private fun SettingsTopBar(
                     maxLines = 1,
                 )
                 Text(
-                    "连接、通知、语音与更新",
+                    "偏好、输入与连接",
                     fontSize = 11.sp,
                     color = WandColors.textMuted,
                     maxLines = 1,
@@ -453,64 +513,46 @@ private fun SettingsTopBar(
 }
 
 @Composable
-private fun SettingsHero(
+private fun SettingsAboutSection(
     appVersion: String,
     serverVersion: String?,
 ) {
     WandCard(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(16.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            WandBrandMark(size = 46)
+            WandBrandMark(size = 38)
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 Text(
-                    "Wand 控制台",
-                    fontSize = 18.sp,
+                    "Wand",
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textPrimary,
                 )
                 Text(
-                    "原生控制台",
-                    fontSize = 11.sp,
+                    "远程 CLI 控制台",
+                    fontSize = 12.sp,
                     color = WandColors.textMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    SettingPill("App v$appVersion", WandIcons.settings)
-                    serverVersion?.let { SettingPill("Server v$it", WandIcons.update) }
-                }
             }
         }
-    }
-}
-
-@Composable
-private fun SettingPill(text: String, icon: ImageVector, tint: Color = WandColors.textSecondary) {
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(tint.copy(alpha = 0.10f))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
-        Text(
-            text,
-            fontSize = 10.5.sp,
-            fontWeight = FontWeight.Medium,
-            color = tint,
-            maxLines = 1,
-        )
+        RowDivider()
+        InfoRow("App 版本", "v$appVersion", icon = WandIcons.settings)
+        serverVersion?.let {
+            RowDivider()
+            InfoRow("Server 版本", "v$it", icon = WandIcons.update)
+        }
     }
 }
 
