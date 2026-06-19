@@ -16,8 +16,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,8 +43,12 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.lerp as lerpDp
@@ -256,6 +265,70 @@ fun EmptyState(
                 Button(onClick = onAction, modifier = Modifier.padding(top = 8.dp)) {
                     Text(actionText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
+            }
+        }
+    }
+}
+
+/** 下划线式切换条：避开厚重胶囊外框，适合设置页和弹层顶部的紧凑 tab。 */
+@Composable
+fun <T> WandChoiceStrip(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    minHeight: Dp = 42.dp,
+    labelFontSize: TextUnit = 13.sp,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = minHeight)
+            .background(Color.Transparent),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        options.forEach { (value, label) ->
+            val active = value == selected
+            val textColor by animateColorAsState(
+                if (active) WandColors.brand else WandColors.textSecondary,
+                WandMotion.tweenFast(),
+                label = "choiceStripText",
+            )
+            val indicatorColor by animateColorAsState(
+                if (active) WandColors.brand else WandColors.brand.copy(alpha = 0f),
+                WandMotion.tweenFast(),
+                label = "choiceStripIndicator",
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = minHeight)
+                    .clip(RoundedCornerShape(6.dp))
+                    .selectable(
+                        selected = active,
+                        role = Role.Tab,
+                    ) { onSelect(value) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    label,
+                    fontSize = labelFontSize,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Box(
+                    modifier = Modifier
+                        .padding(top = 3.dp)
+                        .width(24.dp)
+                        .height(2.5.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(indicatorColor),
+                )
             }
         }
     }

@@ -24,7 +24,8 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -33,10 +34,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,6 +71,7 @@ import com.wand.app.ui.HomeActions
 import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandBrandMark
+import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -313,33 +315,36 @@ private fun AppearanceModePicker(
     selected: WandAppearanceMode,
     onSelected: (WandAppearanceMode) -> Unit,
 ) {
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            val options = listOf(
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SettingsRowIcon(icon = WandIcons.settings, tint = WandColors.brand)
+            Text(
+                "界面主题",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WandColors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        WandChoiceStrip(
+            options = listOf(
                 WandAppearanceMode.Light to "明亮",
                 WandAppearanceMode.Dark to "黑暗",
                 WandAppearanceMode.System to "跟随系统",
-            )
-            options.forEachIndexed { index, (mode, label) ->
-                SegmentedButton(
-                    selected = selected == mode,
-                    onClick = { onSelected(mode) },
-                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                    colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = WandColors.brandSoft,
-                        activeContentColor = WandColors.brand,
-                        activeBorderColor = WandColors.brand,
-                        inactiveContainerColor = Color.Transparent,
-                        inactiveContentColor = WandColors.textSecondary,
-                        inactiveBorderColor = WandColors.border,
-                    ),
-                ) { Text(label, fontSize = 12.sp, maxLines = 1) }
-            }
-        }
+            ),
+            selected = selected,
+            onSelect = onSelected,
+            minHeight = 40.dp,
+            labelFontSize = 12.sp,
+        )
     }
 }
 
@@ -366,33 +371,19 @@ private fun NotificationFeedbackSection(
                 fontWeight = FontWeight.Medium,
                 color = WandColors.textPrimary,
             )
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                // 与 NotificationHelper.SOUND_PRESETS 对齐。
-                val presets = listOf(
+            // 与 NotificationHelper.SOUND_PRESETS 对齐。
+            WandChoiceStrip(
+                options = listOf(
                     "chime" to "叮咚",
                     "bubble" to "气泡",
                     "meow" to "喵~",
                     "bell" to "铃声",
-                )
-                presets.forEachIndexed { index, (id, label) ->
-                    SegmentedButton(
-                        selected = selectedSound == id,
-                        onClick = { onSoundSelected(id) },
-                        shape = SegmentedButtonDefaults.itemShape(
-                            index = index,
-                            count = presets.size,
-                        ),
-                        colors = SegmentedButtonDefaults.colors(
-                            activeContainerColor = WandColors.brandSoft,
-                            activeContentColor = WandColors.brand,
-                            activeBorderColor = WandColors.brand,
-                            inactiveContainerColor = Color.Transparent,
-                            inactiveContentColor = WandColors.textSecondary,
-                            inactiveBorderColor = WandColors.border,
-                        ),
-                    ) { Text(label, fontSize = 12.sp, maxLines = 1) }
-                }
-            }
+                ),
+                selected = selectedSound,
+                onSelect = onSoundSelected,
+                minHeight = 38.dp,
+                labelFontSize = 12.sp,
+            )
         }
         RowDivider()
         Row(
@@ -553,6 +544,7 @@ private fun SttModelSection() {
                 SttModelManager.isReady(context, model)
             }
             val downloading = downloadingId == model.id
+            val isSelected = selectedId == model.id
             val status = when {
                 downloading && sttState is SttModelManager.State.Downloading ->
                     "下载中 ${sttState.percent}%"
@@ -564,7 +556,11 @@ private fun SttModelSection() {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .background(if (isSelected) WandColors.brand.copy(alpha = 0.08f) else Color.Transparent)
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.RadioButton,
+                    ) {
                         selectedId = model.id
                         SttModelManager.setSelectedModel(context, model.id)
                         if (SttModelManager.isReady(context, model)) {
@@ -594,14 +590,14 @@ private fun SttModelSection() {
                             modifier = Modifier.padding(top = 2.dp),
                         )
                     }
-                    if (selectedId == model.id) {
-                        Icon(
-                            WandIcons.check,
-                            contentDescription = "使用中",
-                            tint = WandColors.brand,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                    RadioButton(
+                        selected = isSelected,
+                        onClick = null,
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = WandColors.brand,
+                            unselectedColor = WandColors.textMuted,
+                        ),
+                    )
                 }
                 if (downloading && sttState is SttModelManager.State.Downloading) {
                     LinearProgressIndicator(
@@ -691,7 +687,17 @@ private fun SettingsRowIcon(
     icon: ImageVector,
     tint: Color = WandColors.textMuted,
 ) {
-    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
+    val shape = RoundedCornerShape(9.dp)
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(shape)
+            .background(tint.copy(alpha = 0.10f))
+            .border(0.55.dp, tint.copy(alpha = 0.16f), shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
+    }
 }
 
 /** 操作行：左侧场景图标 + 标签 + 行尾右箭头，行高 ≥52dp，danger 时图标与标签同色。 */
@@ -740,6 +746,11 @@ private fun SwitchRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onChange,
+            )
             .heightIn(min = 56.dp)
             .padding(horizontal = 14.dp),
     ) {
@@ -754,7 +765,7 @@ private fun SwitchRow(
         Spacer(modifier = Modifier.weight(1f))
         Switch(
             checked = checked,
-            onCheckedChange = onChange,
+            onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedTrackColor = WandColors.brand,
             ),
@@ -779,6 +790,12 @@ private fun AppIconCard(
         modifier = modifier,
         onClick = onClick,
         selected = selected,
+        shape = RoundedCornerShape(12.dp),
+        containerColor = if (selected) {
+            WandColors.brand.copy(alpha = 0.08f)
+        } else {
+            WandColors.surface.copy(alpha = 0.92f)
+        },
         contentPadding = PaddingValues(vertical = 14.dp),
     ) {
         Column(
@@ -788,22 +805,40 @@ private fun AppIconCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
+                    .size(54.dp)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(WandColors.surfaceSoft),
                 contentAlignment = Alignment.Center,
             ) {
-                // 自适应图标可视区约为画布中央 2/3，放大到 72dp 再裁 48dp 圆，贴近桌面观感。
+                // 自适应图标可视区约为画布中央 2/3，放大到 82dp 再裁 54dp 圆角方形，贴近桌面观感。
                 Image(
                     painterResource(backgroundRes),
                     contentDescription = null,
-                    modifier = Modifier.requiredSize(72.dp),
+                    modifier = Modifier.requiredSize(82.dp),
                 )
                 Image(
                     painterResource(foregroundRes),
                     contentDescription = null,
-                    modifier = Modifier.requiredSize(72.dp),
+                    modifier = Modifier.requiredSize(82.dp),
                 )
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .size(17.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(WandColors.brand),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            WandIcons.check,
+                            contentDescription = "已选中",
+                            tint = Color.White,
+                            modifier = Modifier.size(11.dp),
+                        )
+                    }
+                }
             }
             Text(
                 name,

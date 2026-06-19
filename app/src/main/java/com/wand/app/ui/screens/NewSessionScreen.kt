@@ -39,9 +39,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -75,6 +72,7 @@ import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -408,32 +406,14 @@ private fun <T> WandSegmented(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    SingleChoiceSegmentedButtonRow(modifier = modifier.fillMaxWidth()) {
-        options.forEachIndexed { index, (value, label) ->
-            val isSelected = value == selected
-            SegmentedButton(
-                selected = isSelected,
-                onClick = { onSelect(value) },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = WandColors.brandSoft,
-                    activeContentColor = WandColors.brand,
-                    activeBorderColor = WandColors.brand,
-                    inactiveContainerColor = Color.Transparent,
-                    inactiveContentColor = WandColors.textSecondary,
-                    inactiveBorderColor = WandColors.border,
-                ),
-            ) {
-                Text(
-                    label,
-                    fontSize = 14.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
+    WandChoiceStrip(
+        options = options,
+        selected = selected,
+        onSelect = onSelect,
+        modifier = modifier,
+        minHeight = 42.dp,
+        labelFontSize = 14.sp,
+    )
 }
 
 /**

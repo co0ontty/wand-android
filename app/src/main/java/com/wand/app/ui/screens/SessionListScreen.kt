@@ -42,9 +42,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -91,6 +88,7 @@ import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
@@ -665,33 +663,14 @@ private fun ScopeToggle(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val options = listOf("active" to "进行中", "history" to "历史会话")
-    SingleChoiceSegmentedButtonRow(modifier = modifier) {
-        options.forEachIndexed { index, (value, label) ->
-            val active = selected == value
-            SegmentedButton(
-                selected = active,
-                onClick = { onSelect(value) },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = WandColors.brandSoft,
-                    activeContentColor = WandColors.brand,
-                    activeBorderColor = WandColors.brand,
-                    inactiveContainerColor = Color.Transparent,
-                    inactiveContentColor = WandColors.textSecondary,
-                    inactiveBorderColor = WandColors.border,
-                ),
-            ) {
-                Text(
-                    label,
-                    fontSize = 11.5.sp,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
+    WandChoiceStrip(
+        options = listOf("active" to "进行中", "history" to "历史会话"),
+        selected = selected,
+        onSelect = onSelect,
+        modifier = modifier,
+        minHeight = 34.dp,
+        labelFontSize = 11.5.sp,
+    )
 }
 
 /** 拖拽范围选择：取指针垂直方向最近的行（落在卡片间隙也不漏选，对齐 iOS sessionId(nearestTo:)）。 */
