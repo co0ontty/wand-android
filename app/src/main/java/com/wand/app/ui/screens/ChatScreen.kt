@@ -19,6 +19,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -112,6 +113,7 @@ import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
+import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandApiException
 import com.wand.app.speech.SherpaSpeechEngine
@@ -120,6 +122,9 @@ import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.WandAsyncImage
+import com.wand.app.ui.WandFileChip
+import com.wand.app.ui.WandImage
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
@@ -136,7 +141,6 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
-import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -272,6 +276,7 @@ fun ChatScreen(
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
     // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
     var uploadingAttachments by remember { mutableStateOf(false) }
+    var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
     val uploadUris: (List<Uri>) -> Unit = { uris ->
         if (uris.isNotEmpty()) {
             uploadingAttachments = true
@@ -281,8 +286,7 @@ fun ChatScreen(
                         uris.take(5).map { uri -> readAttachment(context, uri) }
                     }
                     val uploaded = api.uploadAttachments(sessionId, files)
-                    val paths = uploaded.joinToString("\n") { it.savedPath }
-                    draft = "[附件已上传，请查看以下文件:\n$paths\n]\n\n" + draft
+                    pendingAttachments = (pendingAttachments + uploaded).takeLast(5)
                     store.toast = "已上传 ${uploaded.size} 个附件"
                 } catch (e: Exception) {
                     store.toast = e.message ?: "附件上传失败"
@@ -423,6 +427,11 @@ fun ChatScreen(
             voice = voice,
             onMicDown = onMicDown,
             uploading = uploadingAttachments,
+            pendingAttachments = pendingAttachments,
+            baseUrl = api.baseUrl,
+            onRemoveAttachment = { file ->
+                pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
+            },
             onPickPhoto = {
                 photoPicker.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -433,8 +442,9 @@ fun ChatScreen(
         ) {
             // 发送回调（带触感反馈）；发送后恢复当前轮次钉顶，让旧对话折起。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            val text = draft
+            val text = buildAttachmentPrompt(pendingAttachments, draft)
             draft = ""
+            pendingAttachments = emptyList()
             followsLatest = true
             historyExpanded = false
             store.send(text)
@@ -1077,7 +1087,9 @@ private fun thinkingShortLabel(id: String): String =
 
 private fun modelDisplayLabel(store: ChatStore, id: String?): String {
     val effectiveId = id?.takeIf { it != "default" } ?: store.defaultModel
-    if (effectiveId.isNullOrBlank()) return "跟随服务端默认"
+    if (effectiveId.isNullOrBlank()) {
+        return store.availableModels.firstOrNull { it.id == "default" }?.label ?: "跟随服务端默认"
+    }
     return store.availableModels.firstOrNull { it.id == effectiveId }?.label ?: effectiveId
 }
 
@@ -1105,6 +1117,7 @@ private fun shortModelLabel(store: ChatStore): String {
         "opus" in lower -> "Opus"
         "sonnet" in lower -> "Sonnet"
         "haiku" in lower -> "Haiku"
+        "gpt-5.5" in lower -> "GPT-5.5"
         "gpt-5" in lower -> "GPT-5"
         "gpt-4" in lower -> "GPT-4"
         leaf.length > 12 -> leaf.take(10) + "…"
@@ -1138,7 +1151,7 @@ private fun SettingsMenuOption(label: String, selected: Boolean, onClick: () -> 
 }
 
 /** 从 content Uri 读出 (文件名, 字节)，供 multipart 上传。 */
-private fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray> {
+internal fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray> {
     var name = "attachment"
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
         val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -1149,6 +1162,65 @@ private fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray> 
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         ?: throw WandApiException(null, "无法读取 $name")
     return name to bytes
+}
+
+internal fun buildAttachmentPrompt(attachments: List<UploadedFile>, body: String): String {
+    if (attachments.isEmpty()) return body
+    val paths = attachments.joinToString("\n") { it.savedPath }
+    return "[附件已上传，请查看以下文件:\n$paths\n]\n\n$body"
+}
+
+@Composable
+internal fun PendingAttachmentsPreview(
+    attachments: List<UploadedFile>,
+    baseUrl: String,
+    onRemove: (UploadedFile) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (attachments.isEmpty()) return
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+    ) {
+        attachments.forEach { file ->
+            Box {
+                if (baseUrl.isNotBlank() && WandImage.isImagePath(file.savedPath)) {
+                    WandAsyncImage(
+                        path = file.savedPath,
+                        baseUrl = baseUrl,
+                        modifier = Modifier.size(width = 96.dp, height = 72.dp),
+                        maxWidth = 96,
+                        maxHeight = 72,
+                    )
+                } else {
+                    WandFileChip(
+                        path = file.savedPath,
+                        modifier = Modifier.widthIn(max = 190.dp),
+                    )
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(WandColors.surface.copy(alpha = 0.92f))
+                        .border(1.dp, WandColors.border, CircleShape)
+                        .clickable { onRemove(file) },
+                ) {
+                    Icon(
+                        WandIcons.close,
+                        contentDescription = "移除附件",
+                        tint = WandColors.textSecondary,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1371,6 +1443,9 @@ private fun BottomBar(
     voice: VoiceInputController,
     onMicDown: () -> Unit,
     uploading: Boolean,
+    pendingAttachments: List<UploadedFile>,
+    baseUrl: String,
+    onRemoveAttachment: (UploadedFile) -> Unit,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
     onExpandedChange: (Boolean) -> Unit,
@@ -1441,6 +1516,9 @@ private fun BottomBar(
             onVoiceModeChange = { voiceMode = it },
             onMicDown = onMicDown,
             uploading = uploading,
+            pendingAttachments = pendingAttachments,
+            baseUrl = baseUrl,
+            onRemoveAttachment = onRemoveAttachment,
             onPickPhoto = onPickPhoto,
             onPickFile = onPickFile,
             onExpandedChange = onExpandedChange,
@@ -1460,6 +1538,9 @@ private fun InputBar(
     onVoiceModeChange: (Boolean) -> Unit,
     onMicDown: () -> Unit,
     uploading: Boolean,
+    pendingAttachments: List<UploadedFile>,
+    baseUrl: String,
+    onRemoveAttachment: (UploadedFile) -> Unit,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
     onExpandedChange: (Boolean) -> Unit,
@@ -1467,7 +1548,7 @@ private fun InputBar(
 ) {
     // 结构化会话不存在「已结束」终止态（停止只回到 idle，真失败也能再发消息触发
     // 服务端 --resume 续接），所以发送按钮只看草稿是否非空，不再被 sessionEnded 卡死。
-    val canSend = draft.isNotBlank()
+    val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
     // 从语音模式轻点切回键盘时自动聚焦文本框，键盘直接弹起。
     val focusRequester = remember { FocusRequester() }
     var focusAfterExit by remember { mutableStateOf(false) }
@@ -1492,38 +1573,13 @@ private fun InputBar(
         }
     }
     // 展开态（聚焦 / 语音模式 / 有草稿）：长成卡片，底部多一条控制行；否则收成单行胶囊。
-    val expanded = isFocused || voiceMode || draft.isNotBlank()
+    val expanded = isFocused || voiceMode || draft.isNotBlank() || pendingAttachments.isNotEmpty()
     LaunchedEffect(expanded) {
         onExpandedChange(expanded)
     }
-    val composerShape = RoundedCornerShape(if (expanded) 24.dp else 28.dp)
-    val darkGlass = isWandDarkTheme()
-    val composerGlass = if (expanded) {
-        WandGlass.regular.copy(
-            tintAlpha = if (darkGlass) 0.62f else 0.46f,
-            fallbackAlpha = if (darkGlass) 0.92f else 0.84f,
-            blurRadius = 20.dp,
-            refractionHeight = 6.dp,
-            refractionAmount = 10.dp,
-            shadowElevation = 8.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.34f else 0.14f),
-        )
-    } else {
-        WandGlass.regular.copy(
-            tintAlpha = if (darkGlass) 0.56f else 0.34f,
-            fallbackAlpha = if (darkGlass) 0.88f else 0.78f,
-            blurRadius = 18.dp,
-            refractionHeight = 3.dp,
-            refractionAmount = 8.dp,
-            shadowElevation = 3.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.28f else 0.10f),
-        )
-    }
-
     // 顶部内容：键盘模式是自增高文本框，语音模式是「按住说话」面板。背景/描边交给外层卡片。
     val inputContent: @Composable RowScope.() -> Unit = {
-        Box(
-            contentAlignment = Alignment.CenterStart,
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .heightIn(min = 34.dp)
@@ -1535,6 +1591,14 @@ private fun InputBar(
                     },
                 ),
         ) {
+            if (pendingAttachments.isNotEmpty() && !voiceMode) {
+                PendingAttachmentsPreview(
+                    attachments = pendingAttachments,
+                    baseUrl = baseUrl,
+                    onRemove = onRemoveAttachment,
+                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp),
+                )
+            }
             if (voiceMode) {
                 VoiceHoldField(
                     draft = draft,
@@ -1547,45 +1611,47 @@ private fun InputBar(
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
-                BasicTextField(
-                    value = draft,
-                    onValueChange = onDraftChange,
-                    textStyle = TextStyle(
-                        fontSize = 16.sp,
-                        lineHeight = 21.sp,
-                        color = WandColors.textPrimary,
-                    ),
-                    cursorBrush = SolidColor(WandColors.brand),
-                    minLines = 1,
-                    maxLines = 6,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Sentences,
-                    ),
-                    decorationBox = { innerTextField ->
-                        Box(
-                            contentAlignment = Alignment.CenterStart,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
-                        ) {
-                            if (draft.isEmpty()) {
-                                Text(
-                                    if (store.messages.isEmpty()) "发消息…" else "跟进",
-                                    fontSize = 16.sp,
-                                    color = WandColors.textMuted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                Box(contentAlignment = Alignment.CenterStart) {
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = onDraftChange,
+                        textStyle = TextStyle(
+                            fontSize = 16.sp,
+                            lineHeight = 21.sp,
+                            color = WandColors.textPrimary,
+                        ),
+                        cursorBrush = SolidColor(WandColors.brand),
+                        minLines = 1,
+                        maxLines = 6,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Sentences,
+                        ),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                contentAlignment = Alignment.CenterStart,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
+                            ) {
+                                if (draft.isEmpty()) {
+                                    Text(
+                                        if (store.messages.isEmpty()) "发消息…" else "跟进",
+                                        fontSize = 16.sp,
+                                        color = WandColors.textMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                innerTextField()
                             }
-                            innerTextField()
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 34.dp, max = 132.dp)
-                        .focusRequester(focusRequester)
-                        .onFocusChanged { isFocused = it.isFocused },
-                )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 34.dp, max = 132.dp)
+                            .focusRequester(focusRequester)
+                            .onFocusChanged { isFocused = it.isFocused },
+                    )
+                }
             }
         }
     }
@@ -1619,62 +1685,40 @@ private fun InputBar(
         )
     }
 
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        val controlsCompact = maxWidth < 360.dp
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glassSurface(backdrop, composerShape, composerGlass)
-                .padding(horizontal = if (expanded) 8.dp else 9.dp, vertical = if (expanded) 6.dp else 4.dp),
-            verticalArrangement = Arrangement.spacedBy(if (expanded) 8.dp else 0.dp),
-        ) {
+    NativeComposerSurface(
+        backdrop = backdrop,
+        expanded = expanded,
+        onFocusInput = {
+            if (!voiceMode) runCatching { focusRequester.requestFocus() }
+        },
+        collapsedLeading = { plusMenu() },
+        inputContent = { inputContent() },
+        collapsedTrailing = {
+            mic()
+            trailing()
+        },
+        expandedControls = { controlsCompact ->
+            // 控制行：+ / 模式徽标 / 模型·思考徽标 / 话筒 / 发送·停止。
+            // 窄屏时退成图标芯片，右侧按钮始终保留固定空间。
             Row(
-                verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.weight(1f),
             ) {
-                if (!expanded) {
-                    plusMenu()
-                }
-                inputContent()
-                if (!expanded) {
-                    mic()
-                    trailing()
-                }
-            }
-            if (expanded) {
-                // 控制行：+ / 模式徽标 / 模型·思考徽标 / 话筒 / 发送·停止。
-                // 窄屏时退成图标芯片，右侧按钮始终保留固定空间。
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        plusMenu()
-                        if (store.isStructured) {
-                            ModeChip(store, compact = controlsCompact)
-                            ModelThinkingChip(
-                                store,
-                                compact = controlsCompact,
-                                modifier = if (controlsCompact) Modifier else Modifier.weight(1f),
-                            )
-                        }
-                    }
-                    mic()
-                    trailing()
+                plusMenu()
+                if (store.isStructured) {
+                    ModeChip(store, compact = controlsCompact)
+                    ModelThinkingChip(
+                        store,
+                        compact = controlsCompact,
+                        modifier = if (controlsCompact) Modifier else Modifier.weight(1f),
+                    )
                 }
             }
-        }
-    }
+            mic()
+            trailing()
+        },
+    )
     if (showStopConfirm) {
         AlertDialog(
             onDismissRequest = { showStopConfirm = false },
@@ -1917,7 +1961,7 @@ private fun ModelThinkingChip(
  * 圆形 + 号，点开菜单「从相册选择 / 从文件选择」两项；上传中显示转圈。
  */
 @Composable
-private fun ComposerActionsMenu(
+internal fun ComposerActionsMenu(
     backdrop: GlassBackdrop,
     uploading: Boolean,
     onPickPhoto: () -> Unit,
@@ -1990,7 +2034,7 @@ private fun ComposerActionsMenu(
 // MARK: - 按住说话（端侧语音识别）
 
 /** 识别文本追加进草稿（不覆盖已有内容，对齐 Web commitVoiceTranscript / iOS appendTranscriptToDraft）。 */
-private fun appendVoiceText(existing: String, text: String): String {
+internal fun appendVoiceText(existing: String, text: String): String {
     val clean = text.trim()
     if (clean.isEmpty()) return existing
     val base = existing.trimEnd()
@@ -2056,7 +2100,7 @@ private suspend fun PointerInputScope.voiceTapOrHoldGesture(
  * - 长按 → 立即按住说话（原交互）：按住录音、上滑取消、松手把识别文本追加进输入框。
  */
 @Composable
-private fun VoiceMicButton(
+internal fun VoiceMicButton(
     voice: VoiceInputController,
     voiceMode: Boolean,
     onToggleMode: () -> Unit,
@@ -2108,7 +2152,7 @@ private fun VoiceMicButton(
  * 按住录音（同话筒长按），轻点切回键盘输入；非录音时显示当前草稿，所见即所得。
  */
 @Composable
-private fun VoiceHoldField(
+internal fun VoiceHoldField(
     draft: String,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
@@ -2176,7 +2220,7 @@ private fun VoiceHoldField(
 
 /** 按住期间的实时转写气泡：覆盖式文本 + 引擎标签 + 上滑取消提示。 */
 @Composable
-private fun VoiceTranscriptBubble(backdrop: GlassBackdrop, voice: VoiceInputController) {
+internal fun VoiceTranscriptBubble(backdrop: GlassBackdrop, voice: VoiceInputController) {
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier

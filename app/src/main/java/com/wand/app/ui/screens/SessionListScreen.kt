@@ -1,7 +1,6 @@
 package com.wand.app.ui.screens
 
 import android.text.format.DateUtils
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.LocalIndication
@@ -41,7 +40,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -642,18 +645,15 @@ private fun SessionToolbarIconButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Box(
-        modifier = modifier
-            .size(44.dp)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
-            .clip(CircleShape)
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.size(48.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = tint,
+            tint = if (enabled) tint else WandColors.textMuted.copy(alpha = 0.48f),
             modifier = Modifier.size(21.dp),
         )
     }
@@ -666,42 +666,28 @@ private fun ScopeToggle(
     modifier: Modifier = Modifier,
 ) {
     val options = listOf("active" to "进行中", "history" to "历史会话")
-    val brand = WandColors.brand
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
-            .border(0.7.dp, WandColors.border, RoundedCornerShape(10.dp))
-            .padding(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        options.forEach { (value, label) ->
-            val active = value == selected
-            val bg by animateColorAsState(
-                if (active) WandColors.surface else Color.Transparent,
-                label = "scopeToggleBg",
-            )
-            val fg by animateColorAsState(
-                if (active) brand else WandColors.textSecondary,
-                label = "scopeToggleFg",
-            )
-            val knobShadow = if (active) Color.Black.copy(alpha = 0.10f) else Color.Transparent
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .layeredShadow(RoundedCornerShape(8.dp), if (active) 1.dp else 0.dp, knobShadow, knobShadow)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(bg)
-                    .clickable { onSelect(value) }
-                    .padding(horizontal = 6.dp, vertical = 5.dp),
-                contentAlignment = Alignment.Center,
+    SingleChoiceSegmentedButtonRow(modifier = modifier) {
+        options.forEachIndexed { index, (value, label) ->
+            val active = selected == value
+            SegmentedButton(
+                selected = active,
+                onClick = { onSelect(value) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = WandColors.brandSoft,
+                    activeContentColor = WandColors.brand,
+                    activeBorderColor = WandColors.brand,
+                    inactiveContainerColor = Color.Transparent,
+                    inactiveContentColor = WandColors.textSecondary,
+                    inactiveBorderColor = WandColors.border,
+                ),
             ) {
                 Text(
                     label,
                     fontSize = 11.5.sp,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                    color = fg,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

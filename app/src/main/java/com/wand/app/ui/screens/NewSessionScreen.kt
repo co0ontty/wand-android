@@ -32,14 +32,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -206,8 +208,9 @@ fun NewSessionScreen(
         }
     }
 
+    val defaultModelLabel = providerModels.firstOrNull { it.id == "default" }?.label ?: "默认"
     val selectedModelLabel = if (selectedModel.isEmpty() || selectedModel == "default") {
-        "默认"
+        defaultModelLabel
     } else {
         providerModels.firstOrNull { it.id == selectedModel }?.label ?: selectedModel
     }
@@ -304,7 +307,7 @@ fun NewSessionScreen(
                     value = selectedModelLabel,
                     icon = Icons.Outlined.Memory,
                     options = buildList {
-                        add("" to "默认")
+                        add("" to "默认 · $defaultModelLabel")
                         providerModels.filter { it.id != "default" }.forEach { add(it.id to it.label) }
                     },
                     selectedId = selectedModel,
@@ -398,10 +401,6 @@ private fun Modifier.selectCard(selected: Boolean): Modifier {
         .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
 }
 
-/**
- * iOS 风格分段控件（对齐 SwiftUI `.pickerStyle(.segmented)`）：
- * 弱底轨道 + 选中段为浮起的 surface 胶囊（brand 文字），未选中透明（次级文字）。
- */
 @Composable
 private fun <T> WandSegmented(
     options: List<Pair<T, String>>,
@@ -409,40 +408,28 @@ private fun <T> WandSegmented(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(WandColors.textPrimary.copy(alpha = 0.06f))
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        options.forEach { (value, label) ->
+    SingleChoiceSegmentedButtonRow(modifier = modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, (value, label) ->
             val isSelected = value == selected
-            val bg by animateColorAsState(
-                if (isSelected) WandColors.surface else Color.Transparent,
-                WandMotion.tweenFast(),
-                label = "segBg",
-            )
-            val fg by animateColorAsState(
-                if (isSelected) WandColors.brand else WandColors.textSecondary,
-                WandMotion.tweenFast(),
-                label = "segFg",
-            )
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(bg)
-                    .clickable { onSelect(value) }
-                    .padding(vertical = 7.dp),
+            SegmentedButton(
+                selected = isSelected,
+                onClick = { onSelect(value) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = WandColors.brandSoft,
+                    activeContentColor = WandColors.brand,
+                    activeBorderColor = WandColors.brand,
+                    inactiveContainerColor = Color.Transparent,
+                    inactiveContentColor = WandColors.textSecondary,
+                    inactiveBorderColor = WandColors.border,
+                ),
             ) {
                 Text(
                     label,
                     fontSize = 14.sp,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = fg,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -453,6 +440,7 @@ private fun <T> WandSegmented(
  * 模型 / 思考深度菜单卡（对齐 iOS optionMenuCard）：
  * brand 软底圆形图标 + 标题（11）/ 当前值（13 半粗）+ 上下箭头；点开下拉选项。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OptionMenuCard(
     title: String,
@@ -501,35 +489,59 @@ private fun OptionMenuCard(
                 modifier = Modifier.size(14.dp),
             )
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            containerColor = WandColors.surface,
-        ) {
-            options.forEach { (id, label) ->
-                val isSel = selectedId == id || (selectedId == "default" && id == "")
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            label,
-                            fontSize = 14.sp,
-                            fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isSel) WandColors.brand else WandColors.textPrimary,
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            if (isSel) WandIcons.check else Icons.Outlined.RadioButtonUnchecked,
-                            contentDescription = null,
-                            tint = if (isSel) WandColors.brand else WandColors.textMuted,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    },
-                    onClick = {
-                        onSelect(id)
-                        expanded = false
-                    },
-                )
+        if (expanded) {
+            ModalBottomSheet(
+                onDismissRequest = { expanded = false },
+                containerColor = WandColors.bgElevated,
+                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .navigationBarsPadding()
+                        .padding(bottom = 18.dp),
+                ) {
+                    Text(
+                        "选择$title",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                    )
+                    options.forEach { (id, label) ->
+                        val isSel = selectedId == id || (selectedId == "default" && id == "")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSel) WandColors.brandSoft else Color.Transparent)
+                                .clickable {
+                                    onSelect(id)
+                                    expanded = false
+                                }
+                                .padding(horizontal = 14.dp, vertical = 13.dp),
+                        ) {
+                            Icon(
+                                if (isSel) WandIcons.check else Icons.Outlined.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (isSel) WandColors.brand else WandColors.textMuted,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                label,
+                                fontSize = 14.sp,
+                                fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isSel) WandColors.brand else WandColors.textPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
             }
         }
     }

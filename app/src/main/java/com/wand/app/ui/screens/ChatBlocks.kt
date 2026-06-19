@@ -125,7 +125,9 @@ fun TurnView(
     val currentFold = remember(turn.content, shouldFoldCurrentReply) {
         if (shouldFoldCurrentReply) foldCurrentReplyTail(turn.content) else CurrentReplyFold(turn.content, "")
     }
-    val segments = remember(currentFold.blocks) { splitBySubagent(currentFold.blocks) }
+    var currentReplyExpanded by remember(turnIndex, shouldFoldCurrentReply) { mutableStateOf(false) }
+    val displayBlocks = if (shouldFoldCurrentReply && currentReplyExpanded) turn.content else currentFold.blocks
+    val segments = remember(displayBlocks) { splitBySubagent(displayBlocks) }
     val preview = remember(turn.content) { replyPreview(turn.content) }
     // 抽纸折叠：历史回复（位于最后一条用户消息之前）默认折起，当前一轮展开。
     // historyBoundary 变化（= 发了新消息）即按新归属重置：旧回复自动折回去、丢弃手动展开。
@@ -142,8 +144,13 @@ fun TurnView(
         AssistantReplyHeader(
             collapsed = collapsed,
             preview = preview,
-            summary = currentFold.summary,
+            summary = if (currentReplyExpanded) "" else currentFold.summary,
             onToggle = {
+                if (!collapsed && currentFold.summary.isNotBlank() && !currentReplyExpanded) {
+                    currentReplyExpanded = true
+                    onUserExpand()
+                    return@AssistantReplyHeader
+                }
                 val next = !collapsed
                 collapsed = next
                 if (!next) onUserExpand()

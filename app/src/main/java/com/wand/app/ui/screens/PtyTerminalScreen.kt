@@ -1,5 +1,6 @@
 package com.wand.app.ui.screens
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
 import android.net.Uri
@@ -7,6 +8,9 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -52,7 +57,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -62,7 +69,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
+import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandIcons
@@ -73,12 +82,14 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
- * 下方嵌一层加载 `embed=terminal` 的 WebView，只展示终端黑窗 + 输入栏 + 悬浮球。
+ * 下方嵌一层加载 `embed=terminal&nativeInput=1` 的 WebView，只展示终端黑窗 + 悬浮球。
  * 对称 iOS PtySessionView——把网页终端套进原生 chrome，而不是整页跳出去。
  *
  * 鉴权沿用全局 CookieManager（ConnectActivity 登录后已写入并持久化的会话 cookie），
@@ -96,10 +107,57 @@ fun PtyTerminalScreen(
     var draft by remember(sessionId) { mutableStateOf("") }
     var sending by remember(sessionId) { mutableStateOf(false) }
     var toast by remember(sessionId) { mutableStateOf<String?>(null) }
+    var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
+    var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val voice = remember { VoiceInputController(context) }
     val scope = rememberCoroutineScope()
     val quickCommit = remember(sessionId) {
         QuickCommitStore(sessionId, api) { msg -> toast = msg }
     }
+    DisposableEffect(voice) {
+        voice.onToast = { toast = it }
+        onDispose { voice.destroy() }
+    }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        toast = if (granted) "已获得麦克风权限，按住麦克风说话" else "需要麦克风权限才能语音输入"
+    }
+    val onMicDown: () -> Unit = {
+        if (voice.hasMicPermission()) {
+            if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            voice.beginPress { text -> draft = appendVoiceText(draft, text) }
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    val uploadUris: (List<Uri>) -> Unit = { uris ->
+        if (uris.isNotEmpty()) {
+            uploadingAttachments = true
+            scope.launch {
+                try {
+                    val files = withContext(Dispatchers.IO) {
+                        uris.take(5).map { uri -> readAttachment(context, uri) }
+                    }
+                    val uploaded = api.uploadAttachments(sessionId, files)
+                    pendingAttachments = (pendingAttachments + uploaded).takeLast(5)
+                    toast = "已上传 ${uploaded.size} 个附件"
+                } catch (e: Exception) {
+                    toast = e.message ?: "附件上传失败"
+                } finally {
+                    uploadingAttachments = false
+                }
+            }
+        }
+    }
+    val attachmentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> uploadUris(uris.orEmpty()) }
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(5),
+    ) { uris -> uploadUris(uris) }
     DisposableEffect(quickCommit) {
         onDispose { quickCommit.shutdown() }
     }
@@ -138,25 +196,43 @@ fun PtyTerminalScreen(
                 backdrop = glassBackdrop,
                 draft = draft,
                 sending = sending,
+                uploading = uploadingAttachments,
+                pendingAttachments = pendingAttachments,
+                baseUrl = api.baseUrl,
+                voice = voice,
                 onDraftChange = { draft = it },
+                onRemoveAttachment = { file ->
+                    pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
+                },
+                onMicDown = onMicDown,
+                onPickPhoto = {
+                    photoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                onPickFile = { attachmentPicker.launch(arrayOf("*/*")) },
                 onSend = {
-                    val text = draft.trim()
+                    val body = draft
+                    val attachments = pendingAttachments
+                    val text = buildAttachmentPrompt(attachments, body).trim()
                     if (text.isEmpty() || sending) return@PtyNativeInputBar
                     draft = ""
+                    pendingAttachments = emptyList()
                     sending = true
                     scope.launch {
                         try {
-                            api.sendInput(sessionId, text, view = "chat")
+                            api.sendInput(sessionId, text, view = "terminal")
                             delay(30)
                             api.sendInput(
                                 id = sessionId,
                                 input = "\r",
-                                view = "chat",
+                                view = "terminal",
                                 shortcutKey = "enter_text",
                             )
                         } catch (e: Exception) {
                             toast = e.message ?: "发送失败"
-                            draft = text
+                            draft = body
+                            pendingAttachments = attachments
                         }
                         sending = false
                     }
@@ -292,22 +368,38 @@ private fun PtyNativeInputBar(
     backdrop: GlassBackdrop,
     draft: String,
     sending: Boolean,
+    uploading: Boolean,
+    pendingAttachments: List<UploadedFile>,
+    baseUrl: String,
+    voice: VoiceInputController,
     onDraftChange: (String) -> Unit,
+    onRemoveAttachment: (UploadedFile) -> Unit,
+    onMicDown: () -> Unit,
+    onPickPhoto: () -> Unit,
+    onPickFile: () -> Unit,
     onSend: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
     var isFocused by remember { mutableStateOf(false) }
     var refocusAfterSend by remember { mutableStateOf(false) }
-    val expanded = isFocused || draft.isNotBlank()
+    var voiceMode by remember { mutableStateOf(false) }
+    var focusAfterExitVoice by remember { mutableStateOf(false) }
+    val expanded = isFocused || voiceMode || draft.isNotBlank() || pendingAttachments.isNotEmpty()
 
     LaunchedEffect(refocusAfterSend, sending) {
-        if (refocusAfterSend && !sending) {
+        if (refocusAfterSend && !sending && !voiceMode) {
             refocusAfterSend = false
             runCatching { focusRequester.requestFocus() }
         }
     }
+    LaunchedEffect(voiceMode, focusAfterExitVoice) {
+        if (!voiceMode && focusAfterExitVoice) {
+            focusAfterExitVoice = false
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .glassSurface(
@@ -317,16 +409,18 @@ private fun PtyNativeInputBar(
                 edgeToEdge = true,
             )
             .imePadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .navigationBarsPadding(),
     ) {
-        if (!expanded) {
+        if (voice.pressed) {
+            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                VoiceTranscriptBubble(backdrop, voice)
+            }
+        }
+        val terminalChip: @Composable () -> Unit = {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(WandColors.textSecondary.copy(alpha = 0.10f)),
             ) {
@@ -338,66 +432,142 @@ private fun PtyNativeInputBar(
                 )
             }
         }
-        BasicTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            enabled = !sending,
-            textStyle = TextStyle(
-                color = WandColors.textPrimary,
-                fontSize = 15.sp,
-                lineHeight = 20.sp,
-            ),
-            cursorBrush = SolidColor(WandColors.brand),
-            minLines = 1,
-            maxLines = 4,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 40.dp, max = 108.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(WandColors.surface.copy(alpha = 0.72f))
-                .border(
-                    0.7.dp,
-                    if (isFocused) WandColors.brand.copy(alpha = 0.72f) else WandColors.border,
-                    RoundedCornerShape(16.dp),
-                )
-                .focusRequester(focusRequester)
-                .onFocusChanged { isFocused = it.isFocused }
-                .padding(horizontal = 13.dp, vertical = 9.dp),
-            decorationBox = { innerTextField ->
-                Box(
-                    contentAlignment = Alignment.CenterStart,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (draft.isEmpty()) {
-                        Text(
-                            "输入到终端会话",
-                            fontSize = 15.sp,
-                            color = WandColors.textMuted,
+        val inputContent: @Composable RowScope.() -> Unit = {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 34.dp),
+            ) {
+                if (pendingAttachments.isNotEmpty() && !voiceMode) {
+                    PendingAttachmentsPreview(
+                        attachments = pendingAttachments,
+                        baseUrl = baseUrl,
+                        onRemove = onRemoveAttachment,
+                        modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp),
+                    )
+                }
+                if (voiceMode) {
+                    VoiceHoldField(
+                        draft = draft,
+                        voice = voice,
+                        onMicDown = onMicDown,
+                        onExitVoiceMode = {
+                            focusAfterExitVoice = true
+                            voiceMode = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        BasicTextField(
+                            value = draft,
+                            onValueChange = onDraftChange,
+                            enabled = !sending,
+                            textStyle = TextStyle(
+                                color = WandColors.textPrimary,
+                                fontSize = 16.sp,
+                                lineHeight = 21.sp,
+                            ),
+                            cursorBrush = SolidColor(WandColors.brand),
+                            minLines = 1,
+                            maxLines = 6,
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 34.dp, max = 132.dp)
+                                .focusRequester(focusRequester)
+                                .onFocusChanged { isFocused = it.isFocused },
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    contentAlignment = Alignment.CenterStart,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
+                                ) {
+                                    if (draft.isEmpty()) {
+                                        Text(
+                                            "输入到终端…",
+                                            fontSize = 16.sp,
+                                            color = WandColors.textMuted,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
                         )
                     }
-                    innerTextField()
                 }
-            },
-        )
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(if (draft.isBlank() || sending) WandColors.surfaceSoft.copy(alpha = 0.72f) else WandColors.brand)
-                .clickable(enabled = draft.isNotBlank() && !sending) {
-                    refocusAfterSend = true
-                    onSend()
-                },
-        ) {
-            Icon(
-                WandIcons.arrowUp,
-                contentDescription = "发送",
-                tint = if (draft.isBlank() || sending) WandColors.textMuted else Color.White,
-                modifier = Modifier.size(20.dp),
+            }
+        }
+        val plusMenu: @Composable () -> Unit = {
+            ComposerActionsMenu(
+                backdrop = backdrop,
+                uploading = uploading,
+                onPickPhoto = onPickPhoto,
+                onPickFile = onPickFile,
             )
         }
+        val micButton: @Composable () -> Unit = {
+            VoiceMicButton(
+                voice = voice,
+                voiceMode = voiceMode,
+                onToggleMode = { voiceMode = !voiceMode },
+                onMicDown = onMicDown,
+            )
+        }
+        val sendButton: @Composable () -> Unit = {
+            val canSend = (draft.isNotBlank() || pendingAttachments.isNotEmpty()) && !sending
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (!canSend) WandColors.textMuted.copy(alpha = 0.10f) else WandColors.textPrimary)
+                    .clickable(enabled = canSend) {
+                        refocusAfterSend = true
+                        onSend()
+                    },
+            ) {
+                Icon(
+                    WandIcons.arrowUp,
+                    contentDescription = "发送",
+                    tint = if (!canSend) WandColors.textMuted.copy(alpha = 0.55f) else WandColors.surface,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        NativeComposerSurface(
+            backdrop = backdrop,
+            expanded = expanded,
+            onFocusInput = { runCatching { focusRequester.requestFocus() } },
+            collapsedLeading = { plusMenu() },
+            inputContent = inputContent,
+            collapsedTrailing = {
+                micButton()
+                sendButton()
+            },
+            expandedControls = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    plusMenu()
+                    terminalChip()
+                    Text(
+                        "终端",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = WandColors.textSecondary,
+                        maxLines = 1,
+                    )
+                }
+                micButton()
+                sendButton()
+            },
+        )
     }
 }
 
@@ -449,10 +619,14 @@ private fun PtyTerminalWebView(serverUrl: String, sessionId: String) {
                             ".is-wand-embed-terminal .wand-joystick-ball{opacity:1!important;transform:none;}" +
                             ".is-wand-embed-terminal .wand-joystick-panel{z-index:124;}" +
                             ".is-wand-embed-terminal .terminal-scroll-wrap{padding:8px 4px 8px!important;--term-font-family:\\\"Roboto Mono\\\",\\\"Droid Sans Mono\\\",\\\"Noto Sans Mono\\\",\\\"Noto Sans Symbols 2\\\",\\\"Noto Sans Symbols\\\",monospace!important;--term-font-size:10px!important;--term-row-height:15px!important;}" +
-                            ".is-wand-embed-terminal .input-panel{display:none!important;}" +
                             ".is-wand-embed-terminal .terminal-container{margin:0!important;border-left:0!important;border-right:0!important;border-radius:0!important;box-shadow:none!important;}" +
                             "';" +
                             "document.head.appendChild(s);}" +
+                            "if(!window.__wandNativeJoystickFocusGuard){" +
+                            "window.__wandNativeJoystickFocusGuard=true;" +
+                            "function blurJoystickFocus(){try{var a=document.activeElement;if(a&&typeof a.blur==='function')a.blur();setTimeout(function(){try{var n=document.activeElement;if(n&&typeof n.blur==='function')n.blur();}catch(e){}},0);}catch(e){}}" +
+                            "['pointerdown','pointerup','touchstart','touchend','click'].forEach(function(type){document.addEventListener(type,function(e){try{var t=e.target;if(t&&t.closest&&t.closest('.wand-joystick-root'))blurJoystickFocus();}catch(err){}},true);});" +
+                            "}" +
                             "function fit(){try{window.dispatchEvent(new Event('resize'));var o=document.getElementById('output');if(o){var w=o.style.width;o.style.width='calc(100% - 0.01px)';void o.offsetWidth;o.style.width=w;}}catch(e){}}" +
                             "[0,80,220,520].forEach(function(d){setTimeout(fit,d);});" +
                             "}catch(e){}})();",

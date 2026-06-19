@@ -1,12 +1,16 @@
 package com.wand.app
 
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -99,8 +103,17 @@ class HomeActivity : AppCompatActivity() {
             },
         )
 
-        enableEdgeToEdge()
+        applyEdgeToEdge(appearanceMode == WandAppearanceMode.Dark)
         setContent {
+            val systemDark = isSystemInDarkTheme()
+            val resolvedDark = when (appearanceMode) {
+                WandAppearanceMode.Light -> false
+                WandAppearanceMode.Dark -> true
+                WandAppearanceMode.System -> systemDark
+            }
+            LaunchedEffect(resolvedDark) {
+                applyEdgeToEdge(resolvedDark)
+            }
             WandTheme(appearanceMode = appearanceMode) {
                 WandApp(
                     api = api,
@@ -114,6 +127,14 @@ class HomeActivity : AppCompatActivity() {
                 )
             }
         }
+    }
+
+    private fun applyEdgeToEdge(dark: Boolean) {
+        val transparent = Color.TRANSPARENT
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(transparent, transparent) { dark },
+            navigationBarStyle = SystemBarStyle.auto(transparent, transparent) { dark },
+        )
     }
 
     @Deprecated("Deprecated in Java")

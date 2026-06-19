@@ -163,29 +163,38 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
         }
     }
     val total = modified + deleted + added
+    val label = if (total > 0) {
+        listOfNotNull(
+            modified.takeIf { it > 0 }?.let { "~$it" },
+            deleted.takeIf { it > 0 }?.let { "-$it" },
+            added.takeIf { it > 0 }?.let { "+$it" },
+        ).joinToString(" ")
+    } else {
+        "0"
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
-            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-            .clip(CircleShape)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.28f))
-            .border(0.45.dp, WandColors.border.copy(alpha = 0.38f), CircleShape)
+            .sizeIn(minWidth = 54.dp, minHeight = 44.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(WandColors.surface.copy(alpha = 0.58f))
+            .border(0.55.dp, WandColors.border.copy(alpha = 0.68f), RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
         Icon(
             WandIcons.commit,
             contentDescription = "Git 变更",
-            tint = WandColors.textSecondary,
-            modifier = Modifier.size(16.dp),
+            tint = if (total > 0) WandColors.brand else WandColors.textMuted,
+            modifier = Modifier.size(15.dp),
         )
         Text(
-            if (total > 0) total.toString() else "✓",
+            label,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             fontFamily = FontFamily.Monospace,
-            color = if (total > 0) WandColors.textSecondary else WandColors.running,
+            color = if (total > 0) WandColors.textPrimary else WandColors.textMuted,
         )
     }
 }
@@ -204,7 +213,7 @@ private fun GitBranchIcon(tint: Color) {
         val path = Path().apply {
             moveTo(18f * s, 10.8f * s)
             lineTo(18f * s, 12f * s)
-            quadraticBezierTo(18f * s, 15f * s, 15f * s, 15f * s)
+            quadraticTo(18f * s, 15f * s, 15f * s, 15f * s)
             lineTo(9.2f * s, 15f * s)
         }
         drawPath(path, tint, style = stroke)
@@ -228,20 +237,22 @@ fun QuickCommitSheet(
     ModalBottomSheet(
         onDismissRequest = { if (!qc.inFlight) onDismiss() },
         sheetState = sheetState,
-        // ModalBottomSheet 是独立 window，采样不到 app 的 backdrop 层，
-        // 永远走降级玻璃：近实底 bgElevated（保证 dock 画布与文字对比度）。
+        // ModalBottomSheet 是独立 window，采样不到 app 的 backdrop 层。
+        // 用近实底 bgElevated 保证输入区与按钮对比度。
         containerColor = WandColors.bgElevated.copy(alpha = 0.98f),
+        scrimColor = Color.Black.copy(alpha = 0.46f),
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
         Column(
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 16.dp)
                 .navigationBarsPadding()
                 .imePadding()
-                .padding(bottom = 20.dp),
+                .padding(bottom = 18.dp),
         ) {
             SheetHeader(qc)
             if (qc.result != null) {
@@ -264,31 +275,37 @@ private fun SheetHeader(qc: QuickCommitStore) {
         s.ahead?.takeIf { it > 0 }?.let { parts.add("↑$it") }
         s.behind?.takeIf { it > 0 }?.let { parts.add("↓$it") }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Text(
             "快捷提交",
             fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = WandColors.textPrimary,
+            modifier = Modifier.weight(1f),
         )
-        when {
-            qc.statusLoading && s == null -> Text(
-                "读取 git 状态…",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            s != null && !s.isGit -> Text(
-                "当前会话目录不是 git 仓库",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            parts.isNotEmpty() -> Text(
-                parts.joinToString(" · "),
-                fontSize = 12.sp,
+        val summary = when {
+            qc.statusLoading && s == null -> "读取中"
+            s != null && !s.isGit -> "非 Git 仓库"
+            parts.isNotEmpty() -> parts.joinToString(" · ")
+            else -> null
+        }
+        summary?.let {
+            Text(
+                it,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = WandColors.textMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
+                    .padding(horizontal = 9.dp, vertical = 5.dp)
+                    .widthIn(max = 190.dp),
             )
         }
     }
@@ -306,20 +323,19 @@ private fun FormPanel(
     val hasChanges = (s?.modifiedCount ?: 0) > 0
     val hasSubmodule = s?.hasSubmodule == true
 
-    // "New" 标题 + AI 生成按钮（预填 message 与推荐 tag，不提交）
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "New",
-            fontSize = 12.sp,
+            "提交信息",
+            fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = WandColors.textPrimary,
         )
         Spacer(Modifier.weight(1f))
         OutlinedButton(
             onClick = { qc.generateAI() },
             enabled = !qc.generating && !qc.submitting && hasChanges,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            modifier = Modifier.height(30.dp),
+            modifier = Modifier.height(32.dp),
         ) {
             if (qc.generating) {
                 CircularProgressIndicator(
@@ -328,7 +344,12 @@ private fun FormPanel(
                 )
                 Spacer(Modifier.width(6.dp))
             } else {
-                Text("✦ ", fontSize = 12.sp)
+                Icon(
+                    WandIcons.sparkle,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                )
+                Spacer(Modifier.width(6.dp))
             }
             Text(if (qc.generating) "生成中…" else "AI", fontSize = 12.sp)
         }
@@ -346,7 +367,7 @@ private fun FormPanel(
         OutlinedTextField(
             value = qc.messageDraft,
             onValueChange = { qc.messageDraft = it },
-            placeholder = { Text("留空由 AI 根据改动生成", fontSize = 14.sp) },
+            placeholder = { Text("留空自动生成", fontSize = 14.sp) },
             minLines = 2,
             maxLines = 4,
             enabled = !qc.submitting,
@@ -365,7 +386,7 @@ private fun FormPanel(
                 qc.tagDraft = it
                 qc.tagEdited = true
             },
-            placeholder = { Text("留空则 AI 生成（拖入 Tag 球时生效）", fontSize = 14.sp) },
+            placeholder = { Text("可选 tag", fontSize = 14.sp) },
             singleLine = true,
             enabled = !qc.submitting,
             shape = RoundedCornerShape(12.dp),
@@ -378,7 +399,6 @@ private fun FormPanel(
         Text(it, fontSize = 12.sp, color = WandColors.danger)
     }
 
-    // 磁吸 dock
     val busyLabel = (if (qc.autoGenerating) "AI 生成 + 提交中…" else "执行中…") +
         (if (qc.submoduleIntent) "（含 submodule）" else "")
     MagneticDock(
@@ -441,7 +461,7 @@ private fun FormPanel(
 private fun PairOldLine(label: String, old: String) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Text(
             label,
@@ -457,7 +477,6 @@ private fun PairOldLine(label: String, old: String) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Text("→", fontSize = 12.sp, color = WandColors.textHint)
     }
 }
 

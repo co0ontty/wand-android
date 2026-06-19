@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -120,12 +121,13 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showDisconnectConfirm = false },
             containerColor = WandColors.bgElevated,
+            shape = RoundedCornerShape(20.dp),
             icon = {
                 SettingsIconBadge(icon = WandIcons.logout, tint = WandColors.danger)
             },
             title = {
                 Text(
-                    "断开当前服务器？",
+                    "断开连接",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textPrimary,
@@ -133,7 +135,7 @@ fun SettingsScreen(
             },
             text = {
                 Text(
-                    "会清除本机保存的服务器地址和连接码，并返回连接页。正在运行的服务器端任务不会被删除。",
+                    "清除本机保存的服务器地址和连接码，并返回连接页。",
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
                     color = WandColors.textSecondary,
@@ -189,8 +191,8 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // —— 高频偏好 ——
-                SectionHeader("外观")
-                WandCard(modifier = Modifier.fillMaxWidth()) {
+                SectionHeader("外观调整")
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     AppearanceModePicker(
                         selected = appearanceMode,
                         onSelected = { mode ->
@@ -228,7 +230,7 @@ fun SettingsScreen(
 
                 // —— 后台 ——
                 SectionHeader("后台运行")
-                WandCard(modifier = Modifier.fillMaxWidth()) {
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     SwitchRow("后台保活", keepAlive, WandIcons.refresh) { enabled ->
                         keepAlive = enabled
                         if (enabled && Build.VERSION.SDK_INT >= 33) {
@@ -236,36 +238,22 @@ fun SettingsScreen(
                         }
                         actions.setKeepAlive(enabled)
                     }
-                    Text(
-                        "保持与服务器的连接，便于任务在后台继续推进。",
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                        color = WandColors.textMuted,
-                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
-                    )
                 }
 
                 // —— 更新 ——
                 SectionHeader("更新")
-                WandCard(modifier = Modifier.fillMaxWidth()) {
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
                     RowDivider()
                     SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
                         betaChannel = it
                         actions.setBetaChannel(it)
                     }
-                    Text(
-                        "开启后接收最新开发构建；关闭只提示正式版。",
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                        color = WandColors.textMuted,
-                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
-                    )
                 }
 
                 // —— 连接 ——
                 SectionHeader("连接与服务器")
-                WandCard(modifier = Modifier.fillMaxWidth()) {
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     InfoRow("服务器地址", actions.serverUrl, icon = WandIcons.web, mono = true)
                     RowDivider()
                     InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定", icon = WandIcons.permission)
@@ -306,13 +294,6 @@ fun SettingsScreen(
                         actions.setAppIcon("garfield")
                     }
                 }
-                Text(
-                    "切换后桌面图标会变化，部分启动器需要几秒生效。",
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
 
                 // —— 关于 ——
                 SectionHeader("关于")
@@ -332,13 +313,11 @@ private fun AppearanceModePicker(
     selected: WandAppearanceMode,
     onSelected: (WandAppearanceMode) -> Unit,
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        Text("选择明亮、黑暗，或跟随系统外观。", fontSize = 12.sp, color = WandColors.textMuted)
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             val options = listOf(
                 WandAppearanceMode.Light to "明亮",
@@ -374,7 +353,7 @@ private fun NotificationFeedbackSection(
     onVolumeCommit: () -> Unit,
     onHapticChange: (Boolean) -> Unit,
 ) {
-    WandCard(modifier = Modifier.fillMaxWidth()) {
+    SettingsCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -494,12 +473,6 @@ private fun SettingsTopBar(
                     color = WandColors.textPrimary,
                     maxLines = 1,
                 )
-                Text(
-                    "偏好、输入与连接",
-                    fontSize = 11.sp,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                )
             }
             WandChromeIconButton(
                 icon = WandIcons.web,
@@ -517,7 +490,7 @@ private fun SettingsAboutSection(
     appVersion: String,
     serverVersion: String?,
 ) {
-    WandCard(
+    SettingsCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -573,7 +546,7 @@ private fun SttModelSection() {
     LaunchedEffect(sttState) {
         if (sttState is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
     }
-    WandCard(modifier = Modifier.fillMaxWidth()) {
+    SettingsCard(modifier = Modifier.fillMaxWidth()) {
         SttModelManager.MODELS.forEachIndexed { index, model ->
             if (index > 0) RowDivider()
             val ready = remember(sttState, downloadingId, model.id) {
@@ -611,12 +584,6 @@ private fun SttModelSection() {
                             color = WandColors.textPrimary,
                         )
                         Text(
-                            model.description,
-                            fontSize = 11.sp,
-                            color = WandColors.textMuted,
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
-                        Text(
                             status,
                             fontSize = 11.sp,
                             color = when {
@@ -648,13 +615,20 @@ private fun SttModelSection() {
                 }
             }
         }
-        Text(
-            "离线识别；中英混合模型更适合编程口述，内存占用较高。",
-            fontSize = 11.sp,
-            color = WandColors.textMuted,
-            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
-        )
     }
+}
+
+@Composable
+private fun SettingsCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    WandCard(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        containerColor = WandColors.surface.copy(alpha = 0.92f),
+        content = content,
+    )
 }
 
 /** 卡片内行间分割线：0.5dp border 色，左右与行内边距对齐。 */
@@ -678,12 +652,10 @@ private fun InfoRow(label: String, value: String, icon: ImageVector? = null, mon
             .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
         if (icon != null) {
-            SettingsIconBadge(icon = icon)
-            Spacer(modifier = Modifier.size(10.dp))
+            SettingsRowIcon(icon = icon)
+            Spacer(modifier = Modifier.size(12.dp))
         }
-        Column {
-            Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = WandColors.textPrimary)
-        }
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = WandColors.textPrimary)
         Spacer(modifier = Modifier.weight(1f))
         Text(
             value,
@@ -714,6 +686,14 @@ private fun SettingsIconBadge(
     }
 }
 
+@Composable
+private fun SettingsRowIcon(
+    icon: ImageVector,
+    tint: Color = WandColors.textMuted,
+) {
+    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
+}
+
 /** 操作行：左侧场景图标 + 标签 + 行尾右箭头，行高 ≥52dp，danger 时图标与标签同色。 */
 @Composable
 private fun ActionRow(
@@ -731,12 +711,12 @@ private fun ActionRow(
             .heightIn(min = 52.dp)
             .padding(horizontal = 14.dp),
     ) {
-        SettingsIconBadge(icon = icon, tint = tint)
+        SettingsRowIcon(icon = icon, tint = tint)
         Text(
             label,
-            fontSize = 15.sp,
+            fontSize = 14.sp,
             color = if (danger) WandColors.danger else WandColors.textPrimary,
-            modifier = Modifier.padding(start = 12.dp),
+            modifier = Modifier.padding(start = 14.dp),
         )
         Spacer(modifier = Modifier.weight(1f))
         Icon(
@@ -763,13 +743,13 @@ private fun SwitchRow(
             .heightIn(min = 56.dp)
             .padding(horizontal = 14.dp),
     ) {
-        SettingsIconBadge(icon = icon)
+        SettingsRowIcon(icon = icon)
         Text(
             label,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = WandColors.textPrimary,
-            modifier = Modifier.padding(start = 12.dp),
+            modifier = Modifier.padding(start = 14.dp),
         )
         Spacer(modifier = Modifier.weight(1f))
         Switch(
