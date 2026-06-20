@@ -110,22 +110,34 @@ fun TurnView(
     turn: ConversationTurn,
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
+    compactUser: Boolean = false,
+    hideAssistantHeader: Boolean = false,
+    currentReplyExpandedOverride: Boolean? = null,
     turnIndex: Int = -1,
     historyBoundary: Int = -1,
     onUserExpand: () -> Unit = {},
+    onCurrentReplyExpandedChange: (Boolean) -> Unit = {},
+    onCurrentReplyExpandToBottom: () -> Unit = {},
     askSelections: Map<String, AskUserSelectionState> = emptyMap(),
     onAskToggle: (String, Int, Int, Boolean) -> Unit = { _, _, _, _ -> },
     onAskSubmit: (String, String) -> Unit = { _, _ -> },
 ) {
     if (turn.role == "user") {
-        UserTurnView(turn)
+        UserTurnView(turn, compact = compactUser)
         return
     }
     val shouldFoldCurrentReply = isLastTurn && turnIndex > historyBoundary
     val currentFold = remember(turn.content, shouldFoldCurrentReply) {
         if (shouldFoldCurrentReply) foldCurrentReplyTail(turn.content) else CurrentReplyFold(turn.content, "")
     }
-    var currentReplyExpanded by remember(turnIndex, shouldFoldCurrentReply) { mutableStateOf(false) }
+    var localCurrentReplyExpanded by remember(turnIndex, shouldFoldCurrentReply) { mutableStateOf(false) }
+    val currentReplyExpanded = currentReplyExpandedOverride ?: localCurrentReplyExpanded
+    val setCurrentReplyExpanded: (Boolean) -> Unit = { expanded ->
+        if (currentReplyExpandedOverride == null) {
+            localCurrentReplyExpanded = expanded
+        }
+        onCurrentReplyExpandedChange(expanded)
+    }
     val displayBlocks = if (shouldFoldCurrentReply && currentReplyExpanded) turn.content else currentFold.blocks
     val segments = remember(displayBlocks) { splitBySubagent(displayBlocks) }
     val preview = remember(turn.content) { replyPreview(turn.content) }
@@ -141,21 +153,24 @@ fun TurnView(
     ) {
         // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
         // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
-        AssistantReplyHeader(
-            collapsed = collapsed,
-            preview = preview,
-            summary = if (currentReplyExpanded) "" else currentFold.summary,
-            onToggle = {
-                if (!collapsed && currentFold.summary.isNotBlank() && !currentReplyExpanded) {
-                    currentReplyExpanded = true
-                    onUserExpand()
-                    return@AssistantReplyHeader
-                }
-                val next = !collapsed
-                collapsed = next
-                if (!next) onUserExpand()
-            },
-        )
+        if (!hideAssistantHeader) {
+            AssistantReplyHeader(
+                collapsed = collapsed,
+                preview = preview,
+                summary = if (currentReplyExpanded) "" else currentFold.summary,
+                onToggle = {
+                    if (!collapsed && currentFold.summary.isNotBlank() && !currentReplyExpanded) {
+                        setCurrentReplyExpanded(true)
+                        onCurrentReplyExpandToBottom()
+                        return@AssistantReplyHeader
+                    }
+                    val next = !collapsed
+                    collapsed = next
+                    if (next) setCurrentReplyExpanded(false)
+                    if (!next) onUserExpand()
+                },
+            )
+        }
         if (!collapsed) {
             segments.forEachIndexed { segmentIndex, segment ->
                 if (segment.subagent == null) {
@@ -286,7 +301,9 @@ private fun replyPreview(content: List<ContentBlock>): String {
     return if (toolCount > 0) "$toolCount 个工具调用" else ""
 }
 
-private const val CURRENT_REPLY_TAIL_UNITS = 8
+private const val CURRENT_REPLY_TAIL_UNITS = 5
+private const val CURRENT_REPLY_TEXT_UNIT_CHARS = 280
+private const val COMPACT_USER_MIN_CHARS = 140
 
 private data class CurrentReplyFold(
     val blocks: List<ContentBlock>,
@@ -359,25 +376,34 @@ private fun splitReplyTextUnits(text: String): List<String> {
         .split(Regex("\\n\\s*\\n+"))
         .map { it.trim() }
         .filter { it.isNotEmpty() }
-    if (paragraphs.size > 1) return paragraphs
-    return trimmed
-        .lineSequence()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .toList()
-        .ifEmpty { listOf(trimmed) }
+    val units = if (paragraphs.size > 1) {
+        paragraphs
+    } else {
+        trimmed
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toList()
+            .ifEmpty { listOf(trimmed) }
+    }
+    return units.flatMap { splitLongReplyUnit(it) }
+}
+
+private fun splitLongReplyUnit(text: String): List<String> {
+    if (text.length <= CURRENT_REPLY_TEXT_UNIT_CHARS) return listOf(text)
+    return text.chunked(CURRENT_REPLY_TEXT_UNIT_CHARS)
 }
 
 /** user turn 也可能携带 Task tool_result；保留普通用户气泡，并把子代理回包独立成面板。 */
 @Composable
-private fun UserTurnView(turn: ConversationTurn) {
+private fun UserTurnView(turn: ConversationTurn, compact: Boolean) {
     val parentBlocks = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
     val subagentSegments = remember(turn.content) {
         splitBySubagent(turn.content).filter { it.subagent != null }
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
         if (parentBlocks.any { it is ContentBlock.Text && it.text.isNotBlank() }) {
-            UserBubble(turn.copy(content = parentBlocks))
+            UserBubble(turn.copy(content = parentBlocks), compact = compact)
         }
         subagentSegments.forEach { segment ->
             SubagentPanel(meta = segment.subagent ?: return@forEach, running = false) {
@@ -601,7 +627,7 @@ private fun SubagentPanel(
 }
 
 @Composable
-private fun UserBubble(turn: ConversationTurn) {
+private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
     val rawText = turn.content
         .filterIsInstance<ContentBlock.Text>()
         .joinToString("\n") { it.text }
@@ -609,6 +635,9 @@ private fun UserBubble(turn: ConversationTurn) {
     // 无前缀时 paths 为空、body 即原文，行为与旧版完全一致（对齐网页 renderUserText）。
     val parsed = remember(rawText) { parseUserAttachmentText(rawText) }
     val baseUrl = LocalServerBaseUrl.current
+    val canCompact = compact && shouldCompactUserBody(parsed.body)
+    var expanded by remember(parsed.body, compact) { mutableStateOf(!canCompact) }
+    val collapsed = canCompact && !expanded
     val bubbleShape = RoundedCornerShape(
         topStart = WandShapes.radiusLg,
         topEnd = WandShapes.radiusLg,
@@ -637,47 +666,71 @@ private fun UserBubble(turn: ConversationTurn) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                SelectionContainer {
-                    // 玻璃质感气泡：品牌色纵向渐变（上浅下深）+ 顶缘受光 rim + 品牌色软阴影。
-                    val brand = WandColors.brand
-                    Text(
-                        parsed.body,
-                        fontSize = 15.sp,
-                        lineHeight = 21.sp,
-                        color = Color.White,
-                        modifier = Modifier
-                            .shadow(
-                                elevation = 2.dp,
-                                shape = bubbleShape,
-                                ambientColor = brand.copy(alpha = 0.45f),
-                                spotColor = brand.copy(alpha = 0.45f),
-                            )
-                            .clip(bubbleShape)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        lerp(brand, Color.White, 0.10f),
-                                        lerp(brand, Color.Black, 0.10f),
-                                    )
+                // 玻璃质感气泡：品牌色纵向渐变（上浅下深）+ 顶缘受光 rim + 品牌色软阴影。
+                val brand = WandColors.brand
+                Column(
+                    modifier = Modifier
+                        .shadow(
+                            elevation = 2.dp,
+                            shape = bubbleShape,
+                            ambientColor = brand.copy(alpha = 0.45f),
+                            spotColor = brand.copy(alpha = 0.45f),
+                        )
+                        .clip(bubbleShape)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    lerp(brand, Color.White, 0.10f),
+                                    lerp(brand, Color.Black, 0.10f),
                                 )
                             )
-                            .border(
-                                1.dp,
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = 0.32f),
-                                        Color.White.copy(alpha = 0.02f),
-                                    )
-                                ),
-                                bubbleShape,
-                            )
-                            .padding(horizontal = 13.dp, vertical = 8.dp),
-                    )
+                        )
+                        .border(
+                            1.dp,
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.32f),
+                                    Color.White.copy(alpha = 0.02f),
+                                )
+                            ),
+                            bubbleShape,
+                        )
+                        .padding(horizontal = 13.dp, vertical = 8.dp),
+                ) {
+                    SelectionContainer {
+                        Text(
+                            parsed.body,
+                            fontSize = 15.sp,
+                            lineHeight = 21.sp,
+                            color = Color.White,
+                            maxLines = if (collapsed) 2 else Int.MAX_VALUE,
+                            overflow = if (collapsed) TextOverflow.Ellipsis else TextOverflow.Clip,
+                        )
+                    }
+                    if (canCompact) {
+                        Text(
+                            if (collapsed) "展开" else "收起",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White.copy(alpha = 0.86f),
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .padding(top = 4.dp)
+                                .clickableWithoutRipple { expanded = !expanded },
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+private fun shouldCompactUserBody(text: String): Boolean =
+    text.length > COMPACT_USER_MIN_CHARS ||
+        text.lineSequence()
+            .filter { it.isNotBlank() }
+            .take(3)
+            .count() > 2
 
 // MARK: - 工具调用与结果的渲染层配对
 

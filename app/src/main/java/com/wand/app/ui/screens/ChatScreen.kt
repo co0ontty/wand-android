@@ -138,6 +138,7 @@ import com.wand.app.ui.theme.GlassStyle
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
@@ -147,6 +148,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+private enum class ChatScrollMode {
+    PinLatestTurn,
+    StickToBottom,
+    Manual,
+}
 
 /**
  * 原生聊天视图 —— 对称 iOS ChatView.swift：
@@ -189,9 +196,9 @@ fun ChatScreen(
     }
 
     var draft by remember { mutableStateOf("") }
-    // 抽纸式跟随：true = 把真实的最新一轮（用户消息 + 助手头部）钉在页面上方；
-    // 助手正文的旧段落折进头部摘要，只在下方显示最新尾部。用户手动滚动后置 false。
-    var followsLatest by remember { mutableStateOf(true) }
+    // 把「最新轮次置顶」「真正到底部」「用户手动浏览」拆成三种状态，避免到底部按钮
+    // 复用置顶 spacer 后滚进空白区域。
+    var scrollMode by remember { mutableStateOf(ChatScrollMode.PinLatestTurn) }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
@@ -228,7 +235,7 @@ fun ChatScreen(
                 if (source == NestedScrollSource.UserInput) {
                     if (available.y > 0f) {
                         pulledDown += available.y
-                        if (pulledDown > thresholdPx) followsLatest = false
+                        if (pulledDown > thresholdPx) scrollMode = ChatScrollMode.Manual
                     } else if (available.y < 0f) {
                         pulledDown = 0f
                     }
@@ -250,6 +257,7 @@ fun ChatScreen(
         if (lastUserTurnIndex >= 0) store.loadedOffset + lastUserTurnIndex else -1
     }
     var historyExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var expandedCurrentReplyIndex by rememberSaveable(sessionId) { mutableStateOf(-1) }
     val historyItems = remember(displayItems, lastUserTurnIndex) {
         if (lastUserTurnIndex > 0) {
             displayItems.filter { messageItemTurnIndex(it) < lastUserTurnIndex }
@@ -266,6 +274,7 @@ fun ChatScreen(
     }
     LaunchedEffect(absoluteLastUserTurnIndex) {
         historyExpanded = false
+        expandedCurrentReplyIndex = -1
     }
     val unloadedHistoryCount = remember(store.loadedOffset, absoluteLastUserTurnIndex) {
         if (absoluteLastUserTurnIndex > 0) minOf(store.loadedOffset, absoluteLastUserTurnIndex) else 0
@@ -313,17 +322,23 @@ fun ChatScreen(
     val visibleHistoryCount = when {
         !hasCollapsedHistory -> 0
         historyExpanded -> historyItems.size + 1
-        else -> 1
+        else -> 0
     }
     val latestAnchorIndex = headerOffset + visibleHistoryCount
     val bottomIndex = headerOffset + visibleHistoryCount + currentItems.size + if (store.isResponding) 1 else 0
-    LaunchedEffect(store.messages, store.isResponding, store.loading, latestAnchorIndex, bottomIndex) {
-        if (!store.loading && followsLatest) {
-            val target = if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex
+    val collapsedBottomIndex = headerOffset + currentItems.size + if (store.isResponding) 1 else 0
+    LaunchedEffect(store.messages, store.isResponding, store.loading, latestAnchorIndex, bottomIndex, scrollMode) {
+        if (!store.loading && scrollMode != ChatScrollMode.Manual) {
+            val target = when (scrollMode) {
+                ChatScrollMode.PinLatestTurn ->
+                    if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex
+                ChatScrollMode.StickToBottom -> bottomIndex
+                ChatScrollMode.Manual -> bottomIndex
+            }
             listState.scrollToItem(target)
             for (waitMs in listOf(50L, 150L, 350L, 700L)) {
                 delay(waitMs)
-                if (!followsLatest) break
+                if (scrollMode == ChatScrollMode.Manual) break
                 listState.scrollToItem(target)
             }
         }
@@ -331,18 +346,56 @@ fun ChatScreen(
     // 展开某条折叠回复时，把它的「头（第一行）」滚到顶部区域来读，且不被顶出屏幕上沿；
     // 同时暂停贴底跟随，免得流式刷新又把视图拽回底部。
     val scrollReplyToTop: (Int) -> Unit = { turnIdx ->
-        followsLatest = false
+        scrollMode = ChatScrollMode.Manual
+        expandedCurrentReplyIndex = -1
         scrollScope.launch {
             val visibleItems = if (historyExpanded) historyItems + currentItems else currentItems
             val baseOffset = headerOffset + when {
                 historyItems.isEmpty() -> 0
                 historyExpanded -> 0
-                else -> 1
+                else -> 0
             }
             val p = visibleItems.indexOfFirst { messageItemTurnIndex(it) == turnIdx }
             if (p >= 0) listState.animateScrollToItem(baseOffset + p)
         }
     }
+    val toggleHistory: () -> Unit = {
+        val next = !historyExpanded
+        scrollMode = if (next) ChatScrollMode.Manual else ChatScrollMode.PinLatestTurn
+        if (next) expandedCurrentReplyIndex = -1
+        historyExpanded = next
+        if (next) store.loadEarlier()
+        scrollScope.launch {
+            delay(50)
+            listState.animateScrollToItem(headerOffset)
+        }
+    }
+    val expandCurrentReplyToBottom: (Int) -> Unit = { turnIdx ->
+        expandedCurrentReplyIndex = turnIdx
+        historyExpanded = false
+        scrollMode = ChatScrollMode.StickToBottom
+        scrollScope.launch {
+            for (waitMs in listOf(50L, 150L, 350L, 700L)) {
+                delay(waitMs)
+                if (expandedCurrentReplyIndex != turnIdx) break
+                listState.scrollToItem(collapsedBottomIndex)
+            }
+        }
+    }
+    val collapseExpandedCurrentReply: () -> Unit = {
+        expandedCurrentReplyIndex = -1
+        historyExpanded = false
+        scrollMode = ChatScrollMode.PinLatestTurn
+        scrollScope.launch {
+            listState.animateScrollToItem(latestAnchorIndex)
+        }
+    }
+    val latestUserTurn = store.messages.getOrNull(lastUserTurnIndex)
+    val expandedReplyTurn = store.messages.getOrNull(expandedCurrentReplyIndex)
+    val showPinnedLatestContext = expandedCurrentReplyIndex >= 0 &&
+        latestUserTurn != null &&
+        expandedReplyTurn != null &&
+        expandedReplyTurn.role != "user"
 
     // Toast 自动消失。
     LaunchedEffect(store.toast) {
@@ -445,8 +498,9 @@ fun ChatScreen(
             val text = buildAttachmentPrompt(pendingAttachments, draft)
             draft = ""
             pendingAttachments = emptyList()
-            followsLatest = true
+            scrollMode = ChatScrollMode.PinLatestTurn
             historyExpanded = false
+            expandedCurrentReplyIndex = -1
             store.send(text)
         } },
     ) { padding ->
@@ -472,7 +526,12 @@ fun ChatScreen(
                             .fillMaxSize()
                             .padding(padding),
                     ) {
-                    val pinSpacerHeight = if (followsLatest && lastUserTurnIndex >= 0 && !historyExpanded) {
+                    val pinnedContextTopPadding = if (showPinnedLatestContext) 126.dp else 0.dp
+                    val pinSpacerHeight = if (
+                        scrollMode == ChatScrollMode.PinLatestTurn &&
+                        lastUserTurnIndex >= 0 &&
+                        !historyExpanded
+                    ) {
                         maxHeight
                     } else {
                         0.dp
@@ -481,12 +540,12 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(bottom = if (followsLatest) 0.dp else 50.dp)
+                            .padding(bottom = if (scrollMode == ChatScrollMode.Manual) 50.dp else 0.dp)
                             .nestedScroll(followPauseConnection),
                         contentPadding = PaddingValues(
                             start = 14.dp,
                             end = 14.dp,
-                            top = 8.dp,
+                            top = 8.dp + pinnedContextTopPadding,
                             bottom = 18.dp,
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -537,7 +596,7 @@ fun ChatScreen(
                                                     store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
                                                 },
                                                 onAskSubmit = { toolUseId, answerText ->
-                                                    followsLatest = true
+                                                    scrollMode = ChatScrollMode.PinLatestTurn
                                                     store.submitAskUser(toolUseId, answerText)
                                                 },
                                             )
@@ -549,21 +608,15 @@ fun ChatScreen(
                                     }
                                 }
                             }
-                            item(key = "history-summary") {
-                                HistorySummaryStrip(
-                                    count = collapsedHistoryCount,
-                                    preview = historyPreview(store.messages, lastUserTurnIndex),
-                                    expanded = historyExpanded,
-                                    onToggle = {
-                                        followsLatest = false
-                                        val next = !historyExpanded
-                                        historyExpanded = next
-                                        if (next) store.loadEarlier()
-                                        scrollScope.launch {
-                                            listState.animateScrollToItem(headerOffset)
-                                        }
-                                    },
-                                )
+                            if (historyExpanded) {
+                                item(key = "history-summary") {
+                                    HistorySummaryStrip(
+                                        count = collapsedHistoryCount,
+                                        preview = historyPreview(store.messages, lastUserTurnIndex),
+                                        expanded = true,
+                                        onToggle = toggleHistory,
+                                    )
+                                }
                             }
                             if (historyExpanded && store.loadingEarlier && historyItems.isEmpty()) {
                                 item(key = "history-loading-earlier") {
@@ -590,22 +643,80 @@ fun ChatScreen(
                         itemsIndexed(currentItems, key = { _, item -> "current-${messageItemKey(item)}" }) { _, item ->
                             Box(modifier = Modifier.animateItem()) {
                                 when (item) {
-                                    is MessageDisplayItem.Turn -> TurnView(
-                                        item.turn,
-                                        isLastTurn = item.index == store.messages.lastIndex,
-                                        isResponding = store.isResponding,
-                                        turnIndex = item.index,
-                                        historyBoundary = lastUserTurnIndex,
-                                        onUserExpand = { scrollReplyToTop(item.index) },
-                                        askSelections = store.askUserSelections,
-                                        onAskToggle = { toolUseId, qIdx, optIdx, multi ->
-                                            store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
-                                        },
-                                        onAskSubmit = { toolUseId, answerText ->
-                                            followsLatest = true
-                                            store.submitAskUser(toolUseId, answerText)
-                                        },
-                                    )
+                                    is MessageDisplayItem.Turn -> {
+                                        val controlsCurrentReplyExpansion = item.index == store.messages.lastIndex &&
+                                            item.turn.role != "user"
+                                        val hidePinnedUserInList = showPinnedLatestContext &&
+                                            item.index == lastUserTurnIndex &&
+                                            item.turn.role == "user"
+                                        val hidePinnedReplyHeader = showPinnedLatestContext &&
+                                            controlsCurrentReplyExpansion &&
+                                            expandedCurrentReplyIndex == item.index
+                                        val showInlineHistory = hasCollapsedHistory &&
+                                            !showPinnedLatestContext &&
+                                            !historyExpanded &&
+                                            item.index == lastUserTurnIndex &&
+                                            item.turn.role == "user"
+                                        val renderTurn: @Composable () -> Unit = {
+                                            TurnView(
+                                                item.turn,
+                                                isLastTurn = item.index == store.messages.lastIndex,
+                                                isResponding = store.isResponding,
+                                                hideAssistantHeader = hidePinnedReplyHeader,
+                                                compactUser = scrollMode == ChatScrollMode.PinLatestTurn &&
+                                                    !historyExpanded &&
+                                                    item.index == lastUserTurnIndex &&
+                                                    (store.isResponding || item.index < store.messages.lastIndex),
+                                                currentReplyExpandedOverride =
+                                                    if (controlsCurrentReplyExpansion) {
+                                                        expandedCurrentReplyIndex == item.index
+                                                    } else {
+                                                        null
+                                                    },
+                                                turnIndex = item.index,
+                                                historyBoundary = lastUserTurnIndex,
+                                                onUserExpand = { scrollReplyToTop(item.index) },
+                                                onCurrentReplyExpandedChange = { expanded ->
+                                                    if (controlsCurrentReplyExpansion) {
+                                                        expandedCurrentReplyIndex = if (expanded) item.index else -1
+                                                    }
+                                                },
+                                                onCurrentReplyExpandToBottom = {
+                                                    if (controlsCurrentReplyExpansion) {
+                                                        expandCurrentReplyToBottom(item.index)
+                                                    }
+                                                },
+                                                askSelections = store.askUserSelections,
+                                                onAskToggle = { toolUseId, qIdx, optIdx, multi ->
+                                                    store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
+                                                },
+                                                onAskSubmit = { toolUseId, answerText ->
+                                                    scrollMode = ChatScrollMode.PinLatestTurn
+                                                    store.submitAskUser(toolUseId, answerText)
+                                                },
+                                            )
+                                        }
+                                        if (hidePinnedUserInList) {
+                                            Spacer(modifier = Modifier.height(0.dp))
+                                        } else if (showInlineHistory) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.Top,
+                                            ) {
+                                                InlineHistoryChip(
+                                                    count = collapsedHistoryCount,
+                                                    onToggle = toggleHistory,
+                                                    modifier = Modifier.padding(top = 3.dp),
+                                                )
+                                                Box(modifier = Modifier.weight(1f)) {
+                                                    renderTurn()
+                                                }
+                                            }
+                                        } else {
+                                            renderTurn()
+                                        }
+                                    }
                                     is MessageDisplayItem.Exploration -> ExplorationGroupCard(
                                         tools = item.tools,
                                         running = store.isResponding &&
@@ -635,6 +746,22 @@ fun ChatScreen(
                             }
                         }
                     }
+                    AnimatedVisibility(
+                        visible = showPinnedLatestContext,
+                        enter = fadeIn(WandMotion.tweenFast()),
+                        exit = fadeOut(WandMotion.tweenFast()),
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    ) {
+                        PinnedLatestContextBar(
+                            historyCount = collapsedHistoryCount,
+                            showHistoryChip = hasCollapsedHistory,
+                            userText = turnPlainText(latestUserTurn),
+                            replyPreview = turnPlainText(expandedReplyTurn),
+                            onHistoryToggle = toggleHistory,
+                            onReplyToggle = collapseExpandedCurrentReply,
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                        )
+                    }
                     }
                 }
             }
@@ -652,9 +779,25 @@ fun ChatScreen(
                 visible = !store.connected,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
-            // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。用户上滚后点它，回到最新一轮（贴底）。
             AnimatedVisibility(
-                visible = !store.loading && store.loadError == null && !followsLatest,
+                visible = historyExpanded && hasCollapsedHistory,
+                enter = fadeIn(WandMotion.tweenFast()) +
+                    scaleIn(initialScale = 0.88f, animationSpec = WandMotion.tweenFast()),
+                exit = fadeOut(WandMotion.tweenFast()) +
+                    scaleOut(targetScale = 0.88f, animationSpec = WandMotion.tweenFast()),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = 12.dp),
+            ) {
+                InlineHistoryChip(
+                    count = collapsedHistoryCount,
+                    expanded = true,
+                    onToggle = toggleHistory,
+                )
+            }
+            // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。用户上滚后点它，回到真正的列表底部。
+            AnimatedVisibility(
+                visible = !store.loading && store.loadError == null && scrollMode == ChatScrollMode.Manual,
                 enter = fadeIn(WandMotion.tweenFast()) +
                     scaleIn(initialScale = 0.8f, animationSpec = WandMotion.tweenFast()),
                 exit = fadeOut(WandMotion.tweenFast()) +
@@ -669,10 +812,11 @@ fun ChatScreen(
                         .size(42.dp)
                         .glassSurface(glassBackdrop, CircleShape, WandGlass.accent)
                         .clickable {
-                            followsLatest = true
+                            scrollMode = ChatScrollMode.StickToBottom
                             historyExpanded = false
                             scrollScope.launch {
-                                listState.animateScrollToItem(if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex)
+                                delay(50)
+                                listState.animateScrollToItem(collapsedBottomIndex)
                             }
                         },
                 ) {
@@ -853,6 +997,180 @@ private fun HistorySummaryStrip(
             color = WandColors.brand,
         )
     }
+}
+
+@Composable
+private fun InlineHistoryChip(
+    count: Int,
+    expanded: Boolean = false,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = modifier
+            .widthIn(max = 132.dp)
+            .clip(CircleShape)
+            .background(WandColors.surfaceSoft)
+            .border(1.dp, WandColors.border, CircleShape)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+    ) {
+        Icon(
+            WandIcons.expand,
+            contentDescription = null,
+            tint = WandColors.textMuted,
+            modifier = Modifier
+                .size(13.dp)
+                .graphicsLayer { rotationZ = if (expanded) 90f else -90f },
+        )
+        Text(
+            if (expanded) "收起上文" else "已收起 $count 段",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun PinnedLatestContextBar(
+    historyCount: Int,
+    showHistoryChip: Boolean,
+    userText: String,
+    replyPreview: String,
+    onHistoryToggle: () -> Unit,
+    onReplyToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(WandColors.bgElevated)
+            .border(1.dp, WandColors.border.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            if (showHistoryChip) {
+                InlineHistoryChip(
+                    count = historyCount,
+                    onToggle = onHistoryToggle,
+                    modifier = Modifier.padding(top = 1.dp),
+                )
+            }
+            PinnedUserBubble(
+                text = userText,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        PinnedReplyHeader(
+            preview = replyPreview,
+            onToggle = onReplyToggle,
+        )
+    }
+}
+
+@Composable
+private fun PinnedUserBubble(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Text(
+            text.ifBlank { "用户消息" },
+            fontSize = 14.sp,
+            lineHeight = 19.sp,
+            color = Color.White,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .clip(
+                    RoundedCornerShape(
+                        topStart = WandShapes.radiusLg,
+                        topEnd = WandShapes.radiusLg,
+                        bottomStart = WandShapes.radiusLg,
+                        bottomEnd = 6.dp,
+                    ),
+                )
+                .background(WandColors.brand)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun PinnedReplyHeader(
+    preview: String,
+    onToggle: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.full)
+            .clickableWithoutRipple { onToggle() }
+            .padding(vertical = 3.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(WandColors.brand.copy(alpha = 0.14f)),
+        ) {
+            Icon(
+                WandIcons.sparkle,
+                contentDescription = null,
+                tint = WandColors.brand,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Text(
+            "Wand",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textPrimary,
+        )
+        Text(
+            preview.ifBlank { "已展开全文，点此收起" },
+            fontSize = 12.sp,
+            color = WandColors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            WandIcons.expand,
+            contentDescription = "收起回复",
+            tint = WandColors.textSecondary,
+            modifier = Modifier
+                .size(15.dp)
+                .graphicsLayer { rotationZ = 180f },
+        )
+    }
+}
+
+private fun turnPlainText(turn: ConversationTurn?): String {
+    return turn?.content
+        ?.filterIsInstance<ContentBlock.Text>()
+        ?.joinToString(" ") { it.text }
+        ?.trim()
+        ?.replace(Regex("\\s+"), " ")
+        .orEmpty()
 }
 
 private fun historyPreview(messages: List<ConversationTurn>, beforeTurnIndex: Int): String {
