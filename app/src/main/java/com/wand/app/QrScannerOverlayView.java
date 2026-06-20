@@ -164,6 +164,6 @@ public class QrScannerOverlayView extends View {
     }
 
     private float dp(float value) {
-        return value * getResources().getDisplayMetrics().density;
+        return NetUtils.dpToPx(getContext(), value);
     }
 }

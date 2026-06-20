@@ -68,7 +68,7 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
             override fun onResults(results: Bundle?) {
                 if (cancelled) return
                 val text = firstResult(results) ?: lastText
-                this@SystemSpeechEngine.listener?.onFinal(text.ifEmpty { lastText })
+                this@SystemSpeechEngine.listener?.onFinal(text)
             }
 
             override fun onError(error: Int) {

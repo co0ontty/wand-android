@@ -12,6 +12,16 @@ import org.json.JSONObject
 
 // MARK: - org.json 容错取值辅助
 
+/** 泛型 JSONArray 迭代：消除重复的 for-i-optJSONObject 样板。 */
+internal inline fun <T> JSONArray.parseEach(block: (JSONObject) -> T?): List<T> {
+    val out = mutableListOf<T>()
+    for (i in 0 until length()) {
+        val obj = optJSONObject(i) ?: continue
+        block(obj)?.let { out.add(it) }
+    }
+    return out
+}
+
 internal fun JSONObject.str(key: String): String? =
     if (has(key) && !isNull(key)) optString(key) else null
 
@@ -155,18 +165,8 @@ data class ConversationTurn(
             return ConversationTurn(role = o.str("role") ?: "assistant", content = blocks)
         }
 
-        fun parseList(arr: JSONArray?): List<ConversationTurn>? {
-            if (arr == null) return null
-            val turns = mutableListOf<ConversationTurn>()
-            for (i in 0 until arr.length()) {
-                val turnObj = arr.optJSONObject(i) ?: continue
-                try {
-                    turns.add(parse(turnObj))
-                } catch (_: Exception) {
-                }
-            }
-            return turns
-        }
+        fun parseList(arr: JSONArray?): List<ConversationTurn>? =
+            arr?.parseEach { try { parse(it) } catch (_: Exception) { null } }
     }
 }
 
@@ -319,7 +319,7 @@ data class SessionSnapshot(
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
             queuedMessages = o.arr("queuedMessages")?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.optString(it) }
+                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { it.isNotEmpty() } }
             },
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
@@ -327,17 +327,8 @@ data class SessionSnapshot(
             autoApprovePermissions = o.bool("autoApprovePermissions"),
         )
 
-        fun parseList(arr: JSONArray): List<SessionSnapshot> {
-            val out = mutableListOf<SessionSnapshot>()
-            for (i in 0 until arr.length()) {
-                val snapObj = arr.optJSONObject(i) ?: continue
-                try {
-                    out.add(parse(snapObj))
-                } catch (_: Exception) {
-                }
-            }
-            return out
-        }
+        fun parseList(arr: JSONArray): List<SessionSnapshot> =
+            arr.parseEach { try { parse(it) } catch (_: Exception) { null } }
     }
 }
 
@@ -356,26 +347,25 @@ data class HistorySession(
 ) {
     val id: String get() = claudeSessionId
 
+    /** API 路径归一化：服务端接口只认 "claude" 或 "codex"。 */
+    val apiProvider: String get() = if (provider == "codex") "codex" else "claude"
+
     companion object {
         fun parseList(arr: JSONArray, provider: String): List<HistorySession> {
-            val out = mutableListOf<HistorySession>()
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val sessionId = o.str("claudeSessionId") ?: continue
-                out.add(
-                    HistorySession(
-                        claudeSessionId = sessionId,
-                        cwd = o.str("cwd") ?: "",
-                        firstUserMessage = o.str("firstUserMessage") ?: "",
-                        timestamp = o.str("timestamp"),
-                        mtimeMs = o.dbl("mtimeMs"),
-                        hasConversation = o.bool("hasConversation"),
-                        managedByWand = o.bool("managedByWand"),
-                        provider = o.str("provider") ?: provider,
-                    )
+            val p = provider
+            return arr.parseEach { o ->
+                val sid = o.str("claudeSessionId") ?: return@parseEach null
+                HistorySession(
+                    claudeSessionId = sid,
+                    cwd = o.str("cwd") ?: "",
+                    firstUserMessage = o.str("firstUserMessage") ?: "",
+                    timestamp = o.str("timestamp"),
+                    mtimeMs = o.dbl("mtimeMs"),
+                    hasConversation = o.bool("hasConversation"),
+                    managedByWand = o.bool("managedByWand"),
+                    provider = o.str("provider") ?: p,
                 )
             }
-            return out
         }
     }
 }
@@ -389,16 +379,12 @@ data class ModelInfo(
     val alias: Boolean?,
 ) {
     companion object {
-        fun parseList(arr: JSONArray?): List<ModelInfo> {
-            if (arr == null) return emptyList()
-            val out = mutableListOf<ModelInfo>()
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val id = o.str("id") ?: continue
-                out.add(ModelInfo(id = id, label = o.str("label") ?: id, alias = o.bool("alias")))
-            }
-            return out
-        }
+        fun parseList(arr: JSONArray?): List<ModelInfo> =
+            arr?.parseEach { o ->
+                o.str("id")?.let { id ->
+                    ModelInfo(id = id, label = o.str("label") ?: id, alias = o.bool("alias"))
+                }
+            } ?: emptyList()
     }
 }
 
@@ -428,19 +414,14 @@ data class UploadedFile(
     companion object {
         fun parseList(o: JSONObject): List<UploadedFile> {
             val arr = o.arr("files") ?: return emptyList()
-            val out = mutableListOf<UploadedFile>()
-            for (i in 0 until arr.length()) {
-                val f = arr.optJSONObject(i) ?: continue
-                out.add(
-                    UploadedFile(
-                        originalName = f.str("originalName") ?: "",
-                        savedPath = f.str("savedPath") ?: "",
-                        size = f.int("size") ?: 0,
-                        mimeType = f.str("mimeType") ?: "",
-                    )
+            return arr.parseEach { f ->
+                UploadedFile(
+                    originalName = f.str("originalName") ?: "",
+                    savedPath = f.str("savedPath") ?: "",
+                    size = f.int("size") ?: 0,
+                    mimeType = f.str("mimeType") ?: "",
                 )
             }
-            return out
         }
     }
 }
@@ -548,7 +529,7 @@ data class WsData(
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
             queuedMessages = o.arr("queuedMessages")?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.optString(it) }
+                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { it.isNotEmpty() } }
             },
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
@@ -609,13 +590,8 @@ data class DirectoryListing(
 ) {
     companion object {
         fun parse(o: JSONObject): DirectoryListing {
-            val items = mutableListOf<DirectoryItem>()
-            val arr = o.arr("items")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    arr.optJSONObject(i)?.let { items.add(DirectoryItem.parse(it)) }
-                }
-            }
+            val items = (o.arr("items") ?: return DirectoryListing(emptyList(), o.bool("truncated")))
+                .parseEach { DirectoryItem.parse(it) }
             return DirectoryListing(items = items, truncated = o.bool("truncated"))
         }
     }
@@ -635,13 +611,11 @@ data class RecentPath(
 
     companion object {
         fun parseList(arr: JSONArray): List<RecentPath> {
-            val out = mutableListOf<RecentPath>()
-            for (i in 0 until arr.length()) {
-                val p = arr.optJSONObject(i) ?: continue
-                val path = p.str("path") ?: continue
-                out.add(RecentPath(path, p.str("name"), p.str("lastUsedAt")))
+            return arr.parseEach { p ->
+                p.str("path")?.let { path ->
+                    RecentPath(path, p.str("name"), p.str("lastUsedAt"))
+                }
             }
-            return out
         }
     }
 }

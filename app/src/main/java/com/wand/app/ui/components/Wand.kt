@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
@@ -359,7 +360,7 @@ fun WandCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     selected: Boolean = false,
-    shape: Shape = RoundedCornerShape(12.dp),
+    shape: Shape = WandShapes.md,
     containerColor: Color? = null,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
@@ -455,6 +456,35 @@ fun WandChromeIconButton(
             contentDescription = contentDescription,
             tint = tint,
             modifier = Modifier.size(19.dp),
+        )
+    }
+}
+
+/**
+ * 顶栏 / 工具栏里的统一图标按钮（对齐 iOS toolbar button）。
+ * 合并 ChatScreen.QuietTopIconButton 与 SessionListScreen.SessionToolbarIconButton：
+ * 前者 48×48 / icon 22dp，后者 48×48 / icon 21dp —— 统一为可配参数。
+ */
+@Composable
+fun ToolbarIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = WandColors.textSecondary,
+    enabled: Boolean = true,
+    iconSize: Dp = 21.dp,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.size(48.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) tint else WandColors.textMuted.copy(alpha = 0.48f),
+            modifier = Modifier.size(iconSize),
         )
     }
 }

@@ -10,6 +10,9 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
+import android.content.Context;
+import android.util.DisplayMetrics;
+
 /**
  * 网络相关的共享工具。
  *
@@ -60,5 +63,15 @@ final class NetUtils {
         conn.setConnectTimeout(connectTimeout);
         conn.setReadTimeout(readTimeout);
         return conn;
+    }
+
+    /** dp → px（合并 ConnectActivity.dpToPx 与 QrScannerOverlayView.dp）。 */
+    static int dpToPx(Context context, int dp) {
+        return (int) (dp * context.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** dp → px（浮点版，供 QrScannerOverlayView 绘制用）。 */
+    static float dpToPx(Context context, float dp) {
+        return dp * context.getResources().getDisplayMetrics().density;
     }
 }

@@ -98,6 +98,7 @@ class WandSocket(baseUrl: String) {
                 handler.post {
                     if (gen != generation || closed) return@post
                     lastMessageAt = SystemClock.elapsedRealtime()
+                    reconnectDelayMs = 1_000L
                     onConnectionChange?.invoke(true)
                     // 重新订阅当前会话；服务端会推一份 init 快照，相当于天然 resync。
                     subscribedSessionId?.let { id ->

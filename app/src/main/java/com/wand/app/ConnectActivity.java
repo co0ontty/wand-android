@@ -465,7 +465,7 @@ public class ConnectActivity extends AppCompatActivity {
             }
             return "服务器返回了异常状态码: " + code;
         } catch (Exception e) {
-            return describeConnectionError(e);
+            return NetworkErrorHelper.describeError(e, "connect");
         } finally {
             if (conn != null) {
                 try { conn.disconnect(); } catch (Exception ignored) {}
@@ -485,7 +485,7 @@ public class ConnectActivity extends AppCompatActivity {
             }
             return "服务器返回了异常状态码: " + code;
         } catch (Exception e) {
-            return describeConnectionError(e);
+            return NetworkErrorHelper.describeError(e, "connect");
         }
     }
 
@@ -499,30 +499,6 @@ public class ConnectActivity extends AppCompatActivity {
             url = url.substring(0, url.length() - 1);
         }
         return url;
-    }
-
-    /**
-     * 把连接探测过程中的异常映射成面向用户的中文文案。两个 testConnection*
-     * 方法共用 — 文案取二者并集 (MalformedURLException 仅直连路径可能触发)。
-     */
-    private static String describeConnectionError(Exception e) {
-        if (e instanceof java.net.MalformedURLException) {
-            return "地址格式不正确，请检查后重试";
-        }
-        if (e instanceof java.net.ConnectException) {
-            return "无法连接到服务器，请确认地址和端口是否正确";
-        }
-        if (e instanceof java.net.SocketTimeoutException) {
-            return "连接超时，请检查网络或服务器是否在运行";
-        }
-        if (e instanceof java.net.UnknownHostException) {
-            return "无法解析地址，请检查服务器地址是否正确";
-        }
-        if (e instanceof javax.net.ssl.SSLException) {
-            // 已 trustSelfSigned 全信任, SSL 异常基本只因 host 不通, 归并到"无法连接"。
-            return "无法连接到服务器，请确认地址和端口是否正确";
-        }
-        return "连接失败，请检查地址或稍后重试";
     }
 
     /** 连接成功后进入原生主界面（HomeActivity）；WebView（MainActivity）只作网页版兜底。 */
@@ -673,6 +649,6 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private int dpToPx(int dp) {
-        return (int) (dp * getResources().getDisplayMetrics().density + 0.5f);
+        return NetUtils.dpToPx(this, dp);
     }
 }

@@ -6,10 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.GitStatusResult
 import com.wand.app.data.WandApi
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -24,7 +20,7 @@ class QuickCommitStore(
     val sessionId: String,
     private val api: WandApi,
     private val onToast: (String) -> Unit = {},
-) {
+) : ScopedStore() {
 
     var status by mutableStateOf<GitStatusResult?>(null)
         private set
@@ -64,13 +60,8 @@ class QuickCommitStore(
         private set
 
     private var lastFetchAt = 0L
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     val inFlight: Boolean get() = submitting || pushing
-
-    fun shutdown() {
-        scope.cancel()
-    }
 
     // MARK: - git 状态
 

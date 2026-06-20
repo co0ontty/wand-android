@@ -129,9 +129,11 @@ import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
+import com.wand.app.ui.components.middleTruncate
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.GlassStyle
@@ -445,11 +447,12 @@ fun ChatScreen(
                     }
                 },
                 navigationIcon = {
-                    QuietTopIconButton(
+                    ToolbarIconButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "返回",
                         onClick = onBack,
                         modifier = Modifier.padding(start = 6.dp),
+                        iconSize = 22.dp,
                     )
                 },
                 actions = {
@@ -844,26 +847,6 @@ fun ChatScreen(
     }
 }
 
-@Composable
-private fun QuietTopIconButton(
-    icon: ImageVector,
-    contentDescription: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    IconButton(
-        onClick = onClick,
-        modifier = modifier.size(48.dp),
-    ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            tint = WandColors.textSecondary,
-            modifier = Modifier.size(22.dp),
-        )
-    }
-}
-
 /** 顶栏左侧 provider 小徽标：品牌色弱底圆角方块 + 品牌 logo，标明当前 Claude / Codex。 */
 @Composable
 private fun ChatProviderBadge(provider: String?) {
@@ -892,14 +875,6 @@ private fun navigationStatusTitle(store: ChatStore): String {
     val task = store.currentTaskTitle?.trim().orEmpty()
     if (store.isResponding && task.isNotEmpty()) return task
     return if (store.snapshot?.provider == "codex") "Codex 对话" else "Claude 对话"
-}
-
-/** 中间截断（对齐 iOS .truncationMode(.middle)，Compose 没有内置实现）。 */
-private fun middleTruncate(text: String, maxChars: Int): String {
-    if (text.length <= maxChars) return text
-    val head = (maxChars - 1) / 2
-    val tail = maxChars - 1 - head
-    return text.take(head) + "…" + text.takeLast(tail)
 }
 
 @Composable

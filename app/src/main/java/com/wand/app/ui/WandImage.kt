@@ -87,18 +87,15 @@ object WandImage {
             .toString()
 
     // 进程级单例：所有 AsyncImage 共用一个走 WandHttp.client 的 ImageLoader。
-    @Volatile
-    private var loader: ImageLoader? = null
+    private lateinit var loader: ImageLoader
 
     fun imageLoader(context: Context): ImageLoader {
-        loader?.let { return it }
-        return synchronized(this) {
-            loader ?: ImageLoader.Builder(context.applicationContext)
-                .okHttpClient { WandHttp.client }
-                .crossfade(true)
-                .build()
-                .also { loader = it }
-        }
+        if (::loader.isInitialized) return loader
+        loader = ImageLoader.Builder(context.applicationContext)
+            .okHttpClient { WandHttp.client }
+            .crossfade(true)
+            .build()
+        return loader
     }
 }
 

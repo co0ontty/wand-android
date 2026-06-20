@@ -38,11 +38,17 @@ class WandApi(baseUrl: String, val token: String?) {
         return builder.build()
     }
 
+    private val longTimeoutClient by lazy {
+        WandHttp.client.newBuilder()
+            .readTimeout(180, TimeUnit.SECONDS)
+            .build()
+    }
+
     private fun execute(request: Request, timeoutSec: Int): Pair<Int, String> {
-        val client = if (timeoutSec == 30) {
-            WandHttp.client
-        } else {
-            WandHttp.client.newBuilder()
+        val client = when (timeoutSec) {
+            30 -> WandHttp.client
+            180 -> longTimeoutClient
+            else -> WandHttp.client.newBuilder()
                 .readTimeout(timeoutSec.toLong(), TimeUnit.SECONDS)
                 .build()
         }
@@ -51,34 +57,43 @@ class WandApi(baseUrl: String, val token: String?) {
         }
     }
 
+    private fun IOException.toApiException() =
+        WandApiException(null, "网络错误：${message ?: "请求失败"}")
+
+    /** 执行一次 HTTP 请求并处理 401 自动重登。 */
+    private suspend fun executeWithRetry(request: Request, timeoutSec: Int = 30): Pair<Int, String> =
+        withContext(Dispatchers.IO) {
+            var (code, text) = try {
+                execute(request, timeoutSec)
+            } catch (e: IOException) {
+                throw e.toApiException()
+            }
+            if (code == 401 && !token.isNullOrEmpty()) {
+                try {
+                    WandAuth.loginWithToken(baseUrl, token)
+                } catch (_: Exception) {
+                    throw WandApiException(401, "登录已失效，请重新连接")
+                }
+                val retried = try {
+                    execute(request, timeoutSec)
+                } catch (e: IOException) {
+                    throw e.toApiException()
+                }
+                code = retried.first
+                text = retried.second
+            }
+            code to text
+        }
+
     /** 带 401 自动重登的请求入口。返回响应 body 字符串。 */
     private suspend fun requestData(
         method: String,
         path: String,
         body: JSONObject? = null,
         timeoutSec: Int = 30,
-    ): String = withContext(Dispatchers.IO) {
+    ): String {
         val request = buildRequest(method, path, body)
-        var (code, text) = try {
-            execute(request, timeoutSec)
-        } catch (e: IOException) {
-            throw WandApiException(null, "网络错误：${e.message ?: "请求失败"}")
-        }
-        if (code == 401 && !token.isNullOrEmpty()) {
-            // session cookie 过期：用 appToken 重新登录一次，cookie 注入共享 CookieJar 后重试。
-            try {
-                WandAuth.loginWithToken(baseUrl, token)
-            } catch (_: Exception) {
-                throw WandApiException(401, "登录已失效，请重新连接")
-            }
-            val retried = try {
-                execute(buildRequest(method, path, body), timeoutSec)
-            } catch (e: IOException) {
-                throw WandApiException(null, "网络错误：${e.message ?: "请求失败"}")
-            }
-            code = retried.first
-            text = retried.second
-        }
+        val (code, text) = executeWithRetry(request, timeoutSec)
         if (code !in 200..299) {
             if (code == 401) throw WandApiException(401, "登录已失效，请重新连接")
             var message = "服务器返回 $code"
@@ -89,7 +104,7 @@ class WandApi(baseUrl: String, val token: String?) {
             }
             throw WandApiException(code, message)
         }
-        text
+        return text
     }
 
     private suspend fun requestObject(
@@ -211,7 +226,7 @@ class WandApi(baseUrl: String, val token: String?) {
     suspend fun uploadAttachments(
         id: String,
         files: List<Pair<String, ByteArray>>,
-    ): List<UploadedFile> = withContext(Dispatchers.IO) {
+    ): List<UploadedFile> {
         val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
         for ((name, bytes) in files.take(5)) {
             if (bytes.size > 10 * 1024 * 1024) {
@@ -227,13 +242,9 @@ class WandApi(baseUrl: String, val token: String?) {
             .url("$baseUrl/api/sessions/$id/upload")
             .post(multipart.build())
             .build()
-        val (code, text) = try {
-            execute(request, timeoutSec = 60)
-        } catch (e: IOException) {
-            throw WandApiException(null, "网络错误：${e.message ?: "请求失败"}")
-        }
+        val (code, text) = executeWithRetry(request, timeoutSec = 60)
         if (code !in 200..299) throw WandApiException(code, "附件上传失败")
-        try {
+        return try {
             UploadedFile.parseList(JSONObject(text))
         } catch (e: Exception) {
             throw WandApiException(null, "响应解析失败：${e.message}")
@@ -249,7 +260,7 @@ class WandApi(baseUrl: String, val token: String?) {
         HistorySession.parseList(requestArray("GET", "/api/codex-history"), provider = "codex")
 
     suspend fun resumeHistory(history: HistorySession): SessionSnapshot {
-        val provider = if (history.provider == "codex") "codex" else "claude"
+        val provider = history.apiProvider
         return SessionSnapshot.parse(
             requestObject(
                 "POST",
@@ -260,7 +271,7 @@ class WandApi(baseUrl: String, val token: String?) {
     }
 
     suspend fun deleteHistory(history: HistorySession) {
-        val provider = if (history.provider == "codex") "codex" else "claude"
+        val provider = history.apiProvider
         requestData("DELETE", "/api/$provider-history/${encode(history.claudeSessionId)}")
     }
 

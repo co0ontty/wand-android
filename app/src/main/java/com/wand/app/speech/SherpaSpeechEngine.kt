@@ -201,7 +201,7 @@ class SherpaSpeechEngine(private val context: Context) : SpeechEngine {
         thread(name = "wand-stt") {
             val recognizer = try {
                 obtainRecognizer(context)
-            } catch (e: Throwable) {
+            } catch (e: Exception) {
                 phase = PHASE_IDLE
                 postError("加载语音模型失败：${e.message}")
                 return@thread
@@ -258,7 +258,7 @@ class SherpaSpeechEngine(private val context: Context) : SpeechEngine {
                 main.post {
                     if (phase != PHASE_CANCELLED) listener.onFinal(finalText)
                 }
-            } catch (e: Throwable) {
+            } catch (e: Exception) {
                 postError("识别失败：${e.message}")
             } finally {
                 try {

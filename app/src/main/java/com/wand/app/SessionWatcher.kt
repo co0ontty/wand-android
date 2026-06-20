@@ -76,7 +76,6 @@ object SessionWatcher {
     private var lastListRefreshAt = 0L
 
     /** ChatScreen 注册的「正在看」的会话；前台 + 正在看 → 抑制该会话的打扰通知。 */
-    @Volatile
     var activeChatSessionId: String? = null
 
     private var startedActivities = 0

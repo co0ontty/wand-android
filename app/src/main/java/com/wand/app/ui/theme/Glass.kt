@@ -318,7 +318,7 @@ fun Modifier.glassSurface(
                 if (edgeToEdge) Modifier
                 else Modifier.border(
                     1.dp,
-                    Brush.linearGradient(listOf(style.rimLight, style.rimShade)),
+                    bevelRimBrush(style.rimLight, style.rimShade),
                     shape,
                 )
             )

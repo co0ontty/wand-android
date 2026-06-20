@@ -12,10 +12,6 @@ import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import com.wand.app.data.WsData
 import com.wand.app.data.WsIncoming
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -36,7 +32,7 @@ data class AskUserSelectionState(
     val submitted: Boolean = false,
 )
 
-class ChatStore(val sessionId: String, val api: WandApi) {
+class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     var messages by mutableStateOf<List<ConversationTurn>>(emptyList())
         private set
@@ -100,9 +96,6 @@ class ChatStore(val sessionId: String, val api: WandApi) {
     private var started = false
     private var queuePromotePending = false
 
-    /** UI 主线程作用域；shutdown 时取消所有未完成请求。 */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
     val isStructured: Boolean get() = snapshot?.isStructured ?: true
     val sessionEnded: Boolean get() = status in listOf("exited", "failed", "stopped")
 
@@ -130,9 +123,9 @@ class ChatStore(val sessionId: String, val api: WandApi) {
         }
     }
 
-    fun shutdown() {
+    override fun shutdown() {
         socket.close()
-        scope.cancel()
+        super.shutdown()
     }
 
     // MARK: - 推送合流

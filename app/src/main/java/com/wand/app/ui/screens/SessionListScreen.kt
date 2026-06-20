@@ -86,9 +86,11 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.middleTruncate
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.GlassStyle
@@ -563,7 +565,7 @@ private fun SessionListTopBar(
                     color = WandColors.textPrimary,
                     modifier = Modifier.align(Alignment.Center),
                 )
-                SessionToolbarIconButton(
+                ToolbarIconButton(
                     icon = WandIcons.close,
                     contentDescription = "退出多选",
                     tint = WandColors.brand,
@@ -572,7 +574,7 @@ private fun SessionListTopBar(
                 )
             } else {
                 Box(modifier = Modifier.align(Alignment.CenterStart)) {
-                    SessionToolbarIconButton(
+                    ToolbarIconButton(
                         icon = Icons.Default.MoreVert,
                         contentDescription = "菜单",
                         onClick = { onMenuOpenChange(true) },
@@ -617,7 +619,7 @@ private fun SessionListTopBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (listScope == "history") {
-                        SessionToolbarIconButton(
+                        ToolbarIconButton(
                             icon = WandIcons.delete,
                             contentDescription = "清空历史会话",
                             tint = if (canClearHistory) WandColors.danger else WandColors.textMuted,
@@ -625,7 +627,7 @@ private fun SessionListTopBar(
                             onClick = onClearHistory,
                         )
                     } else {
-                        SessionToolbarIconButton(
+                        ToolbarIconButton(
                             icon = WandIcons.add,
                             contentDescription = "新建会话",
                             tint = WandColors.brand,
@@ -636,29 +638,6 @@ private fun SessionListTopBar(
             }
         }
         HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
-    }
-}
-
-@Composable
-private fun SessionToolbarIconButton(
-    icon: ImageVector,
-    contentDescription: String,
-    tint: Color = WandColors.textSecondary,
-    enabled: Boolean = true,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.size(48.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (enabled) tint else WandColors.textMuted.copy(alpha = 0.48f),
-            modifier = Modifier.size(21.dp),
-        )
     }
 }
 
@@ -893,7 +872,7 @@ private fun HistorySessionCard(
                 val cwd = history.cwd
                 if (cwd.isNotEmpty()) {
                     Text(
-                        middleTruncatePath(cwd),
+                        middleTruncate(cwd),
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         color = WandColors.textMuted,
@@ -1109,7 +1088,7 @@ private fun SessionCard(
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Text(
-                        if (cwd.isEmpty()) "未设置工作目录" else middleTruncatePath(cwd, 48),
+                        if (cwd.isEmpty()) "未设置工作目录" else middleTruncate(cwd, 48),
                         modifier = Modifier.fillMaxWidth(),
                         fontSize = 10.5.sp,
                         fontFamily = FontFamily.Monospace,
@@ -1143,38 +1122,11 @@ private fun SessionMetaRail(session: SessionSnapshot, status: String) {
             modifier = Modifier.height(24.dp),
             contentAlignment = Alignment.Center,
         ) {
-            SessionModeChip(session)
+            MetaChip(
+                text = if (session.isStructured) "聊天" else "终端",
+                icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
+            )
         }
-    }
-}
-
-@Composable
-private fun SessionModeChip(session: SessionSnapshot) {
-    val mode = if (session.isStructured) "聊天" else "终端"
-    val tint = WandColors.textSecondary
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .widthIn(max = 96.dp)
-            .clip(WandShapes.full)
-            .background(tint.copy(alpha = 0.075f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-    ) {
-        Icon(
-            if (session.isStructured) WandIcons.chat else WandIcons.terminal,
-            contentDescription = null,
-            tint = tint.copy(alpha = 0.88f),
-            modifier = Modifier.size(11.dp),
-        )
-        Text(
-            mode,
-            fontSize = 9.8.sp,
-            fontWeight = FontWeight.Medium,
-            color = tint.copy(alpha = 0.92f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
@@ -1278,16 +1230,4 @@ private fun sessionDurationLabel(session: SessionSnapshot): String {
         null
     }
     return singleUnitDurationLabel((ended ?: System.currentTimeMillis()) - started)
-}
-
-/**
- * 中段省略长路径：保留头部与尾部、中间塞 "…"，比纯尾部省略更能同时看出「在哪个根目录、哪个项目」。
- * 短路径原样返回；超长才折叠（阈值约一行等宽字符宽度）。
- */
-private fun middleTruncatePath(path: String, max: Int = 38): String {
-    if (path.length <= max) return path
-    val keep = max - 1
-    val head = (keep + 1) / 2
-    val tail = keep - head
-    return path.take(head) + "…" + path.takeLast(tail)
 }

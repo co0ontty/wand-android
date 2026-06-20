@@ -328,7 +328,7 @@ object WandShapes {
     val lg: Shape = RoundedCornerShape(20.dp)
 
     /** 圆形胶囊。 */
-    val full: Shape = RoundedCornerShape(50)
+    val full: Shape = RoundedCornerShape(999.dp)
 
     // 自定义每角圆角时用的原始半径（如聊天气泡"尾巴"）。
     val radiusXs: Dp = 6.dp

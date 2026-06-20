@@ -280,7 +280,7 @@ final class UpdateManager {
 
             } catch (Exception e) {
                 if (cancelled[0]) return;
-                final String errMsg = friendlyDownloadError(e);
+                final String errMsg = NetworkErrorHelper.describeError(e, "download");
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
                     progress.dismiss();
@@ -362,15 +362,6 @@ final class UpdateManager {
                 .setPositiveButton(android.R.string.ok, null)
                 .show();
         }
-    }
-
-    private static String friendlyDownloadError(Exception e) {
-        if (e instanceof java.net.SocketTimeoutException) return "下载超时，请检查网络后重试";
-        if (e instanceof java.net.UnknownHostException) return "无法连接到下载服务器，请检查网络";
-        if (e instanceof java.net.ConnectException) return "无法连接到下载服务器";
-        String raw = e.getMessage() != null ? e.getMessage() : "";
-        if (raw.contains("ENOSPC") || raw.toLowerCase().contains("space")) return "存储空间不足，请清理后重试";
-        return raw.isEmpty() ? "下载失败，请稍后重试" : raw;
     }
 
     static String extractVersionFromFileName(String fileName) {
