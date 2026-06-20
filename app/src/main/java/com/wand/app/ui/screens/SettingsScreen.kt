@@ -2,8 +2,16 @@ package com.wand.app.ui.screens
 
 import android.Manifest
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,8 +45,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -54,7 +65,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -80,9 +93,11 @@ import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
+import kotlinx.coroutines.delay
 
 /**
  * 原生设置页 —— 对称 iOS SettingsView，并把原 WebView 桥（WandNative）的
@@ -106,6 +121,7 @@ fun SettingsScreen(
     var keepAlive by remember { mutableStateOf(false) }
     var betaChannel by remember { mutableStateOf(actions.isBetaChannel()) }
     var appearanceMode by remember { mutableStateOf(actions.getAppearanceMode()) }
+    val motionEnabled = rememberSettingsMotionEnabled()
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -192,117 +208,151 @@ fun SettingsScreen(
             ) {
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // —— 高频偏好 ——
-                SectionHeader("外观调整")
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    AppearanceModePicker(
-                        selected = appearanceMode,
-                        onSelected = { mode ->
-                            appearanceMode = mode
-                            actions.setAppearanceMode(mode)
+                SettingsMotionSection(
+                    title = "外观调整",
+                    index = 0,
+                    motionEnabled = motionEnabled,
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        AppearanceModePicker(
+                            selected = appearanceMode,
+                            onSelected = { mode ->
+                                appearanceMode = mode
+                                actions.setAppearanceMode(mode)
+                            },
+                        )
+                    }
+                }
+
+                SettingsMotionSection(
+                    title = "通知与反馈",
+                    index = 1,
+                    motionEnabled = motionEnabled,
+                ) {
+                    NotificationFeedbackSection(
+                        selectedSound = selectedSound,
+                        volume = volume,
+                        hapticEnabled = hapticEnabled,
+                        onSoundSelected = { id ->
+                            selectedSound = id
+                            actions.setNotificationSound(id)
+                            actions.previewSound(id)
+                        },
+                        onVolumeChange = { volume = it },
+                        onVolumeCommit = {
+                            actions.setNotificationVolume(volume.toInt())
+                            actions.previewSound(selectedSound)
+                        },
+                        onHapticChange = {
+                            hapticEnabled = it
+                            actions.setHapticEnabled(it)
                         },
                     )
                 }
 
-                // —— 通知与反馈 ——
-                SectionHeader("通知与反馈")
-                NotificationFeedbackSection(
-                    selectedSound = selectedSound,
-                    volume = volume,
-                    hapticEnabled = hapticEnabled,
-                    onSoundSelected = { id ->
-                        selectedSound = id
-                        actions.setNotificationSound(id)
-                        actions.previewSound(id)
-                    },
-                    onVolumeChange = { volume = it },
-                    onVolumeCommit = {
-                        actions.setNotificationVolume(volume.toInt())
-                        actions.previewSound(selectedSound)
-                    },
-                    onHapticChange = {
-                        hapticEnabled = it
-                        actions.setHapticEnabled(it)
-                    },
-                )
-
-                // —— 语音输入 ——
-                SectionHeader("语音输入")
-                SttModelSection()
-
-                // —— 后台 ——
-                SectionHeader("后台运行")
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    SwitchRow("后台保活", keepAlive, WandIcons.refresh) { enabled ->
-                        keepAlive = enabled
-                        if (enabled && Build.VERSION.SDK_INT >= 33) {
-                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                        actions.setKeepAlive(enabled)
-                    }
-                }
-
-                // —— 更新 ——
-                SectionHeader("更新")
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
-                    RowDivider()
-                    SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
-                        betaChannel = it
-                        actions.setBetaChannel(it)
-                    }
-                }
-
-                // —— 连接 ——
-                SectionHeader("连接与服务器")
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    InfoRow("服务器地址", actions.serverUrl, icon = WandIcons.web, mono = true)
-                    RowDivider()
-                    InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定", icon = WandIcons.permission)
-                    RowDivider()
-                    ActionRow("打开网页版", WandIcons.web) { actions.openWeb() }
-                    RowDivider()
-                    ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
-                    RowDivider()
-                    ActionRow("断开连接", WandIcons.logout, danger = true) {
-                        showDisconnectConfirm = true
-                    }
-                }
-
-                // —— 低频个性化 ——
-                SectionHeader("应用图标")
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                SettingsMotionSection(
+                    title = "语音输入",
+                    index = 2,
+                    motionEnabled = motionEnabled,
                 ) {
-                    AppIconCard(
-                        name = "赛博虎妞",
-                        backgroundRes = R.drawable.ic_launcher_background,
-                        foregroundRes = R.drawable.ic_launcher_foreground,
-                        selected = appIcon == "shorthair",
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        appIcon = "shorthair"
-                        actions.setAppIcon("shorthair")
-                    }
-                    AppIconCard(
-                        name = "勤劳初二",
-                        backgroundRes = R.drawable.ic_launcher_background_garfield,
-                        foregroundRes = R.drawable.ic_launcher_foreground_garfield,
-                        selected = appIcon == "garfield",
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        appIcon = "garfield"
-                        actions.setAppIcon("garfield")
+                    SttModelSection()
+                }
+
+                SettingsMotionSection(
+                    title = "后台运行",
+                    index = 3,
+                    motionEnabled = motionEnabled,
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        SwitchRow("后台保活", keepAlive, WandIcons.refresh) { enabled ->
+                            keepAlive = enabled
+                            if (enabled && Build.VERSION.SDK_INT >= 33) {
+                                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            actions.setKeepAlive(enabled)
+                        }
                     }
                 }
 
-                // —— 关于 ——
-                SectionHeader("关于")
-                SettingsAboutSection(
-                    appVersion = actions.appVersion,
-                    serverVersion = serverVersion,
-                )
+                SettingsMotionSection(
+                    title = "更新",
+                    index = 4,
+                    motionEnabled = motionEnabled,
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
+                        RowDivider()
+                        SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
+                            betaChannel = it
+                            actions.setBetaChannel(it)
+                        }
+                    }
+                }
+
+                SettingsMotionSection(
+                    title = "连接与服务器",
+                    index = 5,
+                    motionEnabled = motionEnabled,
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        InfoRow("服务器地址", actions.serverUrl, icon = WandIcons.web, mono = true)
+                        RowDivider()
+                        InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定", icon = WandIcons.permission)
+                        RowDivider()
+                        ActionRow("打开网页版", WandIcons.web) { actions.openWeb() }
+                        RowDivider()
+                        ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
+                        RowDivider()
+                        ActionRow("断开连接", WandIcons.logout, danger = true) {
+                            showDisconnectConfirm = true
+                        }
+                    }
+                }
+
+                SettingsMotionSection(
+                    title = "应用图标",
+                    index = 6,
+                    motionEnabled = motionEnabled,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        AppIconCard(
+                            name = "赛博虎妞",
+                            backgroundRes = R.drawable.ic_launcher_background,
+                            foregroundRes = R.drawable.ic_launcher_foreground,
+                            selected = appIcon == "shorthair",
+                            motionEnabled = motionEnabled,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            appIcon = "shorthair"
+                            actions.setAppIcon("shorthair")
+                        }
+                        AppIconCard(
+                            name = "勤劳初二",
+                            backgroundRes = R.drawable.ic_launcher_background_garfield,
+                            foregroundRes = R.drawable.ic_launcher_foreground_garfield,
+                            selected = appIcon == "garfield",
+                            motionEnabled = motionEnabled,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            appIcon = "garfield"
+                            actions.setAppIcon("garfield")
+                        }
+                    }
+                }
+
+                SettingsMotionSection(
+                    title = "关于",
+                    index = 7,
+                    motionEnabled = motionEnabled,
+                ) {
+                    SettingsAboutSection(
+                        appVersion = actions.appVersion,
+                        serverVersion = serverVersion,
+                    )
+                }
 
                 Spacer(modifier = Modifier.size(32.dp))
             }
@@ -334,17 +384,83 @@ private fun AppearanceModePicker(
                 modifier = Modifier.weight(1f),
             )
         }
-        WandChoiceStrip(
-            options = listOf(
-                WandAppearanceMode.Light to "明亮",
-                WandAppearanceMode.Dark to "黑暗",
-                WandAppearanceMode.System to "跟随系统",
-            ),
-            selected = selected,
-            onSelect = onSelected,
-            minHeight = 40.dp,
-            labelFontSize = 12.sp,
+        val options = listOf(
+            WandAppearanceMode.Light to "明亮",
+            WandAppearanceMode.Dark to "黑暗",
+            WandAppearanceMode.System to "跟随系统",
         )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, (mode, label) ->
+                SegmentedButton(
+                    selected = selected == mode,
+                    onClick = { onSelected(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                ) {
+                    Text(
+                        label,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberSettingsMotionEnabled(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            ) > 0f
+        }.getOrDefault(true)
+    }
+}
+
+@Composable
+private fun SettingsMotionSection(
+    title: String,
+    index: Int,
+    motionEnabled: Boolean,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var visible by remember(motionEnabled) { mutableStateOf(!motionEnabled) }
+    LaunchedEffect(index, motionEnabled) {
+        if (!motionEnabled) {
+            visible = true
+            return@LaunchedEffect
+        }
+        delay(index * 28L)
+        visible = true
+    }
+
+    val progress by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = if (motionEnabled) {
+            tween(durationMillis = 220, easing = WandMotion.easing)
+        } else {
+            snap()
+        },
+        label = "settingsSectionEnter",
+    )
+    val density = LocalDensity.current
+    val offsetY = with(density) { 8.dp.toPx() * (1f - progress) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = progress
+                translationY = offsetY
+            },
+    ) {
+        SectionHeader(title)
+        content()
     }
 }
 
@@ -783,6 +899,7 @@ private fun AppIconCard(
     backgroundRes: Int,
     foregroundRes: Int,
     selected: Boolean,
+    motionEnabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -821,11 +938,26 @@ private fun AppIconCard(
                     contentDescription = null,
                     modifier = Modifier.requiredSize(82.dp),
                 )
-                if (selected) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = selected,
+                    enter = fadeIn(
+                        animationSpec = if (motionEnabled) tween(160, easing = WandMotion.easing) else snap(),
+                    ) + scaleIn(
+                        initialScale = 0.88f,
+                        animationSpec = if (motionEnabled) tween(180, easing = WandMotion.easing) else snap(),
+                    ),
+                    exit = fadeOut(
+                        animationSpec = if (motionEnabled) tween(90, easing = WandMotion.easing) else snap(),
+                    ) + scaleOut(
+                        targetScale = 0.92f,
+                        animationSpec = if (motionEnabled) tween(90, easing = WandMotion.easing) else snap(),
+                    ),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp),
+                ) {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
                             .size(17.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(WandColors.brand),

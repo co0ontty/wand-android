@@ -221,12 +221,12 @@ fun PtyTerminalScreen(
                     sending = true
                     scope.launch {
                         try {
-                            api.sendInput(sessionId, text, view = "terminal")
+                            api.sendInput(sessionId, text, view = "chat")
                             delay(30)
                             api.sendInput(
                                 id = sessionId,
                                 input = "\r",
-                                view = "terminal",
+                                view = "chat",
                                 shortcutKey = "enter_text",
                             )
                         } catch (e: Exception) {

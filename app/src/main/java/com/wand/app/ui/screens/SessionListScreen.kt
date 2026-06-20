@@ -1,6 +1,5 @@
 package com.wand.app.ui.screens
 
-import android.text.format.DateUtils
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.LocalIndication
@@ -901,20 +900,30 @@ private fun HistorySessionCard(
     }
 }
 
-/** ISO8601 时间 → 相对时间（"3 分钟前"），解析失败返回空。 */
+/** ISO8601 时间 → 相对时间（单单位：刚刚 / N分钟 / N小时 / N天），解析失败返回空。 */
 private fun relativeTimeLabel(timestamp: String?): String {
     if (timestamp.isNullOrEmpty()) return ""
-    return try {
-        val millis = Instant.parse(timestamp).toEpochMilli()
-        DateUtils.getRelativeTimeSpanString(
-            millis,
-            System.currentTimeMillis(),
-            DateUtils.MINUTE_IN_MILLIS,
-            DateUtils.FORMAT_ABBREV_RELATIVE,
-        ).toString()
+    val millis = try {
+        Instant.parse(timestamp).toEpochMilli()
     } catch (_: Exception) {
-        ""
+        return ""
     }
+    return singleUnitDurationLabel(System.currentTimeMillis() - millis)
+}
+
+/**
+ * 单位时长文案（AGENTS.md 约定：duration / relative chip 只显示一个单位）。
+ * - 刚刚 / N分钟 / N小时 / N天
+ * 秒数由调用方提供：相对时间传 (now - 当时)，会话时长传 (end - start)。
+ */
+private fun singleUnitDurationLabel(deltaMillis: Long): String {
+    val minutes = (deltaMillis.coerceAtLeast(0L) / 60_000L)
+    if (minutes < 1) return "刚刚"
+    val hours = minutes / 60
+    if (hours < 1) return "${minutes}分钟"
+    val days = hours / 24
+    if (days < 1) return "${hours}小时"
+    return "${days}天"
 }
 
 /**
@@ -1262,14 +1271,7 @@ private fun sessionDurationLabel(session: SessionSnapshot): String {
     } catch (_: Exception) {
         null
     }
-    val seconds = ((ended ?: System.currentTimeMillis()) - started).coerceAtLeast(0L) / 1000L
-    val minutes = seconds / 60
-    if (minutes < 1) return "刚刚"
-    val hours = minutes / 60
-    if (hours < 1) return "${minutes}分钟"
-    val days = hours / 24
-    if (days < 1) return "${hours}小时"
-    return "${days}天"
+    return singleUnitDurationLabel((ended ?: System.currentTimeMillis()) - started)
 }
 
 /**

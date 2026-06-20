@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Spacer
@@ -105,13 +106,38 @@ import org.json.JSONObject
 
 // MARK: - 单条消息
 
+/**
+ * 折叠卡片统一箭头：内部跑 [animateFloatAsState]，展开态转 180°。
+ * 抽出来统一所有卡片（Tool/Diff/Terminal/Thinking/Orphan/Subagent/Todo…）的展开方向与动画，
+ * 避免之前各处手写 rotationZ 且方向不一致（有的展开转 180°，有的收起才转 180°）。
+ */
+@Composable
+fun ExpandChevron(
+    expanded: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    size: Dp = 18.dp,
+    contentDescription: String = if (expanded) "收起" else "展开",
+) {
+    val rotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        WandMotion.tweenNormal(),
+        label = "expandChevron",
+    )
+    Icon(
+        WandIcons.expand,
+        contentDescription = contentDescription,
+        tint = tint,
+        modifier = modifier.size(size).graphicsLayer { rotationZ = rotation },
+    )
+}
+
 @Composable
 fun TurnView(
     turn: ConversationTurn,
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
     compactUser: Boolean = false,
-    hideAssistantHeader: Boolean = false,
     currentReplyExpandedOverride: Boolean? = null,
     turnIndex: Int = -1,
     historyBoundary: Int = -1,
@@ -153,24 +179,22 @@ fun TurnView(
     ) {
         // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
         // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
-        if (!hideAssistantHeader) {
-            AssistantReplyHeader(
-                collapsed = collapsed,
-                preview = preview,
-                summary = if (currentReplyExpanded) "" else currentFold.summary,
-                onToggle = {
-                    if (!collapsed && currentFold.summary.isNotBlank() && !currentReplyExpanded) {
-                        setCurrentReplyExpanded(true)
-                        onCurrentReplyExpandToBottom()
-                        return@AssistantReplyHeader
-                    }
-                    val next = !collapsed
-                    collapsed = next
-                    if (next) setCurrentReplyExpanded(false)
-                    if (!next) onUserExpand()
-                },
-            )
-        }
+        AssistantReplyHeader(
+            collapsed = collapsed,
+            preview = preview,
+            summary = if (currentReplyExpanded) "" else currentFold.summary,
+            onToggle = {
+                if (!collapsed && currentFold.summary.isNotBlank() && !currentReplyExpanded) {
+                    setCurrentReplyExpanded(true)
+                    onCurrentReplyExpandToBottom()
+                    return@AssistantReplyHeader
+                }
+                val next = !collapsed
+                collapsed = next
+                if (next) setCurrentReplyExpanded(false)
+                if (!next) onUserExpand()
+            },
+        )
         if (!collapsed) {
             segments.forEachIndexed { segmentIndex, segment ->
                 if (segment.subagent == null) {
@@ -215,11 +239,6 @@ private fun AssistantReplyHeader(
     summary: String,
     onToggle: () -> Unit,
 ) {
-    val arrow by animateFloatAsState(
-        if (collapsed) 0f else 180f,
-        WandMotion.tweenNormal(),
-        label = "replyArrow",
-    )
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -271,13 +290,11 @@ private fun AssistantReplyHeader(
             } else {
                 Spacer(modifier = Modifier.weight(1f))
             }
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (collapsed) "展开回复" else "收起回复",
+            ExpandChevron(
+                expanded = !collapsed,
                 tint = WandColors.textSecondary,
-                modifier = Modifier
-                    .size(15.dp)
-                    .graphicsLayer { rotationZ = arrow },
+                size = 15.dp,
+                contentDescription = if (collapsed) "展开回复" else "收起回复",
             )
         }
         // 收起临界线：分隔「头」与「正文」的细线，落在头像 / 名字这一行下沿。
@@ -539,11 +556,6 @@ private fun SubagentPanel(
     var expanded by remember(meta.taskId) { mutableStateOf(false) }
     val title = meta.agentType?.takeIf { it.isNotBlank() } ?: "Sub-agent"
     val description = meta.taskDescription?.takeIf { it.isNotBlank() }
-    val arrowRotation by animateFloatAsState(
-        if (expanded) 180f else 0f,
-        WandMotion.tweenNormal(),
-        label = "subagentArrow",
-    )
 
     // 只让标题保持子代理语义卡；展开内容回归普通消息流，避免长任务被一条
     // 贯穿多屏的蓝色大边框包住。
@@ -605,13 +617,11 @@ private fun SubagentPanel(
                 fontWeight = FontWeight.SemiBold,
                 color = WandColors.info,
             )
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起子任务" else "查看子任务",
+            ExpandChevron(
+                expanded = expanded,
                 tint = WandColors.info,
-                modifier = Modifier
-                    .size(16.dp)
-                    .graphicsLayer { rotationZ = arrowRotation },
+                size = 16.dp,
+                contentDescription = if (expanded) "收起子任务" else "查看子任务",
             )
         }
         if (expanded) {
@@ -1450,11 +1460,6 @@ fun ToolCard(
     val isSuccess = result != null && !isError
     val hasBody = result != null && result.text.isNotEmpty()
     var expanded by remember { mutableStateOf(false) }
-    val arrowRotation by animateFloatAsState(
-        if (expanded) 180f else 0f,
-        WandMotion.tweenNormal(),
-        label = "toolArrow",
-    )
     val statusColor = when {
         isError -> WandColors.danger
         running -> WandColors.brand
@@ -1530,13 +1535,10 @@ fun ToolCard(
                         .clip(CircleShape)
                         .background(WandColors.bgPrimary),
                 ) {
-                    Icon(
-                        WandIcons.expand,
-                        contentDescription = if (expanded) "收起" else "展开",
+                    ExpandChevron(
+                        expanded = expanded,
                         tint = WandColors.textSecondary,
-                        modifier = Modifier
-                            .size(14.dp)
-                            .graphicsLayer { rotationZ = arrowRotation },
+                        size = 14.dp,
                     )
                 }
             }
@@ -1685,13 +1687,10 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
                         .padding(horizontal = 7.dp, vertical = 4.dp),
                 )
             }
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
+            ExpandChevron(
+                expanded = expanded,
                 tint = WandColors.textSecondary,
-                modifier = Modifier
-                    .size(14.dp)
-                    .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+                size = 14.dp,
             )
         }
         if (expanded) {
@@ -1821,11 +1820,6 @@ private fun ToolResultBody(result: ContentBlock.ToolResult, modifier: Modifier =
 @Composable
 private fun OrphanResultBlock(result: ContentBlock.ToolResult) {
     var expanded by remember { mutableStateOf(false) }
-    val arrowRotation by animateFloatAsState(
-        if (expanded) 180f else 0f,
-        WandMotion.tweenNormal(),
-        label = "orphanArrow",
-    )
     val tint = if (result.isError) WandColors.danger else WandColors.textSecondary
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1848,13 +1842,10 @@ private fun OrphanResultBlock(result: ContentBlock.ToolResult) {
                 fontWeight = FontWeight.Medium,
                 color = tint,
             )
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
+            ExpandChevron(
+                expanded = expanded,
                 tint = tint,
-                modifier = Modifier
-                    .size(14.dp)
-                    .graphicsLayer { rotationZ = arrowRotation },
+                size = 14.dp,
             )
         }
         if (expanded) {
@@ -1869,11 +1860,6 @@ private fun OrphanResultBlock(result: ContentBlock.ToolResult) {
 @Composable
 private fun ThinkingBlock(text: String, streaming: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
-    val arrowRotation by animateFloatAsState(
-        if (expanded) 180f else 0f,
-        WandMotion.tweenNormal(),
-        label = "thinkArrow",
-    )
     val iconAlpha: Float
     if (streaming) {
         val breath = rememberInfiniteTransition(label = "thinkBreath")
@@ -1910,13 +1896,10 @@ private fun ThinkingBlock(text: String, streaming: Boolean = false) {
                 fontWeight = FontWeight.Medium,
                 color = WandColors.thinking,
             )
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
+            ExpandChevron(
+                expanded = expanded,
                 tint = WandColors.thinking.copy(alpha = 0.7f),
-                modifier = Modifier
-                    .size(16.dp)
-                    .graphicsLayer { rotationZ = arrowRotation },
+                size = 16.dp,
             )
         }
         if (expanded) {
@@ -1988,7 +1971,7 @@ fun PermissionCard(
                 fontWeight = FontWeight.SemiBold,
                 color = WandColors.permission,
             )
-            Box(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.weight(1f))
             StatusDot("permission")
         }
         Text(
@@ -2038,7 +2021,7 @@ fun PermissionCard(
                     maxLines = 1,
                 )
             }
-            Box(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.weight(1f))
             if (escalation != null) {
                 OutlinedButton(
                     onClick = { onResolve("approve_turn") },
@@ -2151,11 +2134,6 @@ fun AskUserQuestionCard(
     // 回答送达后自动折叠（对齐 Web 已答默认折叠）。
     LaunchedEffect(isAnswered) { if (isAnswered) expanded = false }
     val allAnswered = questions.indices.all { !selection.selected[it].isNullOrEmpty() }
-    val arrowRotation by animateFloatAsState(
-        if (expanded) 180f else 0f,
-        WandMotion.tweenNormal(),
-        label = "askArrow",
-    )
 
     // 状态色通过 glassCard 的 rimTint 表达（已答绿 / 待答品牌），
     // 不再叠手写 background + border —— 那会与 glassCard 自带的描边/底色撞成双重描边。
@@ -2208,13 +2186,10 @@ fun AskUserQuestionCard(
             } else {
                 Spacer(modifier = Modifier.weight(1f))
             }
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
+            ExpandChevron(
+                expanded = expanded,
                 tint = WandColors.textMuted,
-                modifier = Modifier
-                    .size(18.dp)
-                    .graphicsLayer { rotationZ = arrowRotation },
+                size = 18.dp,
             )
         }
         if (expanded) {
@@ -2400,11 +2375,6 @@ fun DiffCard(
     var expanded by remember { mutableStateOf(result == null) }
     // 默认展开态对齐 Web：执行中展开，结果到达后自动收起（手动点开不受影响）。
     LaunchedEffect(result != null) { if (result != null) expanded = false }
-    val arrowRotation by animateFloatAsState(
-        if (expanded) 180f else 0f,
-        WandMotion.tweenNormal(),
-        label = "diffArrow",
-    )
 
     Column(
         modifier = Modifier
@@ -2453,13 +2423,10 @@ fun DiffCard(
                     .background(statusColor.copy(alpha = 0.12f))
                     .padding(horizontal = 7.dp, vertical = 2.dp),
             )
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
+            ExpandChevron(
+                expanded = expanded,
                 tint = WandColors.textMuted,
-                modifier = Modifier
-                    .size(18.dp)
-                    .graphicsLayer { rotationZ = arrowRotation },
+                size = 18.dp,
             )
         }
         if (expanded) {
@@ -2543,11 +2510,6 @@ fun TerminalCard(
         else -> WandColors.success
     }
     var expanded by remember { mutableStateOf(false) }
-    val arrowRotation by animateFloatAsState(
-        if (expanded) 180f else 0f,
-        WandMotion.tweenNormal(),
-        label = "termArrow",
-    )
     // 终端固定深色（非玻璃，对齐 Web inline-terminal），但补一层暖调层叠投影，
     // 让它与相邻工具/Diff 卡一样"浮起"，不再贴平。
     val (termKeyShadow, termAmbientShadow) = cardShadowColors()
@@ -2602,13 +2564,10 @@ fun TerminalCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
+            ExpandChevron(
+                expanded = expanded,
                 tint = TermText.copy(alpha = 0.6f),
-                modifier = Modifier
-                    .size(18.dp)
-                    .graphicsLayer { rotationZ = arrowRotation },
+                size = 18.dp,
             )
         }
         if (expanded) {
@@ -2813,13 +2772,10 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
+            ExpandChevron(
+                expanded = expanded,
                 tint = WandColors.textMuted,
-                modifier = Modifier
-                    .size(18.dp)
-                    .graphicsLayer { rotationZ = if (expanded) 0f else 180f },
+                size = 18.dp,
             )
         }
         if (expanded) {
