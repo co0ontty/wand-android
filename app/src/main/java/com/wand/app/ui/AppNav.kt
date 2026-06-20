@@ -9,7 +9,6 @@ sealed class Screen {
     data class Chat(val sessionId: String) : Screen()
     data class PtyTerminal(val sessionId: String) : Screen()
     data object NewSession : Screen()
-    data object Settings : Screen()
 }
 
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */

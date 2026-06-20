@@ -245,7 +245,13 @@ fun SessionListScreen(
                 onNewSession = onNewSession,
                 onClearHistory = { showClearHistoryConfirmation = true },
                 onExitSelection = { endSelection() },
-                onOpenSettings = onOpenSettings,
+                onOpenSettings = {
+                    menuOpen = false
+                    scope.launch {
+                        delay(170)
+                        onOpenSettings()
+                    }
+                },
                 onOpenWeb = onOpenWeb,
                 onSwitchServer = onSwitchServer,
             )

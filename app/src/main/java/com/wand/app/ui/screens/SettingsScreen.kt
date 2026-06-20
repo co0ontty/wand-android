@@ -9,7 +9,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -18,25 +17,25 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -44,12 +43,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -65,9 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -81,23 +74,14 @@ import com.wand.app.data.WandApi
 import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SttModelManager
 import com.wand.app.ui.HomeActions
-import com.wand.app.ui.components.SectionHeader
-import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandChoiceStrip
-import com.wand.app.ui.components.WandChromeIconButton
 import com.wand.app.ui.components.WandIcons
 import androidx.compose.foundation.shape.RoundedCornerShape
-import com.wand.app.ui.theme.AmbientBackground
-import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.WandColors
-import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
-import com.wand.app.ui.theme.glassBackdropSource
-import com.wand.app.ui.theme.glassSurface
-import com.wand.app.ui.theme.rememberGlassBackdrop
-import kotlinx.coroutines.delay
+import com.wand.app.ui.theme.isWandDarkTheme
 
 /**
  * 原生设置页 —— 对称 iOS SettingsView，并把原 WebView 桥（WandNative）的
@@ -110,6 +94,7 @@ fun SettingsScreen(
     api: WandApi,
     actions: HomeActions,
     onBack: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var serverVersion by remember { mutableStateOf<String?>(null) }
     var showDisconnectConfirm by remember { mutableStateOf(false) }
@@ -179,183 +164,183 @@ fun SettingsScreen(
         )
     }
 
-    // 液态玻璃：设置页内容从玻璃顶栏下滚过。
-    val glassBackdrop = rememberGlassBackdrop()
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            SettingsTopBar(
-                backdrop = glassBackdrop,
-                onBack = onBack,
-                onOpenWeb = actions.openWeb,
-            )
-        },
-    ) { padding ->
-        Box(
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .fillMaxHeight()
+            .navigationBarsPadding()
+            .imePadding(),
+    ) {
+        SettingsSheetHeader(
+            onBack = onBack,
+        )
+        SettingsContentLayout(
             modifier = Modifier
-                .fillMaxSize()
-                .glassBackdropSource(glassBackdrop),
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
         ) {
-            AmbientBackground(Modifier.fillMaxSize())
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    // padding 放在 verticalScroll 之后：顶部留白随内容滚动，
-                    // 内容从玻璃顶栏下面滑过。
-                    .padding(padding)
-                    .padding(horizontal = 14.dp),
+            SettingsMotionSection(
+                title = "常用",
+                index = 0,
+                motionEnabled = motionEnabled,
             ) {
-                Spacer(modifier = Modifier.height(10.dp))
-
-                SettingsMotionSection(
-                    title = "外观调整",
-                    index = 0,
-                    motionEnabled = motionEnabled,
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        AppearanceModePicker(
-                            selected = appearanceMode,
-                            onSelected = { mode ->
-                                appearanceMode = mode
-                                actions.setAppearanceMode(mode)
-                            },
-                        )
-                    }
-                }
-
-                SettingsMotionSection(
-                    title = "通知与反馈",
-                    index = 1,
-                    motionEnabled = motionEnabled,
-                ) {
-                    NotificationFeedbackSection(
-                        selectedSound = selectedSound,
-                        volume = volume,
-                        hapticEnabled = hapticEnabled,
-                        onSoundSelected = { id ->
-                            selectedSound = id
-                            actions.setNotificationSound(id)
-                            actions.previewSound(id)
-                        },
-                        onVolumeChange = { volume = it },
-                        onVolumeCommit = {
-                            actions.setNotificationVolume(volume.toInt())
-                            actions.previewSound(selectedSound)
-                        },
-                        onHapticChange = {
-                            hapticEnabled = it
-                            actions.setHapticEnabled(it)
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                    AppearanceModePicker(
+                        selected = appearanceMode,
+                        onSelected = { mode ->
+                            appearanceMode = mode
+                            actions.setAppearanceMode(mode)
                         },
                     )
                 }
-
-                SettingsMotionSection(
-                    title = "语音输入",
-                    index = 2,
-                    motionEnabled = motionEnabled,
-                ) {
-                    SttModelSection()
-                }
-
-                SettingsMotionSection(
-                    title = "后台运行",
-                    index = 3,
-                    motionEnabled = motionEnabled,
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        SwitchRow("后台保活", keepAlive, WandIcons.refresh) { enabled ->
-                            keepAlive = enabled
-                            if (enabled && Build.VERSION.SDK_INT >= 33) {
-                                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                            actions.setKeepAlive(enabled)
-                        }
-                    }
-                }
-
-                SettingsMotionSection(
-                    title = "更新",
-                    index = 4,
-                    motionEnabled = motionEnabled,
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
-                        RowDivider()
-                        SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
-                            betaChannel = it
-                            actions.setBetaChannel(it)
-                        }
-                    }
-                }
-
-                SettingsMotionSection(
-                    title = "连接与服务器",
-                    index = 5,
-                    motionEnabled = motionEnabled,
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        InfoRow("服务器地址", actions.serverUrl, icon = WandIcons.web, mono = true)
-                        RowDivider()
-                        InfoRow("连接码", if (actions.hasToken) "已绑定" else "未绑定", icon = WandIcons.permission)
-                        RowDivider()
-                        ActionRow("打开网页版", WandIcons.web) { actions.openWeb() }
-                        RowDivider()
-                        ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
-                        RowDivider()
-                        ActionRow("断开连接", WandIcons.logout, danger = true) {
-                            showDisconnectConfirm = true
-                        }
-                    }
-                }
-
-                SettingsMotionSection(
-                    title = "应用图标",
-                    index = 6,
-                    motionEnabled = motionEnabled,
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        AppIconCard(
-                            name = "赛博虎妞",
-                            backgroundRes = R.drawable.ic_launcher_background,
-                            foregroundRes = R.drawable.ic_launcher_foreground,
-                            selected = appIcon == "shorthair",
-                            motionEnabled = motionEnabled,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            appIcon = "shorthair"
-                            actions.setAppIcon("shorthair")
-                        }
-                        AppIconCard(
-                            name = "勤劳初二",
-                            backgroundRes = R.drawable.ic_launcher_background_garfield,
-                            foregroundRes = R.drawable.ic_launcher_foreground_garfield,
-                            selected = appIcon == "garfield",
-                            motionEnabled = motionEnabled,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            appIcon = "garfield"
-                            actions.setAppIcon("garfield")
-                        }
-                    }
-                }
-
-                SettingsMotionSection(
-                    title = "关于",
-                    index = 7,
-                    motionEnabled = motionEnabled,
-                ) {
-                    SettingsAboutSection(
-                        appVersion = actions.appVersion,
-                        serverVersion = serverVersion,
-                    )
-                }
-
-                Spacer(modifier = Modifier.size(32.dp))
+                NotificationFeedbackSection(
+                    selectedSound = selectedSound,
+                    volume = volume,
+                    hapticEnabled = hapticEnabled,
+                    onSoundSelected = { id ->
+                        selectedSound = id
+                        actions.setNotificationSound(id)
+                        actions.previewSound(id)
+                    },
+                    onVolumeChange = { volume = it },
+                    onVolumeCommit = {
+                        actions.setNotificationVolume(volume.toInt())
+                        actions.previewSound(selectedSound)
+                    },
+                    onHapticChange = {
+                        hapticEnabled = it
+                        actions.setHapticEnabled(it)
+                    },
+                )
+                SttModelSection()
             }
+
+            SettingsMotionSection(
+                title = "连接",
+                index = 1,
+                motionEnabled = motionEnabled,
+            ) {
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                    InfoRow("当前服务器", actions.serverUrl, icon = WandIcons.web, mono = true)
+                    RowDivider()
+                    InfoRow(
+                        "连接状态",
+                        if (actions.hasToken) "连接码已绑定" else "未绑定连接码",
+                        icon = WandIcons.permission,
+                    )
+                    RowDivider()
+                    ActionRow("打开网页版", WandIcons.web) { actions.openWeb() }
+                    RowDivider()
+                    ActionRow("切换服务器", WandIcons.swapServer) { actions.switchServer() }
+                }
+            }
+
+            SettingsMotionSection(
+                title = "运行与更新",
+                index = 2,
+                motionEnabled = motionEnabled,
+            ) {
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                    SwitchRow("后台保活", keepAlive, WandIcons.refresh) { enabled ->
+                        keepAlive = enabled
+                        if (enabled && Build.VERSION.SDK_INT >= 33) {
+                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                        actions.setKeepAlive(enabled)
+                    }
+                    RowDivider()
+                    ActionRow("检查更新", WandIcons.update) { actions.manualCheckUpdate() }
+                    RowDivider()
+                    SwitchRow("Beta 通道", betaChannel, WandIcons.update) {
+                        betaChannel = it
+                        actions.setBetaChannel(it)
+                    }
+                }
+            }
+
+            SettingsMotionSection(
+                title = "个性化",
+                index = 3,
+                motionEnabled = motionEnabled,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    AppIconCard(
+                        name = "赛博虎妞",
+                        backgroundRes = R.drawable.ic_launcher_background,
+                        foregroundRes = R.drawable.ic_launcher_foreground,
+                        selected = appIcon == "shorthair",
+                        motionEnabled = motionEnabled,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        appIcon = "shorthair"
+                        actions.setAppIcon("shorthair")
+                    }
+                    AppIconCard(
+                        name = "勤劳初二",
+                        backgroundRes = R.drawable.ic_launcher_background_garfield,
+                        foregroundRes = R.drawable.ic_launcher_foreground_garfield,
+                        selected = appIcon == "garfield",
+                        motionEnabled = motionEnabled,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        appIcon = "garfield"
+                        actions.setAppIcon("garfield")
+                    }
+                }
+            }
+
+            SettingsMotionSection(
+                title = "关于",
+                index = 4,
+                motionEnabled = motionEnabled,
+            ) {
+                SettingsAboutSection(
+                    appVersion = actions.appVersion,
+                    serverVersion = serverVersion,
+                )
+            }
+
+            SettingsMotionSection(
+                title = "危险操作",
+                index = 5,
+                motionEnabled = motionEnabled,
+            ) {
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                    ActionRow("断开连接", WandIcons.logout, danger = true) {
+                        showDisconnectConfirm = true
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun SettingsContentLayout(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    BoxWithConstraints(modifier = modifier) {
+        val wide = maxWidth >= 720.dp
+        val horizontalPadding = if (wide) 22.dp else 14.dp
+        val maxContentWidth = if (wide) 720.dp else 560.dp
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = maxContentWidth)
+                .align(Alignment.TopCenter)
+                .padding(horizontal = horizontalPadding)
+                .padding(top = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            content()
         }
     }
 }
@@ -368,14 +353,14 @@ private fun AppearanceModePicker(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            SettingsRowIcon(icon = WandIcons.settings, tint = WandColors.brand)
+            SettingsRowIcon(icon = WandIcons.settings)
             Text(
                 "界面主题",
                 fontSize = 14.sp,
@@ -389,22 +374,13 @@ private fun AppearanceModePicker(
             WandAppearanceMode.Dark to "黑暗",
             WandAppearanceMode.System to "跟随系统",
         )
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            options.forEachIndexed { index, (mode, label) ->
-                SegmentedButton(
-                    selected = selected == mode,
-                    onClick = { onSelected(mode) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
-                ) {
-                    Text(
-                        label,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
+        WandChoiceStrip(
+            options = options,
+            selected = selected,
+            onSelect = onSelected,
+            minHeight = 34.dp,
+            labelFontSize = 12.sp,
+        )
     }
 }
 
@@ -429,39 +405,31 @@ private fun SettingsMotionSection(
     motionEnabled: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    var visible by remember(motionEnabled) { mutableStateOf(!motionEnabled) }
-    LaunchedEffect(index, motionEnabled) {
-        if (!motionEnabled) {
-            visible = true
-            return@LaunchedEffect
-        }
-        delay(index * 28L)
-        visible = true
-    }
-
-    val progress by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = if (motionEnabled) {
-            tween(durationMillis = 220, easing = WandMotion.easing)
-        } else {
-            snap()
-        },
-        label = "settingsSectionEnter",
-    )
-    val density = LocalDensity.current
-    val offsetY = with(density) { 8.dp.toPx() * (1f - progress) }
-
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                alpha = progress
-                translationY = offsetY
-            },
+            .fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SectionHeader(title)
+        SettingsChapterHeader(title = title)
         content()
     }
+}
+
+@Composable
+private fun SettingsChapterHeader(
+    title: String,
+) {
+    Text(
+        title,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = WandColors.textMuted,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 6.dp, start = 2.dp),
+    )
 }
 
 @Composable
@@ -478,8 +446,8 @@ private fun NotificationFeedbackSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
                 "提示音",
@@ -497,7 +465,7 @@ private fun NotificationFeedbackSection(
                 ),
                 selected = selectedSound,
                 onSelect = onSoundSelected,
-                minHeight = 38.dp,
+                minHeight = 34.dp,
                 labelFontSize = 12.sp,
             )
         }
@@ -506,8 +474,8 @@ private fun NotificationFeedbackSection(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 56.dp)
-                .padding(horizontal = 14.dp),
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 12.dp),
         ) {
             Text(
                 "音量",
@@ -527,14 +495,14 @@ private fun NotificationFeedbackSection(
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 12.dp),
+                    .padding(start = 10.dp),
             )
             Text(
                 "${volume.toInt()}",
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
                 color = WandColors.textMuted,
-                modifier = Modifier.padding(start = 8.dp),
+                modifier = Modifier.padding(start = 6.dp),
             )
         }
         RowDivider()
@@ -543,52 +511,70 @@ private fun NotificationFeedbackSection(
 }
 
 @Composable
-private fun SettingsTopBar(
-    backdrop: GlassBackdrop,
+private fun SettingsSheetHeader(
     onBack: () -> Unit,
-    onOpenWeb: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(
-                backdrop,
-                RoundedCornerShape(0.dp),
-                WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
-                edgeToEdge = true,
-            ),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 38.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(WandColors.textMuted.copy(alpha = 0.48f)),
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .statusBarsPadding()
-                .height(54.dp)
-                .padding(horizontal = 12.dp),
+                .height(48.dp)
+                .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            WandChromeIconButton(
-                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "返回",
+            SettingsHeaderButton(
+                icon = WandIcons.close,
+                contentDescription = "关闭设置",
                 onClick = onBack,
             )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "设置",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary,
-                    maxLines = 1,
-                )
-            }
-            WandChromeIconButton(
-                icon = WandIcons.web,
-                contentDescription = "打开网页版",
-                tint = WandColors.brand,
-                onClick = onOpenWeb,
+            Text(
+                "设置",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
             )
+            Spacer(modifier = Modifier.size(44.dp))
         }
         HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+    }
+}
+
+@Composable
+private fun SettingsHeaderButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    tint: Color = WandColors.textSecondary,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -603,11 +589,11 @@ private fun SettingsAboutSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            WandBrandMark(size = 38)
+            WandBrandMark(size = 34)
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -629,6 +615,12 @@ private fun SettingsAboutSection(
         }
         RowDivider()
         InfoRow("App 版本", "v$appVersion", icon = WandIcons.settings)
+        RowDivider()
+        InfoRow(
+            "Android",
+            "${Build.VERSION.RELEASE} / SDK ${Build.VERSION.SDK_INT}",
+            icon = WandIcons.permission,
+        )
         serverVersion?.let {
             RowDivider()
             InfoRow("Server 版本", "v$it", icon = WandIcons.update)
@@ -685,7 +677,7 @@ private fun SttModelSection() {
                             SttModelManager.startDownload(context, model)
                         }
                     }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -735,10 +727,13 @@ private fun SettingsCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    WandCard(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        containerColor = WandColors.surface.copy(alpha = 0.92f),
+    val shape = RoundedCornerShape(14.dp)
+    val dark = isWandDarkTheme()
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(WandColors.surface.copy(alpha = 0.98f))
+            .border(0.5.dp, WandColors.border.copy(alpha = if (dark) 0.16f else 0.08f), shape),
         content = content,
     )
 }
@@ -749,7 +744,7 @@ private fun RowDivider() {
     HorizontalDivider(
         thickness = 0.5.dp,
         color = WandColors.border,
-        modifier = Modifier.padding(horizontal = 14.dp),
+        modifier = Modifier.padding(horizontal = 12.dp),
     )
 }
 
@@ -760,12 +755,12 @@ private fun InfoRow(label: String, value: String, icon: ImageVector? = null, mon
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 54.dp)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp),
     ) {
         if (icon != null) {
             SettingsRowIcon(icon = icon)
-            Spacer(modifier = Modifier.size(12.dp))
+            Spacer(modifier = Modifier.size(10.dp))
         }
         Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = WandColors.textPrimary)
         Spacer(modifier = Modifier.weight(1f))
@@ -776,7 +771,7 @@ private fun InfoRow(label: String, value: String, icon: ImageVector? = null, mon
             color = WandColors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 16.dp),
+            modifier = Modifier.padding(start = 12.dp),
         )
     }
 }
@@ -806,13 +801,13 @@ private fun SettingsRowIcon(
     val shape = RoundedCornerShape(9.dp)
     Box(
         modifier = Modifier
-            .size(30.dp)
+            .size(28.dp)
             .clip(shape)
-            .background(tint.copy(alpha = 0.10f))
-            .border(0.55.dp, tint.copy(alpha = 0.16f), shape),
+            .background(tint.copy(alpha = 0.08f))
+            .border(0.55.dp, tint.copy(alpha = 0.14f), shape),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
     }
 }
 
@@ -824,28 +819,28 @@ private fun ActionRow(
     danger: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val tint = if (danger) WandColors.danger else WandColors.brand
+    val tint = if (danger) WandColors.danger else WandColors.textSecondary
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .heightIn(min = 52.dp)
-            .padding(horizontal = 14.dp),
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 12.dp),
     ) {
         SettingsRowIcon(icon = icon, tint = tint)
         Text(
             label,
             fontSize = 14.sp,
             color = if (danger) WandColors.danger else WandColors.textPrimary,
-            modifier = Modifier.padding(start = 14.dp),
+            modifier = Modifier.padding(start = 12.dp),
         )
         Spacer(modifier = Modifier.weight(1f))
         Icon(
             WandIcons.chevronRight,
             contentDescription = null,
             tint = WandColors.textMuted,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(18.dp),
         )
     }
 }
@@ -867,8 +862,8 @@ private fun SwitchRow(
                 role = Role.Switch,
                 onValueChange = onChange,
             )
-            .heightIn(min = 56.dp)
-            .padding(horizontal = 14.dp),
+            .heightIn(min = 50.dp)
+            .padding(horizontal = 12.dp),
     ) {
         SettingsRowIcon(icon = icon)
         Text(
@@ -876,7 +871,7 @@ private fun SwitchRow(
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = WandColors.textPrimary,
-            modifier = Modifier.padding(start = 14.dp),
+            modifier = Modifier.padding(start = 12.dp),
         )
         Spacer(modifier = Modifier.weight(1f))
         Switch(
@@ -891,7 +886,7 @@ private fun SwitchRow(
 
 /**
  * 应用图标预览卡：launcher 前景/背景矢量按自适应图标安全区放大裁圆，
- * 模拟桌面实际效果；选中态走 WandCard(selected=true) 的 mode-card 规范。
+ * 模拟桌面实际效果；选中态只保留轻量边框和浅背景。
  */
 @Composable
 private fun AppIconCard(
@@ -903,27 +898,26 @@ private fun AppIconCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    WandCard(
-        modifier = modifier,
-        onClick = onClick,
-        selected = selected,
-        shape = RoundedCornerShape(12.dp),
-        containerColor = if (selected) {
-            WandColors.brand.copy(alpha = 0.08f)
-        } else {
-            WandColors.surface.copy(alpha = 0.92f)
-        },
-        contentPadding = PaddingValues(vertical = 14.dp),
+    val shape = RoundedCornerShape(14.dp)
+    val dark = isWandDarkTheme()
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(if (selected) WandColors.brandSoft else WandColors.surface.copy(alpha = 0.98f))
+            .border(
+                0.55.dp,
+                if (selected) WandColors.brand.copy(alpha = 0.32f) else WandColors.border.copy(alpha = if (dark) 0.16f else 0.08f),
+                shape,
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
             Box(
                 modifier = Modifier
-                    .size(54.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(15.dp))
                     .background(WandColors.surfaceSoft),
                 contentAlignment = Alignment.Center,
             ) {
@@ -974,10 +968,9 @@ private fun AppIconCard(
             }
             Text(
                 name,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = if (selected) WandColors.brand else WandColors.textPrimary,
             )
-        }
     }
 }
