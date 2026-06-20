@@ -141,6 +141,8 @@ fun TurnView(
     currentReplyExpandedOverride: Boolean? = null,
     turnIndex: Int = -1,
     historyBoundary: Int = -1,
+    showHeader: Boolean = true,
+    showContent: Boolean = true,
     onUserExpand: () -> Unit = {},
     onCurrentReplyExpandedChange: (Boolean) -> Unit = {},
     onCurrentReplyExpandToBottom: () -> Unit = {},
@@ -153,49 +155,42 @@ fun TurnView(
         return
     }
     val shouldFoldCurrentReply = isLastTurn && turnIndex > historyBoundary
-    val currentFold = remember(turn.content, shouldFoldCurrentReply) {
-        if (shouldFoldCurrentReply) foldCurrentReplyTail(turn.content) else CurrentReplyFold(turn.content, "")
-    }
-    var localCurrentReplyExpanded by remember(turnIndex, shouldFoldCurrentReply) { mutableStateOf(false) }
-    val currentReplyExpanded = currentReplyExpandedOverride ?: localCurrentReplyExpanded
-    val setCurrentReplyExpanded: (Boolean) -> Unit = { expanded ->
-        if (currentReplyExpandedOverride == null) {
-            localCurrentReplyExpanded = expanded
-        }
-        onCurrentReplyExpandedChange(expanded)
-    }
-    val displayBlocks = if (shouldFoldCurrentReply && currentReplyExpanded) turn.content else currentFold.blocks
-    val segments = remember(displayBlocks) { splitBySubagent(displayBlocks) }
+    val segments = remember(turn.content) { splitBySubagent(turn.content) }
     val preview = remember(turn.content) { replyPreview(turn.content) }
     // 抽纸折叠：历史回复（位于最后一条用户消息之前）默认折起，当前一轮展开。
     // historyBoundary 变化（= 发了新消息）即按新归属重置：旧回复自动折回去、丢弃手动展开。
     val defaultCollapsed = turnIndex in 0 until historyBoundary
-    var collapsed by remember(historyBoundary) { mutableStateOf(defaultCollapsed) }
+    var localCollapsed by remember(historyBoundary) { mutableStateOf(defaultCollapsed) }
+    val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
+    val setCollapsed: (Boolean) -> Unit = { next ->
+        if (currentReplyExpandedOverride == null) {
+            localCollapsed = next
+        }
+        onCurrentReplyExpandedChange(!next)
+    }
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
-        // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
-        // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
-        AssistantReplyHeader(
-            collapsed = collapsed,
-            preview = preview,
-            summary = if (currentReplyExpanded) "" else currentFold.summary,
-            onToggle = {
-                if (!collapsed && currentFold.summary.isNotBlank() && !currentReplyExpanded) {
-                    setCurrentReplyExpanded(true)
-                    onCurrentReplyExpandToBottom()
-                    return@AssistantReplyHeader
-                }
-                val next = !collapsed
-                collapsed = next
-                if (next) setCurrentReplyExpanded(false)
-                if (!next) onUserExpand()
-            },
-        )
-        if (!collapsed) {
+        if (showHeader) {
+            // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
+            // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
+            AssistantReplyHeader(
+                collapsed = collapsed,
+                preview = preview,
+                summary = "",
+                onToggle = {
+                    val next = !collapsed
+                    setCollapsed(next)
+                    if (!next) {
+                        if (shouldFoldCurrentReply) onCurrentReplyExpandToBottom() else onUserExpand()
+                    }
+                },
+            )
+        }
+        if (showContent && (!showHeader || !collapsed)) {
             segments.forEachIndexed { segmentIndex, segment ->
                 if (segment.subagent == null) {
                     SegmentBlocks(
@@ -318,98 +313,7 @@ private fun replyPreview(content: List<ContentBlock>): String {
     return if (toolCount > 0) "$toolCount 个工具调用" else ""
 }
 
-private const val CURRENT_REPLY_TAIL_UNITS = 5
-private const val CURRENT_REPLY_TEXT_UNIT_CHARS = 280
 private const val COMPACT_USER_MIN_CHARS = 140
-
-private data class CurrentReplyFold(
-    val blocks: List<ContentBlock>,
-    val summary: String,
-)
-
-private data class ReplyFoldUnit(
-    val blockIndex: Int,
-    val text: String?,
-)
-
-/**
- * 当前最新回复的抽纸折叠：真实用户消息和助手头部固定在上方，回复正文只保留尾部。
- * 旧段落折进助手头部摘要，避免当前回复超过一屏时首屏停在第 01 段。
- */
-private fun foldCurrentReplyTail(content: List<ContentBlock>): CurrentReplyFold {
-    if (content.any { it is ContentBlock.ToolUse && it.name == "AskUserQuestion" }) {
-        return CurrentReplyFold(content, "")
-    }
-
-    val units = mutableListOf<ReplyFoldUnit>()
-    content.forEachIndexed { blockIndex, block ->
-        when (block) {
-            is ContentBlock.Text -> splitReplyTextUnits(block.text).forEach { units += ReplyFoldUnit(blockIndex, it) }
-            is ContentBlock.Thinking,
-            is ContentBlock.ToolUse,
-            is ContentBlock.ToolResult -> units += ReplyFoldUnit(blockIndex, null)
-            is ContentBlock.Unknown -> Unit
-        }
-    }
-
-    if (units.size <= CURRENT_REPLY_TAIL_UNITS) return CurrentReplyFold(content, "")
-
-    val keepStart = units.size - CURRENT_REPLY_TAIL_UNITS
-    val keepByBlock = mutableMapOf<Int, MutableList<String>>()
-    val keepWholeBlocks = mutableSetOf<Int>()
-    for (i in keepStart until units.size) {
-        val unit = units[i]
-        if (unit.text == null) keepWholeBlocks += unit.blockIndex
-        else keepByBlock.getOrPut(unit.blockIndex) { mutableListOf() } += unit.text
-    }
-
-    val visible = mutableListOf<ContentBlock>()
-    content.forEachIndexed { blockIndex, block ->
-        when (block) {
-            is ContentBlock.Text -> {
-                val keptText = keepByBlock[blockIndex]?.joinToString("\n\n")?.trim().orEmpty()
-                if (keptText.isNotBlank()) visible += block.copy(text = keptText)
-            }
-            is ContentBlock.Thinking,
-            is ContentBlock.ToolUse,
-            is ContentBlock.ToolResult -> if (blockIndex in keepWholeBlocks) visible += block
-            is ContentBlock.Unknown -> Unit
-        }
-    }
-
-    val hidden = keepStart
-    val latest = units.asReversed().firstNotNullOfOrNull { it.text?.trim()?.takeIf { text -> text.isNotEmpty() } }
-        ?.replace(Regex("\\s+"), " ")
-        ?.let { if (it.length > 48) it.take(45) + "..." else it }
-        .orEmpty()
-    val summary = if (latest.isNotBlank()) "已收起 $hidden 条 · 最新：$latest" else "已收起 $hidden 条"
-    return CurrentReplyFold(visible.ifEmpty { content.takeLast(1) }, summary)
-}
-
-private fun splitReplyTextUnits(text: String): List<String> {
-    val trimmed = text.trim()
-    if (trimmed.isEmpty()) return emptyList()
-    val paragraphs = trimmed
-        .split(Regex("\\n\\s*\\n+"))
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-    val units = if (paragraphs.size > 1) {
-        paragraphs
-    } else {
-        trimmed
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .toList()
-            .ifEmpty { listOf(trimmed) }
-    }
-    return units.flatMap { splitLongReplyUnit(it) }
-}
-
-private fun splitLongReplyUnit(text: String): List<String> {
-    if (text.length <= CURRENT_REPLY_TEXT_UNIT_CHARS) return listOf(text)
-    return text.chunked(CURRENT_REPLY_TEXT_UNIT_CHARS)
-}
 
 /** user turn 也可能携带 Task tool_result；保留普通用户气泡，并把子代理回包独立成面板。 */
 @Composable
