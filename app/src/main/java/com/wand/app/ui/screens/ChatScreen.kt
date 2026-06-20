@@ -412,7 +412,7 @@ fun ChatScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            // 顶栏对齐 iOS navigationStatus：居中显示最新一条用户消息 + 完整工作目录，
+            // 顶栏对齐 iOS navigationStatus：居中显示稳定会话状态 + 完整工作目录，
             // 右侧是 Git 变更统计 + 会话设置菜单（仅结构化会话）。
             // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
             CenterAlignedTopAppBar(
@@ -433,8 +433,7 @@ fun ChatScreen(
                             modifier = Modifier.widthIn(max = 220.dp),
                         ) {
                             Text(
-                                latestUserMessage(store.messages)
-                                    ?: store.snapshot?.displayTitle ?: "对话详情",
+                                navigationStatusTitle(store),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = WandColors.textPrimary,
@@ -526,7 +525,7 @@ fun ChatScreen(
                             .fillMaxSize()
                             .padding(padding),
                     ) {
-                    val pinnedContextTopPadding = if (showPinnedLatestContext) 126.dp else 0.dp
+                    val pinnedContextTopPadding = if (showPinnedLatestContext) 68.dp else 0.dp
                     val pinSpacerHeight = if (
                         scrollMode == ChatScrollMode.PinLatestTurn &&
                         lastUserTurnIndex >= 0 &&
@@ -646,9 +645,6 @@ fun ChatScreen(
                                     is MessageDisplayItem.Turn -> {
                                         val controlsCurrentReplyExpansion = item.index == store.messages.lastIndex &&
                                             item.turn.role != "user"
-                                        val hidePinnedUserInList = showPinnedLatestContext &&
-                                            item.index == lastUserTurnIndex &&
-                                            item.turn.role == "user"
                                         val hidePinnedReplyHeader = showPinnedLatestContext &&
                                             controlsCurrentReplyExpansion &&
                                             expandedCurrentReplyIndex == item.index
@@ -696,9 +692,7 @@ fun ChatScreen(
                                                 },
                                             )
                                         }
-                                        if (hidePinnedUserInList) {
-                                            Spacer(modifier = Modifier.height(0.dp))
-                                        } else if (showInlineHistory) {
+                                        if (showInlineHistory) {
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -755,7 +749,6 @@ fun ChatScreen(
                         PinnedLatestContextBar(
                             historyCount = collapsedHistoryCount,
                             showHistoryChip = hasCollapsedHistory,
-                            userText = turnPlainText(latestUserTurn),
                             replyPreview = turnPlainText(expandedReplyTurn),
                             onHistoryToggle = toggleHistory,
                             onReplyToggle = collapseExpandedCurrentReply,
@@ -922,19 +915,11 @@ private fun ChatProviderBadge(provider: String?) {
     }
 }
 
-/** 最新一条非空用户消息（顶栏标题，对齐 iOS latestUserMessage）。 */
-private fun latestUserMessage(messages: List<ConversationTurn>): String? {
-    for (turn in messages.asReversed()) {
-        if (turn.role != "user") continue
-        val text = turn.content
-            .filterIsInstance<ContentBlock.Text>()
-            .joinToString(" ") { it.text }
-            .split(Regex("\\s+"))
-            .filter { it.isNotEmpty() }
-            .joinToString(" ")
-        if (text.isNotEmpty()) return text
-    }
-    return null
+/** 顶栏标题保持稳定，避免和最新用户消息、钉顶上下文重复。 */
+private fun navigationStatusTitle(store: ChatStore): String {
+    val task = store.currentTaskTitle?.trim().orEmpty()
+    if (store.isResponding && task.isNotEmpty()) return task
+    return if (store.snapshot?.provider == "codex") "Codex 对话" else "Claude 对话"
 }
 
 /** 中间截断（对齐 iOS .truncationMode(.middle)，Compose 没有内置实现）。 */
@@ -1040,73 +1025,31 @@ private fun InlineHistoryChip(
 private fun PinnedLatestContextBar(
     historyCount: Int,
     showHistoryChip: Boolean,
-    userText: String,
     replyPreview: String,
     onHistoryToggle: () -> Unit,
     onReplyToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .background(WandColors.bgElevated)
             .border(1.dp, WandColors.border.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            if (showHistoryChip) {
-                InlineHistoryChip(
-                    count = historyCount,
-                    onToggle = onHistoryToggle,
-                    modifier = Modifier.padding(top = 1.dp),
-                )
-            }
-            PinnedUserBubble(
-                text = userText,
-                modifier = Modifier.weight(1f),
+        if (showHistoryChip) {
+            InlineHistoryChip(
+                count = historyCount,
+                onToggle = onHistoryToggle,
             )
         }
         PinnedReplyHeader(
             preview = replyPreview,
             onToggle = onReplyToggle,
-        )
-    }
-}
-
-@Composable
-private fun PinnedUserBubble(
-    text: String,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier.fillMaxWidth(),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        Text(
-            text.ifBlank { "用户消息" },
-            fontSize = 14.sp,
-            lineHeight = 19.sp,
-            color = Color.White,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .widthIn(max = 280.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = WandShapes.radiusLg,
-                        topEnd = WandShapes.radiusLg,
-                        bottomStart = WandShapes.radiusLg,
-                        bottomEnd = 6.dp,
-                    ),
-                )
-                .background(WandColors.brand)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -1115,11 +1058,12 @@ private fun PinnedUserBubble(
 private fun PinnedReplyHeader(
     preview: String,
     onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(WandShapes.full)
             .clickableWithoutRipple { onToggle() }
