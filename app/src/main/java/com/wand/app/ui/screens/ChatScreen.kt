@@ -1,12 +1,5 @@
 package com.wand.app.ui.screens
 
-import android.Manifest
-import android.content.Context
-import android.net.Uri
-import android.provider.OpenableColumns
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -19,7 +12,6 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -116,16 +108,12 @@ import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
-import com.wand.app.data.WandApiException
 import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
-import com.wand.app.ui.WandAsyncImage
-import com.wand.app.ui.WandFileChip
-import com.wand.app.ui.WandImage
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
@@ -146,10 +134,8 @@ import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 private enum class ChatScrollMode {
@@ -206,26 +192,14 @@ fun ChatScreen(
     val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
 
-    // 按住说话：端侧语音识别控制器（sherpa 本地模型优先，系统识别器兜底）。
     val context = LocalContext.current
-    val voice = remember { VoiceInputController(context) }
-    DisposableEffect(voice) {
-        voice.onToast = { store.toast = it }
-        onDispose { voice.destroy() }
-    }
-    val micPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        store.toast = if (granted) "已获得麦克风权限，按住麦克风说话" else "需要麦克风权限才能语音输入"
-    }
-    val onMicDown: () -> Unit = {
-        if (voice.hasMicPermission()) {
-            if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            voice.beginPress { text -> draft = appendVoiceText(draft, text) }
-        } else {
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
+    val voiceInput = rememberVoiceInputHandle(
+        isHapticEnabled = isHapticEnabled,
+        onToast = { store.toast = it },
+        onCommit = { text -> draft = appendVoiceText(draft, text) },
+    )
+    val voice = voiceInput.voice
+    val onMicDown = voiceInput.onMicDown
 
     val density = LocalDensity.current
 
@@ -273,34 +247,17 @@ fun ChatScreen(
     // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
     var uploadingAttachments by remember { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
-    val uploadUris: (List<Uri>) -> Unit = { uris ->
-        if (uris.isNotEmpty()) {
-            uploadingAttachments = true
-            scrollScope.launch {
-                try {
-                    val files = withContext(Dispatchers.IO) {
-                        uris.take(5).map { uri -> readAttachment(context, uri) }
-                    }
-                    val uploaded = api.uploadAttachments(sessionId, files)
-                    pendingAttachments = (pendingAttachments + uploaded).takeLast(5)
-                    store.toast = "已上传 ${uploaded.size} 个附件"
-                } catch (e: Exception) {
-                    store.toast = e.message ?: "附件上传失败"
-                } finally {
-                    uploadingAttachments = false
-                }
-            }
-        }
+    val attachmentPickers = rememberAttachmentPickerActions { uris ->
+        scrollScope.launchAttachmentUpload(
+            context = context,
+            api = api,
+            sessionId = sessionId,
+            uris = uris,
+            onUploadingChange = { uploadingAttachments = it },
+            onUploaded = { uploaded -> pendingAttachments = (pendingAttachments + uploaded).takeLast(5) },
+            onToast = { store.toast = it },
+        )
     }
-    // 「从文件选择」：系统文档选择器，任意类型。
-    val attachmentPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris -> uploadUris(uris.orEmpty()) }
-    // 「从相册选择」：系统相册选择器（Photo Picker），只回传用户勾选的图片、无需整库权限。
-    // 对齐 iOS PHPicker。
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(5),
-    ) { uris -> uploadUris(uris) }
 
     // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
     // 顶部「加载更早」哨兵与历史折叠条都占项；跟随最新时锚到最后一条用户消息。
@@ -483,12 +440,8 @@ fun ChatScreen(
             onRemoveAttachment = { file ->
                 pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
             },
-            onPickPhoto = {
-                photoPicker.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                )
-            },
-            onPickFile = { attachmentPicker.launch(arrayOf("*/*")) },
+            onPickPhoto = attachmentPickers.pickPhoto,
+            onPickFile = attachmentPickers.pickFile,
             onExpandedChange = { composerExpanded = it },
         ) {
             // 发送回调（带触感反馈）；发送后恢复当前轮次钉顶，让旧对话折起。
@@ -1383,79 +1336,6 @@ private fun SettingsMenuOption(label: String, selected: Boolean, onClick: () -> 
     )
 }
 
-/** 从 content Uri 读出 (文件名, 字节)，供 multipart 上传。 */
-internal fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray> {
-    var name = "attachment"
-    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (index >= 0 && cursor.moveToFirst()) {
-            cursor.getString(index)?.takeIf { it.isNotEmpty() }?.let { name = it }
-        }
-    }
-    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        ?: throw WandApiException(null, "无法读取 $name")
-    return name to bytes
-}
-
-internal fun buildAttachmentPrompt(attachments: List<UploadedFile>, body: String): String {
-    if (attachments.isEmpty()) return body
-    val paths = attachments.joinToString("\n") { it.savedPath }
-    return "[附件已上传，请查看以下文件:\n$paths\n]\n\n$body"
-}
-
-@Composable
-internal fun PendingAttachmentsPreview(
-    attachments: List<UploadedFile>,
-    baseUrl: String,
-    onRemove: (UploadedFile) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (attachments.isEmpty()) return
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Top,
-        modifier = modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-    ) {
-        attachments.forEach { file ->
-            Box {
-                if (baseUrl.isNotBlank() && WandImage.isImagePath(file.savedPath)) {
-                    WandAsyncImage(
-                        path = file.savedPath,
-                        baseUrl = baseUrl,
-                        modifier = Modifier.size(width = 96.dp, height = 72.dp),
-                        maxWidth = 96,
-                        maxHeight = 72,
-                    )
-                } else {
-                    WandFileChip(
-                        path = file.savedPath,
-                        modifier = Modifier.widthIn(max = 190.dp),
-                    )
-                }
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(WandColors.surface.copy(alpha = 0.92f))
-                        .border(1.dp, WandColors.border, CircleShape)
-                        .clickable { onRemove(file) },
-                ) {
-                    Icon(
-                        WandIcons.close,
-                        contentDescription = "移除附件",
-                        tint = WandColors.textSecondary,
-                        modifier = Modifier.size(13.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun RespondingIndicator(taskTitle: String?) {
     Row(
@@ -2265,14 +2145,6 @@ internal fun ComposerActionsMenu(
 }
 
 // MARK: - 按住说话（端侧语音识别）
-
-/** 识别文本追加进草稿（不覆盖已有内容，对齐 Web commitVoiceTranscript / iOS appendTranscriptToDraft）。 */
-internal fun appendVoiceText(existing: String, text: String): String {
-    val clean = text.trim()
-    if (clean.isEmpty()) return existing
-    val base = existing.trimEnd()
-    return if (base.isEmpty()) clean else "$base $clean"
-}
 
 /**
  * 轻点 vs 按住的分界：按住超过该时长进入录音，否则按轻点处理。

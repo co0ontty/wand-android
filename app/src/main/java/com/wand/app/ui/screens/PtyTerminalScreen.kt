@@ -1,6 +1,5 @@
 package com.wand.app.ui.screens
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
 import android.net.Uri
@@ -8,9 +7,6 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -57,9 +53,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -82,10 +76,8 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
@@ -110,54 +102,28 @@ fun PtyTerminalScreen(
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
     val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
-    val voice = remember { VoiceInputController(context) }
     val scope = rememberCoroutineScope()
     val quickCommit = remember(sessionId) {
         QuickCommitStore(sessionId, api) { msg -> toast = msg }
     }
-    DisposableEffect(voice) {
-        voice.onToast = { toast = it }
-        onDispose { voice.destroy() }
+    val voiceInput = rememberVoiceInputHandle(
+        isHapticEnabled = isHapticEnabled,
+        onToast = { toast = it },
+        onCommit = { text -> draft = appendVoiceText(draft, text) },
+    )
+    val voice = voiceInput.voice
+    val onMicDown = voiceInput.onMicDown
+    val attachmentPickers = rememberAttachmentPickerActions { uris ->
+        scope.launchAttachmentUpload(
+            context = context,
+            api = api,
+            sessionId = sessionId,
+            uris = uris,
+            onUploadingChange = { uploadingAttachments = it },
+            onUploaded = { uploaded -> pendingAttachments = (pendingAttachments + uploaded).takeLast(5) },
+            onToast = { toast = it },
+        )
     }
-    val micPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        toast = if (granted) "已获得麦克风权限，按住麦克风说话" else "需要麦克风权限才能语音输入"
-    }
-    val onMicDown: () -> Unit = {
-        if (voice.hasMicPermission()) {
-            if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            voice.beginPress { text -> draft = appendVoiceText(draft, text) }
-        } else {
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-    val uploadUris: (List<Uri>) -> Unit = { uris ->
-        if (uris.isNotEmpty()) {
-            uploadingAttachments = true
-            scope.launch {
-                try {
-                    val files = withContext(Dispatchers.IO) {
-                        uris.take(5).map { uri -> readAttachment(context, uri) }
-                    }
-                    val uploaded = api.uploadAttachments(sessionId, files)
-                    pendingAttachments = (pendingAttachments + uploaded).takeLast(5)
-                    toast = "已上传 ${uploaded.size} 个附件"
-                } catch (e: Exception) {
-                    toast = e.message ?: "附件上传失败"
-                } finally {
-                    uploadingAttachments = false
-                }
-            }
-        }
-    }
-    val attachmentPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris -> uploadUris(uris.orEmpty()) }
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(5),
-    ) { uris -> uploadUris(uris) }
     DisposableEffect(quickCommit) {
         onDispose { quickCommit.shutdown() }
     }
@@ -205,12 +171,8 @@ fun PtyTerminalScreen(
                     pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
                 },
                 onMicDown = onMicDown,
-                onPickPhoto = {
-                    photoPicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                    )
-                },
-                onPickFile = { attachmentPicker.launch(arrayOf("*/*")) },
+                onPickPhoto = attachmentPickers.pickPhoto,
+                onPickFile = attachmentPickers.pickFile,
                 onSend = {
                     val body = draft
                     val attachments = pendingAttachments

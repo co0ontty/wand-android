@@ -23,7 +23,8 @@ object WandAuth {
 
     class AuthException(message: String) : Exception(message)
 
-    /** 解码连接码：base64(url#token)。逻辑与 ConnectActivity.tryDecodeConnectCode 一致。 */
+    /** 解码连接码：base64(url#token)。 */
+    @JvmStatic
     fun decodeConnectCode(input: String): Pair<String, String>? {
         return try {
             val cleaned = input.replace(Regex("\\s+"), "")

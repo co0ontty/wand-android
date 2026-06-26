@@ -25,17 +25,20 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
+import com.wand.app.data.WandAuth;
+import com.wand.app.data.WandHttp;
 
 import org.json.JSONObject;
 
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
-import android.util.Base64;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+
+import kotlin.Pair;
 
 public class ConnectActivity extends AppCompatActivity {
 
@@ -216,7 +219,7 @@ public class ConnectActivity extends AppCompatActivity {
                     }
                 }
             }
-            String[] decoded = tryDecodeConnectCode(candidate);
+            Pair<String, String> decoded = WandAuth.decodeConnectCode(candidate);
             boolean looksLikeUrl = candidate.startsWith("http://") || candidate.startsWith("https://");
             if (decoded == null && !looksLikeUrl) {
                 Toast.makeText(this, R.string.scan_qr_invalid, Toast.LENGTH_LONG).show();
@@ -256,11 +259,11 @@ public class ConnectActivity extends AppCompatActivity {
 
         cancelCurrentTask();
         currentTask = networkExecutor.submit(() -> {
-            String[] decoded = tryDecodeConnectCode(savedInput);
+            Pair<String, String> decoded = WandAuth.decodeConnectCode(savedInput);
 
             if (decoded != null) {
-                String serverUrl = decoded[0];
-                String appToken = decoded[1];
+                String serverUrl = decoded.getFirst();
+                String appToken = decoded.getSecond();
                 setAutoStatus("正在验证连接码…");
                 String error = testConnectionWithToken(serverUrl, appToken, 5000);
                 runOnUiThread(() -> {
@@ -274,7 +277,7 @@ public class ConnectActivity extends AppCompatActivity {
                     }
                 });
             } else {
-                final String normalizedUrl = normalizeServerUrl(savedInput);
+                final String normalizedUrl = WandHttp.normalizeBaseUrl(savedInput);
 
                 String savedToken = serverStore.getAppToken();
                 if (!TextUtils.isEmpty(savedToken)) {
@@ -338,27 +341,6 @@ public class ConnectActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Try to decode the input as a connect code (base64 encoded "URL#TOKEN").
-     * Returns a String[2] = {url, token} on success, or null.
-     */
-    private String[] tryDecodeConnectCode(String input) {
-        try {
-            String cleaned = input.replaceAll("\\s+", "");
-            if (cleaned.isEmpty()) return null;
-            byte[] buf = Base64.decode(cleaned, Base64.DEFAULT | Base64.NO_WRAP | Base64.URL_SAFE);
-            String decoded = new String(buf, StandardCharsets.UTF_8);
-            int hashIdx = decoded.lastIndexOf('#');
-            if (hashIdx < 1) return null;
-            String url = decoded.substring(0, hashIdx);
-            String token = decoded.substring(hashIdx + 1);
-            if (!url.startsWith("http") || token.length() < 16) return null;
-            return new String[]{url, token};
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     private void attemptConnect() {
         String rawInput = urlInput.getText() != null ? urlInput.getText().toString().trim() : "";
         if (TextUtils.isEmpty(rawInput)) {
@@ -372,11 +354,11 @@ public class ConnectActivity extends AppCompatActivity {
 
         cancelCurrentTask();
         currentTask = networkExecutor.submit(() -> {
-            String[] decoded = tryDecodeConnectCode(rawInput);
+            Pair<String, String> decoded = WandAuth.decodeConnectCode(rawInput);
 
             if (decoded != null) {
-                String serverUrl = decoded[0];
-                String appToken = decoded[1];
+                String serverUrl = decoded.getFirst();
+                String appToken = decoded.getSecond();
 
                 String error = testConnectionWithToken(serverUrl, appToken, 8000);
                 runOnUiThread(() -> {
@@ -394,7 +376,7 @@ public class ConnectActivity extends AppCompatActivity {
                     }
                 });
             } else {
-                final String normalizedUrl = normalizeServerUrl(rawInput);
+                final String normalizedUrl = WandHttp.normalizeBaseUrl(rawInput);
                 String error = testConnection(normalizedUrl, 8000);
                 runOnUiThread(() -> {
                     if (isDestroyed()) return;
@@ -489,18 +471,6 @@ public class ConnectActivity extends AppCompatActivity {
         }
     }
 
-    /** 补全协议前缀 (默认 http://) 并去掉末尾斜杠, 用于直连地址归一化。 */
-    private static String normalizeServerUrl(String raw) {
-        String url = raw;
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "http://" + url;
-        }
-        if (url.endsWith("/")) {
-            url = url.substring(0, url.length() - 1);
-        }
-        return url;
-    }
-
     /** 连接成功后进入原生主界面（HomeActivity）；WebView（MainActivity）只作网页版兜底。 */
     private void launchWebView(String url, String appToken) {
         Intent intent = new Intent(this, HomeActivity.class);
@@ -574,8 +544,8 @@ public class ConnectActivity extends AppCompatActivity {
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
             textColumn.setLayoutParams(columnParams);
 
-            String[] decoded = tryDecodeConnectCode(entry);
-            String primaryText = decoded != null ? decoded[0] : entry;
+            Pair<String, String> decoded = WandAuth.decodeConnectCode(entry);
+            String primaryText = decoded != null ? decoded.getFirst() : entry;
 
             TextView urlText = new TextView(this);
             urlText.setText(primaryText);

@@ -59,7 +59,8 @@ object WandHttp {
             .build()
     }
 
-    /** 去掉末尾斜杠的 base URL 归一化（与 ConnectActivity.normalizeServerUrl 对齐）。 */
+    /** 补全协议并去掉末尾斜杠的 base URL 归一化。 */
+    @JvmStatic
     fun normalizeBaseUrl(raw: String): String {
         var url = raw.trim()
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
