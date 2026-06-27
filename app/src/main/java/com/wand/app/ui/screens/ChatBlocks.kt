@@ -18,22 +18,29 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,6 +55,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -56,6 +64,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -392,62 +401,117 @@ private fun SegmentBlocks(
     showSubagentTags: Boolean = true,
 ) {
     val items = remember(blocks) { pairToolBlocks(blocks) }
+    val renderItems = remember(items, isLastTurn, isResponding) {
+        collapseActivityItems(items, isLastTurn, isResponding)
+    }
+    var openActivity by remember { mutableStateOf<ActivityGroup?>(null) }
+    LaunchedEffect(items) { openActivity = null }
+
+    openActivity?.let { group ->
+        ActivityDetailSheet(
+            group = group,
+            isLastTurn = isLastTurn,
+            isResponding = isResponding,
+            askSelections = askSelections,
+            onAskToggle = onAskToggle,
+            onAskSubmit = onAskSubmit,
+            showSubagentTags = showSubagentTags,
+            onDismiss = { openActivity = null },
+        )
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        items.forEachIndexed { index, item ->
-            when (item) {
-                is DisplayItem.Tool -> {
-                    val use = item.use
-                    // Task/Agent 自身只表达派遣关系，面板头已经承接该语义。
-                    if (use.subagent?.taskId == use.id && use.name in setOf("Task", "Agent")) {
-                        return@forEachIndexed
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (showSubagentTags) SubagentTag(use.subagent)
-                        val askQuestions = if (use.name == "AskUserQuestion") {
-                            remember(use.input) { AskUserQuestionData.parse(use.input) }
-                        } else {
-                            emptyList()
-                        }
-                        when {
-                            askQuestions.isNotEmpty() -> AskUserQuestionCard(
-                                toolUseId = use.id,
-                                questions = askQuestions,
-                                result = item.result,
-                                selection = askSelections[use.id] ?: AskUserSelectionState(),
-                                onToggle = { qIdx, optIdx, multi ->
-                                    onAskToggle(use.id, qIdx, optIdx, multi)
-                                },
-                                onSubmit = { answerText -> onAskSubmit(use.id, answerText) },
-                            )
-                            use.name in setOf("Edit", "Write", "MultiEdit") -> DiffCard(
-                                toolName = use.name,
-                                input = use.input,
-                                result = item.result,
-                            )
-                            use.name == "Bash" -> TerminalCard(
-                                input = use.input,
-                                result = item.result,
-                                running = item.result == null && isLastTurn && isResponding,
-                            )
-                            else -> ToolCard(
-                                use = use,
-                                result = item.result,
-                                running = item.result == null && isLastTurn && isResponding,
-                            )
-                        }
-                    }
-                }
-                is DisplayItem.Plain -> BlockView(
-                    item.block,
-                    streaming = isLastTurn && isResponding && index == items.lastIndex,
-                    showSubagentTag = showSubagentTags,
+        renderItems.forEach { renderItem ->
+            when (renderItem) {
+                is SegmentRenderItem.Item -> RenderDisplayItem(
+                    item = renderItem.item,
+                    itemIndex = renderItem.index,
+                    itemCount = items.size,
+                    isLastTurn = isLastTurn,
+                    isResponding = isResponding,
+                    askSelections = askSelections,
+                    onAskToggle = onAskToggle,
+                    onAskSubmit = onAskSubmit,
+                    showSubagentTags = showSubagentTags,
+                    initiallyExpanded = false,
                 )
-                is DisplayItem.Exploration -> ExplorationGroupCard(
-                    tools = item.tools,
-                    running = isLastTurn && isResponding && item.tools.any { it.result == null },
+                is SegmentRenderItem.Activity -> ActivitySummaryRow(
+                    group = renderItem.group,
+                    onClick = { openActivity = renderItem.group },
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun RenderDisplayItem(
+    item: DisplayItem,
+    itemIndex: Int,
+    itemCount: Int,
+    isLastTurn: Boolean,
+    isResponding: Boolean,
+    askSelections: Map<String, AskUserSelectionState>,
+    onAskToggle: (String, Int, Int, Boolean) -> Unit,
+    onAskSubmit: (String, String) -> Unit,
+    showSubagentTags: Boolean,
+    initiallyExpanded: Boolean,
+) {
+    when (item) {
+        is DisplayItem.Tool -> {
+            val use = item.use
+            // Task/Agent 自身只表达派遣关系，面板头已经承接该语义。
+            if (isHiddenDispatchTool(use)) return
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (showSubagentTags) SubagentTag(use.subagent)
+                val askQuestions = if (use.name == "AskUserQuestion") {
+                    remember(use.input) { AskUserQuestionData.parse(use.input) }
+                } else {
+                    emptyList()
+                }
+                when {
+                    askQuestions.isNotEmpty() -> AskUserQuestionCard(
+                        toolUseId = use.id,
+                        questions = askQuestions,
+                        result = item.result,
+                        selection = askSelections[use.id] ?: AskUserSelectionState(),
+                        onToggle = { qIdx, optIdx, multi ->
+                            onAskToggle(use.id, qIdx, optIdx, multi)
+                        },
+                        onSubmit = { answerText -> onAskSubmit(use.id, answerText) },
+                    )
+                    use.name in setOf("Edit", "Write", "MultiEdit") -> DiffCard(
+                        toolName = use.name,
+                        input = use.input,
+                        result = item.result,
+                        initiallyExpanded = initiallyExpanded,
+                    )
+                    use.name == "Bash" -> TerminalCard(
+                        input = use.input,
+                        result = item.result,
+                        running = item.result == null && isLastTurn && isResponding,
+                        initiallyExpanded = initiallyExpanded,
+                    )
+                    else -> ToolCard(
+                        use = use,
+                        result = item.result,
+                        running = item.result == null && isLastTurn && isResponding,
+                        initiallyExpanded = initiallyExpanded,
+                    )
+                }
+            }
+        }
+        is DisplayItem.Plain -> BlockView(
+            item.block,
+            streaming = isLastTurn && isResponding && itemIndex == itemCount - 1,
+            showSubagentTag = showSubagentTags,
+            initiallyExpanded = initiallyExpanded,
+        )
+        is DisplayItem.Exploration -> ExplorationDetailCard(
+            tools = item.tools,
+            running = isLastTurn && isResponding && item.tools.any { it.result == null },
+            initiallyExpanded = initiallyExpanded,
+        )
     }
 }
 
@@ -654,6 +718,17 @@ private sealed class DisplayItem {
     class Exploration(val tools: List<ExplorationToolItem>) : DisplayItem()
 }
 
+private data class ActivityGroup(
+    val summary: String,
+    val items: List<DisplayItem>,
+    val running: Boolean,
+)
+
+private sealed class SegmentRenderItem {
+    data class Item(val index: Int, val item: DisplayItem) : SegmentRenderItem()
+    data class Activity(val group: ActivityGroup) : SegmentRenderItem()
+}
+
 /** 探索卡里的一个工具（配对后的 use + 可选 result）。 */
 data class ExplorationToolItem(
     val use: ContentBlock.ToolUse,
@@ -745,6 +820,271 @@ private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse): Boolean {
     return true
 }
 
+private fun collapseActivityItems(
+    items: List<DisplayItem>,
+    isLastTurn: Boolean,
+    isResponding: Boolean,
+): List<SegmentRenderItem> {
+    val renderItems = mutableListOf<SegmentRenderItem>()
+    val pending = mutableListOf<DisplayItem>()
+
+    fun flushPending() {
+        if (pending.isNotEmpty()) {
+            val groupItems = pending.toList()
+            renderItems += SegmentRenderItem.Activity(
+                ActivityGroup(
+                    summary = activitySummary(groupItems, groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) }),
+                    items = groupItems,
+                    running = groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) },
+                )
+            )
+            pending.clear()
+        }
+    }
+
+    items.forEachIndexed { index, item ->
+        if (shouldSkipDisplayItem(item)) return@forEachIndexed
+        if (isCollapsibleActivityItem(item)) {
+            pending += item
+        } else {
+            flushPending()
+            renderItems += SegmentRenderItem.Item(index, item)
+        }
+    }
+    flushPending()
+    return renderItems
+}
+
+private fun shouldSkipDisplayItem(item: DisplayItem): Boolean =
+    item is DisplayItem.Tool && isHiddenDispatchTool(item.use)
+
+private fun isHiddenDispatchTool(use: ContentBlock.ToolUse): Boolean =
+    use.subagent?.taskId == use.id && use.name in setOf("Task", "Agent")
+
+private fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
+    is DisplayItem.Plain -> item.block !is ContentBlock.Text && item.block !is ContentBlock.Unknown
+    is DisplayItem.Exploration -> true
+    is DisplayItem.Tool -> item.use.name != "AskUserQuestion"
+}
+
+private fun isDisplayItemRunning(
+    item: DisplayItem,
+    isLastTurn: Boolean,
+    isResponding: Boolean,
+): Boolean {
+    if (!isLastTurn || !isResponding) return false
+    return when (item) {
+        is DisplayItem.Tool -> item.result == null
+        is DisplayItem.Exploration -> item.tools.any { it.result == null }
+        is DisplayItem.Plain -> item.block is ContentBlock.Thinking
+    }
+}
+
+@Composable
+private fun ActivitySummaryRow(group: ActivityGroup, onClick: () -> Unit) {
+    val tint = if (group.running) WandColors.brand else WandColors.textMuted
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.sm)
+            .clickableWithoutRipple { onClick() }
+            .padding(horizontal = 2.dp, vertical = 5.dp),
+    ) {
+        Icon(
+            activityIcon(group.items),
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            group.summary,
+            fontSize = 14.sp,
+            lineHeight = 19.sp,
+            color = WandColors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            WandIcons.chevronRight,
+            contentDescription = "查看详情",
+            tint = WandColors.textMuted,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActivityDetailSheet(
+    group: ActivityGroup,
+    isLastTurn: Boolean,
+    isResponding: Boolean,
+    askSelections: Map<String, AskUserSelectionState>,
+    onAskToggle: (String, Int, Int, Boolean) -> Unit,
+    onAskSubmit: (String, String) -> Unit,
+    showSubagentTags: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = WandColors.bgElevated.copy(alpha = 0.98f),
+        scrimColor = Color.Black.copy(alpha = 0.46f),
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.86f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(bottom = 18.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "执行详情",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    group.summary,
+                    fontSize = 11.sp,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
+                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                        .widthIn(max = 210.dp),
+                )
+            }
+            group.items.forEachIndexed { index, item ->
+                RenderDisplayItem(
+                    item = item,
+                    itemIndex = index,
+                    itemCount = group.items.size,
+                    isLastTurn = isLastTurn,
+                    isResponding = isResponding,
+                    askSelections = askSelections,
+                    onAskToggle = onAskToggle,
+                    onAskSubmit = onAskSubmit,
+                    showSubagentTags = showSubagentTags,
+                    initiallyExpanded = true,
+                )
+            }
+        }
+    }
+}
+
+private fun activityIcon(items: List<DisplayItem>): ImageVector {
+    val tools = activityTools(items)
+    val firstTool = tools.firstOrNull()?.use
+    if (firstTool != null) return toolIcon(firstTool.name)
+    return when (items.firstOrNull()) {
+        is DisplayItem.Plain -> WandIcons.thinking
+        else -> WandIcons.genericTool
+    }
+}
+
+private fun activitySummary(items: List<DisplayItem>, running: Boolean): String {
+    val tools = activityTools(items)
+    if (items.size == 1 && tools.size == 1) {
+        val tool = tools.first()
+        val prefix = if (running && tool.result == null) "正在" else "已"
+        val detail = toolSummary(tool.use.description, tool.use.input)
+        val label = activityVerb(tool.use.name)
+        return if (detail.isNotEmpty()) {
+            "$prefix$label $detail"
+        } else {
+            "$prefix$label"
+        }
+    }
+    if (items.size == 1 && items.first() is DisplayItem.Plain) {
+        val block = (items.first() as DisplayItem.Plain).block
+        return when (block) {
+            is ContentBlock.Thinking -> if (running) "正在思考" else "已思考"
+            is ContentBlock.ToolResult -> if (block.isError) "有 1 条执行错误" else "已生成 1 条执行结果"
+            else -> "已完成 1 项活动"
+        }
+    }
+
+    val readCount = tools.count { activityKind(it.use.name) == "read" }
+    val commandCount = tools.count { activityKind(it.use.name) == "command" }
+    val searchCount = tools.count { activityKind(it.use.name) == "search" }
+    val editCount = tools.count { activityKind(it.use.name) == "edit" }
+    val webCount = tools.count { activityKind(it.use.name) == "web" }
+    val todoCount = tools.count { activityKind(it.use.name) == "todo" }
+    val otherToolCount = tools.size - readCount - commandCount - searchCount - editCount - webCount - todoCount
+    val thinkingCount = items.count { it is DisplayItem.Plain && it.block is ContentBlock.Thinking }
+    val resultCount = items.count { it is DisplayItem.Plain && it.block is ContentBlock.ToolResult }
+
+    val parts = mutableListOf<String>()
+    if (readCount > 0) parts += "浏览 $readCount 个文件"
+    if (commandCount > 0) parts += "运行 $commandCount 条命令"
+    if (searchCount > 0) parts += "搜索 $searchCount 次"
+    if (editCount > 0) parts += "修改 $editCount 个文件"
+    if (webCount > 0) parts += "访问 $webCount 个网页"
+    if (todoCount > 0) parts += "更新 $todoCount 次待办"
+    if (thinkingCount > 0) parts += "思考 $thinkingCount 段"
+    if (resultCount > 0) parts += "生成 $resultCount 条结果"
+    if (otherToolCount > 0) parts += "调用 $otherToolCount 个工具"
+
+    val prefix = if (running) "正在" else "已"
+    return if (parts.isEmpty()) {
+        "${prefix}完成 ${items.size} 项活动"
+    } else {
+        prefix + parts.joinToString("，")
+    }
+}
+
+private fun activityTools(items: List<DisplayItem>): List<ExplorationToolItem> =
+    items.flatMap { item ->
+        when (item) {
+            is DisplayItem.Tool -> listOf(ExplorationToolItem(item.use, item.result))
+            is DisplayItem.Exploration -> item.tools
+            is DisplayItem.Plain -> emptyList()
+        }
+    }
+
+private fun activityVerb(name: String): String = when (activityKind(name)) {
+    "read" -> "浏览"
+    "command" -> "运行"
+    "search" -> "搜索代码"
+    "edit" -> "修改"
+    "web" -> "访问网页"
+    "todo" -> "更新待办"
+    else -> toolLabel(name)
+}
+
+private fun activityKind(name: String): String {
+    val lower = name.lowercase()
+    return when {
+        lower.startsWith("read") || lower.contains("notebook") -> "read"
+        lower == "bash" || lower.contains("command") || lower.contains("shell") -> "command"
+        lower.contains("grep") || lower.contains("glob") ||
+            lower.contains("search") || lower.contains("find") -> "search"
+        lower.contains("edit") || lower.contains("write") -> "edit"
+        lower.contains("web") || lower.contains("fetch") || lower.contains("http") -> "web"
+        lower.contains("todo") -> "todo"
+        else -> "other"
+    }
+}
+
 /**
  * 连续读取、搜索、网页获取通常只是模型探索上下文，不需要逐张占满对话流。
  * 至少连续两次才合并，单次操作仍保留完整工具卡（对齐 iOS collapseConsecutiveExplorationTools）。
@@ -834,6 +1174,7 @@ fun BlockView(
     block: ContentBlock,
     streaming: Boolean = false,
     showSubagentTag: Boolean = true,
+    initiallyExpanded: Boolean = false,
 ) {
     when (block) {
         is ContentBlock.Text -> {
@@ -846,20 +1187,20 @@ fun BlockView(
         }
         is ContentBlock.Thinking -> {
             if (block.thinking.isNotBlank()) {
-                ThinkingBlock(block.thinking, streaming = streaming)
+                ThinkingBlock(block.thinking, streaming = streaming, initiallyExpanded = initiallyExpanded)
             }
         }
         is ContentBlock.ToolUse -> {
             // 落单的 ToolUse（正常路径已在 TurnView 配对，这里兜底）
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (showSubagentTag) SubagentTag(block.subagent)
-                ToolCard(use = block, result = null, running = false)
+                ToolCard(use = block, result = null, running = false, initiallyExpanded = initiallyExpanded)
             }
         }
         is ContentBlock.ToolResult -> {
             // 落单的 ToolResult 兜底：渲染成无头工具卡的结果区样式
             if (block.text.isNotEmpty()) {
-                OrphanResultBlock(block)
+                OrphanResultBlock(block, initiallyExpanded = initiallyExpanded)
             }
         }
         is ContentBlock.Unknown -> Unit
@@ -922,6 +1263,7 @@ fun MarkdownText(text: String) {
                         fontSize = 15.sp,
                         lineHeight = 22.sp,
                         color = WandColors.textPrimary,
+                        textAlign = TextAlign.Start,
                     )
                 }
                 is MarkdownBlock.Heading -> SelectionContainer {
@@ -940,6 +1282,7 @@ fun MarkdownText(text: String) {
                         },
                         fontWeight = FontWeight.SemiBold,
                         color = WandColors.textPrimary,
+                        textAlign = TextAlign.Start,
                         modifier = Modifier.padding(top = if (block.level <= 2) 3.dp else 1.dp),
                     )
                 }
@@ -961,6 +1304,7 @@ fun MarkdownText(text: String) {
                             fontSize = 15.sp,
                             lineHeight = 22.sp,
                             color = WandColors.textPrimary,
+                            textAlign = TextAlign.Start,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -983,6 +1327,7 @@ fun MarkdownText(text: String) {
                             fontSize = 14.sp,
                             lineHeight = 21.sp,
                             color = WandColors.textSecondary,
+                            textAlign = TextAlign.Start,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -1073,6 +1418,7 @@ private fun MarkdownTableRow(cells: List<String>, header: Boolean, background: C
                     lineHeight = if (header) 18.sp else 17.sp,
                     fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
                     color = if (header) WandColors.textPrimary else WandColors.textSecondary,
+                    textAlign = TextAlign.Start,
                     modifier = Modifier
                         .widthIn(min = 110.dp, max = 190.dp)
                         .padding(horizontal = 10.dp, vertical = 9.dp),
@@ -1318,8 +1664,9 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                     }
                 }
                 else -> {
-                    append(raw[i])
-                    i++
+                    val next = nextInlineMarkerIndex(raw, i + 1)
+                    append(raw.substring(i, next))
+                    i = next
                 }
             }
         }
@@ -1328,6 +1675,15 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
 
 private fun inlineMarkdownPlain(raw: String): String =
     raw.replace("\\*", "*").replace("\\_", "_").replace("\\`", "`")
+
+private fun nextInlineMarkerIndex(raw: String, start: Int): Int {
+    var next = raw.length
+    for (marker in charArrayOf('\\', '`', '[', '*', '_', '~')) {
+        val at = raw.indexOf(marker, start)
+        if (at >= 0 && at < next) next = at
+    }
+    return next
+}
 
 // MARK: - 工具调用卡片（含结果区，三态）
 
@@ -1359,11 +1715,12 @@ fun ToolCard(
     use: ContentBlock.ToolUse,
     result: ContentBlock.ToolResult?,
     running: Boolean = false,
+    initiallyExpanded: Boolean = false,
 ) {
     val isError = result?.isError == true
     val isSuccess = result != null && !isError
     val hasBody = result != null && result.text.isNotEmpty()
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember(use.id, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     val statusColor = when {
         isError -> WandColors.danger
         running -> WandColors.brand
@@ -1510,7 +1867,37 @@ private fun ToolStatusIconBox(
 
 @Composable
 fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
-    var expanded by remember { mutableStateOf(false) }
+    val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
+    val group = remember(items, running) {
+        ActivityGroup(
+            summary = activitySummary(items, running),
+            items = items,
+            running = running,
+        )
+    }
+    var open by remember { mutableStateOf(false) }
+    if (open) {
+        ActivityDetailSheet(
+            group = group,
+            isLastTurn = running,
+            isResponding = running,
+            askSelections = emptyMap(),
+            onAskToggle = { _, _, _, _ -> },
+            onAskSubmit = { _, _ -> },
+            showSubagentTags = true,
+            onDismiss = { open = false },
+        )
+    }
+    ActivitySummaryRow(group = group, onClick = { open = true })
+}
+
+@Composable
+private fun ExplorationDetailCard(
+    tools: List<ExplorationToolItem>,
+    running: Boolean,
+    initiallyExpanded: Boolean = false,
+) {
+    var expanded by remember(tools, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     val completedCount = tools.count { it.result != null }
     val failedCount = tools.count { it.result?.isError == true }
     val progress = if (tools.isEmpty()) 0f else completedCount.toFloat() / tools.size
@@ -1722,8 +2109,11 @@ private fun ToolResultBody(result: ContentBlock.ToolResult, modifier: Modifier =
 
 /** 落单 ToolResult 的兜底渲染：可折叠的结果块。 */
 @Composable
-private fun OrphanResultBlock(result: ContentBlock.ToolResult) {
-    var expanded by remember { mutableStateOf(false) }
+private fun OrphanResultBlock(
+    result: ContentBlock.ToolResult,
+    initiallyExpanded: Boolean = false,
+) {
+    var expanded by remember(result.toolUseId, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     val tint = if (result.isError) WandColors.danger else WandColors.textSecondary
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1762,8 +2152,12 @@ private fun OrphanResultBlock(result: ContentBlock.ToolResult) {
 
 /** Thinking 块：收起态一行（紫灰，流式时图标呼吸），展开态弱紫底 + 左侧 2dp 竖线 + 斜体。 */
 @Composable
-private fun ThinkingBlock(text: String, streaming: Boolean = false) {
-    var expanded by remember { mutableStateOf(false) }
+private fun ThinkingBlock(
+    text: String,
+    streaming: Boolean = false,
+    initiallyExpanded: Boolean = false,
+) {
+    var expanded by remember(text, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     val iconAlpha: Float
     if (streaming) {
         val breath = rememberInfiniteTransition(label = "thinkBreath")
@@ -2253,6 +2647,7 @@ fun DiffCard(
     toolName: String,
     input: JSONObject,
     result: ContentBlock.ToolResult?,
+    initiallyExpanded: Boolean = false,
 ) {
     val path = input.str("file_path") ?: input.str("path") ?: ""
     val fileName = path.substringAfterLast('/').ifEmpty { path }
@@ -2276,9 +2671,11 @@ fun DiffCard(
         else -> WandColors.success
     }
 
-    var expanded by remember { mutableStateOf(result == null) }
+    var expanded by remember(toolName, path, initiallyExpanded) { mutableStateOf(initiallyExpanded || result == null) }
     // 默认展开态对齐 Web：执行中展开，结果到达后自动收起（手动点开不受影响）。
-    LaunchedEffect(result != null) { if (result != null) expanded = false }
+    LaunchedEffect(result != null, initiallyExpanded) {
+        if (result != null && !initiallyExpanded) expanded = false
+    }
 
     Column(
         modifier = Modifier
@@ -2406,6 +2803,7 @@ fun TerminalCard(
     input: JSONObject,
     result: ContentBlock.ToolResult?,
     running: Boolean = false,
+    initiallyExpanded: Boolean = false,
 ) {
     val command = input.str("command") ?: input.str("cmd") ?: ""
     val statusColor = when {
@@ -2413,7 +2811,7 @@ fun TerminalCard(
         result.isError -> WandColors.danger
         else -> WandColors.success
     }
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember(command, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     // 终端固定深色（非玻璃，对齐 Web inline-terminal），但补一层暖调层叠投影，
     // 让它与相邻工具/Diff 卡一样"浮起"，不再贴平。
     val (termKeyShadow, termAmbientShadow) = cardShadowColors()

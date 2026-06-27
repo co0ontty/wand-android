@@ -20,7 +20,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -89,7 +88,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -139,7 +137,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 private enum class ChatScrollMode {
-    PinLatestTurn,
     StickToBottom,
     Manual,
 }
@@ -185,9 +182,8 @@ fun ChatScreen(
     }
 
     var draft by remember { mutableStateOf("") }
-    // 把「最新轮次置顶」「真正到底部」「用户手动浏览」拆成三种状态，避免到底部按钮
-    // 复用置顶 spacer 后滚进空白区域。
-    var scrollMode by remember { mutableStateOf(ChatScrollMode.PinLatestTurn) }
+    // 发送后跟随列表底部；用户手动浏览时暂停跟随。
+    var scrollMode by remember { mutableStateOf(ChatScrollMode.StickToBottom) }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
@@ -268,11 +264,10 @@ fun ChatScreen(
         historyExpanded -> historyItems.size + 1
         else -> 0
     }
-    val latestAnchorIndex = headerOffset + visibleHistoryCount
     val bottomIndex = headerOffset + visibleHistoryCount + currentItems.size + if (store.isResponding) 1 else 0
     // 完整回复展开后，滚动只浏览内容，不再把下拉手势解释为“恢复折叠”。
     // 收起/折叠交给标题行的显式按钮，避免用户正常阅读时被意外带回摘要态。
-    val followPauseConnection = remember(density, expandedCurrentReplyIndex, latestAnchorIndex) {
+    val followPauseConnection = remember(density, expandedCurrentReplyIndex) {
         val manualThresholdPx = with(density) { 18.dp.toPx() }
         object : NestedScrollConnection {
             private var pulledDown = 0f
@@ -298,19 +293,18 @@ fun ChatScreen(
             }
         }
     }
-    LaunchedEffect(store.messages, store.isResponding, store.loading, latestAnchorIndex, bottomIndex, scrollMode) {
+    LaunchedEffect(store.messages, store.isResponding, store.loading, bottomIndex, scrollMode) {
         if (!store.loading && scrollMode != ChatScrollMode.Manual) {
-            val target = when (scrollMode) {
-                ChatScrollMode.PinLatestTurn ->
-                    if (lastUserTurnIndex >= 0) latestAnchorIndex else bottomIndex
-                ChatScrollMode.StickToBottom -> (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+            fun targetIndex(): Int = when (scrollMode) {
+                ChatScrollMode.StickToBottom ->
+                    maxOf(bottomIndex, listState.layoutInfo.totalItemsCount - 1, 0)
                 ChatScrollMode.Manual -> bottomIndex
             }
-            listState.scrollToItem(target)
+            listState.scrollToItem(targetIndex())
             for (waitMs in listOf(50L, 150L, 350L, 700L)) {
                 delay(waitMs)
                 if (scrollMode == ChatScrollMode.Manual) break
-                listState.scrollToItem(target)
+                listState.scrollToItem(targetIndex())
             }
         }
     }
@@ -327,7 +321,7 @@ fun ChatScreen(
     }
     val toggleHistory: () -> Unit = {
         val next = !historyExpanded
-        scrollMode = if (next) ChatScrollMode.Manual else ChatScrollMode.PinLatestTurn
+        scrollMode = if (next) ChatScrollMode.Manual else ChatScrollMode.StickToBottom
         if (next) expandedCurrentReplyIndex = -1
         historyExpanded = next
         if (next) store.loadEarlier()
@@ -339,15 +333,15 @@ fun ChatScreen(
     val expandCurrentReplyToBottom: (Int) -> Unit = { turnIdx ->
         expandedCurrentReplyIndex = turnIdx
         historyExpanded = false
-        scrollMode = ChatScrollMode.PinLatestTurn
+        scrollMode = ChatScrollMode.StickToBottom
         scrollScope.launch {
             for (waitMs in listOf(50L, 150L, 350L, 700L)) {
                 delay(waitMs)
                 if (expandedCurrentReplyIndex != turnIdx) break
                 if (waitMs == 50L) {
-                    listState.animateScrollToItem(latestAnchorIndex)
+                    listState.animateScrollToItem(bottomIndex)
                 } else {
-                    listState.scrollToItem(latestAnchorIndex)
+                    listState.scrollToItem(bottomIndex)
                 }
             }
         }
@@ -444,12 +438,12 @@ fun ChatScreen(
             onPickFile = attachmentPickers.pickFile,
             onExpandedChange = { composerExpanded = it },
         ) {
-            // 发送回调（带触感反馈）；发送后恢复当前轮次钉顶，让旧对话折起。
+            // 发送回调（带触感反馈）；发送后回到底部并让旧对话折起。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val text = buildAttachmentPrompt(pendingAttachments, draft)
             draft = ""
             pendingAttachments = emptyList()
-            scrollMode = ChatScrollMode.PinLatestTurn
+            scrollMode = ChatScrollMode.StickToBottom
             historyExpanded = false
             expandedCurrentReplyIndex = -1
             store.send(text)
@@ -472,39 +466,12 @@ fun ChatScreen(
                         SessionLaunchPanel(store, showSettings = !composerExpanded)
                     }
                 else -> {
-                    BoxWithConstraints(
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(padding),
                     ) {
-                    val pinSpacerHeight = if (
-                        scrollMode == ChatScrollMode.PinLatestTurn &&
-                        lastUserTurnIndex >= 0 &&
-                        !historyExpanded &&
-                        expandedCurrentReplyIndex < 0
-                    ) {
-                        maxHeight
-                    } else {
-                        0.dp
-                    }
-                    val pinnedUserItem = currentItems.firstOrNull {
-                        it is MessageDisplayItem.Turn &&
-                            it.index == lastUserTurnIndex &&
-                            it.turn.role == "user"
-                    } as? MessageDisplayItem.Turn
-                    val pinnedReplyItem = currentItems.firstOrNull {
-                        it is MessageDisplayItem.Turn &&
-                            it.index == expandedCurrentReplyIndex &&
-                            it.turn.role != "user"
-                    } as? MessageDisplayItem.Turn
-                    val pinCurrentReplyContext = !historyExpanded && pinnedReplyItem != null
-                    val currentListItems = if (pinCurrentReplyContext) {
-                        currentItems.filterNot { it == pinnedUserItem }
-                    } else {
-                        currentItems
-                    }
-                    var pinnedContextHeightPx by remember { mutableStateOf(0) }
-                    val pinnedContextHeight = with(density) { pinnedContextHeightPx.toDp() }
+                    val currentListItems = currentItems
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -514,7 +481,7 @@ fun ChatScreen(
                         contentPadding = PaddingValues(
                             start = 14.dp,
                             end = 14.dp,
-                            top = if (pinCurrentReplyContext) pinnedContextHeight + 10.dp else 8.dp,
+                            top = 8.dp,
                             bottom = 18.dp,
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -565,7 +532,7 @@ fun ChatScreen(
                                                     store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
                                                 },
                                                 onAskSubmit = { toolUseId, answerText ->
-                                                    scrollMode = ChatScrollMode.PinLatestTurn
+                                                    scrollMode = ChatScrollMode.StickToBottom
                                                     store.submitAskUser(toolUseId, answerText)
                                                 },
                                             )
@@ -611,13 +578,7 @@ fun ChatScreen(
                         }
                         itemsIndexed(
                             currentListItems,
-                            key = { _, item ->
-                                if (pinCurrentReplyContext) {
-                                    "current-body-${messageItemKey(item)}"
-                                } else {
-                                    "current-${messageItemKey(item)}"
-                                }
-                            },
+                            key = { _, item -> "current-${messageItemKey(item)}" },
                         ) { _, item ->
                             Box(modifier = Modifier.animateItem()) {
                                 when (item) {
@@ -633,10 +594,7 @@ fun ChatScreen(
                                                 item.turn,
                                                 isLastTurn = item.index == store.messages.lastIndex,
                                                 isResponding = store.isResponding,
-                                                compactUser = scrollMode == ChatScrollMode.PinLatestTurn &&
-                                                    !historyExpanded &&
-                                                    item.index == lastUserTurnIndex &&
-                                                    (store.isResponding || item.index < store.messages.lastIndex),
+                                                compactUser = false,
                                                 currentReplyExpandedOverride =
                                                     if (controlsCurrentReplyExpansion) {
                                                         expandedCurrentReplyIndex == item.index
@@ -645,7 +603,7 @@ fun ChatScreen(
                                                     },
                                                 turnIndex = item.index,
                                                 historyBoundary = lastUserTurnIndex,
-                                                showHeader = !(pinCurrentReplyContext && item == pinnedReplyItem),
+                                                showHeader = true,
                                                 onUserExpand = { scrollReplyToTop(item.index) },
                                                 onCurrentReplyExpandedChange = { expanded ->
                                                     if (controlsCurrentReplyExpansion) {
@@ -662,7 +620,7 @@ fun ChatScreen(
                                                     store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
                                                 },
                                                 onAskSubmit = { toolUseId, answerText ->
-                                                    scrollMode = ChatScrollMode.PinLatestTurn
+                                                    scrollMode = ChatScrollMode.StickToBottom
                                                     store.submitAskUser(toolUseId, answerText)
                                                 },
                                             )
@@ -704,99 +662,6 @@ fun ChatScreen(
                         }
                         item(key = "chat-bottom") {
                             Spacer(modifier = Modifier.size(1.dp))
-                        }
-                        if (pinSpacerHeight > 0.dp) {
-                            item(key = "chat-pin-spacer") {
-                                Spacer(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(pinSpacerHeight),
-                                )
-                            }
-                        }
-                    }
-                    if (pinCurrentReplyContext) {
-                        val pinnedReplyForContext = pinnedReplyItem!!
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp)
-                                .background(WandColors.bgPrimary)
-                                .padding(top = 8.dp, bottom = 10.dp)
-                                .onSizeChanged { pinnedContextHeightPx = it.height },
-                        ) {
-                            if (pinnedUserItem != null) {
-                                if (hasCollapsedHistory) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.Top,
-                                    ) {
-                                        InlineHistoryChip(
-                                            count = collapsedHistoryCount,
-                                            onToggle = toggleHistory,
-                                            modifier = Modifier.padding(top = 3.dp),
-                                        )
-                                        Box(modifier = Modifier.weight(1f)) {
-                                            TurnView(
-                                                pinnedUserItem.turn,
-                                                isLastTurn = pinnedUserItem.index == store.messages.lastIndex,
-                                                isResponding = store.isResponding,
-                                                compactUser = true,
-                                                turnIndex = pinnedUserItem.index,
-                                                historyBoundary = lastUserTurnIndex,
-                                                askSelections = store.askUserSelections,
-                                                onAskToggle = { toolUseId, qIdx, optIdx, multi ->
-                                                    store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
-                                                },
-                                                onAskSubmit = { toolUseId, answerText ->
-                                                    scrollMode = ChatScrollMode.PinLatestTurn
-                                                    store.submitAskUser(toolUseId, answerText)
-                                                },
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    TurnView(
-                                        pinnedUserItem.turn,
-                                        isLastTurn = pinnedUserItem.index == store.messages.lastIndex,
-                                        isResponding = store.isResponding,
-                                        compactUser = true,
-                                        turnIndex = pinnedUserItem.index,
-                                        historyBoundary = lastUserTurnIndex,
-                                        askSelections = store.askUserSelections,
-                                        onAskToggle = { toolUseId, qIdx, optIdx, multi ->
-                                            store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
-                                        },
-                                        onAskSubmit = { toolUseId, answerText ->
-                                            scrollMode = ChatScrollMode.PinLatestTurn
-                                            store.submitAskUser(toolUseId, answerText)
-                                        },
-                                    )
-                                }
-                            }
-                            TurnView(
-                                pinnedReplyForContext.turn,
-                                isLastTurn = pinnedReplyForContext.index == store.messages.lastIndex,
-                                isResponding = store.isResponding,
-                                currentReplyExpandedOverride = true,
-                                turnIndex = pinnedReplyForContext.index,
-                                historyBoundary = lastUserTurnIndex,
-                                showContent = false,
-                                onCurrentReplyExpandedChange = { expanded ->
-                                    expandedCurrentReplyIndex = if (expanded) pinnedReplyForContext.index else -1
-                                },
-                                askSelections = store.askUserSelections,
-                                onAskToggle = { toolUseId, qIdx, optIdx, multi ->
-                                    store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
-                                },
-                                onAskSubmit = { toolUseId, answerText ->
-                                    scrollMode = ChatScrollMode.PinLatestTurn
-                                    store.submitAskUser(toolUseId, answerText)
-                                },
-                            )
                         }
                     }
                     }
@@ -943,7 +808,7 @@ private fun ChatProviderBadge(provider: String?) {
     }
 }
 
-/** 顶栏标题保持稳定，避免和最新用户消息、钉顶上下文重复。 */
+/** 顶栏标题保持稳定，避免和最新用户消息内容重复。 */
 private fun navigationStatusTitle(store: ChatStore): String {
     val task = store.currentTaskTitle?.trim().orEmpty()
     if (store.isResponding && task.isNotEmpty()) return task
@@ -1260,9 +1125,9 @@ private data class ThinkingLevel(
 /** 思考深度档位（对齐 iOS thinkingLevels / 服务端 thinking-effort 端点）。 */
 private val THINKING_LEVELS = listOf(
     ThinkingLevel("off", "关闭", "关", "关闭"),
-    ThinkingLevel("standard", "低", "低", "低（think）"),
-    ThinkingLevel("deep", "中", "中", "中（think hard）"),
-    ThinkingLevel("max", "高", "高", "高（ultrathink）"),
+    ThinkingLevel("standard", "低", "低", "低（low）"),
+    ThinkingLevel("deep", "中", "中", "中（medium）"),
+    ThinkingLevel("max", "高", "高", "高（max）"),
 )
 
 private fun thinkingLabel(id: String): String =
