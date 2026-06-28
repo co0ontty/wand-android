@@ -482,7 +482,7 @@ fun ChatScreen(
                             start = 14.dp,
                             end = 14.dp,
                             top = 8.dp,
-                            bottom = 18.dp,
+                            bottom = 4.dp,
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -808,11 +808,25 @@ private fun ChatProviderBadge(provider: String?) {
     }
 }
 
-/** 顶栏标题保持稳定，避免和最新用户消息内容重复。 */
+/** 顶栏标题显示当前对话内容；响应中优先显示任务名。 */
 private fun navigationStatusTitle(store: ChatStore): String {
     val task = store.currentTaskTitle?.trim().orEmpty()
     if (store.isResponding && task.isNotEmpty()) return task
-    return if (store.snapshot?.provider == "codex") "Codex 对话" else "Claude 对话"
+    latestUserMessage(store.messages)?.let { return it }
+    return store.snapshot?.displayTitle ?: "对话详情"
+}
+
+private fun latestUserMessage(messages: List<ConversationTurn>): String? {
+    for (turn in messages.asReversed()) {
+        if (turn.role != "user") continue
+        val text = turn.content
+            .filterIsInstance<ContentBlock.Text>()
+            .joinToString(" ") { it.text }
+            .trim()
+            .replace(Regex("\\s+"), " ")
+        if (text.isNotEmpty()) return text
+    }
+    return null
 }
 
 @Composable

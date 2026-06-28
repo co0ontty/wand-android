@@ -27,6 +27,14 @@ class NavState {
         stack.add(screen)
     }
 
+    fun setDetail(screen: Screen) {
+        if (stack.size == 1) {
+            stack.add(screen)
+        } else {
+            stack[stack.lastIndex] = screen
+        }
+    }
+
     fun pop() {
         if (stack.size > 1) stack.removeAt(stack.size - 1)
     }

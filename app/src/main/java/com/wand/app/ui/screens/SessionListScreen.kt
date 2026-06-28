@@ -75,6 +75,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -180,6 +181,10 @@ class SessionListState(val api: WandApi) {
 @Composable
 fun SessionListScreen(
     state: SessionListState,
+    modifier: Modifier = Modifier,
+    selectedSessionId: String? = null,
+    topBarContentHeight: Dp = 48.dp,
+    compactLayout: Boolean = false,
     onOpenSession: (SessionSnapshot) -> Unit,
     onNewSession: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -230,6 +235,7 @@ fun SessionListScreen(
     // 改用一道发丝分隔线收边，顶栏读作干净的玻璃表面而非浮在内容上的色块。
     val barGlass = WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp)
     Scaffold(
+        modifier = modifier,
         containerColor = Color.Transparent,
         topBar = {
             SessionListTopBar(
@@ -243,6 +249,7 @@ fun SessionListScreen(
                 activeCount = state.visibleSessions.size,
                 historyCount = state.visibleHistorySessions.size,
                 canClearHistory = state.visibleHistorySessions.isNotEmpty(),
+                contentHeight = topBarContentHeight,
                 onSelectScope = { listScope = it },
                 onNewSession = onNewSession,
                 onClearHistory = { showClearHistoryConfirmation = true },
@@ -434,6 +441,7 @@ fun SessionListScreen(
                                             session = session,
                                             selecting = true,
                                             selected = session.id in selectedIds,
+                                            compact = compactLayout,
                                             onClick = {
                                                 selectedIds = if (session.id in selectedIds) {
                                                     selectedIds - session.id
@@ -460,7 +468,8 @@ fun SessionListScreen(
                                         SessionCard(
                                             session = session,
                                             selecting = false,
-                                            selected = false,
+                                            selected = session.id == selectedSessionId,
+                                            compact = compactLayout,
                                             onClick = {
                                                 if (revealed) closeReveal() else onOpenSession(session)
                                             },
@@ -537,6 +546,7 @@ private fun SessionListTopBar(
     activeCount: Int,
     historyCount: Int,
     canClearHistory: Boolean,
+    contentHeight: Dp,
     onSelectScope: (String) -> Unit,
     onNewSession: () -> Unit,
     onClearHistory: () -> Unit,
@@ -554,7 +564,7 @@ private fun SessionListTopBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .height(48.dp)
+                .height(contentHeight)
                 .padding(horizontal = 12.dp),
         ) {
             if (isSelecting) {
@@ -1030,20 +1040,24 @@ private fun SessionCard(
     session: SessionSnapshot,
     selecting: Boolean,
     selected: Boolean,
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     val status = derivedStatus(session)
     WandCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
-        selected = selecting && selected,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+        selected = selected,
+        contentPadding = PaddingValues(
+            horizontal = if (compact) 10.dp else 12.dp,
+            vertical = if (compact) 8.dp else 10.dp,
+        ),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(IntrinsicSize.Min),
-            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 11.dp),
             verticalAlignment = Alignment.Top,
         ) {
             if (selecting) {
@@ -1054,7 +1068,7 @@ private fun SessionCard(
                     modifier = Modifier.size(22.dp),
                 )
             }
-            SessionMetaRail(session = session, status = status)
+            SessionMetaRail(session = session, status = status, compact = compact)
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -1069,7 +1083,7 @@ private fun SessionCard(
                     Text(
                         sessionListTitle(session),
                         modifier = Modifier.weight(1f),
-                        fontSize = 15.5.sp,
+                        fontSize = if (compact) 14.5.sp else 15.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = WandColors.textPrimary,
                         maxLines = 2,
@@ -1084,13 +1098,13 @@ private fun SessionCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(24.dp),
+                        .height(if (compact) 21.dp else 24.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Text(
                         if (cwd.isEmpty()) "未设置工作目录" else middleTruncate(cwd, 48),
                         modifier = Modifier.fillMaxWidth(),
-                        fontSize = 10.5.sp,
+                        fontSize = if (compact) 10.sp else 10.5.sp,
                         fontFamily = FontFamily.Monospace,
                         color = WandColors.textMuted,
                         maxLines = 1,
@@ -1109,17 +1123,17 @@ private fun sessionListTitle(session: SessionSnapshot): String {
 }
 
 @Composable
-private fun SessionMetaRail(session: SessionSnapshot, status: String) {
+private fun SessionMetaRail(session: SessionSnapshot, status: String, compact: Boolean = false) {
     Column(
         modifier = Modifier
-            .widthIn(min = 58.dp)
+            .widthIn(min = if (compact) 52.dp else 58.dp)
             .fillMaxHeight(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        ProviderMark(session = session, status = status)
+        ProviderMark(session = session, status = status, compact = compact)
         Box(
-            modifier = Modifier.height(24.dp),
+            modifier = Modifier.height(if (compact) 22.dp else 24.dp),
             contentAlignment = Alignment.Center,
         ) {
             MetaChip(
@@ -1135,19 +1149,23 @@ private fun SessionMetaRail(session: SessionSnapshot, status: String) {
  * 44dp 头像放在不裁切的外层容器中，状态点轻贴右下角；柔和半透明外环避免切出醒目的白色缺口。
  */
 @Composable
-private fun ProviderMark(session: SessionSnapshot, status: String) {
+private fun ProviderMark(session: SessionSnapshot, status: String, compact: Boolean = false) {
     val isCodex = session.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
     val icon = if (isCodex) BrandLogos.codex else BrandLogos.claude
     val label = if (isCodex) "Codex" else "Claude"
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(if (compact) 10.dp else 12.dp)
     val (keyShadow, ambientShadow) = cardShadowColors()
+    val outerSize = if (compact) 40.dp else 44.dp
+    val markSize = if (compact) 36.dp else 40.dp
+    val logoSize = if (compact) 17.dp else 18.dp
+    val dotSize = if (compact) 9.dp else 10.dp
 
-    Box(modifier = Modifier.size(44.dp)) {
+    Box(modifier = Modifier.size(outerSize)) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .size(40.dp)
+                .size(markSize)
                 .layeredShadow(shape, 1.2.dp, keyShadow, ambientShadow)
                 .clip(shape)
                 .background(
@@ -1164,13 +1182,13 @@ private fun ProviderMark(session: SessionSnapshot, status: String) {
                 icon,
                 contentDescription = "$label，${sessionListTitle(session)}",
                 tint = tint.copy(alpha = 0.82f),
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(logoSize),
             )
         }
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .size(10.dp)
+                .size(dotSize)
                 .clip(CircleShape)
                 .background(WandColors.surface.copy(alpha = 0.86f))
                 .padding(1.7.dp),
