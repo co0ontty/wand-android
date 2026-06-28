@@ -18,12 +18,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -606,6 +606,7 @@ private fun CollapsedRailTile(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
+    val badgeShape = RoundedCornerShape(9.dp)
     val background = when {
         outlined -> WandColors.brand.copy(alpha = 0.06f)
         history -> tint.copy(alpha = 0.075f)
@@ -646,13 +647,20 @@ private fun CollapsedRailTile(
             )
         }
         if (badge != null) {
+            val badgeWidth = when {
+                badge.length <= 1 -> 18.dp
+                badge.length == 2 -> 22.dp
+                else -> 26.dp
+            }
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .size(16.dp)
-                    .clip(CircleShape)
+                    .offset(x = (-3).dp, y = (-3).dp)
+                    .width(badgeWidth)
+                    .height(18.dp)
+                    .clip(badgeShape)
                     .background(if (selected) tint else WandColors.bgElevated)
-                    .border(0.6.dp, tint.copy(alpha = 0.46f), CircleShape),
+                    .border(0.7.dp, tint.copy(alpha = if (selected) 0.68f else 0.34f), badgeShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
