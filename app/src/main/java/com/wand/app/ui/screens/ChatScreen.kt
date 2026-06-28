@@ -1686,6 +1686,10 @@ private fun InputBar(
         collapsedLeading = { plusMenu() },
         inputContent = { inputContent() },
         collapsedTrailing = {
+            if (store.isStructured) {
+                ModeChip(store, compact = true)
+                ModelThinkingChip(store, compact = true)
+            }
             mic()
             trailing()
         },
