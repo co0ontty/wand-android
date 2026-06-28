@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.GitStatusResult
 import com.wand.app.data.WandApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -60,8 +61,13 @@ class QuickCommitStore(
         private set
 
     private var lastFetchAt = 0L
+    private var entryFeedbackToken = 0
 
     val inFlight: Boolean get() = submitting || pushing
+    val entryLocked: Boolean get() = inFlight || entryPhase != QuickCommitEntryPhase.Idle
+
+    var entryPhase by mutableStateOf(QuickCommitEntryPhase.Idle)
+        private set
 
     // MARK: - git 状态
 
@@ -138,6 +144,8 @@ class QuickCommitStore(
         val before = status
 
         submitting = true
+        beginEntryLoading()
+        panelOpen = false
         submoduleIntent = includeSubmodule
         autoGenerating = autoMessage || (withTag && userTag.isEmpty())
         error = null
@@ -165,17 +173,24 @@ class QuickCommitStore(
                     oldCommitSubject = before?.lastCommitSubject.orEmpty(),
                     submoduleCount = r.submoduleCommitCount ?: 0,
                 )
-                result = outcome
-                if (push && outcome.pushError == null) {
-                    // 提交 + 推送一步到位：收面板，toast 报结果。
-                    onToast(outcome.summaryText() + "，已推送")
-                    panelOpen = false
-                } else {
-                    // 未推送（或 push 失败）：留在结果面板，可补推。
-                    loadStatus(force = true)
+                result = null
+                val message = buildString {
+                    append(outcome.summaryText())
+                    if (push && outcome.pushError == null) append("，已推送")
+                    outcome.pushError?.let { append("，推送失败：").append(it) }
                 }
+                if (outcome.pushError == null) {
+                    onToast(message)
+                    finishEntrySuccess()
+                } else {
+                    pushError = outcome.pushError
+                    failEntry(message)
+                }
+                loadStatus(force = true)
             } catch (e: Exception) {
-                error = e.message ?: "快捷提交失败"
+                val message = e.message ?: "快捷提交失败"
+                error = message
+                failEntry(message)
             }
             submitting = false
             autoGenerating = false
@@ -187,6 +202,8 @@ class QuickCommitStore(
     fun pushCommitsOnly() {
         if (inFlight) return
         pushing = true
+        beginEntryLoading()
+        panelOpen = false
         error = null
         pushError = null
         scope.launch {
@@ -200,13 +217,16 @@ class QuickCommitStore(
                 )
                 if (!res.error.isNullOrEmpty()) {
                     pushError = res.error
+                    failEntry(res.error)
                 } else {
                     onToast("已推送 commits")
-                    panelOpen = false
+                    finishEntrySuccess()
                     loadStatus(force = true)
                 }
             } catch (e: Exception) {
-                pushError = e.message ?: "推送失败"
+                val message = e.message ?: "推送失败"
+                pushError = message
+                failEntry(message)
             }
             pushing = false
         }
@@ -218,6 +238,8 @@ class QuickCommitStore(
         val r = result ?: return
         if (pushing) return
         pushing = true
+        beginEntryLoading()
+        panelOpen = false
         pushError = null
         scope.launch {
             try {
@@ -230,6 +252,7 @@ class QuickCommitStore(
                 )
                 if (res.error != null && res.error.isNotEmpty()) {
                     pushError = res.error
+                    failEntry(res.error)
                 } else {
                     result = r.copy(pushed = true)
                     val parts = buildList {
@@ -237,15 +260,47 @@ class QuickCommitStore(
                         if (res.pushedTags == true) add("tags")
                     }
                     onToast("已推送 " + (if (parts.isEmpty()) "（无内容）" else parts.joinToString(" 和 ")))
-                    panelOpen = false
+                    finishEntrySuccess()
                     loadStatus(force = true)
                 }
             } catch (e: Exception) {
-                pushError = e.message ?: "推送失败"
+                val message = e.message ?: "推送失败"
+                pushError = message
+                failEntry(message)
             }
             pushing = false
         }
     }
+
+    private fun beginEntryLoading() {
+        entryFeedbackToken += 1
+        entryPhase = QuickCommitEntryPhase.Loading
+    }
+
+    private fun finishEntrySuccess() {
+        val token = ++entryFeedbackToken
+        entryPhase = QuickCommitEntryPhase.Done
+        scope.launch {
+            delay(1_000)
+            if (entryFeedbackToken == token) {
+                entryPhase = QuickCommitEntryPhase.Idle
+                loadStatus(force = true)
+            }
+        }
+    }
+
+    private fun failEntry(message: String) {
+        entryFeedbackToken += 1
+        entryPhase = QuickCommitEntryPhase.Idle
+        onToast(message)
+        loadStatus(force = true)
+    }
+}
+
+enum class QuickCommitEntryPhase {
+    Idle,
+    Loading,
+    Done,
 }
 
 /** 一次快捷提交的结果（new 侧），old 侧字段来自提交前的 git 状态快照。 */

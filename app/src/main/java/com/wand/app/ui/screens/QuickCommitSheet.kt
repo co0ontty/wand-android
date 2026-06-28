@@ -1,5 +1,12 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector2D
 import androidx.compose.animation.core.Spring
@@ -81,9 +88,11 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.wand.app.ui.QuickCommitEntryPhase
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassCard
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -163,6 +172,8 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
         }
     }
     val total = modified + deleted + added
+    val ahead = status.ahead ?: 0
+    if (quickCommit.entryPhase == QuickCommitEntryPhase.Idle && total == 0 && ahead == 0) return
     val label = if (total > 0) {
         listOfNotNull(
             modified.takeIf { it > 0 }?.let { "~$it" },
@@ -170,7 +181,17 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
             added.takeIf { it > 0 }?.let { "+$it" },
         ).joinToString(" ")
     } else {
-        "0"
+        "↑$ahead"
+    }
+    val activeTint = when (quickCommit.entryPhase) {
+        QuickCommitEntryPhase.Loading -> WandColors.brand
+        QuickCommitEntryPhase.Done -> WandColors.running
+        QuickCommitEntryPhase.Idle -> if (total > 0) WandColors.brand else WandColors.textMuted
+    }
+    val activeBackground = when (quickCommit.entryPhase) {
+        QuickCommitEntryPhase.Loading -> WandColors.brand.copy(alpha = 0.10f)
+        QuickCommitEntryPhase.Done -> WandColors.running.copy(alpha = 0.12f)
+        QuickCommitEntryPhase.Idle -> WandColors.surface.copy(alpha = 0.58f)
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -178,24 +199,63 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
         modifier = Modifier
             .sizeIn(minWidth = 54.dp, minHeight = 44.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(WandColors.surface.copy(alpha = 0.58f))
+            .background(activeBackground)
             .border(0.55.dp, WandColors.border.copy(alpha = 0.68f), RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = !quickCommit.entryLocked, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
-        Icon(
-            WandIcons.commit,
-            contentDescription = "Git 变更",
-            tint = if (total > 0) WandColors.brand else WandColors.textMuted,
-            modifier = Modifier.size(15.dp),
-        )
-        Text(
-            label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = FontFamily.Monospace,
-            color = if (total > 0) WandColors.textPrimary else WandColors.textMuted,
-        )
+        AnimatedContent(
+            targetState = quickCommit.entryPhase,
+            transitionSpec = {
+                (fadeIn(WandMotion.tweenFast()) + scaleIn(initialScale = 0.92f, animationSpec = WandMotion.tweenFast()))
+                    .togetherWith(
+                        fadeOut(WandMotion.tweenFast()) +
+                            scaleOut(targetScale = 0.92f, animationSpec = WandMotion.tweenFast()),
+                    )
+                    .using(SizeTransform(clip = false))
+            },
+            label = "quickCommitEntry",
+        ) { phase ->
+            when (phase) {
+                QuickCommitEntryPhase.Loading -> {
+                    CircularProgressIndicator(
+                        strokeWidth = 1.8.dp,
+                        color = activeTint,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+
+                QuickCommitEntryPhase.Done -> {
+                    Icon(
+                        WandIcons.check,
+                        contentDescription = "快捷提交完成",
+                        tint = activeTint,
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+
+                QuickCommitEntryPhase.Idle -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            WandIcons.commit,
+                            contentDescription = "Git 变更",
+                            tint = activeTint,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Text(
+                            label,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = FontFamily.Monospace,
+                            color = if (total > 0) WandColors.textPrimary else WandColors.textMuted,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
