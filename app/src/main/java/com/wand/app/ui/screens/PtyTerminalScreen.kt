@@ -68,6 +68,7 @@ import com.wand.app.data.WandApi
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
+import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
@@ -291,13 +292,11 @@ private fun PtyTopBar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    ptyMiddleTruncate(snapshot?.cwd ?: "未设置工作目录", 44),
+                TailMarqueePathText(
+                    path = snapshot?.cwd.orEmpty(),
                     fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
                     color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             GitChangesButton(quickCommit) { onOpenQuickCommit() }
@@ -638,12 +637,4 @@ private fun PtyProviderBadge(provider: String?) {
             modifier = Modifier.size(15.dp),
         )
     }
-}
-
-/** 中间截断（与 ChatScreen middleTruncate 同款，避免改其可见性）。 */
-private fun ptyMiddleTruncate(text: String, maxChars: Int): String {
-    if (text.length <= maxChars) return text
-    val head = (maxChars - 1) / 2
-    val tail = maxChars - 1 - head
-    return text.take(head) + "…" + text.takeLast(tail)
 }

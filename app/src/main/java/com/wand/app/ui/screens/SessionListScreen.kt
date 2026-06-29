@@ -72,7 +72,6 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -87,11 +86,11 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
-import com.wand.app.ui.components.middleTruncate
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.GlassStyle
@@ -881,13 +880,11 @@ private fun HistorySessionCard(
                 }
                 val cwd = history.cwd
                 if (cwd.isNotEmpty()) {
-                    Text(
-                        middleTruncate(cwd),
+                    TailMarqueePathText(
+                        path = cwd,
                         fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
                         color = WandColors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -1101,14 +1098,11 @@ private fun SessionCard(
                         .height(if (compact) 21.dp else 24.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
-                    Text(
-                        if (cwd.isEmpty()) "未设置工作目录" else middleTruncate(cwd, 48),
+                    TailMarqueePathText(
+                        path = cwd,
                         modifier = Modifier.fillMaxWidth(),
                         fontSize = if (compact) 10.sp else 10.5.sp,
-                        fontFamily = FontFamily.Monospace,
                         color = WandColors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

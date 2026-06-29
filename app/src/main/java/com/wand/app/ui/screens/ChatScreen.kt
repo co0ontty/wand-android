@@ -116,11 +116,11 @@ import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
-import com.wand.app.ui.components.middleTruncate
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.GlassStyle
@@ -389,13 +389,11 @@ fun ChatScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Text(
-                                middleTruncate(store.snapshot?.cwd ?: "未设置工作目录", 42),
+                            TailMarqueePathText(
+                                path = store.snapshot?.cwd.orEmpty(),
                                 fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
                                 color = WandColors.textMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }

@@ -71,6 +71,7 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.SectionHeader
+import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
@@ -83,9 +84,9 @@ import com.wand.app.ui.theme.secondaryBarGlass
 import kotlinx.coroutines.launch
 
 /**
- * 新建会话 —— **逐像素对齐 iOS NewSessionView**（区块顺序与控件形态完全一致）：
- * Provider（分段控件）→ 会话类型（分段控件）→ 模型与思考（两张菜单卡）→
- * 模式（两列网格，5 选 1，末张半宽）→ 工作目录（路径输入 + 内嵌浏览按钮 + 最近路径）
+ * 新建会话：
+ * Provider（分段控件）→ 会话类型（分段控件）→ 工作目录（路径输入 + 内嵌浏览按钮 + 最近路径）
+ * → 模型与思考（两张菜单卡）→ 模式（两列网格，5 选 1，末张半宽）
  * → 首条消息（可选）。卡片是 iOS 风格的**纯色 surface 平面卡**（无玻璃微光/投影），
  * 选中切 brand 软底 + brand 描边。底部通栏「创建会话」作为唯一主操作，避免上下重复。
  */
@@ -297,6 +298,17 @@ fun NewSessionScreen(
             )
             FieldHint(sessionKindHint(provider, isStructured))
 
+            // —— 工作目录 ——
+            SectionHeader("工作目录")
+            CwdCard(
+                cwd = cwd,
+                onCwdChange = { cwd = it },
+                recentPaths = recentPaths,
+                onBrowse = { showBrowser = true },
+                onPickRecent = { cwd = it },
+            )
+            FieldHint("创建前先确认目录，支持输入绝对路径，或点文件夹图标打开目录浏览器。")
+
             // —— 模型与思考（两张菜单卡）——
             SectionHeader("模型与思考")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -354,16 +366,6 @@ fun NewSessionScreen(
                 }
             }
             FieldHint(modeHint(provider, mode))
-
-            // —— 工作目录 ——
-            SectionHeader("工作目录")
-            CwdCard(
-                cwd = cwd,
-                onCwdChange = { cwd = it },
-                recentPaths = recentPaths,
-                onBrowse = { showBrowser = true },
-                onPickRecent = { cwd = it },
-            )
 
             // —— 首条消息（可选）——
             SectionHeader("首条消息（可选）")
@@ -636,13 +638,11 @@ private fun CwdCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Text(
-                            recent.path,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
+                        TailMarqueePathText(
+                            path = recent.path,
                             color = WandColors.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            fontSize = 11.sp,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     if (isSelected) {
@@ -883,13 +883,11 @@ fun DirectoryBrowserScreen(
                         .border(1.dp, WandColors.border, WandShapes.sm)
                         .padding(horizontal = 10.dp, vertical = 7.dp),
                 ) {
-                    Text(
-                        currentPath,
+                    TailMarqueePathText(
+                        path = currentPath,
                         fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
                         color = WandColors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
