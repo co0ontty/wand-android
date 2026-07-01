@@ -91,6 +91,7 @@ import androidx.compose.ui.zIndex
 import com.wand.app.ui.QuickCommitEntryPhase
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassCard
@@ -304,21 +305,23 @@ fun QuickCommitSheet(
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(bottom = 18.dp),
-        ) {
-            SheetHeader(qc)
-            if (qc.result != null) {
-                ResultPanel(qc, onDismiss)
-            } else {
-                FormPanel(qc, isHapticEnabled, onDismiss)
+        NoOverscroll {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(bottom = 18.dp),
+            ) {
+                SheetHeader(qc)
+                if (qc.result != null) {
+                    ResultPanel(qc, onDismiss)
+                } else {
+                    FormPanel(qc, isHapticEnabled, onDismiss)
+                }
             }
         }
     }

@@ -115,6 +115,7 @@ import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
+import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
@@ -1074,50 +1075,52 @@ private fun LaunchSettingPicker(
                 onDismissRequest = { expanded = false },
                 containerColor = WandColors.bgElevated,
             ) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
-                ) {
-                    Text(
-                        "选择$label",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = WandColors.textPrimary,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                    )
-                    options.forEach { (id, optionLabel) ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (selected == id) WandColors.brandSoft else Color.Transparent,
+                NoOverscroll {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
+                    ) {
+                        Text(
+                            "选择$label",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = WandColors.textPrimary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                        )
+                        options.forEach { (id, optionLabel) ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (selected == id) WandColors.brandSoft else Color.Transparent,
+                                    )
+                                    .clickable {
+                                        onSelect(id)
+                                        expanded = false
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                            ) {
+                                Text(
+                                    optionLabel,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (selected == id) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (selected == id) WandColors.brand else WandColors.textPrimary,
+                                    modifier = Modifier.weight(1f),
                                 )
-                                .clickable {
-                                    onSelect(id)
-                                    expanded = false
+                                if (selected == id) {
+                                    Icon(
+                                        WandIcons.check,
+                                        contentDescription = "当前选中",
+                                        tint = WandColors.brand,
+                                        modifier = Modifier.size(18.dp),
+                                    )
                                 }
-                                .padding(horizontal = 14.dp, vertical = 13.dp),
-                        ) {
-                            Text(
-                                optionLabel,
-                                fontSize = 14.sp,
-                                fontWeight = if (selected == id) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (selected == id) WandColors.brand else WandColors.textPrimary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (selected == id) {
-                                Icon(
-                                    WandIcons.check,
-                                    contentDescription = "当前选中",
-                                    tint = WandColors.brand,
-                                    modifier = Modifier.size(18.dp),
-                                )
                             }
                         }
                     }

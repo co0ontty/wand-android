@@ -70,6 +70,7 @@ import com.wand.app.data.WandApi
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
+import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.SectionHeader
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandCard
@@ -477,50 +478,52 @@ private fun OptionMenuCard(
                 containerColor = WandColors.bgElevated,
                 shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
             ) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp)
-                        .navigationBarsPadding()
-                        .padding(bottom = 18.dp),
-                ) {
-                    Text(
-                        "选择$title",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                    )
-                    options.forEach { (id, label) ->
-                        val isSel = selectedId == id || (selectedId == "default" && id == "")
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (isSel) WandColors.brandSoft else Color.Transparent)
-                                .clickable {
-                                    onSelect(id)
-                                    expanded = false
-                                }
-                                .padding(horizontal = 14.dp, vertical = 13.dp),
-                        ) {
-                            Icon(
-                                if (isSel) WandIcons.check else Icons.Outlined.RadioButtonUnchecked,
-                                contentDescription = null,
-                                tint = if (isSel) WandColors.brand else WandColors.textMuted,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                label,
-                                fontSize = 14.sp,
-                                fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isSel) WandColors.brand else WandColors.textPrimary,
-                                modifier = Modifier.weight(1f),
-                            )
+                NoOverscroll {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp)
+                            .navigationBarsPadding()
+                            .padding(bottom = 18.dp),
+                    ) {
+                        Text(
+                            "选择$title",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = WandColors.textPrimary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                        )
+                        options.forEach { (id, label) ->
+                            val isSel = selectedId == id || (selectedId == "default" && id == "")
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSel) WandColors.brandSoft else Color.Transparent)
+                                    .clickable {
+                                        onSelect(id)
+                                        expanded = false
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                            ) {
+                                Icon(
+                                    if (isSel) WandIcons.check else Icons.Outlined.RadioButtonUnchecked,
+                                    contentDescription = null,
+                                    tint = if (isSel) WandColors.brand else WandColors.textMuted,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    label,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSel) WandColors.brand else WandColors.textPrimary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                         }
                     }
                 }

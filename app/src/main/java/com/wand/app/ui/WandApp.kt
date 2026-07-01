@@ -61,6 +61,7 @@ import com.wand.app.data.WandApi
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
 import com.wand.app.ui.components.BrandLogos
+import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
@@ -282,16 +283,18 @@ private fun ReadyContent(
             shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
             dragHandle = null,
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.86f),
-            ) {
-                SettingsScreen(
-                    api = api,
-                    actions = actions,
-                    onBack = { dismissSettings() },
-                )
+            NoOverscroll {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.86f),
+                ) {
+                    SettingsScreen(
+                        api = api,
+                        actions = actions,
+                        onBack = { dismissSettings() },
+                    )
+                }
             }
         }
     }

@@ -91,6 +91,7 @@ import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.components.toolIcon
@@ -404,8 +405,14 @@ private fun SegmentBlocks(
     val renderItems = remember(items, isLastTurn, isResponding) {
         collapseActivityItems(items, isLastTurn, isResponding)
     }
-    var openActivity by remember { mutableStateOf<ActivityGroup?>(null) }
-    LaunchedEffect(items) { openActivity = null }
+    var openActivityKey by remember { mutableStateOf<String?>(null) }
+    val openActivity = remember(renderItems, openActivityKey) {
+        val key = openActivityKey ?: return@remember null
+        renderItems
+            .filterIsInstance<SegmentRenderItem.Activity>()
+            .firstOrNull { it.group.key == key }
+            ?.group
+    }
 
     openActivity?.let { group ->
         ActivityDetailSheet(
@@ -416,7 +423,7 @@ private fun SegmentBlocks(
             onAskToggle = onAskToggle,
             onAskSubmit = onAskSubmit,
             showSubagentTags = showSubagentTags,
-            onDismiss = { openActivity = null },
+            onDismiss = { openActivityKey = null },
         )
     }
 
@@ -437,7 +444,7 @@ private fun SegmentBlocks(
                 )
                 is SegmentRenderItem.Activity -> ActivitySummaryRow(
                     group = renderItem.group,
-                    onClick = { openActivity = renderItem.group },
+                    onClick = { openActivityKey = renderItem.group.key },
                 )
             }
         }
@@ -719,6 +726,7 @@ private sealed class DisplayItem {
 }
 
 private data class ActivityGroup(
+    val key: String,
     val summary: String,
     val items: List<DisplayItem>,
     val running: Boolean,
@@ -827,24 +835,28 @@ private fun collapseActivityItems(
 ): List<SegmentRenderItem> {
     val renderItems = mutableListOf<SegmentRenderItem>()
     val pending = mutableListOf<DisplayItem>()
+    var pendingStartIndex = -1
 
     fun flushPending() {
         if (pending.isNotEmpty()) {
             val groupItems = pending.toList()
             renderItems += SegmentRenderItem.Activity(
                 ActivityGroup(
+                    key = activityGroupKey(groupItems, pendingStartIndex),
                     summary = activitySummary(groupItems, groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) }),
                     items = groupItems,
                     running = groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) },
                 )
             )
             pending.clear()
+            pendingStartIndex = -1
         }
     }
 
     items.forEachIndexed { index, item ->
         if (shouldSkipDisplayItem(item)) return@forEachIndexed
         if (isCollapsibleActivityItem(item)) {
+            if (pending.isEmpty()) pendingStartIndex = index
             pending += item
         } else {
             flushPending()
@@ -853,6 +865,24 @@ private fun collapseActivityItems(
     }
     flushPending()
     return renderItems
+}
+
+private fun activityGroupKey(items: List<DisplayItem>, startIndex: Int): String {
+    val first = items.firstOrNull()
+    val firstId = first?.let(::displayItemStableKey) ?: "empty"
+    return "$startIndex:$firstId"
+}
+
+private fun displayItemStableKey(item: DisplayItem): String = when (item) {
+    is DisplayItem.Tool -> "tool:${item.use.id.ifBlank { item.use.name }}"
+    is DisplayItem.Exploration -> "explore:${item.tools.firstOrNull()?.use?.id ?: item.tools.size}"
+    is DisplayItem.Plain -> when (val block = item.block) {
+        is ContentBlock.Thinking -> "thinking:${block.subagent?.taskId ?: block.thinking.take(24)}"
+        is ContentBlock.ToolResult -> "result:${block.toolUseId.ifBlank { block.text.take(24) }}"
+        is ContentBlock.Text -> "text:${block.text.take(24)}"
+        is ContentBlock.Unknown -> "unknown"
+        is ContentBlock.ToolUse -> "plain-tool:${block.id.ifBlank { block.name }}"
+    }
 }
 
 private fun shouldSkipDisplayItem(item: DisplayItem): Boolean =
@@ -937,55 +967,57 @@ private fun ActivityDetailSheet(
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
         dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.86f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(bottom = 18.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
+        NoOverscroll {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.86f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(bottom = 18.dp),
             ) {
-                Text(
-                    "执行详情",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    group.summary,
-                    fontSize = 11.sp,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
-                        .padding(horizontal = 9.dp, vertical = 5.dp)
-                        .widthIn(max = 210.dp),
-                )
-            }
-            group.items.forEachIndexed { index, item ->
-                RenderDisplayItem(
-                    item = item,
-                    itemIndex = index,
-                    itemCount = group.items.size,
-                    isLastTurn = isLastTurn,
-                    isResponding = isResponding,
-                    askSelections = askSelections,
-                    onAskToggle = onAskToggle,
-                    onAskSubmit = onAskSubmit,
-                    showSubagentTags = showSubagentTags,
-                    initiallyExpanded = true,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "执行详情",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        group.summary,
+                        fontSize = 11.sp,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
+                            .padding(horizontal = 9.dp, vertical = 5.dp)
+                            .widthIn(max = 210.dp),
+                    )
+                }
+                group.items.forEachIndexed { index, item ->
+                    RenderDisplayItem(
+                        item = item,
+                        itemIndex = index,
+                        itemCount = group.items.size,
+                        isLastTurn = isLastTurn,
+                        isResponding = isResponding,
+                        askSelections = askSelections,
+                        onAskToggle = onAskToggle,
+                        onAskSubmit = onAskSubmit,
+                        showSubagentTags = showSubagentTags,
+                        initiallyExpanded = true,
+                    )
+                }
             }
         }
     }
@@ -1870,6 +1902,7 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
     val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
     val group = remember(items, running) {
         ActivityGroup(
+            key = "exploration:${items.firstOrNull()?.let(::displayItemStableKey) ?: tools.size}",
             summary = activitySummary(items, running),
             items = items,
             running = running,
