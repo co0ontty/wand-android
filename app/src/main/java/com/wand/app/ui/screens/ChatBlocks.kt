@@ -656,17 +656,17 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
                 Column(
                     modifier = Modifier
                         .shadow(
-                            elevation = 2.dp,
+                            elevation = 1.5.dp,
                             shape = bubbleShape,
-                            ambientColor = brand.copy(alpha = 0.45f),
-                            spotColor = brand.copy(alpha = 0.45f),
+                            ambientColor = brand.copy(alpha = 0.22f),
+                            spotColor = brand.copy(alpha = 0.22f),
                         )
                         .clip(bubbleShape)
                         .background(
                             Brush.verticalGradient(
                                 listOf(
-                                    lerp(brand, Color.White, 0.10f),
-                                    lerp(brand, Color.Black, 0.10f),
+                                    lerp(brand, Color.White, 0.06f),
+                                    lerp(brand, Color.Black, 0.06f),
                                 )
                             )
                         )
@@ -674,7 +674,7 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
                             1.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.32f),
+                                    Color.White.copy(alpha = 0.20f),
                                     Color.White.copy(alpha = 0.02f),
                                 )
                             ),

@@ -285,8 +285,11 @@ fun <T> WandChoiceStrip(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = minHeight)
-            .background(Color.Transparent),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .clip(WandShapes.full)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
+            .border(1.dp, WandColors.border.copy(alpha = 0.72f), WandShapes.full)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         options.forEach { (value, label) ->
@@ -296,16 +299,23 @@ fun <T> WandChoiceStrip(
                 WandMotion.tweenFast(),
                 label = "choiceStripText",
             )
-            val indicatorColor by animateColorAsState(
-                if (active) WandColors.brand else WandColors.brand.copy(alpha = 0f),
+            val itemBackground by animateColorAsState(
+                if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
                 WandMotion.tweenFast(),
-                label = "choiceStripIndicator",
+                label = "choiceStripBg",
+            )
+            val itemBorder by animateColorAsState(
+                if (active) WandColors.borderStrong.copy(alpha = 0.38f) else Color.Transparent,
+                WandMotion.tweenFast(),
+                label = "choiceStripBorder",
             )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = minHeight)
-                    .clip(RoundedCornerShape(6.dp))
+                    .heightIn(min = minHeight - 6.dp)
+                    .clip(WandShapes.full)
+                    .background(itemBackground)
+                    .border(1.dp, itemBorder, WandShapes.full)
                     .selectable(
                         selected = active,
                         role = Role.Tab,
@@ -321,14 +331,6 @@ fun <T> WandChoiceStrip(
                     color = textColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                )
-                Box(
-                    modifier = Modifier
-                        .padding(top = 3.dp)
-                        .width(24.dp)
-                        .height(2.5.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(indicatorColor),
                 )
             }
         }
@@ -404,8 +406,8 @@ fun WandCard(
     val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
     // 选中态抬得更高、按压回落，双层投影 + 表面微光 + 倒角描边 = 浮起的实体卡。
     val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.2f, t) * (1f - 0.5f * pressDepth)
-    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.12f), t)
-    val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.48f), t)
+    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.10f), t)
+    val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.42f), t)
     val rimShade = lerp(style.rimShade, brand.copy(alpha = 0.28f), t)
     Column(
         modifier = modifier
@@ -413,7 +415,7 @@ fun WandCard(
             .layeredShadow(shape, elevation, keyShadow, ambientShadow)
             .clip(shape)
             .background(bg)
-            .background(surfaceSheenBrush(), shape)
+            .background(surfaceSheenBrush(highlightScale = 0.55f), shape)
             .border(lerpDp(0.55.dp, 1.dp, t), bevelRimBrush(rimLight, rimShade), shape)
             .then(
                 if (onClick != null) {
@@ -441,7 +443,7 @@ fun WandChromeIconButton(
             .size(44.dp)
             .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
             .clip(CircleShape)
-            .background(WandColors.surface.copy(alpha = 0.28f))
+            .background(WandColors.surface.copy(alpha = 0.62f))
             .border(0.55.dp, WandColors.border.copy(alpha = 0.54f), CircleShape)
             .clickable(
                 enabled = enabled,
@@ -506,7 +508,7 @@ fun WandBrandMark(size: Int = 64) {
             .clip(corner)
             .background(
                 Brush.linearGradient(
-                    listOf(lerp(WandColors.brand, Color.White, 0.08f), lerp(WandColors.brand, Color.Black, 0.10f))
+                    listOf(lerp(WandColors.brand, Color.White, 0.06f), lerp(WandColors.brand, Color.Black, 0.06f))
                 )
             ),
     ) {

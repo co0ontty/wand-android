@@ -30,27 +30,27 @@ fun NativeComposerSurface(
     collapsedTrailing: @Composable RowScope.() -> Unit = {},
     expandedControls: @Composable RowScope.(controlsCompact: Boolean) -> Unit = {},
 ) {
-    val composerShape = RoundedCornerShape(if (expanded) 24.dp else 28.dp)
+    val composerShape = RoundedCornerShape(22.dp)
     val darkGlass = isWandDarkTheme()
     val composerGlass = if (expanded) {
         WandGlass.regular.copy(
-            tintAlpha = if (darkGlass) 0.62f else 0.46f,
-            fallbackAlpha = if (darkGlass) 0.92f else 0.84f,
-            blurRadius = 20.dp,
-            refractionHeight = 6.dp,
-            refractionAmount = 10.dp,
-            shadowElevation = 8.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.34f else 0.14f),
+            tintAlpha = if (darkGlass) 0.70f else 0.82f,
+            fallbackAlpha = if (darkGlass) 0.94f else 0.96f,
+            blurRadius = 12.dp,
+            refractionHeight = 2.dp,
+            refractionAmount = 5.dp,
+            shadowElevation = 2.dp,
+            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.24f else 0.08f),
         )
     } else {
         WandGlass.regular.copy(
-            tintAlpha = if (darkGlass) 0.56f else 0.34f,
-            fallbackAlpha = if (darkGlass) 0.88f else 0.78f,
-            blurRadius = 18.dp,
-            refractionHeight = 3.dp,
-            refractionAmount = 8.dp,
-            shadowElevation = 3.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.28f else 0.10f),
+            tintAlpha = if (darkGlass) 0.62f else 0.76f,
+            fallbackAlpha = if (darkGlass) 0.90f else 0.92f,
+            blurRadius = 10.dp,
+            refractionHeight = 1.dp,
+            refractionAmount = 4.dp,
+            shadowElevation = 1.dp,
+            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.20f else 0.06f),
         )
     }
 

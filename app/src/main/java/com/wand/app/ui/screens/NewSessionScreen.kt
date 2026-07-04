@@ -217,10 +217,18 @@ fun NewSessionScreen(
     val thinkingLabel = THINKING_LEVELS.firstOrNull { it.first == thinkingEffort }?.second ?: "关闭"
 
     Scaffold(
-        containerColor = WandColors.bgPrimary,
-        modifier = Modifier.imePadding(),
+        containerColor = Color.Transparent,
+        modifier = Modifier
+            .imePadding()
+            .ambientBackground(),
         topBar = {
             CenterAlignedTopAppBar(
+                modifier = Modifier.glassSurface(
+                    null,
+                    RoundedCornerShape(0.dp),
+                    secondaryBarGlass,
+                    edgeToEdge = true,
+                ),
                 title = { Text("新建会话", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     TextButton(onClick = onBack) {
@@ -229,44 +237,55 @@ fun NewSessionScreen(
                 },
                 actions = {},
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = WandColors.bgPrimary,
-                    scrolledContainerColor = WandColors.bgPrimary,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                 ),
             )
         },
         bottomBar = {
             // 底部通栏创建按钮（对齐 iOS createBar）。
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(WandColors.bgPrimary)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .glassSurface(
+                        null,
+                        RoundedCornerShape(0.dp),
+                        secondaryBarGlass,
+                        edgeToEdge = true,
+                    )
+                    .navigationBarsPadding(),
             ) {
-                Button(
-                    onClick = { create() },
-                    enabled = canCreate,
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = WandColors.brand,
-                        disabledContainerColor = WandColors.brand.copy(alpha = 0.4f),
-                        contentColor = Color.White,
-                        disabledContentColor = Color.White,
-                    ),
+                HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
-                    if (creating) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text("创建中…", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                    } else {
-                        Text("创建会话", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Button(
+                        onClick = { create() },
+                        enabled = canCreate,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = WandColors.brand,
+                            disabledContainerColor = WandColors.brand.copy(alpha = 0.4f),
+                            contentColor = Color.White,
+                            disabledContentColor = Color.White,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                    ) {
+                        if (creating) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.size(8.dp))
+                            Text("创建中…", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        } else {
+                            Text("创建会话", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
@@ -385,21 +404,21 @@ fun NewSessionScreen(
 /** iOS 风格选择卡底：纯色 surface 平面 + 1pt 描边；选中切 brand 软底 + brand 1.5pt 描边。 */
 @Composable
 private fun Modifier.selectCard(selected: Boolean): Modifier {
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(12.dp)
     val bg by animateColorAsState(
-        if (selected) WandColors.brand.copy(alpha = 0.10f) else WandColors.surface,
+        if (selected) WandColors.brandSoft else WandColors.surface.copy(alpha = 0.94f),
         WandMotion.tweenFast(),
         label = "selectCardBg",
     )
     val borderColor by animateColorAsState(
-        if (selected) WandColors.brand else WandColors.border,
+        if (selected) WandColors.brand.copy(alpha = 0.46f) else WandColors.border.copy(alpha = 0.86f),
         WandMotion.tweenFast(),
         label = "selectCardBorder",
     )
     return this
         .clip(shape)
         .background(bg)
-        .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
+        .border(1.dp, borderColor, shape)
 }
 
 @Composable
@@ -676,6 +695,7 @@ private fun FirstMessageCard(value: String, onValueChange: (String) -> Unit) {
                 contentAlignment = Alignment.CenterStart,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 96.dp)
                     .selectCard(selected = false)
                     .padding(horizontal = 12.dp, vertical = 12.dp),
             ) {
