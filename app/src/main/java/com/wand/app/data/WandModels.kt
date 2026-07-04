@@ -392,13 +392,34 @@ data class ModelsResponse(
     val models: List<ModelInfo>,
     val codexModels: List<ModelInfo>,
     val defaultModel: String?,
+    val defaultCodexModel: String?,
+    val defaultModels: ProviderDefaultModels?,
 ) {
+    fun defaultModelFor(provider: String): String =
+        if (provider == "codex") {
+            defaultModels?.codex ?: defaultCodexModel ?: ""
+        } else {
+            defaultModels?.claude ?: defaultModel ?: ""
+        }
+
     companion object {
         fun parse(o: JSONObject): ModelsResponse = ModelsResponse(
             models = ModelInfo.parseList(o.arr("models")),
             codexModels = ModelInfo.parseList(o.arr("codexModels")),
             defaultModel = o.str("defaultModel"),
+            defaultCodexModel = o.str("defaultCodexModel"),
+            defaultModels = ProviderDefaultModels.parse(o.obj("defaultModels")),
         )
+    }
+}
+
+data class ProviderDefaultModels(
+    val claude: String?,
+    val codex: String?,
+) {
+    companion object {
+        fun parse(o: JSONObject?): ProviderDefaultModels? =
+            o?.let { ProviderDefaultModels(claude = it.str("claude"), codex = it.str("codex")) }
     }
 }
 
@@ -625,14 +646,25 @@ data class ServerConfigInfo(
     val defaultCwd: String?,
     val defaultMode: String?,
     val defaultModel: String?,
+    val defaultCodexModel: String?,
+    val defaultModels: ProviderDefaultModels?,
     val defaultThinkingEffort: String?,
     val currentVersion: String?,
 ) {
+    fun defaultModelFor(provider: String): String =
+        if (provider == "codex") {
+            defaultModels?.codex ?: defaultCodexModel ?: ""
+        } else {
+            defaultModels?.claude ?: defaultModel ?: ""
+        }
+
     companion object {
         fun parse(o: JSONObject): ServerConfigInfo = ServerConfigInfo(
             defaultCwd = o.str("defaultCwd"),
             defaultMode = o.str("defaultMode"),
             defaultModel = o.str("defaultModel"),
+            defaultCodexModel = o.str("defaultCodexModel"),
+            defaultModels = ProviderDefaultModels.parse(o.obj("defaultModels")),
             defaultThinkingEffort = o.str("defaultThinkingEffort"),
             currentVersion = o.str("currentVersion"),
         )

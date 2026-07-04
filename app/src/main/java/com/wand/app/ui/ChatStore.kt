@@ -317,9 +317,10 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         } catch (_: Exception) {
             return
         }
+        val provider = snapshot?.provider ?: "claude"
         availableModels =
-            if (snapshot?.provider == "codex") response.codexModels else response.models
-        defaultModel = response.defaultModel
+            if (provider == "codex") response.codexModels else response.models
+        defaultModel = response.defaultModelFor(provider)
     }
 
     // MARK: - 用户动作

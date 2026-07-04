@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.ModelInfo
+import com.wand.app.data.ProviderDefaultModels
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
@@ -108,6 +109,7 @@ fun NewSessionScreen(
     var mode by remember { mutableStateOf("managed") }
     var availableModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
     var codexModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
+    var serverDefaultModels by remember { mutableStateOf(ProviderDefaultModels(claude = null, codex = null)) }
     var selectedModel by remember { mutableStateOf("") }
     var thinkingEffort by remember { mutableStateOf("off") }
     var firstMessage by remember { mutableStateOf("") }
@@ -125,7 +127,11 @@ fun NewSessionScreen(
             null
         }
         mode = supportedModeFor(config?.defaultMode ?: "managed", provider)
-        selectedModel = config?.defaultModel ?: ""
+        serverDefaultModels = config?.defaultModels ?: ProviderDefaultModels(
+            claude = config?.defaultModel,
+            codex = config?.defaultCodexModel,
+        )
+        selectedModel = ""
         thinkingEffort = config?.defaultThinkingEffort ?: "off"
         try {
             val response = api.models()
@@ -159,10 +165,10 @@ fun NewSessionScreen(
     val canCreate = cwd.trim().isNotEmpty() && !creating
 
     // 持久化默认项（对齐 iOS saveDefaults，失败仅记错不打断选择）。
-    fun persistDefaults(mode: String? = null, model: String? = null, thinkingEffort: String? = null) {
+    fun persistDefaults(mode: String? = null, model: String? = null, providerOverride: String = provider, thinkingEffort: String? = null) {
         scope.launch {
             try {
-                api.updateNewSessionDefaults(mode = mode, model = model, thinkingEffort = thinkingEffort)
+                api.updateNewSessionDefaults(mode = mode, model = model, provider = providerOverride, thinkingEffort = thinkingEffort)
             } catch (e: Exception) {
                 errorMessage = e.message
             }
@@ -208,7 +214,12 @@ fun NewSessionScreen(
         }
     }
 
-    val defaultModelLabel = providerModels.firstOrNull { it.id == "default" }?.label ?: "默认"
+    val serverDefaultModel = if (provider == "codex") serverDefaultModels.codex else serverDefaultModels.claude
+    val defaultModelLabel = if (!serverDefaultModel.isNullOrBlank()) {
+        providerModels.firstOrNull { it.id == serverDefaultModel }?.label ?: serverDefaultModel
+    } else {
+        providerModels.firstOrNull { it.id == "default" }?.label ?: "默认"
+    }
     val selectedModelLabel = if (selectedModel.isEmpty() || selectedModel == "default") {
         defaultModelLabel
     } else {
@@ -306,6 +317,7 @@ fun NewSessionScreen(
                 onSelect = { newProvider ->
                     provider = newProvider
                     mode = supportedModeFor(mode, newProvider)
+                    selectedModel = ""
                 },
             )
 
@@ -343,7 +355,7 @@ fun NewSessionScreen(
                     selectedId = selectedModel,
                     onSelect = {
                         selectedModel = it
-                        persistDefaults(model = it)
+                        persistDefaults(model = it, providerOverride = provider)
                     },
                     modifier = Modifier.weight(1f),
                 )

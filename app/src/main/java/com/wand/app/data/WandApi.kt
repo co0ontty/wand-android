@@ -346,11 +346,20 @@ class WandApi(baseUrl: String, val token: String?) {
     suspend fun updateNewSessionDefaults(
         mode: String? = null,
         model: String? = null,
+        provider: String = "claude",
         thinkingEffort: String? = null,
     ) {
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
-        if (model != null) body.put("defaultModel", model)
+        if (model != null) {
+            if (provider == "codex") {
+                body.put("defaultCodexModel", model)
+                body.put("defaultModels", JSONObject().put("codex", model))
+            } else {
+                body.put("defaultModel", model)
+                body.put("defaultModels", JSONObject().put("claude", model))
+            }
+        }
         if (thinkingEffort != null) body.put("defaultThinkingEffort", thinkingEffort)
         requestData("POST", "/api/settings/config", body)
     }
