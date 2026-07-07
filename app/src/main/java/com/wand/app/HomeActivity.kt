@@ -151,9 +151,14 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun checkUpdate(manager: UpdateManager) {
-        manager.checkForUpdate { cur, latest, url, file, size, source, notes, channel ->
-            manager.showUpdateDialog(cur, latest, url, file, size, source, notes, channel)
-        }
+        manager.checkForUpdate(
+            { cur, latest, url, file, size, source, notes, channel ->
+                manager.showUpdateDialog(cur, latest, url, file, size, source, notes, channel)
+            },
+            { message ->
+                Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            },
+        )
     }
 
     private fun openWebFallback(serverUrl: String, appToken: String?, sessionId: String? = null) {

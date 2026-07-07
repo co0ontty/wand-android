@@ -47,8 +47,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -356,8 +358,11 @@ private fun WideReadyContent(
     onToggleSidebarCollapsed: () -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
 ) {
-    val paneWidth by animateDpAsState(
-        targetValue = if (sidebarCollapsed) 56.dp else listPaneWidth,
+    val sidebarEndGutter = 8.dp
+    val sidebarVerticalInset = 10.dp
+    val sidebarContentWidth = if (sidebarCollapsed) 56.dp else listPaneWidth
+    val sidebarWidth by animateDpAsState(
+        targetValue = sidebarContentWidth + sidebarEndGutter,
         animationSpec = tween(durationMillis = 180),
         label = "wideSidebarWidth",
     )
@@ -368,35 +373,43 @@ private fun WideReadyContent(
     ) {
         Box(
             modifier = Modifier
-                .width(paneWidth)
-                .fillMaxHeight(),
+                .width(sidebarWidth)
+                .fillMaxHeight()
+                .padding(
+                    top = sidebarVerticalInset,
+                    end = sidebarEndGutter,
+                    bottom = sidebarVerticalInset,
+                ),
         ) {
-            if (sidebarCollapsed) {
-                CollapsedSessionRail(
-                    listState = listState,
-                    selectedSessionId = selectedSessionId,
-                    onOpenSession = onOpenSession,
-                    onOpenHistory = onOpenHistory,
-                    onNewSession = onNewSession,
-                )
-            } else {
-                SessionListScreen(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    selectedSessionId = selectedSessionId,
-                    topBarContentHeight = 64.dp,
-                    compactLayout = true,
-                    onOpenSession = onOpenSession,
-                    onNewSession = onNewSession,
-                    onOpenSettings = onOpenSettings,
-                    onOpenWeb = actions.openWeb,
-                    onSwitchServer = actions.switchServer,
-                )
+            WideSidebarPanel(modifier = Modifier.fillMaxSize()) {
+                if (sidebarCollapsed) {
+                    CollapsedSessionRail(
+                        listState = listState,
+                        selectedSessionId = selectedSessionId,
+                        onOpenSession = onOpenSession,
+                        onOpenHistory = onOpenHistory,
+                        onNewSession = onNewSession,
+                    )
+                } else {
+                    SessionListScreen(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        selectedSessionId = selectedSessionId,
+                        topBarContentHeight = 64.dp,
+                        compactLayout = true,
+                        onOpenSession = onOpenSession,
+                        onNewSession = onNewSession,
+                        onOpenSettings = onOpenSettings,
+                        onOpenWeb = actions.openWeb,
+                        onSwitchServer = actions.switchServer,
+                    )
+                }
             }
         }
         SplitPaneCollapseHandle(
             collapsed = sidebarCollapsed,
             onClick = onToggleSidebarCollapsed,
+            modifier = Modifier.padding(vertical = sidebarVerticalInset),
         )
         Box(
             modifier = Modifier
@@ -428,29 +441,60 @@ private fun WideReadyContent(
 }
 
 @Composable
+private fun WideSidebarPanel(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val shape = RoundedCornerShape(topEnd = 22.dp, bottomEnd = 22.dp)
+    val rimColor = WandColors.borderStrong.copy(alpha = 0.32f)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(WandColors.bgElevated.copy(alpha = 0.86f))
+            .drawBehind {
+                val x = size.width - 0.6.dp.toPx()
+                val yInset = 22.dp.toPx()
+                drawLine(
+                    color = rimColor,
+                    start = Offset(x, yInset),
+                    end = Offset(x, size.height - yInset),
+                    strokeWidth = 0.8.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            },
+    ) {
+        content()
+    }
+}
+
+@Composable
 private fun SplitPaneCollapseHandle(
     collapsed: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val trackShape = RoundedCornerShape(999.dp)
+    val knobShape = RoundedCornerShape(12.dp)
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxHeight()
-            .width(24.dp),
+            .width(18.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .fillMaxHeight()
-                .width(1.dp)
-                .background(WandColors.border),
+                .width(2.dp)
+                .height(116.dp)
+                .clip(trackShape)
+                .background(WandColors.borderStrong.copy(alpha = 0.24f)),
         )
         Box(
             modifier = Modifier
-                .width(18.dp)
-                .height(44.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(WandColors.bgElevated.copy(alpha = 0.92f))
-                .border(0.8.dp, WandColors.borderStrong.copy(alpha = 0.44f), RoundedCornerShape(10.dp))
+                .width(20.dp)
+                .height(48.dp)
+                .clip(knobShape)
+                .background(WandColors.bgElevated.copy(alpha = 0.88f))
+                .border(0.6.dp, WandColors.borderStrong.copy(alpha = 0.34f), knobShape)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
@@ -609,7 +653,12 @@ private fun CollapsedRailTile(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
-    val badgeShape = RoundedCornerShape(9.dp)
+    val badgeShape = RoundedCornerShape(
+        topStart = 7.dp,
+        topEnd = 5.dp,
+        bottomEnd = 8.dp,
+        bottomStart = 5.dp,
+    )
     val background = when {
         outlined -> WandColors.brand.copy(alpha = 0.06f)
         history -> tint.copy(alpha = 0.075f)
@@ -633,13 +682,7 @@ private fun CollapsedRailTile(
                 .size(40.dp)
                 .clip(shape)
                 .background(background)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.White.copy(alpha = 0.18f), Color.Transparent),
-                    ),
-                    shape,
-                )
-                .border(if (selected || outlined) 1.2.dp else 0.8.dp, borderColor, shape),
+                .border(if (selected || outlined) 1.dp else 0.55.dp, borderColor, shape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -651,26 +694,29 @@ private fun CollapsedRailTile(
         }
         if (badge != null) {
             val badgeWidth = when {
-                badge.length <= 1 -> 18.dp
-                badge.length == 2 -> 22.dp
-                else -> 26.dp
+                badge.length <= 1 -> 17.dp
+                badge.length == 2 -> 21.dp
+                else -> 25.dp
             }
+            val badgeBackground = WandColors.surfaceSoft.copy(alpha = if (selected) 0.98f else 0.92f)
+            val badgeBorder = tint.copy(alpha = if (selected) 0.78f else 0.46f)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .offset(x = (-3).dp, y = (-3).dp)
+                    .offset(x = (-5).dp, y = (-5).dp)
                     .width(badgeWidth)
-                    .height(18.dp)
+                    .height(16.dp)
                     .clip(badgeShape)
-                    .background(if (selected) tint else WandColors.bgElevated)
-                    .border(0.7.dp, tint.copy(alpha = if (selected) 0.68f else 0.34f), badgeShape),
+                    .background(badgeBackground)
+                    .border(0.7.dp, badgeBorder, badgeShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     badge,
-                    color = if (selected) Color.White else tint,
+                    color = tint.copy(alpha = if (selected) 1f else 0.92f),
                     fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
+                    lineHeight = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center,
                 )
             }

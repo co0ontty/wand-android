@@ -39,8 +39,8 @@ fun NativeComposerSurface(
             blurRadius = 12.dp,
             refractionHeight = 2.dp,
             refractionAmount = 5.dp,
-            shadowElevation = 2.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.24f else 0.08f),
+            shadowElevation = 0.8.dp,
+            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.16f else 0.05f),
         )
     } else {
         WandGlass.regular.copy(
@@ -49,8 +49,8 @@ fun NativeComposerSurface(
             blurRadius = 10.dp,
             refractionHeight = 1.dp,
             refractionAmount = 4.dp,
-            shadowElevation = 1.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.20f else 0.06f),
+            shadowElevation = 0.5.dp,
+            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.14f else 0.04f),
         )
     }
 

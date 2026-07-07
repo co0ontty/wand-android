@@ -58,7 +58,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -98,13 +97,9 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.bevelRimBrush
-import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
-import com.wand.app.ui.theme.layeredShadow
 import com.wand.app.ui.theme.rememberGlassBackdrop
-import com.wand.app.ui.theme.surfaceSheenBrush
 import kotlin.math.roundToInt
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -807,8 +802,8 @@ private fun HistoryList(
 }
 
 /**
- * 历史会话卡：浮起的渐变头像（时钟图标）+ 首条用户消息 + 元信息行（provider 胶囊 + 相对时间）
- * + 工作目录路径独占一行（对齐 iOS HistorySessionRow）。头像深度与 [ProviderMark] 一致。
+ * 历史会话卡：头像（时钟图标）+ 首条用户消息 + 元信息行（provider 胶囊 + 相对时间）
+ * + 工作目录路径独占一行（对齐 iOS HistorySessionRow）。
  */
 @Composable
 private fun HistorySessionCard(
@@ -819,7 +814,6 @@ private fun HistorySessionCard(
     val isCodex = history.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
     val shape = RoundedCornerShape(14.dp)
-    val (keyShadow, ambientShadow) = cardShadowColors()
     WandCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = if (enabled) onClick else null,
@@ -833,16 +827,9 @@ private fun HistorySessionCard(
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .layeredShadow(shape, 3.dp, keyShadow, ambientShadow)
                     .clip(shape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(tint.copy(alpha = 0.26f), tint.copy(alpha = 0.10f)),
-                        ),
-                    )
-                    // 半透明彩色图标片：满白受光高光会在彩底上糊出白印，几乎抹掉只留彩色本身。
-                    .background(surfaceSheenBrush(highlightScale = 0.1f), shape)
-                    .border(1.dp, bevelRimBrush(tint.copy(alpha = 0.35f), tint.copy(alpha = 0.12f)), shape),
+                    .background(tint.copy(alpha = 0.10f))
+                    .border(0.55.dp, tint.copy(alpha = 0.16f), shape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -1139,8 +1126,8 @@ private fun SessionMetaRail(session: SessionSnapshot, status: String, compact: B
 }
 
 /**
- * 左侧助手标识：品牌渐变圆角方块 + brand logo，右下角叠加实时状态点（对齐 iOS providerMark）。
- * 44dp 头像放在不裁切的外层容器中，状态点轻贴右下角；柔和半透明外环避免切出醒目的白色缺口。
+ * 左侧助手标识：弱底圆角方块 + brand logo，右下角叠加实时状态点（对齐 iOS providerMark）。
+ * 44dp 头像放在不裁切的外层容器中，状态点轻贴右下角。
  */
 @Composable
 private fun ProviderMark(session: SessionSnapshot, status: String, compact: Boolean = false) {
@@ -1149,7 +1136,6 @@ private fun ProviderMark(session: SessionSnapshot, status: String, compact: Bool
     val icon = if (isCodex) BrandLogos.codex else BrandLogos.claude
     val label = if (isCodex) "Codex" else "Claude"
     val shape = RoundedCornerShape(if (compact) 10.dp else 12.dp)
-    val (keyShadow, ambientShadow) = cardShadowColors()
     val outerSize = if (compact) 40.dp else 44.dp
     val markSize = if (compact) 36.dp else 40.dp
     val logoSize = if (compact) 17.dp else 18.dp
@@ -1160,16 +1146,9 @@ private fun ProviderMark(session: SessionSnapshot, status: String, compact: Bool
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .size(markSize)
-                .layeredShadow(shape, 1.2.dp, keyShadow, ambientShadow)
                 .clip(shape)
-                .background(
-                    Brush.linearGradient(
-                        listOf(tint.copy(alpha = 0.14f), tint.copy(alpha = 0.055f)),
-                    ),
-                )
-                // 半透明彩色图标片：底色比上者更淡，白受光高光全部抹掉，避免白印浮在彩底上。
-                .background(surfaceSheenBrush(highlightScale = 0f), shape)
-                .border(0.8.dp, bevelRimBrush(tint.copy(alpha = 0.20f), tint.copy(alpha = 0.07f)), shape),
+                .background(tint.copy(alpha = 0.095f))
+                .border(0.55.dp, tint.copy(alpha = 0.14f), shape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(

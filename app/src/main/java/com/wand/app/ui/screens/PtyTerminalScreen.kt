@@ -214,10 +214,10 @@ fun PtyTerminalScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(horizontal = 6.dp, vertical = 8.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
                     .clip(terminalShape)
                     .background(Color.Black)
-                    .border(1.dp, WandColors.border.copy(alpha = 0.72f), terminalShape),
+                    .border(0.55.dp, WandColors.border.copy(alpha = 0.34f), terminalShape),
             ) {
                 PtyTerminalWebView(
                     serverUrl = api.baseUrl,
@@ -627,8 +627,8 @@ private fun PtyProviderBadge(provider: String?) {
         modifier = Modifier
             .size(28.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(background)
-            .border(1.dp, tint.copy(alpha = 0.24f), RoundedCornerShape(8.dp)),
+            .background(background.copy(alpha = 0.72f))
+            .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(8.dp)),
     ) {
         Icon(
             if (isCodex) BrandLogos.codex else BrandLogos.claude,

@@ -52,16 +52,33 @@ final class UpdateManager {
                            String source, String releaseNotes, String channel);
     }
 
+    interface NoUpdateCallback {
+        void onNoUpdate(String message);
+    }
+
     void checkForUpdate(UpdateFoundCallback callback) {
+        checkForUpdate(callback, null, true);
+    }
+
+    void checkForUpdate(UpdateFoundCallback callback, NoUpdateCallback noUpdateCallback) {
+        checkForUpdate(callback, noUpdateCallback, false);
+    }
+
+    private void checkForUpdate(UpdateFoundCallback callback, NoUpdateCallback noUpdateCallback,
+                                boolean suppressDownloadedVersion) {
         String currentVersion;
         try {
             currentVersion = activity.getPackageManager()
                     .getPackageInfo(activity.getPackageName(), 0).versionName;
         } catch (Exception e) {
+            notifyNoUpdate(noUpdateCallback, "无法读取当前版本。");
             return;
         }
 
-        if (executor == null || executor.isShutdown()) return;
+        if (executor == null || executor.isShutdown()) {
+            notifyNoUpdate(noUpdateCallback, "更新检查暂不可用。");
+            return;
+        }
         executor.execute(() -> {
             try {
                 // 更新通道随设置走：beta 接收 -debug 开发构建，stable 只看正式版。
@@ -80,6 +97,7 @@ final class UpdateManager {
                 int code = conn.getResponseCode();
                 if (code != 200) {
                     conn.disconnect();
+                    notifyNoUpdate(noUpdateCallback, "检查更新失败：服务器返回 " + code);
                     return;
                 }
 
@@ -92,7 +110,11 @@ final class UpdateManager {
                 conn.disconnect();
 
                 JSONObject data = new JSONObject(sb.toString());
-                if (!data.optBoolean("updateAvailable", false)) return;
+                if (!data.optBoolean("updateAvailable", false)) {
+                    notifyNoUpdate(noUpdateCallback,
+                            "beta".equals(channel) ? "已是最新 Beta 版本。" : "已是最新正式版。");
+                    return;
+                }
 
                 String latestVersion = data.optString("latestVersion", "");
                 String downloadUrl = data.optString("downloadUrl", "");
@@ -101,9 +123,19 @@ final class UpdateManager {
                 String source = data.optString("source", "");
                 String releaseNotes = data.optString("releaseNotes", "");
 
-                if (latestVersion.isEmpty() || downloadUrl.isEmpty()) return;
-                if (latestVersion.equals(serverStore.getSkippedVersion(channel))) return;
-                if (latestVersion.equals(serverStore.getDownloadedApkVersion(channel))) return;
+                if (latestVersion.isEmpty() || downloadUrl.isEmpty()) {
+                    notifyNoUpdate(noUpdateCallback, "没有可用的更新包。");
+                    return;
+                }
+                if (latestVersion.equals(serverStore.getSkippedVersion(channel))) {
+                    notifyNoUpdate(noUpdateCallback, "这个版本已被跳过。");
+                    return;
+                }
+                if (suppressDownloadedVersion &&
+                        latestVersion.equals(serverStore.getDownloadedApkVersion(channel))) {
+                    notifyNoUpdate(noUpdateCallback, "这个版本已下载过。");
+                    return;
+                }
 
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
@@ -111,7 +143,18 @@ final class UpdateManager {
                             downloadUrl, fileName, size, source, releaseNotes, channel);
                 });
 
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                notifyNoUpdate(noUpdateCallback,
+                        NetworkErrorHelper.describeError(e, "check_update"));
+            }
+        });
+    }
+
+    private void notifyNoUpdate(NoUpdateCallback callback, String message) {
+        if (callback == null) return;
+        activity.runOnUiThread(() -> {
+            if (activity.isDestroyed()) return;
+            callback.onNoUpdate(message);
         });
     }
 

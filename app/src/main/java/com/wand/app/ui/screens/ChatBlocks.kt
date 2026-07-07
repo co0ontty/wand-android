@@ -50,11 +50,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -100,10 +97,8 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
-import com.wand.app.ui.theme.layeredShadow
 import com.wand.app.ui.theme.tinted
 import org.json.JSONObject
 
@@ -651,35 +646,12 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                // 玻璃质感气泡：品牌色纵向渐变（上浅下深）+ 顶缘受光 rim + 品牌色软阴影。
                 val brand = WandColors.brand
                 Column(
                     modifier = Modifier
-                        .shadow(
-                            elevation = 1.5.dp,
-                            shape = bubbleShape,
-                            ambientColor = brand.copy(alpha = 0.22f),
-                            spotColor = brand.copy(alpha = 0.22f),
-                        )
                         .clip(bubbleShape)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    lerp(brand, Color.White, 0.06f),
-                                    lerp(brand, Color.Black, 0.06f),
-                                )
-                            )
-                        )
-                        .border(
-                            1.dp,
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.White.copy(alpha = 0.20f),
-                                    Color.White.copy(alpha = 0.02f),
-                                )
-                            ),
-                            bubbleShape,
-                        )
+                        .background(brand)
+                        .border(0.55.dp, Color.White.copy(alpha = 0.10f), bubbleShape)
                         .padding(horizontal = 13.dp, vertical = 8.dp),
                 ) {
                     SelectionContainer {
@@ -1416,7 +1388,7 @@ private fun MarkdownTable(headers: List<String>, rows: List<List<String>>) {
         Column(
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
-                .border(1.dp, WandColors.border, RoundedCornerShape(10.dp)),
+                .border(0.55.dp, WandColors.border.copy(alpha = 0.58f), RoundedCornerShape(10.dp)),
         ) {
             MarkdownTableRow(headers, header = true, background = WandColors.brand.copy(alpha = 0.09f))
             rows.forEachIndexed { index, row ->
@@ -1945,7 +1917,7 @@ private fun ExplorationDetailCard(
             .fillMaxWidth()
             .clip(WandShapes.md)
             .background(WandColors.textPrimary.copy(alpha = 0.035f))
-            .border(1.dp, tint.copy(alpha = 0.20f), WandShapes.md)
+            .border(0.55.dp, tint.copy(alpha = 0.16f), WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -2274,16 +2246,12 @@ fun PermissionCard(
     val detail = escalation?.reason ?: legacy?.prompt ?: ""
     val target = escalation?.target ?: legacy?.target
 
-    // 权限金色调的玻璃面板（悬浮在消息流上需要实底感，permissionSoft 太透看不清）。
-    // glassSurface 已铺好金调实底 + 立体阴影，这里只补一道清晰的金色描边作语义锚点，
-    // 不再叠一层半透明金底（与玻璃实底重复，反而把权限金冲浑）。
     val permissionGlass = WandGlass.regular.tinted(WandColors.permission, 0.22f)
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
             .glassSurface(backdrop, WandShapes.md, permissionGlass)
-            .border(1.5.dp, WandColors.permission.copy(alpha = 0.55f), WandShapes.md)
             .padding(14.dp),
     ) {
         Row(
@@ -2616,7 +2584,7 @@ private fun AskUserOptionRow(
             .fillMaxWidth()
             .clip(WandShapes.sm)
             .background(fill)
-            .border(if (chosen) 1.5.dp else 1.dp, border, WandShapes.sm)
+            .border(if (chosen) 1.dp else 0.55.dp, border.copy(alpha = if (chosen) 0.72f else 0.58f), WandShapes.sm)
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .graphicsLayer { alpha = if (isAnswered && !chosen) 0.55f else 1f }
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -2630,8 +2598,8 @@ private fun AskUserOptionRow(
                 .clip(if (multiSelect) RoundedCornerShape(3.dp) else CircleShape)
                 .background(if (chosen) tint else Color.Transparent)
                 .border(
-                    2.dp,
-                    if (chosen) tint else WandColors.borderStrong,
+                    1.5.dp,
+                    if (chosen) tint.copy(alpha = 0.86f) else WandColors.borderStrong.copy(alpha = 0.72f),
                     if (multiSelect) RoundedCornerShape(3.dp) else CircleShape,
                 ),
         ) {
@@ -2845,17 +2813,12 @@ fun TerminalCard(
         else -> WandColors.success
     }
     var expanded by remember(command, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
-    // 终端固定深色（非玻璃，对齐 Web inline-terminal），但补一层暖调层叠投影，
-    // 让它与相邻工具/Diff 卡一样"浮起"，不再贴平。
-    val (termKeyShadow, termAmbientShadow) = cardShadowColors()
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .layeredShadow(WandShapes.md, 5.dp, termKeyShadow, termAmbientShadow)
             .clip(WandShapes.md)
             .background(TermBg)
-            .border(1.dp, Color.White.copy(alpha = 0.12f), WandShapes.md)
+            .border(0.55.dp, Color.White.copy(alpha = 0.09f), WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(

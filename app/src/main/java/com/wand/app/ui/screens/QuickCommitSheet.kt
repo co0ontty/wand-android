@@ -126,7 +126,7 @@ fun GitTopBarBadge(qc: QuickCommitStore, onClick: () -> Unit) {
             .padding(end = 10.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), CircleShape)
+            .border(0.55.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.46f), CircleShape)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     ) {
@@ -838,7 +838,6 @@ private fun MagneticDock(
                     onAction = onAction,
                 ),
         ) {
-            // 队伍光环（多球抱团时的描边框）
             clusterRect?.let { r ->
                 Box(
                     modifier = Modifier
@@ -847,8 +846,8 @@ private fun MagneticDock(
                             with(density) { r.width.toDp() },
                             with(density) { r.height.toDp() },
                         )
-                        .background(launchTone.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
-                        .border(1.dp, launchTone.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+                        .background(launchTone.copy(alpha = 0.035f), RoundedCornerShape(12.dp))
+                        .border(0.55.dp, launchTone.copy(alpha = 0.22f), RoundedCornerShape(12.dp)),
                 )
             }
             // 气泡们
@@ -918,8 +917,8 @@ private fun MagneticDock(
                 .then(
                     if (hot) {
                         Modifier
-                            .background(launchTone.copy(alpha = 0.14f), launchShape)
-                            .border(1.5.dp, launchTone.copy(alpha = 0.85f), launchShape)
+                            .background(launchTone.copy(alpha = 0.10f), launchShape)
+                            .border(1.dp, launchTone.copy(alpha = 0.58f), launchShape)
                     } else {
                         Modifier
                     }

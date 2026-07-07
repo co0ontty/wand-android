@@ -286,8 +286,8 @@ fun <T> WandChoiceStrip(
             .fillMaxWidth()
             .heightIn(min = minHeight)
             .clip(WandShapes.full)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
-            .border(1.dp, WandColors.border.copy(alpha = 0.72f), WandShapes.full)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.48f))
+            .border(0.55.dp, WandColors.border.copy(alpha = 0.42f), WandShapes.full)
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -305,7 +305,7 @@ fun <T> WandChoiceStrip(
                 label = "choiceStripBg",
             )
             val itemBorder by animateColorAsState(
-                if (active) WandColors.borderStrong.copy(alpha = 0.38f) else Color.Transparent,
+                if (active) WandColors.borderStrong.copy(alpha = 0.24f) else Color.Transparent,
                 WandMotion.tweenFast(),
                 label = "choiceStripBorder",
             )
@@ -390,7 +390,7 @@ fun WandCard(
                 .layeredShadow(shape, 1.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
                 .clip(shape)
                 .background(bg)
-                .border(if (selected) 1.dp else 0.55.dp, borderColor.copy(alpha = if (selected) 1f else 0.82f), shape)
+                .border(if (selected) 0.8.dp else 0.55.dp, borderColor.copy(alpha = if (selected) 0.86f else 0.54f), shape)
                 .then(
                     if (onClick != null) {
                         Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
@@ -404,7 +404,6 @@ fun WandCard(
     val style = WandGlass.card
     val brand = WandColors.brand
     val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
-    // 选中态抬得更高、按压回落，双层投影 + 表面微光 + 倒角描边 = 浮起的实体卡。
     val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.2f, t) * (1f - 0.5f * pressDepth)
     val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.10f), t)
     val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.42f), t)
@@ -415,8 +414,8 @@ fun WandCard(
             .layeredShadow(shape, elevation, keyShadow, ambientShadow)
             .clip(shape)
             .background(bg)
-            .background(surfaceSheenBrush(highlightScale = 0.55f), shape)
-            .border(lerpDp(0.55.dp, 1.dp, t), bevelRimBrush(rimLight, rimShade), shape)
+            .background(surfaceSheenBrush(highlightScale = 0.32f), shape)
+            .border(lerpDp(0.45.dp, 0.8.dp, t), bevelRimBrush(rimLight, rimShade), shape)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)

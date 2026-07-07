@@ -795,8 +795,8 @@ private fun ChatProviderBadge(provider: String?) {
         modifier = Modifier
             .size(28.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(background)
-            .border(1.dp, tint.copy(alpha = 0.24f), RoundedCornerShape(8.dp)),
+            .background(background.copy(alpha = 0.72f))
+            .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(8.dp)),
     ) {
         Icon(
             if (isCodex) BrandLogos.codex else BrandLogos.claude,
@@ -841,8 +841,8 @@ private fun HistorySummaryStrip(
         modifier = Modifier
             .fillMaxWidth()
             .clip(CircleShape)
-            .background(WandColors.surfaceSoft)
-            .border(1.dp, WandColors.border, CircleShape)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.62f))
+            .border(0.55.dp, WandColors.border.copy(alpha = 0.42f), CircleShape)
             .clickable(onClick = onToggle)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
@@ -895,8 +895,8 @@ private fun InlineHistoryChip(
         modifier = modifier
             .widthIn(max = 132.dp)
             .clip(CircleShape)
-            .background(WandColors.surfaceSoft)
-            .border(1.dp, WandColors.border, CircleShape)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.62f))
+            .border(0.55.dp, WandColors.border.copy(alpha = 0.42f), CircleShape)
             .clickable(onClick = onToggle)
             .padding(horizontal = 8.dp, vertical = 7.dp),
     ) {
@@ -978,7 +978,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
                         .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
-                        .border(1.dp, WandColors.border, RoundedCornerShape(16.dp)),
+                        .border(0.55.dp, WandColors.border.copy(alpha = 0.48f), RoundedCornerShape(16.dp)),
                 ) {
                     LaunchSettingPicker(
                         icon = WandIcons.tune,
@@ -1836,7 +1836,7 @@ private fun ControlChip(
         modifier = modifier
             .clip(CircleShape)
             .background(tint.copy(alpha = 0.10f))
-            .border(1.dp, tint.copy(alpha = 0.22f), CircleShape)
+            .border(0.55.dp, tint.copy(alpha = 0.18f), CircleShape)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = if (showText) 9.dp else 8.dp, vertical = 6.dp),
     ) {

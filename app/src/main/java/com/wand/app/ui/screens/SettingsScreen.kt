@@ -732,8 +732,8 @@ private fun SettingsCard(
     Column(
         modifier = modifier
             .clip(shape)
-            .background(WandColors.surface.copy(alpha = 0.98f))
-            .border(0.5.dp, WandColors.border.copy(alpha = if (dark) 0.16f else 0.08f), shape),
+            .background(WandColors.surface.copy(alpha = 0.96f))
+            .border(0.45.dp, WandColors.border.copy(alpha = if (dark) 0.12f else 0.06f), shape),
         content = content,
     )
 }
@@ -743,7 +743,7 @@ private fun SettingsCard(
 private fun RowDivider() {
     HorizontalDivider(
         thickness = 0.5.dp,
-        color = WandColors.border,
+        color = WandColors.border.copy(alpha = 0.58f),
         modifier = Modifier.padding(horizontal = 12.dp),
     )
 }
@@ -786,7 +786,7 @@ private fun SettingsIconBadge(
             .size(32.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(tint.copy(alpha = 0.11f))
-            .border(1.dp, tint.copy(alpha = 0.18f), RoundedCornerShape(10.dp)),
+            .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(10.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
