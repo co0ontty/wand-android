@@ -6,6 +6,7 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.AttachFile
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Commit
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Checklist
@@ -28,19 +30,25 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.NotificationsNone
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -134,6 +142,20 @@ object WandIcons {
 
     /** 设置。 */
     val settings: ImageVector = Icons.Outlined.Settings
+
+    /** 外观与主题。 */
+    val appearance: ImageVector = Icons.Outlined.Palette
+
+    /** 通知、音量与触感反馈。 */
+    val notification: ImageVector = Icons.Outlined.NotificationsNone
+    val volume: ImageVector = Icons.AutoMirrored.Outlined.VolumeUp
+    val haptic: ImageVector = Icons.Outlined.Vibration
+
+    /** 设置页中的客户端能力。 */
+    val keepAlive: ImageVector = Icons.Outlined.CloudSync
+    val beta: ImageVector = Icons.Outlined.Science
+    val server: ImageVector = Icons.Outlined.Storage
+    val connectionCode: ImageVector = Icons.Outlined.Key
 
     /** 切换服务器。 */
     val swapServer: ImageVector = Icons.Outlined.SwapHoriz

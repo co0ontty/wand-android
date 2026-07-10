@@ -280,6 +280,9 @@ private fun ReadyContent(
         ModalBottomSheet(
             onDismissRequest = { showSettings = false },
             sheetState = settingsSheetState,
+            // 设置页本身是长列表。关闭 sheet 拖拽后，纵向手势只交给内部 verticalScroll，
+            // 避免列表到达边界时与 ModalBottomSheet 的嵌套滚动反复争抢位移而抖动。
+            sheetGesturesEnabled = false,
             containerColor = WandColors.bgElevated,
             scrimColor = Color.Black.copy(alpha = 0.42f),
             shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),

@@ -271,7 +271,7 @@ fun EmptyState(
     }
 }
 
-/** 下划线式切换条：避开厚重胶囊外框，适合设置页和弹层顶部的紧凑 tab。 */
+/** 紧凑分段切换条；flat 模式用于卡片内，去掉“外壳套胶囊”的双层感。 */
 @Composable
 fun <T> WandChoiceStrip(
     options: List<Pair<T, String>>,
@@ -280,27 +280,39 @@ fun <T> WandChoiceStrip(
     modifier: Modifier = Modifier,
     minHeight: Dp = 42.dp,
     labelFontSize: TextUnit = 13.sp,
+    activeTextColor: Color? = null,
+    flat: Boolean = false,
 ) {
+    val resolvedActiveTextColor = activeTextColor ?: WandColors.brand
+    val containerShape = if (flat) WandShapes.sm else WandShapes.full
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = minHeight)
-            .clip(WandShapes.full)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.48f))
-            .border(0.55.dp, WandColors.border.copy(alpha = 0.42f), WandShapes.full)
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+            .clip(containerShape)
+            .background(WandColors.surfaceSoft.copy(alpha = if (flat) 0.34f else 0.48f))
+            .border(
+                0.55.dp,
+                WandColors.borderStrong.copy(alpha = if (flat) 0.18f else 0.26f),
+                containerShape,
+            )
+            .padding(if (flat) 0.dp else 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (flat) 0.dp else 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         options.forEach { (value, label) ->
             val active = value == selected
             val textColor by animateColorAsState(
-                if (active) WandColors.brand else WandColors.textSecondary,
+                if (active) resolvedActiveTextColor else WandColors.textSecondary,
                 WandMotion.tweenFast(),
                 label = "choiceStripText",
             )
             val itemBackground by animateColorAsState(
-                if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
+                if (active) {
+                    if (flat) WandColors.brandSoft else WandColors.surface.copy(alpha = 0.96f)
+                } else {
+                    Color.Transparent
+                },
                 WandMotion.tweenFast(),
                 label = "choiceStripBg",
             )
@@ -312,13 +324,20 @@ fun <T> WandChoiceStrip(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = minHeight - 6.dp)
-                    .clip(WandShapes.full)
-                    .background(itemBackground)
-                    .border(1.dp, itemBorder, WandShapes.full)
+                    .heightIn(min = if (flat) minHeight else minHeight - 6.dp)
+                    .then(
+                        if (flat) {
+                            Modifier.background(itemBackground)
+                        } else {
+                            Modifier
+                                .clip(WandShapes.full)
+                                .background(itemBackground)
+                                .border(1.dp, itemBorder, WandShapes.full)
+                        },
+                    )
                     .selectable(
                         selected = active,
-                        role = Role.Tab,
+                        role = if (flat) Role.RadioButton else Role.Tab,
                     ) { onSelect(value) }
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
