@@ -46,6 +46,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -114,7 +115,8 @@ sealed interface SessionListEntry {
     }
 
     data class Recoverable(val session: HistorySession) : SessionListEntry {
-        override val key: String = "recoverable-${session.id}"
+        // provider 必须进入 key：Claude / Codex 的历史 ID 分属不同接口，不能在多选时混淆。
+        override val key: String = "recoverable-${session.apiProvider}-${session.id}"
         override val sortTimestamp: Long = session.mtimeMs?.toLong() ?: parseIsoMillis(session.timestamp)
     }
 }
@@ -182,14 +184,21 @@ class SessionListState(val api: WandApi) {
         sessions = sessions.filter { it.id != sessionId }
     }
 
-    fun removeHistoryLocally(historyId: String) {
-        historySessions = historySessions.filter { it.id != historyId }
+    fun removeHistoryLocally(history: HistorySession) {
+        historySessions = historySessions.filter {
+            it.id != history.id || it.apiProvider != history.apiProvider
+        }
+    }
+
+    fun removeHistoryLocally(targets: Collection<HistorySession>) {
+        val keys = targets.mapTo(mutableSetOf()) { it.apiProvider to it.id }
+        historySessions = historySessions.filter { (it.apiProvider to it.id) !in keys }
     }
 }
 
 /**
  * 统一会话列表：普通、已归档和本机可恢复会话按时间混排。
- * 支持下拉刷新、10s 轮询、滑动删除；普通会话可长按多选并拖动连续选择。
+ * 支持下拉刷新、10s 轮询、滑动删除；全部条目可长按多选并拖动连续选择。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -221,6 +230,12 @@ fun SessionListScreen(
         selectedIds = emptySet()
         dragAnchorId = null
         dragBaseIds = emptySet()
+    }
+
+    val visibleEntries = state.visibleEntries
+    val selectableKeys = visibleEntries.map { it.key }.toSet()
+    LaunchedEffect(selectableKeys, isSelecting) {
+        if (isSelecting) selectedIds = selectedIds.intersect(selectableKeys)
     }
 
     val context = LocalContext.current
@@ -270,22 +285,36 @@ fun SessionListScreen(
                 SelectionBar(
                     backdrop = glassBackdrop,
                     selectedCount = selectedIds.size,
-                    totalCount = state.visibleSessions.size,
+                    totalCount = selectableKeys.size,
                     onToggleAll = {
-                        selectedIds = if (selectedIds.size == state.visibleSessions.size) {
+                        selectedIds = if (selectableKeys.isNotEmpty() && selectedIds.containsAll(selectableKeys)) {
                             emptySet()
                         } else {
-                            state.visibleSessions.map { it.id }.toSet()
+                            selectableKeys
                         }
                     },
                     onDelete = {
-                        val ids = selectedIds
-                        ids.forEach { state.removeLocally(it) }
+                        val targets = visibleEntries.filter { it.key in selectedIds }
+                        val managed = targets.filterIsInstance<SessionListEntry.Managed>().map { it.session }
+                        val history = targets.filterIsInstance<SessionListEntry.Recoverable>().map { it.session }
+                        managed.forEach { state.removeLocally(it.id) }
+                        state.removeHistoryLocally(history)
                         endSelection()
                         scope.launch {
-                            ids.forEach { id ->
-                                runCatching { state.api.deleteSession(id) }
+                            var failed = false
+                            managed.forEach { session ->
+                                if (runCatching { state.api.deleteSession(session.id) }.isFailure) failed = true
                             }
+                            history.groupBy { it.apiProvider }.forEach { (provider, sessions) ->
+                                if (runCatching {
+                                        state.api.deleteHistoryBatch(provider, sessions.map { it.claudeSessionId })
+                                    }.isFailure
+                                ) {
+                                    failed = true
+                                }
+                            }
+                            // 乐观删除失败时从服务端重拉，让未实际删除的项目恢复显示。
+                            if (failed) state.load(silent = true)
                         }
                     },
                     onDone = { endSelection() },
@@ -357,62 +386,66 @@ fun SessionListScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(9.dp),
                         ) {
-                            items(state.visibleEntries, key = { it.key }) { entry ->
+                            items(visibleEntries, key = { it.key }) { entry ->
+                                DisposableEffect(entry.key) {
+                                    onDispose { rowBounds.remove(entry.key) }
+                                }
+                                val rowModifier = Modifier
+                                    .animateItem()
+                                    .onGloballyPositioned { coords ->
+                                        rowBounds[entry.key] = coords.boundsInWindow()
+                                    }
+                                    // 所有可见条目（Wand 会话、Claude/Codex 历史）都支持长按进入多选，
+                                    // 并可在混排列表中连续拖选。
+                                    .pointerInput(entry.key) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                if (dragAnchorId == null) {
+                                                    if (!isSelecting) isSelecting = true
+                                                    dragAnchorId = entry.key
+                                                    dragBaseIds = selectedIds
+                                                    selectedIds = selectedIds + entry.key
+                                                }
+                                            },
+                                            onDrag = { change, _ ->
+                                                val anchor = dragAnchorId ?: return@detectDragGesturesAfterLongPress
+                                                val originY = rowBounds[entry.key]?.top
+                                                    ?: return@detectDragGesturesAfterLongPress
+                                                val pointerY = originY + change.position.y
+                                                val anchorIndex = visibleEntries.indexOfFirst { it.key == anchor }
+                                                val targetKey = nearestRowId(rowBounds, pointerY)
+                                                val targetIndex = visibleEntries.indexOfFirst { it.key == targetKey }
+                                                if (anchorIndex >= 0 && targetIndex >= 0) {
+                                                    val range = (minOf(anchorIndex, targetIndex)..maxOf(anchorIndex, targetIndex))
+                                                        .map { visibleEntries[it].key }
+                                                    selectedIds = dragBaseIds + range
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                dragAnchorId = null
+                                                dragBaseIds = emptySet()
+                                            },
+                                            onDragCancel = {
+                                                dragAnchorId = null
+                                                dragBaseIds = emptySet()
+                                            },
+                                        )
+                                    }
                                 when (entry) {
                                     is SessionListEntry.Managed -> {
                                         val session = entry.session
-                                        val rowModifier = Modifier
-                                            .animateItem()
-                                            .onGloballyPositioned { coords ->
-                                                rowBounds[session.id] = coords.boundsInWindow()
-                                            }
-                                            // 长按进入多选 + 保持按住拖动做范围选择（对齐 iOS selectionGesture）。
-                                            .pointerInput(session.id) {
-                                                detectDragGesturesAfterLongPress(
-                                                    onDragStart = {
-                                                        if (dragAnchorId == null) {
-                                                            if (!isSelecting) isSelecting = true
-                                                            dragAnchorId = session.id
-                                                            dragBaseIds = selectedIds
-                                                            selectedIds = selectedIds + session.id
-                                                        }
-                                                    },
-                                                    onDrag = { change, _ ->
-                                                        val anchor = dragAnchorId ?: return@detectDragGesturesAfterLongPress
-                                                        val originY = rowBounds[session.id]?.top ?: return@detectDragGesturesAfterLongPress
-                                                        val pointerY = originY + change.position.y
-                                                        val visible = state.visibleSessions
-                                                        val anchorIndex = visible.indexOfFirst { it.id == anchor }
-                                                        val targetId = nearestRowId(rowBounds, pointerY)
-                                                        val targetIndex = visible.indexOfFirst { it.id == targetId }
-                                                        if (anchorIndex >= 0 && targetIndex >= 0) {
-                                                            val range = (minOf(anchorIndex, targetIndex)..maxOf(anchorIndex, targetIndex))
-                                                                .map { visible[it].id }
-                                                            selectedIds = dragBaseIds + range
-                                                        }
-                                                    },
-                                                    onDragEnd = {
-                                                        dragAnchorId = null
-                                                        dragBaseIds = emptySet()
-                                                    },
-                                                    onDragCancel = {
-                                                        dragAnchorId = null
-                                                        dragBaseIds = emptySet()
-                                                    },
-                                                )
-                                            }
                                         if (isSelecting) {
                                             Box(modifier = rowModifier) {
                                                 SessionCard(
                                                     session = session,
                                                     selecting = true,
-                                                    selected = session.id in selectedIds,
+                                                    selected = entry.key in selectedIds,
                                                     compact = compactLayout,
                                                     onClick = {
-                                                        selectedIds = if (session.id in selectedIds) {
-                                                            selectedIds - session.id
+                                                        selectedIds = if (entry.key in selectedIds) {
+                                                            selectedIds - entry.key
                                                         } else {
-                                                            selectedIds + session.id
+                                                            selectedIds + entry.key
                                                         }
                                                     },
                                                 )
@@ -446,22 +479,34 @@ fun SessionListScreen(
                                     is SessionListEntry.Recoverable -> {
                                         val session = entry.session
                                         if (isSelecting) {
-                                            HistorySessionCard(
-                                                history = session,
-                                                enabled = false,
-                                                onClick = {},
-                                            )
+                                            Box(modifier = rowModifier) {
+                                                HistorySessionCard(
+                                                    history = session,
+                                                    enabled = true,
+                                                    selecting = true,
+                                                    selected = entry.key in selectedIds,
+                                                    onClick = {
+                                                        selectedIds = if (entry.key in selectedIds) {
+                                                            selectedIds - entry.key
+                                                        } else {
+                                                            selectedIds + entry.key
+                                                        }
+                                                    },
+                                                )
+                                            }
                                         } else {
                                             SwipeRevealRow(
-                                                modifier = Modifier.animateItem(),
+                                                modifier = rowModifier,
                                                 onDelete = {
-                                                    state.removeHistoryLocally(session.id)
+                                                    state.removeHistoryLocally(session)
                                                     scope.launch { runCatching { state.api.deleteHistory(session) } }
                                                 },
                                             ) { revealed, closeReveal ->
                                                 HistorySessionCard(
                                                     history = session,
                                                     enabled = !historyActionInProgress,
+                                                    selecting = false,
+                                                    selected = false,
                                                     onClick = {
                                                         if (revealed) {
                                                             closeReveal()
@@ -470,7 +515,7 @@ fun SessionListScreen(
                                                             scope.launch {
                                                                 try {
                                                                     val resumed = state.api.resumeHistory(session)
-                                                                    state.removeHistoryLocally(session.id)
+                                                                    state.removeHistoryLocally(session)
                                                                     state.prepend(resumed)
                                                                     state.loadError = null
                                                                     onOpenSession(resumed)
@@ -674,6 +719,8 @@ private fun SelectionBar(
 private fun HistorySessionCard(
     history: HistorySession,
     enabled: Boolean,
+    selecting: Boolean,
+    selected: Boolean,
     onClick: () -> Unit,
 ) {
     val isCodex = history.provider == "codex"
@@ -682,6 +729,7 @@ private fun HistorySessionCard(
     WandCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = if (enabled) onClick else null,
+        selected = selected,
         contentPadding = PaddingValues(14.dp),
     ) {
         Row(
@@ -689,6 +737,14 @@ private fun HistorySessionCard(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.Top,
         ) {
+            if (selecting) {
+                Icon(
+                    if (selected) WandIcons.statusDone else WandIcons.statusPending,
+                    contentDescription = if (selected) "已选中" else "未选中",
+                    tint = if (selected) WandColors.brand else WandColors.textSecondary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
             Box(
                 modifier = Modifier
                     .size(44.dp)

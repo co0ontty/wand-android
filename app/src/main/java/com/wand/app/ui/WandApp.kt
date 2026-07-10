@@ -227,7 +227,7 @@ private fun ReadyContent(
             scope.launch {
                 try {
                     val resumed = listState.api.resumeHistory(history)
-                    listState.removeHistoryLocally(history.id)
+                    listState.removeHistoryLocally(history)
                     listState.prepend(resumed)
                     openDetail(resumed.detailScreen())
                 } catch (e: Exception) {

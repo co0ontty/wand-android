@@ -169,6 +169,7 @@ data class TurnUsage(
     val cacheCreationInputTokens: Int?,
     val reasoningOutputTokens: Int?,
     val totalCostUsd: Double?,
+    val estimated: Boolean?,
 ) {
     val hasVisibleValue: Boolean
         get() = (inputTokens ?: 0) > 0 ||
@@ -191,6 +192,7 @@ data class TurnUsage(
                 cacheCreationInputTokens = o.intEither("cacheCreationInputTokens", "cache_creation_input_tokens"),
                 reasoningOutputTokens = o.intEither("reasoningOutputTokens", "reasoning_output_tokens"),
                 totalCostUsd = o.doubleEither("totalCostUsd", "total_cost_usd"),
+                estimated = o.bool("estimated"),
             )
         }
     }

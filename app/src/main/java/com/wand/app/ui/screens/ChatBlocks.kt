@@ -246,9 +246,10 @@ fun TurnView(
                     }
                 }
             }
-            turn.usage?.takeIf { it.hasVisibleValue }?.let { usage ->
-                UsageSummaryRow(usage)
-            }
+        }
+        val usageIsLive = isLastTurn && isResponding
+        if ((!showHeader || !collapsed) && (usageIsLive || turn.usage?.hasVisibleValue == true)) {
+            UsageSummaryRow(turn.usage, isLive = usageIsLive)
         }
     }
 }
@@ -347,18 +348,23 @@ private fun replyPreview(content: List<ContentBlock>): String {
 
 /** Codex/Claude 单轮 token 与费用摘要；文本可换行，窄屏不会横向溢出。 */
 @Composable
-private fun UsageSummaryRow(usage: TurnUsage) {
+private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
     val parts = remember(usage) {
         buildList {
-            usage.inputTokens?.takeIf { it > 0 }?.let { add("输入 ${formatTokenCount(it)}") }
-            usage.cacheReadInputTokens?.takeIf { it > 0 }?.let { add("缓存命中 ${formatTokenCount(it)}") }
-            usage.cacheCreationInputTokens?.takeIf { it > 0 }?.let { add("缓存写入 ${formatTokenCount(it)}") }
-            usage.outputTokens?.takeIf { it > 0 }?.let { add("输出 ${formatTokenCount(it)}") }
-            usage.reasoningOutputTokens?.takeIf { it > 0 }?.let { add("推理 ${formatTokenCount(it)}") }
-            usage.totalCostUsd?.takeIf { it > 0 }?.let { add("\$${formatUsd(it)}") }
+            usage?.inputTokens?.takeIf { it > 0 }?.let { add("输入 ${formatTokenCount(it)}") }
+            usage?.cacheReadInputTokens?.takeIf { it > 0 }?.let { add("缓存命中 ${formatTokenCount(it)}") }
+            usage?.cacheCreationInputTokens?.takeIf { it > 0 }?.let { add("缓存写入 ${formatTokenCount(it)}") }
+            usage?.outputTokens?.takeIf { it > 0 }?.let {
+                add("输出 ${if (usage.estimated == true) "≈" else ""}${formatTokenCount(it)}")
+            }
+            usage?.reasoningOutputTokens?.takeIf { it > 0 }?.let {
+                add("推理 ${if (usage.estimated == true) "≈" else ""}${formatTokenCount(it)}")
+            }
+            usage?.totalCostUsd?.takeIf { it > 0 }?.let { add("\$${formatUsd(it)}") }
         }
     }
-    if (parts.isEmpty()) return
+    val summary = parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+        ?: if (isLive || usage?.estimated == true) "正在统计用量…" else return
     Row(
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -373,7 +379,7 @@ private fun UsageSummaryRow(usage: TurnUsage) {
             modifier = Modifier.padding(top = 1.dp).size(13.dp),
         )
         Text(
-            parts.joinToString(" · "),
+            summary,
             fontSize = 10.sp,
             lineHeight = 15.sp,
             fontFamily = FontFamily.Monospace,
@@ -3090,11 +3096,8 @@ fun DiffCard(
         else -> WandColors.success
     }
 
-    var expanded by remember(toolName, path, initiallyExpanded) { mutableStateOf(initiallyExpanded || running) }
-    // 默认展开态对齐 Web：执行中展开，结果到达后自动收起（手动点开不受影响）。
-    LaunchedEffect(result != null, initiallyExpanded) {
-        if (result != null && !initiallyExpanded) expanded = false
-    }
+    // 命令/文件详情默认不展示；运行状态只体现在摘要行，用户点开后保持展开。
+    var expanded by remember(toolName, path, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
 
     Column(
         modifier = Modifier
@@ -3329,10 +3332,7 @@ fun TerminalCard(
     var truncated by remember(result?.toolUseId, result?.truncated) { mutableStateOf(result?.truncated == true) }
     var loadingFullOutput by remember(result?.toolUseId) { mutableStateOf(false) }
     var outputLoadError by remember(result?.toolUseId) { mutableStateOf<String?>(null) }
-    var expanded by remember(command, initiallyExpanded) { mutableStateOf(initiallyExpanded || running) }
-    LaunchedEffect(running) {
-        if (running) expanded = true
-    }
+    var expanded by remember(command, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
