@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -73,7 +74,19 @@ import com.wand.app.ui.theme.surfaceSheenBrush
 @Composable
 fun Modifier.clickableWithoutRipple(onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
-    return clickable(interactionSource = interaction, indication = null, onClick = onClick)
+    val pressed by interaction.collectIsPressedAsState()
+    val pressAlpha by animateFloatAsState(
+        targetValue = if (pressed) 0.72f else 1f,
+        animationSpec = tween(durationMillis = if (pressed) 90 else 150),
+        label = "pressAlpha",
+    )
+    return graphicsLayer { alpha = pressAlpha }
+        .clickable(
+            interactionSource = interaction,
+            indication = null,
+            role = Role.Button,
+            onClick = onClick,
+        )
 }
 
 /** 状态 → 语义色。 */

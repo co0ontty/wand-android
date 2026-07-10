@@ -144,6 +144,21 @@ class WandApi(baseUrl: String, val token: String?) {
     suspend fun fetchMessages(id: String, offset: Int, limit: Int): MessagesPage =
         MessagesPage.parse(requestObject("GET", "/api/sessions/$id/messages?offset=$offset&limit=$limit"))
 
+    /** 按需取回被消息窗口截断的完整 tool_result 内容。 */
+    suspend fun fetchToolContent(id: String, toolUseId: String): ContentBlock.ToolResult {
+        val response = requestObject(
+            "GET",
+            "/api/sessions/${encode(id)}/tool-content/${encode(toolUseId)}",
+        )
+        val normalized = JSONObject()
+            .put("type", "tool_result")
+            .put("tool_use_id", response.str("tool_use_id") ?: toolUseId)
+            .put("content", response.opt("content") ?: "")
+            .put("is_error", response.bool("is_error") ?: false)
+        return ContentBlock.parse(normalized) as? ContentBlock.ToolResult
+            ?: throw WandApiException(null, "工具结果解析失败")
+    }
+
     suspend fun sendInput(
         id: String,
         input: String,

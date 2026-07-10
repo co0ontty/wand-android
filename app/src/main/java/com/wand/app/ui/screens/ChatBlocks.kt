@@ -1,5 +1,9 @@
 package com.wand.app.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -18,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -44,8 +49,10 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,8 +60,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -63,6 +74,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,7 +90,10 @@ import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SubagentMeta
+import com.wand.app.data.TurnUsage
+import com.wand.app.data.WandApi
 import com.wand.app.data.arrayField
+import com.wand.app.data.int
 import com.wand.app.data.str
 import com.wand.app.data.summaryText
 import com.wand.app.ui.AskUserSelectionState
@@ -100,7 +115,11 @@ import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.tinted
+import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
+import java.text.NumberFormat
+import java.util.Locale
 
 /**
  * 聊天内容块渲染（重设计规范 v1 第 3.3 节）：
@@ -108,6 +127,10 @@ import org.json.JSONObject
  * MarkdownText / PermissionCard。
  * 工具调用与其结果在渲染层配对成一张卡片，对齐 Web 端 tool-card 结构。
  */
+
+/** ChatScreen 注入的会话上下文，用于按需加载被服务端截断的完整工具结果。 */
+internal val LocalChatApi = compositionLocalOf<WandApi?> { null }
+internal val LocalChatSessionId = compositionLocalOf { "" }
 
 // MARK: - 单条消息
 
@@ -223,6 +246,9 @@ fun TurnView(
                     }
                 }
             }
+            turn.usage?.takeIf { it.hasVisibleValue }?.let { usage ->
+                UsageSummaryRow(usage)
+            }
         }
     }
 }
@@ -247,6 +273,7 @@ private fun AssistantReplyHeader(
                 .fillMaxWidth()
                 .clip(WandShapes.full)
                 .clickableWithoutRipple { onToggle() }
+                .heightIn(min = 48.dp)
                 .padding(vertical = 3.dp),
         ) {
             Box(
@@ -316,6 +343,55 @@ private fun replyPreview(content: List<ContentBlock>): String {
     if (text.isNotEmpty()) return text
     val toolCount = content.count { it is ContentBlock.ToolUse }
     return if (toolCount > 0) "$toolCount 个工具调用" else ""
+}
+
+/** Codex/Claude 单轮 token 与费用摘要；文本可换行，窄屏不会横向溢出。 */
+@Composable
+private fun UsageSummaryRow(usage: TurnUsage) {
+    val parts = remember(usage) {
+        buildList {
+            usage.inputTokens?.takeIf { it > 0 }?.let { add("输入 ${formatTokenCount(it)}") }
+            usage.cacheReadInputTokens?.takeIf { it > 0 }?.let { add("缓存命中 ${formatTokenCount(it)}") }
+            usage.cacheCreationInputTokens?.takeIf { it > 0 }?.let { add("缓存写入 ${formatTokenCount(it)}") }
+            usage.outputTokens?.takeIf { it > 0 }?.let { add("输出 ${formatTokenCount(it)}") }
+            usage.reasoningOutputTokens?.takeIf { it > 0 }?.let { add("推理 ${formatTokenCount(it)}") }
+            usage.totalCostUsd?.takeIf { it > 0 }?.let { add("\$${formatUsd(it)}") }
+        }
+    }
+    if (parts.isEmpty()) return
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 1.dp, start = 2.dp, end = 2.dp),
+    ) {
+        Icon(
+            WandIcons.usage,
+            contentDescription = null,
+            tint = WandColors.textMuted,
+            modifier = Modifier.padding(top = 1.dp).size(13.dp),
+        )
+        Text(
+            parts.joinToString(" · "),
+            fontSize = 10.sp,
+            lineHeight = 15.sp,
+            fontFamily = FontFamily.Monospace,
+            color = WandColors.textMuted,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+private fun formatTokenCount(value: Int): String = when {
+    value < 1_000 -> NumberFormat.getIntegerInstance().format(value)
+    value < 1_000_000 -> String.format(Locale.US, "%.1fk", value / 1_000.0).replace(".0k", "k")
+    else -> String.format(Locale.US, "%.1fM", value / 1_000_000.0).replace(".0M", "M")
+}
+
+private fun formatUsd(value: Double): String = when {
+    value >= 0.01 -> String.format(Locale.US, "%.2f", value)
+    else -> String.format(Locale.US, "%.4f", value)
 }
 
 private const val COMPACT_USER_MIN_CHARS = 140
@@ -486,6 +562,7 @@ private fun RenderDisplayItem(
                         toolName = use.name,
                         input = use.input,
                         result = item.result,
+                        running = item.result == null && isLastTurn && isResponding,
                         initiallyExpanded = initiallyExpanded,
                     )
                     use.name == "Bash" -> TerminalCard(
@@ -779,11 +856,13 @@ private fun explorationToolsOnly(turn: ConversationTurn): List<ExplorationToolIt
 /** 只读探索类工具：读取 / 搜索 / 网页获取 / 待办读取。 */
 private fun isExplorationTool(name: String): Boolean {
     val lower = name.lowercase()
-    return lower.startsWith("read") ||
-        lower.startsWith("grep") ||
-        lower.startsWith("glob") ||
-        lower.startsWith("search") ||
-        lower.startsWith("find") ||
+    val operation = lower.substringAfterLast("__")
+    return operation.startsWith("read") ||
+        operation.startsWith("grep") ||
+        operation.startsWith("glob") ||
+        operation.startsWith("search") ||
+        operation.startsWith("find") ||
+        lower == "tool_search" ||
         lower.contains("websearch") ||
         lower.contains("webfetch") ||
         lower == "todoread"
@@ -852,7 +931,7 @@ private fun displayItemStableKey(item: DisplayItem): String = when (item) {
         is ContentBlock.Thinking -> "thinking:${block.subagent?.taskId ?: block.thinking.take(24)}"
         is ContentBlock.ToolResult -> "result:${block.toolUseId.ifBlank { block.text.take(24) }}"
         is ContentBlock.Text -> "text:${block.text.take(24)}"
-        is ContentBlock.Unknown -> "unknown"
+        is ContentBlock.Unknown -> "unknown:${block.type}:${block.payload.take(24)}"
         is ContentBlock.ToolUse -> "plain-tool:${block.id.ifBlank { block.name }}"
     }
 }
@@ -892,6 +971,7 @@ private fun ActivitySummaryRow(group: ActivityGroup, onClick: () -> Unit) {
             .fillMaxWidth()
             .clip(WandShapes.sm)
             .clickableWithoutRipple { onClick() }
+            .heightIn(min = 48.dp)
             .padding(horizontal = 2.dp, vertical = 5.dp),
     ) {
         Icon(
@@ -1207,7 +1287,70 @@ fun BlockView(
                 OrphanResultBlock(block, initiallyExpanded = initiallyExpanded)
             }
         }
-        is ContentBlock.Unknown -> Unit
+        is ContentBlock.Unknown -> UnknownBlockCard(block, initiallyExpanded)
+    }
+}
+
+/**
+ * 新协议块的显式兼容态。原始载荷保留可检查，避免 Codex 升级后内容无声消失。
+ */
+@Composable
+private fun UnknownBlockCard(block: ContentBlock.Unknown, initiallyExpanded: Boolean) {
+    var expanded by remember(block.type, block.payload, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(WandColors.warningSoft)
+            .border(0.55.dp, WandColors.warning.copy(alpha = 0.32f), WandShapes.md)
+            .animateContentSize(WandMotion.tweenNormal()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickableWithoutRipple { expanded = !expanded }
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+        ) {
+            Icon(
+                WandIcons.genericTool,
+                contentDescription = null,
+                tint = WandColors.warning,
+                modifier = Modifier.size(17.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "暂未适配的内容块",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                )
+                Text(
+                    block.type,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text("兼容显示", fontSize = 10.sp, color = WandColors.warning)
+            ExpandChevron(expanded = expanded, tint = WandColors.warning, size = 16.dp)
+        }
+        if (expanded && block.payload.isNotBlank()) {
+            HorizontalDivider(color = WandColors.warning.copy(alpha = 0.20f))
+            SelectionContainer(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    block.payload.take(8_000) + if (block.payload.length > 8_000) "\n…（已截断）" else "",
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textSecondary,
+                )
+            }
+        }
     }
 }
 
@@ -1295,13 +1438,22 @@ fun MarkdownText(text: String) {
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                     modifier = Modifier.padding(start = (block.indent * 14).dp),
                 ) {
-                    Text(
-                        block.checked?.let { if (it) "☑" else "☐" } ?: block.marker,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (block.checked == true) WandColors.success else WandColors.brand,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
+                    if (block.checked != null) {
+                        Icon(
+                            if (block.checked) WandIcons.statusDone else WandIcons.statusPending,
+                            contentDescription = if (block.checked) "已完成" else "未完成",
+                            tint = if (block.checked) WandColors.success else WandColors.textMuted,
+                            modifier = Modifier.padding(top = 2.dp).size(15.dp),
+                        )
+                    } else {
+                        Text(
+                            block.marker,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = WandColors.brand,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
                     SelectionContainer {
                         Text(
                             inlineMarkdown(block.text),
@@ -1336,42 +1488,67 @@ fun MarkdownText(text: String) {
                         )
                     }
                 }
-                is MarkdownBlock.Code -> Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(WandShapes.sm)
-                        .background(subtleInset),
-                ) {
-                    if (!block.language.isNullOrEmpty()) {
-                        Text(
-                            block.language,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textMuted,
-                            modifier = Modifier.padding(start = 10.dp, top = 6.dp, bottom = 2.dp),
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                    ) {
-                        SelectionContainer {
-                            Text(
-                                block.text,
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = WandColors.textPrimary,
-                            )
-                        }
-                    }
-                }
+                is MarkdownBlock.Code -> MarkdownCodeBlock(block, subtleInset)
                 is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows)
                 MarkdownBlock.Divider -> HorizontalDivider(
                     thickness = 1.dp,
                     color = WandColors.border,
                     modifier = Modifier.padding(vertical = 3.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 代码块：语言标题常驻，原生复制操作提供明确触控反馈。 */
+@Composable
+private fun MarkdownCodeBlock(block: MarkdownBlock.Code, background: Color) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.sm)
+            .background(background),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(start = 10.dp),
+        ) {
+            Text(
+                block.language?.takeIf { it.isNotBlank() } ?: "代码",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.textMuted,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("code", block.text))
+                    Toast.makeText(context, "代码已复制", Toast.LENGTH_SHORT).show()
+                },
+                contentPadding = ButtonDefaults.TextButtonContentPadding,
+            ) {
+                Text("复制", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        HorizontalDivider(thickness = 1.dp, color = WandColors.border.copy(alpha = 0.65f))
+        Box(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+        ) {
+            SelectionContainer {
+                Text(
+                    block.text,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textPrimary,
                 )
             }
         }
@@ -1583,6 +1760,7 @@ private fun isTableSeparator(line: String, columnCount: Int): Boolean {
 private fun inlineMarkdown(raw: String): AnnotatedString {
     val linkColor = WandColors.info
     val codeColor = WandColors.brand.copy(alpha = 0.82f)
+    val uriHandler = LocalUriHandler.current
     return buildAnnotatedString {
         var i = 0
         while (i < raw.length) {
@@ -1640,10 +1818,21 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                     val openUrl = if (closeText >= 0) raw.getOrNull(closeText + 1) else null
                     val closeUrl = if (openUrl == '(') raw.indexOf(')', closeText + 2) else -1
                     if (closeText > i + 1 && closeUrl > closeText + 2) {
-                        withStyle(
-                            SpanStyle(
-                                color = linkColor,
-                                textDecoration = TextDecoration.Underline,
+                        val url = raw.substring(closeText + 2, closeUrl).trim()
+                        withLink(
+                            LinkAnnotation.Url(
+                                url = url,
+                                styles = TextLinkStyles(
+                                    style = SpanStyle(
+                                        color = linkColor,
+                                        textDecoration = TextDecoration.Underline,
+                                    ),
+                                ),
+                                linkInteractionListener = { link ->
+                                    (link as? LinkAnnotation.Url)?.url?.let { target ->
+                                        runCatching { uriHandler.openUri(target) }
+                                    }
+                                },
                             )
                         ) {
                             append(raw.substring(i + 1, closeText))
@@ -1695,6 +1884,16 @@ private fun nextInlineMarkerIndex(raw: String, start: Int): Int {
 private fun toolLabel(name: String): String {
     val lower = name.lowercase()
     return when {
+        lower.startsWith("codex/") -> when (lower.substringAfter('/')) {
+            "spawn_agent" -> "启动子代理"
+            "send_input", "send_message" -> "发送子任务消息"
+            "wait", "wait_agent" -> "等待子代理"
+            "close_agent" -> "关闭子代理"
+            else -> "多 Agent 协作"
+        }
+        lower == "tool_search" || lower.contains("toolsearch") -> "查找可用工具"
+        lower.contains("apply_patch") || lower.contains("patch_apply") -> "应用补丁"
+        lower.contains("view_image") || lower.contains("imagegen") -> "处理图片"
         lower.contains("todo") -> "更新待办"
         lower.contains("websearch") -> "网页搜索"
         lower.contains("webfetch") || lower.contains("fetch") -> "网页获取"
@@ -1705,9 +1904,32 @@ private fun toolLabel(name: String): String {
         lower.startsWith("grep") -> "搜索内容"
         lower.startsWith("glob") -> "查找文件"
         lower == "bash" || lower.contains("command") || lower.contains("shell") -> "执行命令"
+        "__" in name -> humanizeToolName(name.substringAfterLast("__"))
         lower.startsWith("task") || lower.contains("agent") -> "子任务"
         else -> name
     }
+}
+
+private fun humanizeToolName(name: String): String = name
+    .replace('-', ' ')
+    .replace('_', ' ')
+    .trim()
+    .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+
+/** 工具来源单独成标签，避免把 MCP server/Codex 调度信息挤进主标题。 */
+private fun toolSourceLabel(name: String): String? = when {
+    name.startsWith("Codex/", ignoreCase = true) -> "Codex"
+    "__" in name -> {
+        val parts = name.split("__")
+        val source = if (parts.firstOrNull().equals("mcp", ignoreCase = true)) {
+            parts.getOrNull(1)
+        } else {
+            parts.firstOrNull()
+        }
+        source?.take(18)?.ifBlank { "MCP" } ?: "MCP"
+    }
+    name.startsWith("node_repl", ignoreCase = true) -> "REPL"
+    else -> null
 }
 
 /**
@@ -1722,8 +1944,15 @@ fun ToolCard(
     initiallyExpanded: Boolean = false,
 ) {
     val isError = result?.isError == true
-    val isSuccess = result != null && !isError
-    val hasBody = result != null && result.text.isNotEmpty()
+    val declaredStatus = use.input.str("status")?.lowercase()
+    val completedWithoutResult = result == null && !running && (
+        declaredStatus in setOf("completed", "success", "succeeded", "done") ||
+            use.name == "TodoWrite"
+        )
+    val isSuccess = (result != null && !isError) || completedWithoutResult
+    val hasInput = use.input.length() > 0
+    val hasBody = hasInput || result != null
+    val sourceLabel = remember(use.name) { toolSourceLabel(use.name) }
     var expanded by remember(use.id, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     val statusColor = when {
         isError -> WandColors.danger
@@ -1735,7 +1964,7 @@ fun ToolCard(
         isError -> "失败"
         running -> "处理中"
         isSuccess -> "完成"
-        else -> "待执行"
+        else -> "无结果"
     }
 
     Column(
@@ -1764,12 +1993,33 @@ fun ToolCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.weight(1f),
             ) {
-                Text(
-                    toolLabel(use.name),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isError) WandColors.danger else WandColors.textPrimary,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        toolLabel(use.name),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isError) WandColors.danger else WandColors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    sourceLabel?.let { source ->
+                        Text(
+                            source,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = WandColors.info,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .clip(WandShapes.full)
+                                .background(WandColors.infoSoft)
+                                .padding(horizontal = 5.dp, vertical = 2.dp),
+                        )
+                    }
+                }
                 val summary = toolSummary(use.description, use.input)
                 if (summary.isNotEmpty()) {
                     Text(
@@ -1821,16 +2071,21 @@ fun ToolCard(
                 )
             }
         }
-        if (expanded && result != null) {
+        if (expanded && hasBody) {
             HorizontalDivider(
                 thickness = 1.dp,
                 color = WandColors.border.copy(alpha = 0.7f),
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-            ToolResultBody(
-                result,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
-            )
+            ) {
+                if (hasInput) ToolInputBody(use.input)
+                result?.let { toolResult ->
+                    ToolResultBody(toolResult, showSectionLabel = hasInput)
+                }
+            }
         }
     }
 }
@@ -2077,36 +2332,179 @@ private fun explorationToolSummary(tool: ExplorationToolItem): String {
     return "$firstKey: ${summaryText(tool.use.input.opt(firstKey))}"
 }
 
-/** 工具结果正文：次级底色代码框 + 4000 字截断。 */
+private data class ToolInputEntry(val key: String, val value: String)
+
+/** 任意 JSON 参数都保留为可读结构；字符串里的 JSON 也会再次格式化。 */
+private fun structuredDisplayText(value: Any?): String = when (value) {
+    null, JSONObject.NULL -> "null"
+    is JSONObject -> try { value.toString(2) } catch (_: Exception) { value.toString() }
+    is JSONArray -> try { value.toString(2) } catch (_: Exception) { value.toString() }
+    is String -> prettyStructuredText(value)
+    else -> value.toString()
+}
+
+private fun prettyStructuredText(raw: String): String {
+    val trimmed = raw.trim()
+    return try {
+        when {
+            trimmed.startsWith("{") && trimmed.endsWith("}") -> JSONObject(trimmed).toString(2)
+            trimmed.startsWith("[") && trimmed.endsWith("]") -> JSONArray(trimmed).toString(2)
+            else -> raw
+        }
+    } catch (_: Exception) {
+        raw
+    }
+}
+
 @Composable
-private fun ToolResultBody(result: ContentBlock.ToolResult, modifier: Modifier = Modifier) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(WandShapes.sm)
-                .background(WandColors.textPrimary.copy(alpha = 0.045f))
-                .horizontalScroll(rememberScrollState())
-                .padding(10.dp),
-        ) {
-            SelectionContainer {
+private fun ToolInputBody(input: JSONObject) {
+    val entries = remember(input.toString()) {
+        input.keys().asSequence().toList().sorted().take(24).map { key ->
+            ToolInputEntry(key, structuredDisplayText(input.opt(key)))
+        }
+    }
+    if (entries.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(
+            "输入参数",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textMuted,
+        )
+        entries.forEach { entry ->
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    if (result.text.length > 4000) {
-                        result.text.take(4000) + "\n…（已截断）"
-                    } else {
-                        result.text
-                    },
-                    fontSize = 12.sp,
+                    entry.key,
+                    fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
-                    color = if (result.isError) WandColors.danger else WandColors.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.info,
                 )
+                SelectionContainer {
+                    Text(
+                        entry.value.take(4_000) + if (entry.value.length > 4_000) "\n…（字段已截断）" else "",
+                        fontSize = 11.sp,
+                        lineHeight = 17.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textPrimary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(WandShapes.sm)
+                            .background(WandColors.textPrimary.copy(alpha = 0.045f))
+                            .padding(horizontal = 9.dp, vertical = 7.dp),
+                    )
+                }
             }
         }
-        if (result.truncated) {
+        if (input.length() > entries.size) {
             Text(
-                "内容过长，已截断",
-                fontSize = 11.sp,
+                "另有 ${input.length() - entries.size} 个参数未展开",
+                fontSize = 10.sp,
                 color = WandColors.textMuted,
+            )
+        }
+    }
+}
+
+/** 工具结果正文：结构化 JSON 格式化、移动端自动换行，并可按需加载完整内容。 */
+@Composable
+private fun ToolResultBody(
+    result: ContentBlock.ToolResult,
+    modifier: Modifier = Modifier,
+    showSectionLabel: Boolean = false,
+) {
+    val api = LocalChatApi.current
+    val sessionId = LocalChatSessionId.current
+    val scope = rememberCoroutineScope()
+    var fullText by remember(result.toolUseId, result.text) { mutableStateOf(result.text) }
+    var truncated by remember(result.toolUseId, result.truncated) { mutableStateOf(result.truncated) }
+    var loading by remember(result.toolUseId) { mutableStateOf(false) }
+    var loadError by remember(result.toolUseId) { mutableStateOf<String?>(null) }
+    val formatted = remember(fullText) { prettyStructuredText(fullText) }
+    val displayLimit = 24_000
+    val displayText = remember(formatted) {
+        formatted.take(displayLimit) + if (formatted.length > displayLimit) "\n…（本页仅展示前 $displayLimit 字）" else ""
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
+        if (showSectionLabel) {
+            Text(
+                if (result.isError) "错误输出" else "工具输出",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (result.isError) WandColors.danger else WandColors.textMuted,
+            )
+        }
+        if (displayText.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(WandShapes.sm)
+                    .background(
+                        if (result.isError) WandColors.dangerSoft
+                        else WandColors.textPrimary.copy(alpha = 0.045f)
+                    )
+                    .padding(10.dp),
+            ) {
+                SelectionContainer {
+                    Text(
+                        displayText,
+                        fontSize = 11.sp,
+                        lineHeight = 17.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = if (result.isError) WandColors.danger else WandColors.textPrimary,
+                    )
+                }
+            }
+        }
+        if (truncated) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    loadError ?: "服务端为保证传输速度省略了部分内容",
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    color = if (loadError != null) WandColors.danger else WandColors.textMuted,
+                    modifier = Modifier.weight(1f),
+                )
+                if (api != null && sessionId.isNotBlank() && result.toolUseId.isNotBlank()) {
+                    TextButton(
+                        enabled = !loading,
+                        onClick = {
+                            loading = true
+                            loadError = null
+                            scope.launch {
+                                try {
+                                    val loaded = api.fetchToolContent(sessionId, result.toolUseId)
+                                    fullText = loaded.text
+                                    truncated = false
+                                } catch (error: Exception) {
+                                    loadError = error.message ?: "加载失败，请重试"
+                                } finally {
+                                    loading = false
+                                }
+                            }
+                        },
+                    ) {
+                        if (loading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = WandColors.brand,
+                            )
+                        } else {
+                            Text("加载完整内容", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        } else if (displayText.isEmpty()) {
+            Text(
+                if (result.isError) "工具执行失败，未返回错误详情" else "工具已完成，没有文本输出",
+                fontSize = 11.sp,
+                color = if (result.isError) WandColors.danger else WandColors.textMuted,
             )
         }
     }
@@ -2127,7 +2525,9 @@ private fun OrphanResultBlock(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.clickableWithoutRipple { expanded = !expanded },
+            modifier = Modifier
+                .clickableWithoutRipple { expanded = !expanded }
+                .heightIn(min = 48.dp),
         ) {
             Icon(
                 if (result.isError) WandIcons.error else WandIcons.toolResult,
@@ -2183,7 +2583,9 @@ private fun ThinkingBlock(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.clickableWithoutRipple { expanded = !expanded },
+            modifier = Modifier
+                .clickableWithoutRipple { expanded = !expanded }
+                .heightIn(min = 48.dp),
         ) {
             Icon(
                 WandIcons.thinking,
@@ -2351,9 +2753,8 @@ fun PermissionCard(
 
 // MARK: - 工具参数摘要
 
-/** 摘要优先级：description > 常见关键参数 > 第一个参数。 */
+/** 摘要优先级：常见关键参数 > 有意义的 description > 第一个参数。 */
 private fun toolSummary(description: String?, input: JSONObject): String {
-    if (!description.isNullOrEmpty()) return description
     val preferredKeys =
         listOf("command", "file_path", "path", "pattern", "query", "prompt", "url", "description")
     for (key in preferredKeys) {
@@ -2362,6 +2763,11 @@ private fun toolSummary(description: String?, input: JSONObject): String {
             if (text.isNotEmpty()) return text
         }
     }
+    description?.takeIf {
+        it.isNotBlank() && it.lowercase() !in setOf(
+            "running", "searching", "completed", "in_progress", "success", "done",
+        )
+    }?.let { return it }
     val firstKey = input.keys().asSequence().firstOrNull() ?: return ""
     return "$firstKey: ${summaryText(input.opt(firstKey))}"
 }
@@ -2449,6 +2855,7 @@ fun AskUserQuestionCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickableWithoutRipple { expanded = !expanded }
+                .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
             Icon(
@@ -2648,31 +3055,42 @@ fun DiffCard(
     toolName: String,
     input: JSONObject,
     result: ContentBlock.ToolResult?,
+    running: Boolean = false,
     initiallyExpanded: Boolean = false,
 ) {
     val path = input.str("file_path") ?: input.str("path") ?: ""
-    val fileName = path.substringAfterLast('/').ifEmpty { path }
+    val fileName = path.substringAfterLast('/').ifEmpty { "未命名文件" }
     val isWrite = toolName == "Write" || toolName == "MultiEdit"
     val oldText = input.str("old_string") ?: ""
     val newText = input.str("new_string") ?: input.str("content") ?: ""
+    val unifiedDiff = input.str("unified_diff") ?: ""
+    val kind = (input.str("kind") ?: if (isWrite) "add" else "update").lowercase()
+    val movePath = input.str("move_path") ?: ""
+    val diffUnavailableReason = input.str("diff_unavailable_reason")
+    val hasDiffBody = oldText.isNotEmpty() || newText.isNotEmpty() || unifiedDiff.isNotEmpty() || movePath.isNotEmpty()
 
     val statusText = when {
-        result == null -> "执行中"
+        running -> "执行中"
+        result == null -> "无结果"
         result.isError ->
             if (result.text.contains("haven't granted") || result.text.contains("permission")) {
                 "等待授权"
             } else {
                 "失败"
             }
+        kind == "add" -> "已新增"
+        kind == "delete" -> "已删除"
+        movePath.isNotEmpty() -> "已移动"
         else -> "已修改"
     }
     val statusColor = when {
-        result == null -> WandColors.brand
+        running -> WandColors.brand
+        result == null -> WandColors.textMuted
         result.isError -> WandColors.danger
         else -> WandColors.success
     }
 
-    var expanded by remember(toolName, path, initiallyExpanded) { mutableStateOf(initiallyExpanded || result == null) }
+    var expanded by remember(toolName, path, initiallyExpanded) { mutableStateOf(initiallyExpanded || running) }
     // 默认展开态对齐 Web：执行中展开，结果到达后自动收起（手动点开不受影响）。
     LaunchedEffect(result != null, initiallyExpanded) {
         if (result != null && !initiallyExpanded) expanded = false
@@ -2690,12 +3108,13 @@ fun DiffCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickableWithoutRipple { expanded = !expanded }
+                .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 9.dp),
         ) {
             Icon(
                 WandIcons.edit,
                 contentDescription = null,
-                tint = WandColors.brand,
+                tint = statusColor,
                 modifier = Modifier.size(18.dp),
             )
             Text(
@@ -2747,6 +3166,37 @@ fun DiffCard(
                         tint = WandColors.success,
                     )
                 }
+                if (unifiedDiff.isNotEmpty()) {
+                    UnifiedDiffBlock(unifiedDiff)
+                }
+                if (movePath.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("移动到", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = WandColors.textMuted)
+                        SelectionContainer {
+                            Text(
+                                movePath,
+                                fontSize = 11.sp,
+                                lineHeight = 17.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = WandColors.info,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(WandShapes.sm)
+                                    .background(WandColors.infoSoft)
+                                    .padding(8.dp),
+                            )
+                        }
+                    }
+                }
+                if (!hasDiffBody && result != null && !result.isError) {
+                    Text(
+                        diffUnavailableReason
+                            ?: "Codex 已返回文件变更状态，但本次事件未包含差异正文。",
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        color = WandColors.textMuted,
+                    )
+                }
                 if (result != null && result.isError && result.text.isNotEmpty()) {
                     Text(
                         if (result.text.length > 600) result.text.take(600) + "…" else result.text,
@@ -2755,6 +3205,53 @@ fun DiffCard(
                         color = WandColors.danger,
                     )
                 }
+            }
+        }
+    }
+}
+
+/** Codex patch_apply_end 的 unified_diff 专用渲染：保留代码横向滚动并区分增删/区块。 */
+@Composable
+private fun UnifiedDiffBlock(diff: String) {
+    val clipped = remember(diff) {
+        if (diff.length > 16_000) diff.take(16_000) + "\n…（差异已截断）" else diff
+    }
+    val lines = remember(clipped) { clipped.lines() }
+    val annotated = buildAnnotatedString {
+        lines.forEachIndexed { index, line ->
+            val color = when {
+                line.startsWith("@@") -> WandColors.info
+                line.startsWith("+++") || line.startsWith("---") -> WandColors.textMuted
+                line.startsWith("+") -> WandColors.success
+                line.startsWith("-") -> WandColors.danger
+                else -> WandColors.textSecondary
+            }
+            withStyle(SpanStyle(color = color)) { append(line) }
+            if (index < lines.lastIndex) append('\n')
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            "统一差异",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textMuted,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(WandShapes.sm)
+                .background(WandColors.textPrimary.copy(alpha = 0.045f))
+                .horizontalScroll(rememberScrollState())
+                .padding(8.dp),
+        ) {
+            SelectionContainer {
+                Text(
+                    annotated,
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
             }
         }
     }
@@ -2807,12 +3304,35 @@ fun TerminalCard(
     initiallyExpanded: Boolean = false,
 ) {
     val command = input.str("command") ?: input.str("cmd") ?: ""
+    val workdir = input.str("workdir") ?: ""
+    val upstreamStatus = input.str("status") ?: ""
+    val exitCode = input.int("exit_code")
     val statusColor = when {
-        result == null -> WandColors.brand
+        running -> WandColors.brand
+        result == null -> WandColors.textMuted
         result.isError -> WandColors.danger
         else -> WandColors.success
     }
-    var expanded by remember(command, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
+    val statusText = when {
+        running -> "运行中"
+        result?.isError == true && upstreamStatus == "declined" -> "已拒绝"
+        result?.isError == true && exitCode != null -> "失败 · $exitCode"
+        result?.isError == true -> "失败"
+        result != null && exitCode != null -> "完成 · $exitCode"
+        result != null -> "完成"
+        else -> "待执行"
+    }
+    val api = LocalChatApi.current
+    val sessionId = LocalChatSessionId.current
+    val scope = rememberCoroutineScope()
+    var outputText by remember(result?.toolUseId, result?.text) { mutableStateOf(result?.text.orEmpty()) }
+    var truncated by remember(result?.toolUseId, result?.truncated) { mutableStateOf(result?.truncated == true) }
+    var loadingFullOutput by remember(result?.toolUseId) { mutableStateOf(false) }
+    var outputLoadError by remember(result?.toolUseId) { mutableStateOf<String?>(null) }
+    var expanded by remember(command, initiallyExpanded) { mutableStateOf(initiallyExpanded || running) }
+    LaunchedEffect(running) {
+        if (running) expanded = true
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2827,6 +3347,7 @@ fun TerminalCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickableWithoutRipple { expanded = !expanded }
+                .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 9.dp),
         ) {
             if (running) {
@@ -2854,13 +3375,24 @@ fun TerminalCard(
                 )
             }
             Text(
-                "$ " + if (command.length > 80) command.take(77) + "…" else command,
+                "$ " + if (command.length > 80) command.take(77) + "…" else command.ifBlank { "命令" },
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
                 color = TermText,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
+            )
+            Text(
+                statusText,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = statusColor,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(WandShapes.full)
+                    .background(statusColor.copy(alpha = 0.14f))
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
             )
             ExpandChevron(
                 expanded = expanded,
@@ -2873,6 +3405,15 @@ fun TerminalCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
             ) {
+                if (workdir.isNotEmpty()) {
+                    Text(
+                        "目录  $workdir",
+                        fontSize = 10.sp,
+                        lineHeight = 15.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = TermText.copy(alpha = 0.60f),
+                    )
+                }
                 Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     SelectionContainer {
                         Text(
@@ -2884,20 +3425,64 @@ fun TerminalCard(
                         )
                     }
                 }
-                if (result != null && result.text.isNotEmpty()) {
+                if (result != null && outputText.isNotEmpty()) {
                     Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         SelectionContainer {
                             Text(
-                                if (result.text.length > 4000) {
-                                    result.text.take(4000) + "\n…（已截断）"
+                                if (outputText.length > 12_000) {
+                                    outputText.take(12_000) + "\n…（本页仅展示前 12000 字）"
                                 } else {
-                                    result.text
+                                    outputText
                                 },
                                 fontSize = 12.sp,
                                 lineHeight = 18.sp,
                                 fontFamily = FontFamily.Monospace,
                                 color = if (result.isError) TermErrorText else TermText.copy(alpha = 0.85f),
                             )
+                        }
+                    }
+                }
+                if (truncated && result != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            outputLoadError ?: "输出过长，服务端已省略部分内容",
+                            fontSize = 10.sp,
+                            lineHeight = 15.sp,
+                            color = if (outputLoadError != null) TermErrorText else TermText.copy(alpha = 0.60f),
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (api != null && sessionId.isNotBlank() && result.toolUseId.isNotBlank()) {
+                            TextButton(
+                                enabled = !loadingFullOutput,
+                                onClick = {
+                                    loadingFullOutput = true
+                                    outputLoadError = null
+                                    scope.launch {
+                                        try {
+                                            outputText = api.fetchToolContent(sessionId, result.toolUseId).text
+                                            truncated = false
+                                        } catch (error: Exception) {
+                                            outputLoadError = error.message ?: "加载失败，请重试"
+                                        } finally {
+                                            loadingFullOutput = false
+                                        }
+                                    }
+                                },
+                            ) {
+                                if (loadingFullOutput) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = TermText,
+                                    )
+                                } else {
+                                    Text("加载完整输出", fontSize = 10.sp, color = TermText)
+                                }
+                            }
                         }
                     }
                 }
@@ -3031,6 +3616,7 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickableWithoutRipple { expanded = !expanded }
+                .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Canvas(modifier = Modifier.size(18.dp)) {

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -109,6 +110,9 @@ object WandIcons {
 
     /** 工具结果。 */
     val toolResult: ImageVector = Icons.AutoMirrored.Outlined.Notes
+
+    /** 单轮 token / 费用用量。 */
+    val usage: ImageVector = Icons.Outlined.DataUsage
 
     /** 错误。 */
     val error: ImageVector = Icons.Outlined.ErrorOutline

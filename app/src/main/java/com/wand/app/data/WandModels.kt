@@ -67,6 +67,32 @@ fun summaryText(value: Any?): String = when (value) {
     else -> value.toString()
 }
 
+/**
+ * 工具结果既可能是纯字符串，也可能是 Responses/MCP 风格的 content part 数组。
+ * 不认识的 part 不能静默丢弃：优先抽取常见文本字段，否则保留格式化 JSON 作为兜底。
+ */
+private fun structuredContentText(value: Any?): String = when (value) {
+    null, JSONObject.NULL -> ""
+    is String -> value
+    is JSONArray -> buildList {
+        for (i in 0 until value.length()) {
+            structuredContentText(value.opt(i)).takeIf { it.isNotBlank() }?.let(::add)
+        }
+    }.joinToString("\n")
+    is JSONObject -> {
+        val textKeys = listOf("text", "output_text", "input_text", "message", "summary")
+        textKeys.firstNotNullOfOrNull { key ->
+            if (!value.has(key) || value.isNull(key)) null
+            else structuredContentText(value.opt(key)).takeIf { it.isNotBlank() }
+        } ?: try {
+            value.toString(2)
+        } catch (_: Exception) {
+            value.toString()
+        }
+    }
+    else -> value.toString()
+}
+
 // MARK: - 会话消息块
 
 data class SubagentMeta(
@@ -100,7 +126,8 @@ sealed class ContentBlock {
         val truncated: Boolean,
         val subagent: SubagentMeta?,
     ) : ContentBlock()
-    object Unknown : ContentBlock()
+    /** 协议升级兜底：保留类型与原始载荷，UI 可明确提示而不是整块消失。 */
+    data class Unknown(val type: String, val payload: String) : ContentBlock()
 
     companion object {
         fun parse(o: JSONObject): ContentBlock {
@@ -116,19 +143,7 @@ sealed class ContentBlock {
                     subagent = subagent,
                 )
                 "tool_result" -> {
-                    // content: string | Array<{type, text?, ...}> —— 数组时抽取所有 text 拼接。
-                    val text = when (val content = o.opt("content")) {
-                        is String -> content
-                        is JSONArray -> {
-                            val pieces = mutableListOf<String>()
-                            for (i in 0 until content.length()) {
-                                val part = content.optJSONObject(i) ?: continue
-                                part.str("text")?.let { pieces.add(it) }
-                            }
-                            pieces.joinToString("\n")
-                        }
-                        else -> ""
-                    }
+                    val text = structuredContentText(o.opt("content"))
                     ToolResult(
                         toolUseId = o.str("tool_use_id") ?: "",
                         text = text,
@@ -137,8 +152,46 @@ sealed class ContentBlock {
                         subagent = subagent,
                     )
                 }
-                else -> Unknown
+                else -> Unknown(
+                    type = o.str("type")?.takeIf { it.isNotBlank() } ?: "unknown",
+                    payload = try { o.toString(2) } catch (_: Exception) { o.toString() },
+                )
             }
+        }
+    }
+}
+
+/** 单轮 assistant 用量；兼容服务端 camelCase 与上游 snake_case。 */
+data class TurnUsage(
+    val inputTokens: Int?,
+    val outputTokens: Int?,
+    val cacheReadInputTokens: Int?,
+    val cacheCreationInputTokens: Int?,
+    val reasoningOutputTokens: Int?,
+    val totalCostUsd: Double?,
+) {
+    val hasVisibleValue: Boolean
+        get() = (inputTokens ?: 0) > 0 ||
+            (outputTokens ?: 0) > 0 ||
+            (cacheReadInputTokens ?: 0) > 0 ||
+            (cacheCreationInputTokens ?: 0) > 0 ||
+            (reasoningOutputTokens ?: 0) > 0 ||
+            (totalCostUsd ?: 0.0) > 0.0
+
+    companion object {
+        private fun JSONObject.intEither(camel: String, snake: String): Int? = int(camel) ?: int(snake)
+        private fun JSONObject.doubleEither(camel: String, snake: String): Double? = dbl(camel) ?: dbl(snake)
+
+        fun parse(o: JSONObject?): TurnUsage? {
+            if (o == null) return null
+            return TurnUsage(
+                inputTokens = o.intEither("inputTokens", "input_tokens"),
+                outputTokens = o.intEither("outputTokens", "output_tokens"),
+                cacheReadInputTokens = o.intEither("cacheReadInputTokens", "cache_read_input_tokens"),
+                cacheCreationInputTokens = o.intEither("cacheCreationInputTokens", "cache_creation_input_tokens"),
+                reasoningOutputTokens = o.intEither("reasoningOutputTokens", "reasoning_output_tokens"),
+                totalCostUsd = o.doubleEither("totalCostUsd", "total_cost_usd"),
+            )
         }
     }
 }
@@ -146,6 +199,7 @@ sealed class ContentBlock {
 data class ConversationTurn(
     val role: String,
     val content: List<ContentBlock>,
+    val usage: TurnUsage? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): ConversationTurn {
@@ -162,7 +216,11 @@ data class ConversationTurn(
                     }
                 }
             }
-            return ConversationTurn(role = o.str("role") ?: "assistant", content = blocks)
+            return ConversationTurn(
+                role = o.str("role") ?: "assistant",
+                content = blocks,
+                usage = TurnUsage.parse(o.obj("usage")),
+            )
         }
 
         fun parseList(arr: JSONArray?): List<ConversationTurn>? =

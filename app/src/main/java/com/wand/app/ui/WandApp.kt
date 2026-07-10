@@ -542,13 +542,13 @@ private fun CollapsedSessionRail(
         ) {
             entries.forEachIndexed { index, entry ->
                 when (entry) {
-                    is CollapsedRailEntry.Active -> CollapsedSessionTile(
+                    is CollapsedRailEntry.Managed -> CollapsedSessionTile(
                         session = entry.session,
                         index = index + 1,
                         selected = entry.session.id == selectedSessionId,
                         onClick = { onOpenSession(entry.session) },
                     )
-                    is CollapsedRailEntry.History -> CollapsedHistoryTile(
+                    is CollapsedRailEntry.Recoverable -> CollapsedRecoverableSessionTile(
                         history = entry.history,
                         index = index + 1,
                         onClick = { onOpenHistory(entry.history) },
@@ -564,26 +564,25 @@ private fun CollapsedSessionRail(
 private sealed class CollapsedRailEntry {
     abstract val sortKey: Long
 
-    data class Active(
+    data class Managed(
         val session: SessionSnapshot,
         override val sortKey: Long,
     ) : CollapsedRailEntry()
 
-    data class History(
+    data class Recoverable(
         val history: HistorySession,
         override val sortKey: Long,
     ) : CollapsedRailEntry()
 }
 
 private fun collapsedRailEntries(listState: SessionListState): List<CollapsedRailEntry> {
-    val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
     return buildList {
         listState.visibleSessions.forEach { session ->
-            add(CollapsedRailEntry.Active(session, parseIsoMillis(session.startedAt)))
+            add(CollapsedRailEntry.Managed(session, parseIsoMillis(session.startedAt)))
         }
         listState.visibleHistorySessions.forEach { history ->
             val sortKey = history.mtimeMs?.toLong() ?: parseIsoMillis(history.timestamp)
-            if (sortKey > cutoff) add(CollapsedRailEntry.History(history, sortKey))
+            add(CollapsedRailEntry.Recoverable(history, sortKey))
         }
     }.sortedByDescending { it.sortKey }
 }
@@ -612,7 +611,7 @@ private fun CollapsedSessionTile(
 }
 
 @Composable
-private fun CollapsedHistoryTile(
+private fun CollapsedRecoverableSessionTile(
     history: HistorySession,
     index: Int,
     onClick: () -> Unit,
@@ -625,8 +624,7 @@ private fun CollapsedHistoryTile(
         tint = tint,
         selected = false,
         badge = index.toString(),
-        contentDescription = "$index. ${if (isCodex) "Codex" else "Claude"} 历史会话",
-        history = true,
+        contentDescription = "$index. ${if (isCodex) "Codex" else "Claude"} ${history.firstUserMessage.ifEmpty { "会话" }}",
         onClick = onClick,
     )
 }
@@ -652,7 +650,6 @@ private fun CollapsedRailTile(
     badge: String?,
     contentDescription: String,
     outlined: Boolean = false,
-    history: Boolean = false,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
@@ -664,14 +661,12 @@ private fun CollapsedRailTile(
     )
     val background = when {
         outlined -> WandColors.brand.copy(alpha = 0.06f)
-        history -> tint.copy(alpha = 0.075f)
         selected -> tint.copy(alpha = 0.22f)
         else -> tint.copy(alpha = 0.10f)
     }
     val borderColor = when {
         outlined -> WandColors.brand.copy(alpha = 0.50f)
         selected -> tint.copy(alpha = 0.72f)
-        history -> tint.copy(alpha = 0.14f)
         else -> tint.copy(alpha = 0.20f)
     }
     Box(

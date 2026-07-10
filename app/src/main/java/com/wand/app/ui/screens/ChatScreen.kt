@@ -358,7 +358,11 @@ fun ChatScreen(
     // 液态玻璃：内容区是 backdrop 捕获源，顶栏/输入栏/FAB 悬浮其上采样模糊+折射。
     val glassBackdrop = rememberGlassBackdrop()
     var composerExpanded by remember { mutableStateOf(false) }
-    CompositionLocalProvider(LocalServerBaseUrl provides api.baseUrl) {
+    CompositionLocalProvider(
+        LocalServerBaseUrl provides api.baseUrl,
+        LocalChatApi provides api,
+        LocalChatSessionId provides sessionId,
+    ) {
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
