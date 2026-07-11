@@ -57,7 +57,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -69,7 +68,6 @@ import com.wand.app.data.ProviderDefaultModels
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
-import com.wand.app.ui.NewSessionPreferences
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
@@ -104,13 +102,11 @@ fun NewSessionScreen(
     onCreated: (SessionSnapshot) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val newSessionPreferences = remember(context) { NewSessionPreferences(context) }
 
     var cwd by remember { mutableStateOf("") }
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
-    var provider by remember(newSessionPreferences) { mutableStateOf(newSessionPreferences.provider) }
-    var isStructured by remember(newSessionPreferences) { mutableStateOf(newSessionPreferences.isStructured) }
+    var provider by remember { mutableStateOf("claude") }
+    var isStructured by remember { mutableStateOf(true) }
     // 默认托管模式（claude 全自动完成）；codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
     var availableModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
@@ -124,7 +120,8 @@ fun NewSessionScreen(
     var showBrowser by remember { mutableStateOf(false) }
 
     val providerModels = if (provider == "codex") codexModels else availableModels
-    val thinkingLevels = thinkingEffortOptions(provider, selectedModel, providerModels)
+    val serverDefaultModel = if (provider == "codex") serverDefaultModels.codex else serverDefaultModels.claude
+    val thinkingLevels = thinkingEffortOptions(provider, selectedModel, serverDefaultModel, providerModels)
     val supportedModes = supportedModeIds(provider)
 
     LaunchedEffect(Unit) {
@@ -133,7 +130,10 @@ fun NewSessionScreen(
         } catch (_: Exception) {
             null
         }
-        mode = supportedModeFor(config?.defaultMode ?: "managed", provider)
+        val configuredProvider = if (config?.defaultProvider == "codex") "codex" else "claude"
+        provider = configuredProvider
+        isStructured = config?.defaultSessionKind != "pty"
+        mode = supportedModeFor(config?.defaultMode ?: "managed", configuredProvider)
         serverDefaultModels = config?.defaultModels ?: ProviderDefaultModels(
             claude = config?.defaultModel,
             codex = config?.defaultCodexModel,
@@ -144,6 +144,10 @@ fun NewSessionScreen(
             val response = api.models()
             availableModels = response.models
             codexModels = response.codexModels
+            serverDefaultModels = response.defaultModels ?: ProviderDefaultModels(
+                claude = response.defaultModel,
+                codex = response.defaultCodexModel,
+            )
         } catch (_: Exception) {
         }
         recentPaths = try {
@@ -171,11 +175,25 @@ fun NewSessionScreen(
 
     val canCreate = cwd.trim().isNotEmpty() && !creating
 
-    // 持久化默认项（对齐 iOS saveDefaults，失败仅记错不打断选择）。
-    fun persistDefaults(mode: String? = null, model: String? = null, providerOverride: String = provider, thinkingEffort: String? = null) {
+    // 持久化到服务端偏好；失败仅提示，不打断当前页面上的选择。
+    fun persistDefaults(
+        mode: String? = null,
+        model: String? = null,
+        modelProvider: String = provider,
+        thinkingEffort: String? = null,
+        defaultProvider: String? = null,
+        defaultSessionKind: String? = null,
+    ) {
         scope.launch {
             try {
-                api.updateNewSessionDefaults(mode = mode, model = model, provider = providerOverride, thinkingEffort = thinkingEffort)
+                api.updateNewSessionDefaults(
+                    mode = mode,
+                    model = model,
+                    modelProvider = modelProvider,
+                    thinkingEffort = thinkingEffort,
+                    defaultProvider = defaultProvider,
+                    defaultSessionKind = defaultSessionKind,
+                )
             } catch (e: Exception) {
                 errorMessage = e.message
             }
@@ -184,9 +202,6 @@ fun NewSessionScreen(
 
     fun create() {
         if (!canCreate) return
-        // 选择时已经即时落盘；创建前再写一次，覆盖未来可能新增的程序化状态变更。
-        newSessionPreferences.provider = provider
-        newSessionPreferences.isStructured = isStructured
         creating = true
         errorMessage = null
         val path = cwd.trim()
@@ -224,7 +239,6 @@ fun NewSessionScreen(
         }
     }
 
-    val serverDefaultModel = if (provider == "codex") serverDefaultModels.codex else serverDefaultModels.claude
     val defaultModelLabel = if (!serverDefaultModel.isNullOrBlank()) {
         providerModels.firstOrNull { it.id == serverDefaultModel }?.label ?: serverDefaultModel
     } else {
@@ -324,7 +338,7 @@ fun NewSessionScreen(
                 selected = provider,
                 onSelect = { newProvider ->
                     provider = newProvider
-                    newSessionPreferences.provider = newProvider
+                    persistDefaults(defaultProvider = newProvider)
                     mode = supportedModeFor(mode, newProvider)
                     selectedModel = ""
                 },
@@ -337,7 +351,7 @@ fun NewSessionScreen(
                 selected = isStructured,
                 onSelect = {
                     isStructured = it
-                    newSessionPreferences.isStructured = it
+                    persistDefaults(defaultSessionKind = if (it) "structured" else "pty")
                 },
             )
             FieldHint(sessionKindHint(provider, isStructured))
@@ -367,7 +381,7 @@ fun NewSessionScreen(
                     selectedId = selectedModel,
                     onSelect = {
                         selectedModel = it
-                        persistDefaults(model = it, providerOverride = provider)
+                        persistDefaults(model = it, modelProvider = provider)
                     },
                     modifier = Modifier.weight(1f),
                 )

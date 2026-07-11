@@ -748,6 +748,8 @@ data class RecentPath(
 /** GET /api/config 的客户端子集。 */
 data class ServerConfigInfo(
     val defaultCwd: String?,
+    val defaultProvider: String?,
+    val defaultSessionKind: String?,
     val defaultMode: String?,
     val defaultModel: String?,
     val defaultCodexModel: String?,
@@ -766,6 +768,8 @@ data class ServerConfigInfo(
     companion object {
         fun parse(o: JSONObject): ServerConfigInfo = ServerConfigInfo(
             defaultCwd = o.str("defaultCwd"),
+            defaultProvider = o.str("defaultProvider"),
+            defaultSessionKind = o.str("defaultSessionKind"),
             defaultMode = o.str("defaultMode"),
             defaultModel = o.str("defaultModel"),
             defaultCodexModel = o.str("defaultCodexModel"),

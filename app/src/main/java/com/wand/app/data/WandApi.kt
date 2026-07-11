@@ -357,17 +357,19 @@ class WandApi(baseUrl: String, val token: String?) {
         return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
     }
 
-    /** 持久化「新建会话」默认项（对齐 iOS updateNewSessionDefaults → POST /api/settings/config）。 */
+    /** 将「新建会话」默认项持久化到服务端配置。 */
     suspend fun updateNewSessionDefaults(
         mode: String? = null,
         model: String? = null,
-        provider: String = "claude",
+        modelProvider: String = "claude",
         thinkingEffort: String? = null,
+        defaultProvider: String? = null,
+        defaultSessionKind: String? = null,
     ) {
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
         if (model != null) {
-            if (provider == "codex") {
+            if (modelProvider == "codex") {
                 body.put("defaultCodexModel", model)
                 body.put("defaultModels", JSONObject().put("codex", model))
             } else {
@@ -376,6 +378,8 @@ class WandApi(baseUrl: String, val token: String?) {
             }
         }
         if (thinkingEffort != null) body.put("defaultThinkingEffort", thinkingEffort)
+        if (defaultProvider != null) body.put("defaultProvider", defaultProvider)
+        if (defaultSessionKind != null) body.put("defaultSessionKind", defaultSessionKind)
         requestData("POST", "/api/settings/config", body)
     }
 

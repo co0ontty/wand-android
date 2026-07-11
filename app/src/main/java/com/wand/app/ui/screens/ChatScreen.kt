@@ -1159,6 +1159,7 @@ private fun thinkingLevels(store: ChatStore): List<ThinkingEffortOption> =
     thinkingEffortOptions(
         provider = store.snapshot?.provider ?: "claude",
         selectedModel = store.selectedModel,
+        defaultModel = store.defaultModel,
         models = store.availableModels,
     )
 

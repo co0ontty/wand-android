@@ -44,10 +44,13 @@ private val LEGACY_THINKING_LEVELS = listOf(
 fun thinkingEffortOptions(
     provider: String,
     selectedModel: String?,
+    defaultModel: String?,
     models: List<ModelInfo>,
 ): List<ThinkingEffortOption> {
     if (provider != "codex") return LEGACY_THINKING_LEVELS
-    val modelId = selectedModel?.takeIf { it.isNotBlank() && it != "default" } ?: "default"
+    val modelId = selectedModel?.takeIf { it.isNotBlank() && it != "default" }
+        ?: defaultModel?.takeIf { it.isNotBlank() && it != "default" }
+        ?: "default"
     val levels = (models.firstOrNull { it.id == modelId }
         ?: models.firstOrNull { it.id == "default" })?.reasoningEfforts.orEmpty()
     if (levels.isEmpty()) return LEGACY_THINKING_LEVELS
