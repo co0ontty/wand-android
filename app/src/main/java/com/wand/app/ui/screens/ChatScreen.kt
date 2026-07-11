@@ -121,6 +121,9 @@ import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.ThinkingEffortOption
+import com.wand.app.ui.ThinkingEffortSlider
+import com.wand.app.ui.thinkingEffortOptions
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
@@ -668,7 +671,12 @@ fun ChatScreen(
                         if (store.isResponding) {
                             item(key = "responding") {
                                 Box(modifier = Modifier.animateItem()) {
-                                    RespondingIndicator(store.currentTaskTitle)
+                                    LiveTurnStatusRow(
+                                        usage = store.messages.lastOrNull()
+                                            ?.takeIf { it.role == "assistant" }
+                                            ?.usage,
+                                        taskTitle = store.currentTaskTitle,
+                                    )
                                 }
                             }
                         }
@@ -1017,13 +1025,11 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         color = WandColors.border,
                         modifier = Modifier.padding(start = 60.dp),
                     )
-                    LaunchSettingPicker(
-                        icon = WandIcons.thinking,
-                        label = "思考深度",
-                        value = thinkingLabel(store.thinkingEffort),
-                        options = THINKING_LEVELS.map { it.id to it.menuLabel },
-                        selected = store.thinkingEffort,
-                        onSelect = { it?.let(store::chooseThinkingEffort) },
+                    ThinkingEffortSlider(
+                        options = thinkingLevels(store),
+                        selection = store.thinkingEffort,
+                        onSelect = store::chooseThinkingEffort,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                     )
                 }
             }
@@ -1149,26 +1155,15 @@ private fun LaunchSettingPicker(
     }
 }
 
-private data class ThinkingLevel(
-    val id: String,
-    val label: String,
-    val shortLabel: String,
-    val menuLabel: String,
-)
+private fun thinkingLevels(store: ChatStore): List<ThinkingEffortOption> =
+    thinkingEffortOptions(
+        provider = store.snapshot?.provider ?: "claude",
+        selectedModel = store.selectedModel,
+        models = store.availableModels,
+    )
 
-/** 思考深度档位（对齐 iOS thinkingLevels / 服务端 thinking-effort 端点）。 */
-private val THINKING_LEVELS = listOf(
-    ThinkingLevel("off", "关闭", "关", "关闭"),
-    ThinkingLevel("standard", "低", "低", "低（low）"),
-    ThinkingLevel("deep", "中", "中", "中（medium）"),
-    ThinkingLevel("max", "高", "高", "高（max）"),
-)
-
-private fun thinkingLabel(id: String): String =
-    THINKING_LEVELS.firstOrNull { it.id == id }?.label ?: "关闭"
-
-private fun thinkingShortLabel(id: String): String =
-    THINKING_LEVELS.firstOrNull { it.id == id }?.shortLabel ?: "关"
+private fun thinkingShortLabel(store: ChatStore, id: String): String =
+    thinkingLevels(store).firstOrNull { it.id == id }?.shortLabel ?: "自"
 
 private fun modelDisplayLabel(store: ChatStore, id: String?): String {
     val effectiveId = id?.takeIf { it != "default" } ?: store.defaultModel
@@ -1212,7 +1207,7 @@ private fun shortModelLabel(store: ChatStore): String {
 
 private fun modelThinkingText(store: ChatStore): String {
     val model = shortModelLabel(store)
-    return "$model · ${thinkingShortLabel(store.thinkingEffort)}"
+    return "$model · ${thinkingShortLabel(store, store.thinkingEffort)}"
 }
 
 @Composable
@@ -1233,29 +1228,6 @@ private fun SettingsMenuOption(label: String, selected: Boolean, onClick: () -> 
         },
         onClick = onClick,
     )
-}
-
-@Composable
-private fun RespondingIndicator(taskTitle: String?) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .semantics {
-                liveRegion = LiveRegionMode.Polite
-                stateDescription = "正在响应"
-            }
-            .padding(vertical = 4.dp),
-    ) {
-        StatusDot("running")
-        Text(
-            taskTitle ?: "正在思考…",
-            fontSize = 13.sp,
-            color = WandColors.textMuted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
 }
 
 /**
@@ -1996,12 +1968,12 @@ private fun ModelThinkingChip(
             }
             HorizontalDivider(color = WandColors.border)
             MenuSectionHeader("思考深度")
-            THINKING_LEVELS.forEach { level ->
-                SettingsMenuOption(level.menuLabel, selected = store.thinkingEffort == level.id) {
-                    store.chooseThinkingEffort(level.id)
-                    open = false
-                }
-            }
+            ThinkingEffortSlider(
+                options = thinkingLevels(store),
+                selection = store.thinkingEffort,
+                onSelect = store::chooseThinkingEffort,
+                modifier = Modifier.widthIn(min = 260.dp).padding(horizontal = 8.dp, vertical = 4.dp),
+            )
         }
     }
 }

@@ -66,6 +66,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -254,8 +256,10 @@ fun TurnView(
             }
         }
         val usageIsLive = isLastTurn && isResponding
-        if ((!showHeader || !collapsed) && (usageIsLive || turn.usage?.hasVisibleValue == true)) {
-            UsageSummaryRow(turn.usage, isLive = usageIsLive)
+        // 流式用量与「正在思考」合并到列表底部的 LiveTurnStatusRow，避免两个
+        // 左对齐状态行同时更新时在视觉上重叠。响应结束后仍在回复尾部展示完整用量。
+        if (!usageIsLive && (!showHeader || !collapsed) && turn.usage?.hasVisibleValue == true) {
+            UsageSummaryRow(turn.usage, isLive = false)
         }
     }
 }
@@ -400,6 +404,78 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
                     color = WandColors.textMuted,
                 )
             }
+        }
+    }
+}
+
+/**
+ * 运行中的单行状态：用量固定在左，当前思考/任务固定在右。
+ * 两侧各自单行省略，窄屏不会换行互相挤压；响应结束后由 UsageSummaryRow 展示完整用量。
+ */
+@Composable
+internal fun LiveTurnStatusRow(usage: TurnUsage?, taskTitle: String?) {
+    val usageText = remember(usage) {
+        buildList {
+            usage?.inputTokens?.takeIf { it > 0 }?.let { add("输入 ${formatTokenCount(it)}") }
+            usage?.cacheReadInputTokens?.takeIf { it > 0 }?.let { add("缓存 ${formatTokenCount(it)}") }
+            usage?.outputTokens?.takeIf { it > 0 }?.let {
+                add("输出 ${if (usage.estimated == true) "≈" else ""}${formatTokenCount(it)}")
+            }
+            usage?.reasoningOutputTokens?.takeIf { it > 0 }?.let {
+                add("推理 ${if (usage.estimated == true) "≈" else ""}${formatTokenCount(it)}")
+            }
+            usage?.totalCostUsd?.takeIf { it > 0 }?.let { add("\$${formatUsd(it)}") }
+        }.joinToString(" · ").ifEmpty { "正在统计用量…" }
+    }
+    val activityText = taskTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: "正在思考…"
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                liveRegion = LiveRegionMode.Polite
+                stateDescription = "$usageText，$activityText"
+            }
+            .padding(top = 1.dp, start = 2.dp, end = 2.dp, bottom = 4.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Icon(
+                WandIcons.usage,
+                contentDescription = null,
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(13.dp),
+            )
+            Text(
+                usageText,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+            modifier = Modifier.weight(1f),
+        ) {
+            StatusDot("running")
+            Text(
+                activityText,
+                fontSize = 13.sp,
+                color = WandColors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
         }
     }
 }

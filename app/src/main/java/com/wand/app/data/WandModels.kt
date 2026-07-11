@@ -437,16 +437,33 @@ data class ModelInfo(
     val id: String,
     val label: String,
     val alias: Boolean?,
+    val reasoningEfforts: List<ReasoningEffortInfo>,
+    val defaultReasoningEffort: String?,
 ) {
     companion object {
         fun parseList(arr: JSONArray?): List<ModelInfo> =
             arr?.parseEach { o ->
                 o.str("id")?.let { id ->
-                    ModelInfo(id = id, label = o.str("label") ?: id, alias = o.bool("alias"))
+                    ModelInfo(
+                        id = id,
+                        label = o.str("label") ?: id,
+                        alias = o.bool("alias"),
+                        reasoningEfforts = o.arr("reasoningEfforts")?.parseEach { level ->
+                            level.str("effort")?.let { effort ->
+                                ReasoningEffortInfo(effort, level.str("description"))
+                            }
+                        } ?: emptyList(),
+                        defaultReasoningEffort = o.str("defaultReasoningEffort"),
+                    )
                 }
             } ?: emptyList()
     }
 }
+
+data class ReasoningEffortInfo(
+    val effort: String,
+    val description: String?,
+)
 
 data class ModelsResponse(
     val models: List<ModelInfo>,

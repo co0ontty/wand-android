@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +69,7 @@ import com.wand.app.data.ProviderDefaultModels
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
+import com.wand.app.ui.NewSessionPreferences
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
@@ -77,6 +79,8 @@ import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.thinkingEffortOptions
+import com.wand.app.ui.ThinkingEffortSlider
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
@@ -100,11 +104,13 @@ fun NewSessionScreen(
     onCreated: (SessionSnapshot) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val newSessionPreferences = remember(context) { NewSessionPreferences(context) }
 
     var cwd by remember { mutableStateOf("") }
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
-    var provider by remember { mutableStateOf("claude") }
-    var isStructured by remember { mutableStateOf(true) }
+    var provider by remember(newSessionPreferences) { mutableStateOf(newSessionPreferences.provider) }
+    var isStructured by remember(newSessionPreferences) { mutableStateOf(newSessionPreferences.isStructured) }
     // 默认托管模式（claude 全自动完成）；codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
     var availableModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
@@ -118,6 +124,7 @@ fun NewSessionScreen(
     var showBrowser by remember { mutableStateOf(false) }
 
     val providerModels = if (provider == "codex") codexModels else availableModels
+    val thinkingLevels = thinkingEffortOptions(provider, selectedModel, providerModels)
     val supportedModes = supportedModeIds(provider)
 
     LaunchedEffect(Unit) {
@@ -177,6 +184,9 @@ fun NewSessionScreen(
 
     fun create() {
         if (!canCreate) return
+        // 选择时已经即时落盘；创建前再写一次，覆盖未来可能新增的程序化状态变更。
+        newSessionPreferences.provider = provider
+        newSessionPreferences.isStructured = isStructured
         creating = true
         errorMessage = null
         val path = cwd.trim()
@@ -225,8 +235,6 @@ fun NewSessionScreen(
     } else {
         providerModels.firstOrNull { it.id == selectedModel }?.label ?: selectedModel
     }
-    val thinkingLabel = THINKING_LEVELS.firstOrNull { it.first == thinkingEffort }?.second ?: "关闭"
-
     Scaffold(
         containerColor = Color.Transparent,
         modifier = Modifier
@@ -316,6 +324,7 @@ fun NewSessionScreen(
                 selected = provider,
                 onSelect = { newProvider ->
                     provider = newProvider
+                    newSessionPreferences.provider = newProvider
                     mode = supportedModeFor(mode, newProvider)
                     selectedModel = ""
                 },
@@ -326,7 +335,10 @@ fun NewSessionScreen(
             WandSegmented(
                 options = listOf(true to "结构化", false to "PTY"),
                 selected = isStructured,
-                onSelect = { isStructured = it },
+                onSelect = {
+                    isStructured = it
+                    newSessionPreferences.isStructured = it
+                },
             )
             FieldHint(sessionKindHint(provider, isStructured))
 
@@ -359,17 +371,14 @@ fun NewSessionScreen(
                     },
                     modifier = Modifier.weight(1f),
                 )
-                OptionMenuCard(
-                    title = "思考深度",
-                    value = thinkingLabel,
-                    icon = WandIcons.thinking,
-                    options = THINKING_LEVELS,
-                    selectedId = thinkingEffort,
+                ThinkingEffortSlider(
+                    options = thinkingLevels,
+                    selection = thinkingEffort,
                     onSelect = {
                         thinkingEffort = it
                         persistDefaults(thinkingEffort = it)
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).selectCard(selected = false),
                 )
             }
 
@@ -765,14 +774,6 @@ private val SESSION_MODES = listOf(
     SessionMode("auto-edit", "自动编辑", "自动确认修改"),
     SessionMode("default", "标准", "逐步确认操作"),
     SessionMode("native", "原生", "原生结构化输出"),
-)
-
-/** 思考深度档位（对齐 iOS thinkingLevels）：id 与服务端一致，标签同 iOS 中文。 */
-private val THINKING_LEVELS = listOf(
-    "off" to "关闭",
-    "standard" to "低",
-    "deep" to "中",
-    "max" to "高",
 )
 
 /** codex 仅支持 full-access，对齐 Web getSupportedModes。 */
