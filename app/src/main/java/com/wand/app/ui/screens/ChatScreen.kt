@@ -372,6 +372,7 @@ fun ChatScreen(
         LocalServerBaseUrl provides api.baseUrl,
         LocalChatApi provides api,
         LocalChatSessionId provides sessionId,
+        LocalCardExpandDefaults provides store.cardDefaults,
     ) {
     Scaffold(
         containerColor = Color.Transparent,

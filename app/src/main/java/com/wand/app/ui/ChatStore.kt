@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.CardExpandDefaults
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.ModelInfo
 import com.wand.app.data.PermissionRequestInfo
@@ -70,6 +71,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         private set
     var thinkingEffort by mutableStateOf("off")
         private set
+    /** 服务端全局卡片默认展开偏好；旧服务端缺字段时安全回退为全部收起。 */
+    var cardDefaults by mutableStateOf(CardExpandDefaults())
+        private set
     /** 当前执行模式（managed / full-access / auto-edit / default / native）。输入栏模式徽标读它，可中途切换。 */
     var mode by mutableStateOf("default")
         private set
@@ -112,12 +116,12 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             try {
                 val snap = api.getSession(sessionId)
                 apply(snap)
-                loading = false
             } catch (e: Exception) {
-                loading = false
                 loadError = e.message ?: "加载失败"
             }
             loadModels()
+            loadCardDefaults()
+            loading = false
             socket.connect()
             socket.subscribe(sessionId)
         }
@@ -323,6 +327,14 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         defaultModel = response.defaultModelFor(provider)
     }
 
+    private suspend fun loadCardDefaults() {
+        cardDefaults = try {
+            api.serverConfig().cardDefaults
+        } catch (_: Exception) {
+            CardExpandDefaults()
+        }
+    }
+
     // MARK: - 用户动作
 
     /** 发送一条消息。PTY 会话走 chat 视图语义（结尾补换行），结构化会话直接发文本。 */
@@ -330,6 +342,10 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val queueing = isStructured && isResponding && status == "running"
+        if (queueing && lastSubmittedStructuredInput() == trimmed) {
+            toast = "与上一条消息相同，已忽略，不会加入排队。"
+            return
+        }
         val previousMessages = messages
         val previousQueue = queuedMessages
         if (isStructured) {
@@ -359,6 +375,17 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 }
             }
         }
+    }
+
+    private fun lastSubmittedStructuredInput(): String? {
+        queuedMessages.asReversed().firstNotNullOfOrNull { it.trim().takeIf(String::isNotEmpty) }?.let { return it }
+        val lastUser = messages.asReversed().firstOrNull { it.role == "user" } ?: return null
+        val text = lastUser.content.filterIsInstance<com.wand.app.data.ContentBlock.Text>()
+            .joinToString("\n") { it.text }
+            .trim()
+        if (text.isNotEmpty()) return text
+        return lastUser.content.filterIsInstance<com.wand.app.data.ContentBlock.ToolResult>()
+            .firstOrNull()?.text?.trim()?.takeIf(String::isNotEmpty)
     }
 
     // MARK: - AskUserQuestion 交互（对齐 Web 端 __askSelect / __askSubmit）

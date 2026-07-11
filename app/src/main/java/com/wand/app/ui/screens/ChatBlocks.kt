@@ -91,6 +91,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.Canvas
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.CardExpandDefaults
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SubagentMeta
@@ -135,6 +136,7 @@ import java.util.Locale
 /** ChatScreen 注入的会话上下文，用于按需加载被服务端截断的完整工具结果。 */
 internal val LocalChatApi = compositionLocalOf<WandApi?> { null }
 internal val LocalChatSessionId = compositionLocalOf { "" }
+internal val LocalCardExpandDefaults = compositionLocalOf { CardExpandDefaults() }
 
 // MARK: - 单条消息
 
@@ -491,6 +493,7 @@ private fun SegmentBlocks(
     onAskSubmit: (String, String) -> Unit,
     showSubagentTags: Boolean = true,
 ) {
+    val cardDefaults = LocalCardExpandDefaults.current
     val items = remember(blocks) { pairToolBlocks(blocks) }
     val renderItems = remember(items, isLastTurn, isResponding) {
         collapseActivityItems(items, isLastTurn, isResponding)
@@ -530,12 +533,31 @@ private fun SegmentBlocks(
                     onAskToggle = onAskToggle,
                     onAskSubmit = onAskSubmit,
                     showSubagentTags = showSubagentTags,
-                    initiallyExpanded = false,
                 )
-                is SegmentRenderItem.Activity -> ActivitySummaryRow(
-                    group = renderItem.group,
-                    onClick = { openActivityKey = renderItem.group.key },
-                )
+                is SegmentRenderItem.Activity -> {
+                    if (cardDefaults.toolGroup) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            renderItem.group.items.forEachIndexed { index, item ->
+                                RenderDisplayItem(
+                                    item = item,
+                                    itemIndex = index,
+                                    itemCount = renderItem.group.items.size,
+                                    isLastTurn = isLastTurn,
+                                    isResponding = isResponding,
+                                    askSelections = askSelections,
+                                    onAskToggle = onAskToggle,
+                                    onAskSubmit = onAskSubmit,
+                                    showSubagentTags = showSubagentTags,
+                                )
+                            }
+                        }
+                    } else {
+                        ActivitySummaryRow(
+                            group = renderItem.group,
+                            onClick = { openActivityKey = renderItem.group.key },
+                        )
+                    }
+                }
             }
         }
     }
@@ -552,8 +574,8 @@ private fun RenderDisplayItem(
     onAskToggle: (String, Int, Int, Boolean) -> Unit,
     onAskSubmit: (String, String) -> Unit,
     showSubagentTags: Boolean,
-    initiallyExpanded: Boolean,
 ) {
+    val cardDefaults = LocalCardExpandDefaults.current
     when (item) {
         is DisplayItem.Tool -> {
             val use = item.use
@@ -582,19 +604,19 @@ private fun RenderDisplayItem(
                         input = use.input,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = initiallyExpanded,
+                        initiallyExpanded = cardDefaults.editCards,
                     )
                     use.name == "Bash" -> TerminalCard(
                         input = use.input,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = initiallyExpanded,
+                        initiallyExpanded = cardDefaults.terminal,
                     )
                     else -> ToolCard(
                         use = use,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = initiallyExpanded,
+                        initiallyExpanded = cardDefaults.shouldExpandTool(use.name),
                     )
                 }
             }
@@ -603,12 +625,17 @@ private fun RenderDisplayItem(
             item.block,
             streaming = isLastTurn && isResponding && itemIndex == itemCount - 1,
             showSubagentTag = showSubagentTags,
-            initiallyExpanded = initiallyExpanded,
+            initiallyExpanded = when (val block = item.block) {
+                is ContentBlock.Thinking -> cardDefaults.thinking
+                is ContentBlock.ToolUse -> cardDefaults.shouldExpandTool(block.name)
+                is ContentBlock.ToolResult -> cardDefaults.editCards
+                else -> false
+            },
         )
         is DisplayItem.Exploration -> ExplorationDetailCard(
             tools = item.tools,
             running = isLastTurn && isResponding && item.tools.any { it.result == null },
-            initiallyExpanded = initiallyExpanded,
+            initiallyExpanded = cardDefaults.toolGroup,
         )
     }
 }
@@ -1129,7 +1156,6 @@ private fun ActivityDetailSheet(
                         onAskToggle = onAskToggle,
                         onAskSubmit = onAskSubmit,
                         showSubagentTags = showSubagentTags,
-                        initiallyExpanded = true,
                     )
                 }
             }
@@ -2178,6 +2204,7 @@ private fun ToolStatusIconBox(
 
 @Composable
 fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
+    val cardDefaults = LocalCardExpandDefaults.current
     val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
     val group = remember(items, running) {
         ActivityGroup(
@@ -2188,20 +2215,38 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
             failed = items.any(::isDisplayItemFailed),
         )
     }
-    var open by remember { mutableStateOf(false) }
-    if (open) {
-        ActivityDetailSheet(
-            group = group,
-            isLastTurn = running,
-            isResponding = running,
-            askSelections = emptyMap(),
-            onAskToggle = { _, _, _, _ -> },
-            onAskSubmit = { _, _ -> },
-            showSubagentTags = true,
-            onDismiss = { open = false },
-        )
+    if (cardDefaults.toolGroup) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items.forEachIndexed { index, item ->
+                RenderDisplayItem(
+                    item = item,
+                    itemIndex = index,
+                    itemCount = items.size,
+                    isLastTurn = running,
+                    isResponding = running,
+                    askSelections = emptyMap(),
+                    onAskToggle = { _, _, _, _ -> },
+                    onAskSubmit = { _, _ -> },
+                    showSubagentTags = true,
+                )
+            }
+        }
+    } else {
+        var open by remember { mutableStateOf(false) }
+        if (open) {
+            ActivityDetailSheet(
+                group = group,
+                isLastTurn = running,
+                isResponding = running,
+                askSelections = emptyMap(),
+                onAskToggle = { _, _, _, _ -> },
+                onAskSubmit = { _, _ -> },
+                showSubagentTags = true,
+                onDismiss = { open = false },
+            )
+        }
+        ActivitySummaryRow(group = group, onClick = { open = true })
     }
-    ActivitySummaryRow(group = group, onClick = { open = true })
 }
 
 @Composable

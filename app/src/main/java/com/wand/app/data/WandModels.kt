@@ -483,6 +483,33 @@ data class ProviderDefaultModels(
     }
 }
 
+/** 结构化聊天卡片的全局默认展开状态（由服务端 /api/config.cardDefaults 下发）。 */
+data class CardExpandDefaults(
+    val editCards: Boolean = false,
+    val inlineTools: Boolean = false,
+    val terminal: Boolean = false,
+    val thinking: Boolean = false,
+    val toolGroup: Boolean = false,
+) {
+    fun shouldExpandTool(toolName: String): Boolean = when (toolName) {
+        "Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoRead" -> inlineTools
+        "Bash" -> terminal
+        "Edit", "Write", "MultiEdit" -> editCards
+        // 与 Web 通用工具卡保持一致：未单独分类的工具沿用 editCards。
+        else -> editCards
+    }
+
+    companion object {
+        fun parse(o: JSONObject?): CardExpandDefaults = CardExpandDefaults(
+            editCards = o?.bool("editCards") == true,
+            inlineTools = o?.bool("inlineTools") == true,
+            terminal = o?.bool("terminal") == true,
+            thinking = o?.bool("thinking") == true,
+            toolGroup = o?.bool("toolGroup") == true,
+        )
+    }
+}
+
 // MARK: - 附件上传
 
 /** POST /api/sessions/:id/upload 返回的单个文件。 */
@@ -709,6 +736,7 @@ data class ServerConfigInfo(
     val defaultCodexModel: String?,
     val defaultModels: ProviderDefaultModels?,
     val defaultThinkingEffort: String?,
+    val cardDefaults: CardExpandDefaults,
     val currentVersion: String?,
 ) {
     fun defaultModelFor(provider: String): String =
@@ -726,6 +754,7 @@ data class ServerConfigInfo(
             defaultCodexModel = o.str("defaultCodexModel"),
             defaultModels = ProviderDefaultModels.parse(o.obj("defaultModels")),
             defaultThinkingEffort = o.str("defaultThinkingEffort"),
+            cardDefaults = CardExpandDefaults.parse(o.obj("cardDefaults")),
             currentVersion = o.str("currentVersion"),
         )
     }
