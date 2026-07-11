@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Psychology
@@ -187,6 +188,9 @@ object WandIcons {
 
     /** 新建。 */
     val add: ImageVector = Icons.Outlined.Add
+
+    /** 更多菜单。 */
+    val more: ImageVector = Icons.Outlined.MoreVert
 
     /** 空态大图标 / 会话列表空态。 */
     val sparkle: ImageVector = Icons.Outlined.AutoAwesome

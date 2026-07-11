@@ -483,26 +483,33 @@ private fun PtyNativeInputBar(
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .background(if (!canSend) WandColors.textMuted.copy(alpha = 0.10f) else WandColors.textPrimary)
                     .clickable(enabled = canSend) {
                         refocusAfterSend = true
                         onSend()
                     },
             ) {
-                Icon(
-                    WandIcons.arrowUp,
-                    contentDescription = "发送",
-                    tint = if (!canSend) WandColors.textMuted.copy(alpha = 0.55f) else WandColors.surface,
-                    modifier = Modifier.size(18.dp),
-                )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(ComposerActionVisualSize)
+                        .clip(CircleShape)
+                        .background(if (!canSend) WandColors.textMuted.copy(alpha = 0.10f) else WandColors.textPrimary),
+                ) {
+                    Icon(
+                        WandIcons.arrowUp,
+                        contentDescription = "发送",
+                        tint = if (!canSend) WandColors.textMuted.copy(alpha = 0.55f) else WandColors.surface,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
         }
         NativeComposerSurface(
             backdrop = backdrop,
             expanded = expanded,
-            onFocusInput = { runCatching { focusRequester.requestFocus() } },
+            focused = isFocused,
             collapsedLeading = { plusMenu() },
             inputContent = inputContent,
             collapsedTrailing = {

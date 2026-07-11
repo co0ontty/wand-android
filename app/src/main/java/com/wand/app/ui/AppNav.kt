@@ -1,6 +1,8 @@
 package com.wand.app.ui
 
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import com.wand.app.ui.theme.WandAppearanceMode
 
 /** 原生界面的页面栈。结构化对话原生承载，PTY 套在原生头部里嵌一层终端 WebView。 */
@@ -37,6 +39,47 @@ class NavState {
 
     fun pop() {
         if (stack.size > 1) stack.removeAt(stack.size - 1)
+    }
+
+    companion object {
+        val Saver: Saver<NavState, Any> = listSaver(
+            save = { nav -> nav.stack.map { screen -> screen.saveKey() } },
+            restore = { savedStack ->
+                val restoredScreens = savedStack.mapNotNull { savedScreen ->
+                    savedScreen.restoreScreen()
+                }
+                NavState().apply {
+                    if (restoredScreens.firstOrNull() == Screen.SessionList) {
+                        stack.clear()
+                        stack.addAll(restoredScreens)
+                    }
+                }
+            },
+        )
+
+        private const val SESSION_LIST_KEY = "session-list"
+        private const val CHAT_PREFIX = "chat:"
+        private const val PTY_TERMINAL_PREFIX = "pty-terminal:"
+        private const val NEW_SESSION_KEY = "new-session"
+
+        private fun Screen.saveKey(): String = when (this) {
+            Screen.SessionList -> SESSION_LIST_KEY
+            is Screen.Chat -> "$CHAT_PREFIX$sessionId"
+            is Screen.PtyTerminal -> "$PTY_TERMINAL_PREFIX$sessionId"
+            Screen.NewSession -> NEW_SESSION_KEY
+        }
+
+        private fun String.restoreScreen(): Screen? = when {
+            this == SESSION_LIST_KEY -> Screen.SessionList
+            startsWith(CHAT_PREFIX) -> removePrefix(CHAT_PREFIX)
+                .takeIf(String::isNotBlank)
+                ?.let(Screen::Chat)
+            startsWith(PTY_TERMINAL_PREFIX) -> removePrefix(PTY_TERMINAL_PREFIX)
+                .takeIf(String::isNotBlank)
+                ?.let(Screen::PtyTerminal)
+            this == NEW_SESSION_KEY -> Screen.NewSession
+            else -> null
+        }
     }
 }
 

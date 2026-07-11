@@ -48,6 +48,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -80,6 +81,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -158,7 +164,11 @@ fun GitTopBarBadge(qc: QuickCommitStore, onClick: () -> Unit) {
  * 点击打开快速提交面板。
  */
 @Composable
-fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
+fun GitChangesButton(
+    quickCommit: QuickCommitStore,
+    compact: Boolean = false,
+    onClick: () -> Unit,
+) {
     val status = quickCommit.status ?: return
     if (!status.isGit) return
     var modified = 0
@@ -194,15 +204,48 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
         QuickCommitEntryPhase.Done -> WandColors.running.copy(alpha = 0.12f)
         QuickCommitEntryPhase.Idle -> WandColors.surface.copy(alpha = 0.58f)
     }
+    val accessibilityState = when (quickCommit.entryPhase) {
+        QuickCommitEntryPhase.Loading -> "正在准备快捷提交"
+        QuickCommitEntryPhase.Done -> "快捷提交完成"
+        QuickCommitEntryPhase.Idle -> if (total > 0) {
+            "共 $total 个文件变更，修改 $modified 个，删除 $deleted 个，新增 $added 个"
+        } else {
+            "$ahead 个提交待推送"
+        }
+    }
+
+    if (compact) {
+        CompactGitChangesButton(
+            phase = quickCommit.entryPhase,
+            enabled = !quickCommit.entryLocked,
+            total = total,
+            ahead = ahead,
+            activeTint = activeTint,
+            activeBackground = activeBackground,
+            accessibilityState = accessibilityState,
+            onClick = onClick,
+        )
+        return
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .sizeIn(minWidth = 54.dp, minHeight = 44.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Git 快捷提交"
+                stateDescription = accessibilityState
+            }
             .clip(RoundedCornerShape(14.dp))
             .background(activeBackground)
             .border(0.55.dp, WandColors.border.copy(alpha = 0.68f), RoundedCornerShape(14.dp))
-            .clickable(enabled = !quickCommit.entryLocked, onClick = onClick)
+            .clickable(
+                enabled = !quickCommit.entryLocked,
+                role = Role.Button,
+                onClickLabel = "打开快捷提交",
+                onClick = onClick,
+            )
             .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
         AnimatedContent(
@@ -229,7 +272,7 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
                 QuickCommitEntryPhase.Done -> {
                     Icon(
                         WandIcons.check,
-                        contentDescription = "快捷提交完成",
+                        contentDescription = null,
                         tint = activeTint,
                         modifier = Modifier.size(17.dp),
                     )
@@ -242,7 +285,7 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
                     ) {
                         Icon(
                             WandIcons.commit,
-                            contentDescription = "Git 变更",
+                            contentDescription = null,
                             tint = activeTint,
                             modifier = Modifier.size(15.dp),
                         )
@@ -255,6 +298,115 @@ fun GitChangesButton(quickCommit: QuickCommitStore, onClick: () -> Unit) {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 对话页紧凑入口：48dp 命中区内放 36dp 图标，计数徽标不挤占标题空间。 */
+@Composable
+private fun CompactGitChangesButton(
+    phase: QuickCommitEntryPhase,
+    enabled: Boolean,
+    total: Int,
+    ahead: Int,
+    activeTint: Color,
+    activeBackground: Color,
+    accessibilityState: String,
+    onClick: () -> Unit,
+) {
+    val pendingCount = if (total > 0) total else ahead
+    val countLabel = if (pendingCount > 99) "99+" else pendingCount.toString()
+    val badgeLabel = if (total > 0) countLabel else "↑$countLabel"
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(48.dp),
+    ) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier
+                .size(48.dp)
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "Git 快捷提交"
+                    stateDescription = accessibilityState
+                },
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(activeBackground),
+            ) {
+                AnimatedContent(
+                    targetState = phase,
+                    transitionSpec = {
+                        (fadeIn(WandMotion.tweenFast()) +
+                            scaleIn(initialScale = 0.92f, animationSpec = WandMotion.tweenFast()))
+                            .togetherWith(
+                                fadeOut(WandMotion.tweenFast()) +
+                                    scaleOut(targetScale = 0.92f, animationSpec = WandMotion.tweenFast()),
+                            )
+                            .using(SizeTransform(clip = false))
+                    },
+                    label = "compactQuickCommitEntry",
+                ) { currentPhase ->
+                    when (currentPhase) {
+                        QuickCommitEntryPhase.Loading -> {
+                            CircularProgressIndicator(
+                                strokeWidth = 1.8.dp,
+                                color = activeTint,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+
+                        QuickCommitEntryPhase.Done -> {
+                            Icon(
+                                WandIcons.check,
+                                contentDescription = null,
+                                tint = activeTint,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+
+                        QuickCommitEntryPhase.Idle -> {
+                            Icon(
+                                WandIcons.commit,
+                                contentDescription = null,
+                                tint = activeTint,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (phase == QuickCommitEntryPhase.Idle) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-1).dp, y = 1.dp)
+                    .height(17.dp)
+                    .widthIn(min = 17.dp)
+                    .clip(CircleShape)
+                    .background(WandColors.textPrimary)
+                    .border(1.dp, WandColors.bgElevated, CircleShape)
+                    .clearAndSetSemantics { }
+                    .padding(horizontal = 4.dp),
+            ) {
+                Text(
+                    text = badgeLabel,
+                    color = WandColors.bgElevated,
+                    fontSize = 9.sp,
+                    lineHeight = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                )
             }
         }
     }

@@ -182,7 +182,8 @@ private fun ReadyContent(
     actions: HomeActions,
     initialQuickAction: QuickAction? = null,
 ) {
-    val nav = remember { NavState() }
+    val nav = rememberSaveable(saver = NavState.Saver) { NavState() }
+    var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     // 列表状态提升到这里：进聊天再返回时不丢已加载的会话与滚动位置。
     val listState = remember { SessionListState(api) }
     var showSettings by remember { mutableStateOf(false) }
@@ -199,11 +200,14 @@ private fun ReadyContent(
 
     // 认证就绪后消费一次长按图标快捷操作（对称 iOS consume）。
     LaunchedEffect(Unit) {
-        when (val action = initialQuickAction) {
-            is QuickAction.NewSession -> nav.push(Screen.NewSession)
-            is QuickAction.OpenWeb -> actions.openWeb()
-            is QuickAction.OpenSession -> nav.push(Screen.Chat(action.sessionId))
-            null -> {}
+        if (!initialQuickActionConsumed) {
+            initialQuickActionConsumed = true
+            when (val action = initialQuickAction) {
+                is QuickAction.NewSession -> nav.push(Screen.NewSession)
+                is QuickAction.OpenWeb -> actions.openWeb()
+                is QuickAction.OpenSession -> nav.push(Screen.Chat(action.sessionId))
+                null -> {}
+            }
         }
     }
 

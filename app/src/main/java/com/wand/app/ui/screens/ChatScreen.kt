@@ -44,7 +44,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -60,6 +59,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -90,7 +90,16 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -117,7 +126,6 @@ import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.StatusDot
-import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
@@ -182,7 +190,7 @@ fun ChatScreen(
         if (!store.isResponding) quickCommit.loadStatus(force = true)
     }
 
-    var draft by remember { mutableStateOf("") }
+    var draft by rememberSaveable(sessionId) { mutableStateOf("") }
     // 发送后跟随列表底部；用户手动浏览时暂停跟随。
     var scrollMode by remember { mutableStateOf(ChatScrollMode.StickToBottom) }
     val listState = rememberLazyListState()
@@ -199,6 +207,7 @@ fun ChatScreen(
     val onMicDown = voiceInput.onMicDown
 
     val density = LocalDensity.current
+    val focusManager = LocalFocusManager.current
 
     // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
     // 历史不再折成单张「展开历史对话」摘要卡，改为每条助手回复各自带折叠头
@@ -268,12 +277,13 @@ fun ChatScreen(
     val bottomIndex = headerOffset + visibleHistoryCount + currentItems.size + if (store.isResponding) 1 else 0
     // 完整回复展开后，滚动只浏览内容，不再把下拉手势解释为“恢复折叠”。
     // 收起/折叠交给标题行的显式按钮，避免用户正常阅读时被意外带回摘要态。
-    val followPauseConnection = remember(density, expandedCurrentReplyIndex) {
+    val followPauseConnection = remember(density, expandedCurrentReplyIndex, focusManager) {
         val manualThresholdPx = with(density) { 18.dp.toPx() }
         object : NestedScrollConnection {
             private var pulledDown = 0f
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput) {
+                    if (available.y != 0f) focusManager.clearFocus()
                     if (available.y > 0f) {
                         // 只有列表已滚到顶部无法继续向上滚时，累计下拉距离；
                         // 否则用户是在展开内容中向下浏览，不应触发收起。
@@ -366,10 +376,9 @@ fun ChatScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            // 顶栏对齐 iOS navigationStatus：居中显示稳定会话状态 + 完整工作目录，
-            // 右侧是 Git 变更统计 + 会话设置菜单（仅结构化会话）。
+            // 稳定标题 + 简明会话上下文；避免流式任务名和长路径持续跳动、抢占操作区。
             // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 modifier = Modifier.glassSurface(
                     glassBackdrop,
                     RoundedCornerShape(0.dp),
@@ -380,25 +389,27 @@ fun ChatScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(9.dp),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
                         ChatProviderBadge(store.snapshot?.provider)
                         Column(
                             horizontalAlignment = Alignment.Start,
-                            modifier = Modifier.widthIn(max = 220.dp),
+                            modifier = Modifier.weight(1f),
                         ) {
                             Text(
-                                navigationStatusTitle(store),
-                                fontSize = 14.sp,
+                                store.snapshot?.displayTitle ?: "对话详情",
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = WandColors.textPrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            TailMarqueePathText(
-                                path = store.snapshot?.cwd.orEmpty(),
-                                fontSize = 10.sp,
+                            Text(
+                                chatContextSubtitle(store),
+                                fontSize = 11.sp,
                                 color = WandColors.textMuted,
-                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
@@ -415,10 +426,10 @@ fun ChatScreen(
                 actions = {
                     // 模型 / 思考深度 / 模式开关已下沉到输入栏展开态的控制行（对齐 Codex App），
                     // 顶栏右侧只留 Git 变更入口。
-                    GitChangesButton(quickCommit) { quickCommit.openPanel() }
+                    GitChangesButton(quickCommit, compact = true) { quickCommit.openPanel() }
                     Spacer(modifier = Modifier.size(6.dp))
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     scrolledContainerColor = Color.Transparent,
                 ),
@@ -629,19 +640,16 @@ fun ChatScreen(
                                             )
                                         }
                                         if (showInlineHistory) {
-                                            Row(
+                                            Column(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                verticalAlignment = Alignment.Top,
+                                                verticalArrangement = Arrangement.spacedBy(8.dp),
                                             ) {
                                                 InlineHistoryChip(
                                                     count = collapsedHistoryCount,
                                                     onToggle = toggleHistory,
-                                                    modifier = Modifier.padding(top = 3.dp),
+                                                    modifier = Modifier.padding(start = 2.dp),
                                                 )
-                                                Box(modifier = Modifier.weight(1f)) {
-                                                    renderTurn()
-                                                }
+                                                renderTurn()
                                             }
                                         } else {
                                             renderTurn()
@@ -717,7 +725,7 @@ fun ChatScreen(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(48.dp)
                         .glassSurface(glassBackdrop, CircleShape, WandGlass.accent)
                         .clickable {
                             scrollMode = ChatScrollMode.StickToBottom
@@ -778,6 +786,7 @@ fun ChatScreen(
                     fontWeight = FontWeight.Medium,
                     color = Color.White,
                     modifier = Modifier
+                        .semantics { liveRegion = LiveRegionMode.Polite }
                         .padding(top = 8.dp)
                         .glassSurface(glassBackdrop, CircleShape, toastGlass)
                         .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -811,25 +820,30 @@ private fun ChatProviderBadge(provider: String?) {
     }
 }
 
-/** 顶栏标题显示当前对话内容；响应中优先显示任务名。 */
-private fun navigationStatusTitle(store: ChatStore): String {
-    val task = store.currentTaskTitle?.trim().orEmpty()
-    if (store.isResponding && task.isNotEmpty()) return task
-    latestUserMessage(store.messages)?.let { return it }
-    return store.snapshot?.displayTitle ?: "对话详情"
+/** 顶栏第二行保持稳定，只交代 provider、运行状态和紧凑工作目录。 */
+private fun chatContextSubtitle(store: ChatStore): String {
+    val provider = store.snapshot?.providerLabel ?: "Wand"
+    val state = when {
+        !store.connected -> "重连中"
+        store.isResponding -> "运行中"
+        else -> "空闲"
+    }
+    return listOfNotNull(provider, state, compactChatPath(store.snapshot?.cwd)).joinToString(" · ")
 }
 
-private fun latestUserMessage(messages: List<ConversationTurn>): String? {
-    for (turn in messages.asReversed()) {
-        if (turn.role != "user") continue
-        val text = turn.content
-            .filterIsInstance<ContentBlock.Text>()
-            .joinToString(" ") { it.text }
-            .trim()
-            .replace(Regex("\\s+"), " ")
-        if (text.isNotEmpty()) return text
+private fun compactChatPath(path: String?): String? {
+    val normalized = path
+        ?.trim()
+        ?.replace('\\', '/')
+        ?.trimEnd('/')
+        ?.takeIf { it.isNotEmpty() }
+        ?: return null
+    val segments = normalized.split('/').filter { it.isNotEmpty() }
+    return when {
+        segments.isEmpty() -> normalized
+        segments.size == 1 -> segments.first()
+        else -> "…/${segments.takeLast(2).joinToString("/")}"
     }
-    return null
 }
 
 @Composable
@@ -1225,7 +1239,12 @@ private fun RespondingIndicator(taskTitle: String?) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(vertical = 4.dp),
+        modifier = Modifier
+            .semantics {
+                liveRegion = LiveRegionMode.Polite
+                stateDescription = "正在响应"
+            }
+            .padding(vertical = 4.dp),
     ) {
         StatusDot("running")
         Text(
@@ -1408,6 +1427,10 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .semantics {
+                    liveRegion = LiveRegionMode.Polite
+                    stateDescription = "连接已断开，正在重连"
+                }
                 .background(WandColors.danger)
                 .padding(vertical = 6.dp, horizontal = 12.dp),
         ) {
@@ -1579,14 +1602,7 @@ private fun InputBar(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .heightIn(min = 34.dp)
-                .then(
-                    if (!expanded) {
-                        Modifier.clickableWithoutRipple { runCatching { focusRequester.requestFocus() } }
-                    } else {
-                        Modifier
-                    },
-                ),
+                .heightIn(min = 34.dp),
         ) {
             if (pendingAttachments.isNotEmpty() && !voiceMode) {
                 PendingAttachmentsPreview(
@@ -1685,9 +1701,7 @@ private fun InputBar(
     NativeComposerSurface(
         backdrop = backdrop,
         expanded = expanded,
-        onFocusInput = {
-            if (!voiceMode) runCatching { focusRequester.requestFocus() }
-        },
+        focused = isFocused,
         collapsedLeading = { plusMenu() },
         inputContent = { inputContent() },
         collapsedTrailing = {
@@ -1764,18 +1778,29 @@ private fun TrailingSendStop(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(38.dp)
+                .size(48.dp)
                 .clip(CircleShape)
-                .background(WandColors.textPrimary)
-                .border(0.5.dp, WandColors.border.copy(alpha = 0.25f), CircleShape)
-                .clickable(onClick = onStop),
+                .semantics {
+                    contentDescription = "停止任务"
+                    role = Role.Button
+                }
+                .clickable(role = Role.Button, onClick = onStop),
         ) {
-            Icon(
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(ComposerActionVisualSize)
+                    .clip(CircleShape)
+                    .background(WandColors.textPrimary)
+                    .border(0.5.dp, WandColors.border.copy(alpha = 0.25f), CircleShape),
+            ) {
+                Icon(
                 WandIcons.stop,
-                contentDescription = "停止任务",
+                contentDescription = null,
                 tint = WandColors.surface,
-                modifier = Modifier.size(15.dp),
-            )
+                modifier = Modifier.size(16.dp),
+                )
+            }
         }
         return
     }
@@ -1784,13 +1809,14 @@ private fun TrailingSendStop(
             backdrop = backdrop,
             style = WandGlass.accent.copy(tint = WandColors.danger),
             enabled = true,
+            contentDescription = "停止任务",
             onClick = onStop,
         ) {
             Icon(
                 WandIcons.stop,
-                contentDescription = "停止任务",
+                contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(15.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
     }
@@ -1812,13 +1838,14 @@ private fun TrailingSendStop(
             )
         },
         enabled = canSend,
+        contentDescription = if (canSend) "发送消息" else "当前没有可发送内容",
         onClick = onSend,
     ) {
         Icon(
             WandIcons.arrowUp,
-            contentDescription = "发送",
+            contentDescription = null,
             tint = if (canSend) WandColors.surface else WandColors.textMuted.copy(alpha = 0.55f),
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(16.dp),
         )
     }
 }
@@ -1829,34 +1856,50 @@ private fun ControlChip(
     icon: ImageVector,
     text: String,
     tint: Color,
+    contentDescription: String,
     enabled: Boolean = true,
     showText: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = modifier
-            .clip(CircleShape)
-            .background(tint.copy(alpha = 0.10f))
-            .border(0.55.dp, tint.copy(alpha = 0.18f), CircleShape)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = if (showText) 9.dp else 8.dp, vertical = 6.dp),
+            .heightIn(min = 48.dp)
+            .semantics {
+                this.contentDescription = contentDescription
+                role = Role.Button
+            }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(13.dp))
-        if (showText) {
-            Text(
-                text,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = tint,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                // 取可用宽度但允许收缩：空间紧张时省略号缩列，而非撑出固定 130dp 把按钮挤掉。
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Icon(WandIcons.expand, contentDescription = null, tint = tint.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(tint.copy(alpha = 0.10f))
+                .border(0.55.dp, tint.copy(alpha = 0.18f), CircleShape)
+                .padding(horizontal = if (showText) 9.dp else 8.dp, vertical = 6.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(13.dp))
+            if (showText) {
+                Text(
+                    text,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = tint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    // 取可用宽度但允许收缩：空间紧张时省略号缩列，而非撑出固定 130dp 把按钮挤掉。
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Icon(
+                    WandIcons.expand,
+                    contentDescription = null,
+                    tint = tint.copy(alpha = 0.7f),
+                    modifier = Modifier.size(12.dp),
+                )
+            }
         }
     }
 }
@@ -1886,6 +1929,10 @@ private fun ModeChip(store: ChatStore, compact: Boolean = false) {
             icon = WandIcons.permission,
             text = modeLabel(store.mode),
             tint = tint,
+            contentDescription = buildString {
+                append("执行模式：${modeLabel(store.mode)}")
+                if (isCodex) append("，Codex 会话固定")
+            },
             enabled = !isCodex,
             showText = !compact,
         ) { open = true }
@@ -1923,6 +1970,7 @@ private fun ModelThinkingChip(
             icon = WandIcons.tune,
             text = modelThinkingText(store),
             tint = tint,
+            contentDescription = "模型与思考：${modelThinkingText(store)}",
             showText = !compact,
             modifier = if (compact) Modifier.widthIn(max = 112.dp) else Modifier,
         ) { open = true }
@@ -1973,9 +2021,13 @@ internal fun ComposerActionsMenu(
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(34.dp)
+                .size(48.dp)
                 .clip(CircleShape)
-                .clickable(enabled = !uploading) { open = true },
+                .semantics {
+                    contentDescription = if (uploading) "正在上传附件" else "添加附件"
+                    role = Role.Button
+                }
+                .clickable(enabled = !uploading, role = Role.Button) { open = true },
         ) {
             if (uploading) {
                 CircularProgressIndicator(
@@ -1987,7 +2039,7 @@ internal fun ComposerActionsMenu(
                 // 卡片内的「+」走极简：无玻璃圆底，仅图标（对齐 Codex / iOS）。
                 Icon(
                     WandIcons.add,
-                    contentDescription = "更多操作",
+                    contentDescription = null,
                     tint = WandColors.textSecondary,
                     modifier = Modifier.size(20.dp),
                 )
@@ -2102,7 +2154,7 @@ internal fun VoiceMicButton(
 ) {
     val currentOnToggle by rememberUpdatedState(onToggleMode)
     val currentOnMicDown by rememberUpdatedState(onMicDown)
-    // 对齐 iOS micButton：32dp 圆形嵌输入框右下角，平时品牌弱底，按住实底（取消态红）。
+    // 与发送/停止统一可见圆面，触控区独立保持 48dp。
     val background = when {
         voice.pressed && voice.canceling -> WandColors.danger
         voice.pressed -> WandColors.brand
@@ -2116,13 +2168,17 @@ internal fun VoiceMicButton(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .size(32.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
+            .size(48.dp)
             .clip(CircleShape)
-            .background(background)
+            .semantics {
+                role = Role.Button
+                contentDescription = if (voiceMode) "切回键盘输入" else "语音输入"
+                stateDescription = if (voice.pressed) "正在录音" else if (voiceMode) "语音模式" else "键盘模式"
+                onClick(label = if (voiceMode) "切回键盘" else "切换到语音模式") {
+                    currentOnToggle()
+                    true
+                }
+            }
             .pointerInput(voice) {
                 voiceTapOrHoldGesture(
                     voice = voice,
@@ -2131,12 +2187,24 @@ internal fun VoiceMicButton(
                 )
             },
     ) {
-        Icon(
-            if (voiceMode && !voice.pressed) WandIcons.keyboard else WandIcons.mic,
-            contentDescription = if (voiceMode) "切回键盘输入" else "轻点切语音模式，长按说话",
-            tint = if (voice.pressed) Color.White else WandColors.brand,
-            modifier = Modifier.size(16.dp),
-        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(ComposerActionVisualSize)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .clip(CircleShape)
+                .background(background),
+        ) {
+            Icon(
+                if (voiceMode && !voice.pressed) WandIcons.keyboard else WandIcons.mic,
+                contentDescription = null,
+                tint = if (voice.pressed) Color.White else WandColors.brand,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
@@ -2170,6 +2238,19 @@ internal fun VoiceHoldField(
             .heightIn(min = 34.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(stateTint)
+            .semantics {
+                role = Role.Button
+                contentDescription = "按住说话，轻点切回键盘"
+                stateDescription = when {
+                    voice.pressed && voice.canceling -> "松开取消"
+                    voice.pressed -> "正在录音"
+                    else -> "语音输入待命"
+                }
+                onClick(label = "切回键盘") {
+                    currentOnExit()
+                    true
+                }
+            }
             .pointerInput(voice) {
                 voiceTapOrHoldGesture(
                     voice = voice,
@@ -2372,12 +2453,13 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
 
 private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
 
-/** 输入栏操作按钮：38dp 玻璃圆钮（对齐 iOS 停止/发送圆钮），保留按压缩放反馈。 */
+/** 输入栏操作按钮：32dp 可见圆面 + 48dp 触控区，保留按压缩放反馈。 */
 @Composable
 private fun ComposerIconButton(
     backdrop: GlassBackdrop,
     style: GlassStyle,
     enabled: Boolean,
+    contentDescription: String,
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -2391,19 +2473,31 @@ private fun ComposerIconButton(
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(38.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
+            .size(48.dp)
+            .clip(CircleShape)
+            .semantics {
+                this.contentDescription = contentDescription
+                role = Role.Button
             }
-            .glassSurface(backdrop, CircleShape, style)
             .clickable(
                 enabled = enabled,
+                role = Role.Button,
                 interactionSource = interaction,
                 indication = LocalIndication.current,
                 onClick = onClick,
             ),
     ) {
-        content()
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(ComposerActionVisualSize)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .glassSurface(backdrop, CircleShape, style),
+        ) {
+            content()
+        }
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -59,9 +60,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -274,6 +278,9 @@ private fun AssistantReplyHeader(
                 .fillMaxWidth()
                 .clip(WandShapes.full)
                 .clickableWithoutRipple { onToggle() }
+                .semantics(mergeDescendants = true) {
+                    stateDescription = if (collapsed) "已收起" else "已展开"
+                }
                 .heightIn(min = 48.dp)
                 .padding(vertical = 3.dp),
         ) {
@@ -326,11 +333,10 @@ private fun AssistantReplyHeader(
             )
         }
         // 收起临界线：分隔「头」与「正文」的细线，落在头像 / 名字这一行下沿。
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(0.5.dp)
-                .background(WandColors.border.copy(alpha = 0.6f)),
+        HorizontalDivider(
+            thickness = 0.5.dp,
+            color = WandColors.border.copy(alpha = 0.34f),
+            modifier = Modifier.padding(start = 32.dp),
         )
     }
 }
@@ -363,8 +369,8 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
             usage?.totalCostUsd?.takeIf { it > 0 }?.let { add("\$${formatUsd(it)}") }
         }
     }
-    val summary = parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
-        ?: if (isLive || usage?.estimated == true) "正在统计用量…" else return
+    val visibleParts = parts.takeIf { it.isNotEmpty() }
+        ?: if (isLive || usage?.estimated == true) listOf("正在统计用量…") else return
     Row(
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -378,14 +384,21 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
             tint = WandColors.textMuted,
             modifier = Modifier.padding(top = 1.dp).size(13.dp),
         )
-        Text(
-            summary,
-            fontSize = 10.sp,
-            lineHeight = 15.sp,
-            fontFamily = FontFamily.Monospace,
-            color = WandColors.textMuted,
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
             modifier = Modifier.weight(1f),
-        )
+        ) {
+            visibleParts.forEach { part ->
+                Text(
+                    part,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textMuted,
+                )
+            }
+        }
     }
 }
 
@@ -730,11 +743,12 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
                 horizontalArrangement = Arrangement.End,
             ) {
                 val brand = WandColors.brand
+                val tonalBackground = lerp(WandColors.surface, brand, 0.13f)
                 Column(
                     modifier = Modifier
                         .clip(bubbleShape)
-                        .background(brand)
-                        .border(0.55.dp, Color.White.copy(alpha = 0.10f), bubbleShape)
+                        .background(tonalBackground)
+                        .border(0.55.dp, brand.copy(alpha = 0.24f), bubbleShape)
                         .padding(horizontal = 13.dp, vertical = 8.dp),
                 ) {
                     SelectionContainer {
@@ -742,7 +756,7 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
                             parsed.body,
                             fontSize = 15.sp,
                             lineHeight = 21.sp,
-                            color = Color.White,
+                            color = WandColors.textPrimary,
                             maxLines = if (collapsed) 2 else Int.MAX_VALUE,
                             overflow = if (collapsed) TextOverflow.Ellipsis else TextOverflow.Clip,
                         )
@@ -752,7 +766,7 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
                             if (collapsed) "展开" else "收起",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White.copy(alpha = 0.86f),
+                            color = brand,
                             modifier = Modifier
                                 .align(Alignment.End)
                                 .padding(top = 4.dp)
@@ -785,6 +799,7 @@ private data class ActivityGroup(
     val summary: String,
     val items: List<DisplayItem>,
     val running: Boolean,
+    val failed: Boolean,
 )
 
 private sealed class SegmentRenderItem {
@@ -897,12 +912,14 @@ private fun collapseActivityItems(
     fun flushPending() {
         if (pending.isNotEmpty()) {
             val groupItems = pending.toList()
+            val groupRunning = groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) }
             renderItems += SegmentRenderItem.Activity(
                 ActivityGroup(
                     key = activityGroupKey(groupItems, pendingStartIndex),
-                    summary = activitySummary(groupItems, groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) }),
+                    summary = activitySummary(groupItems),
                     items = groupItems,
-                    running = groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) },
+                    running = groupRunning,
+                    failed = groupItems.any(::isDisplayItemFailed),
                 )
             )
             pending.clear()
@@ -967,9 +984,35 @@ private fun isDisplayItemRunning(
     }
 }
 
+private fun isDisplayItemFailed(item: DisplayItem): Boolean = when (item) {
+    is DisplayItem.Tool -> item.result?.isError == true
+    is DisplayItem.Exploration -> item.tools.any { it.result?.isError == true }
+    is DisplayItem.Plain -> (item.block as? ContentBlock.ToolResult)?.isError == true
+}
+
+private fun activityStatusLabel(group: ActivityGroup): String = when {
+    group.running -> "运行中"
+    group.failed -> "执行失败"
+    else -> "已完成"
+}
+
+@Composable
+private fun activityStatusColor(group: ActivityGroup): Color = when {
+    group.running -> WandColors.brand
+    group.failed -> WandColors.danger
+    else -> WandColors.success
+}
+
+private fun activityStatusIcon(group: ActivityGroup): ImageVector = when {
+    group.running -> WandIcons.refresh
+    group.failed -> WandIcons.statusFail
+    else -> WandIcons.statusDone
+}
+
 @Composable
 private fun ActivitySummaryRow(group: ActivityGroup, onClick: () -> Unit) {
-    val tint = if (group.running) WandColors.brand else WandColors.textMuted
+    val statusLabel = activityStatusLabel(group)
+    val tint = activityStatusColor(group)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -977,20 +1020,31 @@ private fun ActivitySummaryRow(group: ActivityGroup, onClick: () -> Unit) {
             .fillMaxWidth()
             .clip(WandShapes.sm)
             .clickableWithoutRipple { onClick() }
+            .semantics(mergeDescendants = true) { stateDescription = statusLabel }
             .heightIn(min = 48.dp)
             .padding(horizontal = 2.dp, vertical = 5.dp),
     ) {
         Icon(
-            activityIcon(group.items),
+            activityStatusIcon(group),
             contentDescription = null,
             tint = tint,
             modifier = Modifier.size(18.dp),
         )
         Text(
-            group.summary,
+            buildAnnotatedString {
+                withStyle(SpanStyle(color = tint, fontWeight = FontWeight.SemiBold)) {
+                    append(statusLabel)
+                }
+                if (group.summary.isNotBlank()) {
+                    withStyle(SpanStyle(color = WandColors.textSecondary)) {
+                        append(" · ")
+                        append(group.summary)
+                    }
+                }
+            },
             fontSize = 14.sp,
             lineHeight = 19.sp,
-            color = WandColors.textMuted,
+            color = WandColors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -1017,6 +1071,8 @@ private fun ActivityDetailSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val statusLabel = activityStatusLabel(group)
+    val statusColor = activityStatusColor(group)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -1030,7 +1086,7 @@ private fun ActivityDetailSheet(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.86f)
+                    .heightIn(max = 680.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
                     .navigationBarsPadding()
@@ -1050,16 +1106,16 @@ private fun ActivityDetailSheet(
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        group.summary,
+                        statusLabel,
                         fontSize = 11.sp,
-                        color = WandColors.textMuted,
+                        fontWeight = FontWeight.SemiBold,
+                        color = statusColor,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
-                            .padding(horizontal = 9.dp, vertical = 5.dp)
-                            .widthIn(max = 210.dp),
+                            .background(statusColor.copy(alpha = 0.12f))
+                            .padding(horizontal = 9.dp, vertical = 5.dp),
                     )
                 }
                 group.items.forEachIndexed { index, item ->
@@ -1081,35 +1137,24 @@ private fun ActivityDetailSheet(
     }
 }
 
-private fun activityIcon(items: List<DisplayItem>): ImageVector {
-    val tools = activityTools(items)
-    val firstTool = tools.firstOrNull()?.use
-    if (firstTool != null) return toolIcon(firstTool.name)
-    return when (items.firstOrNull()) {
-        is DisplayItem.Plain -> WandIcons.thinking
-        else -> WandIcons.genericTool
-    }
-}
-
-private fun activitySummary(items: List<DisplayItem>, running: Boolean): String {
+private fun activitySummary(items: List<DisplayItem>): String {
     val tools = activityTools(items)
     if (items.size == 1 && tools.size == 1) {
         val tool = tools.first()
-        val prefix = if (running && tool.result == null) "正在" else "已"
         val detail = toolSummary(tool.use.description, tool.use.input)
         val label = activityVerb(tool.use.name)
         return if (detail.isNotEmpty()) {
-            "$prefix$label $detail"
+            "$label $detail"
         } else {
-            "$prefix$label"
+            label
         }
     }
     if (items.size == 1 && items.first() is DisplayItem.Plain) {
         val block = (items.first() as DisplayItem.Plain).block
         return when (block) {
-            is ContentBlock.Thinking -> if (running) "正在思考" else "已思考"
-            is ContentBlock.ToolResult -> if (block.isError) "有 1 条执行错误" else "已生成 1 条执行结果"
-            else -> "已完成 1 项活动"
+            is ContentBlock.Thinking -> "思考过程"
+            is ContentBlock.ToolResult -> if (block.isError) "1 条执行错误" else "1 条执行结果"
+            else -> "1 项活动"
         }
     }
 
@@ -1134,11 +1179,10 @@ private fun activitySummary(items: List<DisplayItem>, running: Boolean): String 
     if (resultCount > 0) parts += "生成 $resultCount 条结果"
     if (otherToolCount > 0) parts += "调用 $otherToolCount 个工具"
 
-    val prefix = if (running) "正在" else "已"
     return if (parts.isEmpty()) {
-        "${prefix}完成 ${items.size} 项活动"
+        "${items.size} 项活动"
     } else {
-        prefix + parts.joinToString("，")
+        parts.joinToString("，")
     }
 }
 
@@ -1475,7 +1519,9 @@ fun MarkdownText(text: String) {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 2.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+                        .clip(WandShapes.sm)
+                        .background(WandColors.textPrimary.copy(alpha = 0.035f))
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
                 ) {
                     Box(
                         modifier = Modifier
@@ -2136,9 +2182,10 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
     val group = remember(items, running) {
         ActivityGroup(
             key = "exploration:${items.firstOrNull()?.let(::displayItemStableKey) ?: tools.size}",
-            summary = activitySummary(items, running),
+            summary = activitySummary(items),
             items = items,
             running = running,
+            failed = items.any(::isDisplayItemFailed),
         )
     }
     var open by remember { mutableStateOf(false) }

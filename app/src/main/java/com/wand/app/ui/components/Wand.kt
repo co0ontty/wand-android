@@ -416,13 +416,20 @@ fun WandCard(
         val targetBorder = if (selected) WandColors.brand else WandColors.border
         val bg by animateColorAsState(containerColor, WandMotion.tweenFast(), label = "cardBg")
         val borderColor by animateColorAsState(targetBorder, WandMotion.tweenFast(), label = "cardBorder")
+        // WandColors.border 自带主题 alpha；未选中态必须保留该 alpha，不能用 copy 覆盖成 54%。
+        // 选中态的 brand 是不透明色，再单独降到清晰但克制的 72%。
+        val renderedBorderColor = if (selected) {
+            borderColor.copy(alpha = 0.72f)
+        } else {
+            borderColor
+        }
         Column(
             modifier = modifier
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .layeredShadow(shape, 1.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
                 .clip(shape)
                 .background(bg)
-                .border(if (selected) 0.8.dp else 0.55.dp, borderColor.copy(alpha = if (selected) 0.86f else 0.54f), shape)
+                .border(if (selected) 0.8.dp else 0.55.dp, renderedBorderColor, shape)
                 .then(
                     if (onClick != null) {
                         Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
