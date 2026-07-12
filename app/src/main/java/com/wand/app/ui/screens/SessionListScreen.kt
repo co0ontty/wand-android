@@ -185,8 +185,11 @@ class SessionListState(val api: WandApi) {
         sessions = listOf(snapshot) + sessions.filter { it.id != snapshot.id }
     }
 
-    fun removeLocally(sessionId: String) {
-        sessions = sessions.filter { it.id != sessionId }
+    fun removeLocally(session: SessionSnapshot) {
+        sessions = sessions.filter { it.id != session.id }
+        session.claudeSessionId?.let { providerSessionId ->
+            historySessions = historySessions.filter { it.claudeSessionId != providerSessionId }
+        }
     }
 
     fun removeHistoryLocally(history: HistorySession) {
@@ -312,7 +315,7 @@ fun SessionListScreen(
                         val targets = visibleEntries.filter { it.key in selectedIds }
                         val managed = targets.filterIsInstance<SessionListEntry.Managed>().map { it.session }
                         val history = targets.filterIsInstance<SessionListEntry.Recoverable>().map { it.session }
-                        managed.forEach { state.removeLocally(it.id) }
+                        managed.forEach { state.removeLocally(it) }
                         state.removeHistoryLocally(history)
                         endSelection()
                         scope.launch {
@@ -471,7 +474,7 @@ fun SessionListScreen(
                                             SwipeRevealRow(
                                                 modifier = rowModifier,
                                                 onDelete = {
-                                                    state.removeLocally(session.id)
+                                                    state.removeLocally(session)
                                                     scope.launch {
                                                         try {
                                                             state.api.deleteSession(session.id)

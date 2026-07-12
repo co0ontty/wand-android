@@ -1095,10 +1095,39 @@ private fun isDisplayItemFailed(item: DisplayItem): Boolean = when (item) {
     is DisplayItem.Plain -> (item.block as? ContentBlock.ToolResult)?.isError == true
 }
 
-private fun activityStatusLabel(group: ActivityGroup): String = when {
-    group.running -> "运行中"
-    group.failed -> "执行失败"
-    else -> "已完成"
+private data class ActivityOutcomeCounts(
+    val succeeded: Int,
+    val failed: Int,
+)
+
+private fun activityOutcomeCounts(items: List<DisplayItem>): ActivityOutcomeCounts {
+    var succeeded = 0
+    var failed = 0
+
+    fun count(result: ContentBlock.ToolResult?) {
+        if (result == null) return
+        if (result.isError) failed += 1 else succeeded += 1
+    }
+
+    items.forEach { item ->
+        when (item) {
+            is DisplayItem.Tool -> count(item.result)
+            is DisplayItem.Exploration -> item.tools.forEach { count(it.result) }
+            is DisplayItem.Plain -> count(item.block as? ContentBlock.ToolResult)
+        }
+    }
+    return ActivityOutcomeCounts(succeeded = succeeded, failed = failed)
+}
+
+private fun activityStatusLabel(group: ActivityGroup): String {
+    if (group.running) return "运行中"
+    val outcome = activityOutcomeCounts(group.items)
+    return when {
+        outcome.succeeded > 0 && outcome.failed > 0 -> "成功 ${outcome.succeeded}，失败 ${outcome.failed}"
+        outcome.failed > 0 -> "失败 ${outcome.failed}"
+        outcome.succeeded > 0 -> "完成 ${outcome.succeeded}"
+        else -> "已完成"
+    }
 }
 
 @Composable
@@ -3491,7 +3520,6 @@ fun TerminalCard(
         result?.isError == true && upstreamStatus == "declined" -> "已拒绝"
         result?.isError == true && exitCode != null -> "失败 · $exitCode"
         result?.isError == true -> "失败"
-        result != null && exitCode != null -> "完成 · $exitCode"
         result != null -> "完成"
         else -> "待执行"
     }
