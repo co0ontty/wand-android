@@ -322,8 +322,11 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             return
         }
         val provider = snapshot?.provider ?: "claude"
-        availableModels =
-            if (provider == "codex") response.codexModels else response.models
+        availableModels = when (provider) {
+            "codex" -> response.codexModels
+            "opencode" -> response.opencodeModels
+            else -> response.models
+        }
         defaultModel = response.defaultModelFor(provider)
     }
 

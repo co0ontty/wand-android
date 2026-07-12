@@ -320,8 +320,8 @@ class WandApi(baseUrl: String, val token: String?) {
 
     /**
      * 结构化会话（非 PTY）：POST /api/structured-sessions。
-     * 对齐 Web createStructuredSession：codex 显式走 codex-cli-exec runner，
-     * claude 不传 runner、由服务端按默认（claude-cli-print）解析。
+     * 对齐 Web createStructuredSession：Codex / OpenCode 显式指定各自 runner，
+     * Claude 不传 runner、由服务端按默认（claude-cli-print）解析。
      */
     suspend fun createStructuredSession(
         cwd: String,
@@ -332,7 +332,10 @@ class WandApi(baseUrl: String, val token: String?) {
         thinkingEffort: String? = null,
     ): SessionSnapshot {
         val body = JSONObject().put("cwd", cwd).put("provider", provider)
-        if (provider == "codex") body.put("runner", "codex-cli-exec")
+        when (provider) {
+            "codex" -> body.put("runner", "codex-cli-exec")
+            "opencode" -> body.put("runner", "opencode-cli-run")
+        }
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
         if (!model.isNullOrEmpty()) body.put("model", model)
         if (!thinkingEffort.isNullOrEmpty()) body.put("thinkingEffort", thinkingEffort)
@@ -340,7 +343,7 @@ class WandApi(baseUrl: String, val token: String?) {
         return SessionSnapshot.parse(requestObject("POST", "/api/structured-sessions", body))
     }
 
-    /** PTY 会话：POST /api/commands。对齐 Web runPtyCommandFromModal：command 即 provider（claude / codex）。 */
+    /** PTY 会话：POST /api/commands。对齐 Web runPtyCommandFromModal：command 即 provider。 */
     suspend fun createPtySession(
         cwd: String,
         mode: String?,
@@ -369,12 +372,19 @@ class WandApi(baseUrl: String, val token: String?) {
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
         if (model != null) {
-            if (modelProvider == "codex") {
-                body.put("defaultCodexModel", model)
-                body.put("defaultModels", JSONObject().put("codex", model))
-            } else {
-                body.put("defaultModel", model)
-                body.put("defaultModels", JSONObject().put("claude", model))
+            when (modelProvider) {
+                "codex" -> {
+                    body.put("defaultCodexModel", model)
+                    body.put("defaultModels", JSONObject().put("codex", model))
+                }
+                "opencode" -> {
+                    body.put("defaultOpenCodeModel", model)
+                    body.put("defaultModels", JSONObject().put("opencode", model))
+                }
+                else -> {
+                    body.put("defaultModel", model)
+                    body.put("defaultModels", JSONObject().put("claude", model))
+                }
             }
         }
         if (thinkingEffort != null) body.put("defaultThinkingEffort", thinkingEffort)

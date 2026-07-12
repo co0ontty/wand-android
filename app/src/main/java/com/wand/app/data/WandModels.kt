@@ -328,7 +328,12 @@ data class SessionSnapshot(
 ) {
     val isStructured: Boolean get() = (sessionKind ?: "pty") == "structured"
 
-    val providerLabel: String get() = if (provider == "codex") "Codex" else "Claude"
+    val providerLabel: String
+        get() = when (provider) {
+            "codex" -> "Codex"
+            "opencode" -> "OpenCode"
+            else -> "Claude"
+        }
 
     /** 列表标题：摘要 > 当前任务 > cwd 末段。 */
     val displayTitle: String
@@ -457,23 +462,27 @@ data class ReasoningEffortInfo(
 data class ModelsResponse(
     val models: List<ModelInfo>,
     val codexModels: List<ModelInfo>,
+    val opencodeModels: List<ModelInfo>,
     val defaultModel: String?,
     val defaultCodexModel: String?,
+    val defaultOpenCodeModel: String?,
     val defaultModels: ProviderDefaultModels?,
 ) {
     fun defaultModelFor(provider: String): String =
-        if (provider == "codex") {
-            defaultModels?.codex ?: defaultCodexModel ?: ""
-        } else {
-            defaultModels?.claude ?: defaultModel ?: ""
+        when (provider) {
+            "codex" -> defaultModels?.codex ?: defaultCodexModel ?: ""
+            "opencode" -> defaultModels?.opencode ?: defaultOpenCodeModel ?: ""
+            else -> defaultModels?.claude ?: defaultModel ?: ""
         }
 
     companion object {
         fun parse(o: JSONObject): ModelsResponse = ModelsResponse(
             models = ModelInfo.parseList(o.arr("models")),
             codexModels = ModelInfo.parseList(o.arr("codexModels")),
+            opencodeModels = ModelInfo.parseList(o.arr("opencodeModels")),
             defaultModel = o.str("defaultModel"),
             defaultCodexModel = o.str("defaultCodexModel"),
+            defaultOpenCodeModel = o.str("defaultOpenCodeModel"),
             defaultModels = ProviderDefaultModels.parse(o.obj("defaultModels")),
         )
     }
@@ -482,10 +491,17 @@ data class ModelsResponse(
 data class ProviderDefaultModels(
     val claude: String?,
     val codex: String?,
+    val opencode: String?,
 ) {
     companion object {
         fun parse(o: JSONObject?): ProviderDefaultModels? =
-            o?.let { ProviderDefaultModels(claude = it.str("claude"), codex = it.str("codex")) }
+            o?.let {
+                ProviderDefaultModels(
+                    claude = it.str("claude"),
+                    codex = it.str("codex"),
+                    opencode = it.str("opencode"),
+                )
+            }
     }
 }
 
@@ -736,16 +752,17 @@ data class ServerConfigInfo(
     val defaultMode: String?,
     val defaultModel: String?,
     val defaultCodexModel: String?,
+    val defaultOpenCodeModel: String?,
     val defaultModels: ProviderDefaultModels?,
     val defaultThinkingEffort: String?,
     val cardDefaults: CardExpandDefaults,
     val currentVersion: String?,
 ) {
     fun defaultModelFor(provider: String): String =
-        if (provider == "codex") {
-            defaultModels?.codex ?: defaultCodexModel ?: ""
-        } else {
-            defaultModels?.claude ?: defaultModel ?: ""
+        when (provider) {
+            "codex" -> defaultModels?.codex ?: defaultCodexModel ?: ""
+            "opencode" -> defaultModels?.opencode ?: defaultOpenCodeModel ?: ""
+            else -> defaultModels?.claude ?: defaultModel ?: ""
         }
 
     companion object {
@@ -756,6 +773,7 @@ data class ServerConfigInfo(
             defaultMode = o.str("defaultMode"),
             defaultModel = o.str("defaultModel"),
             defaultCodexModel = o.str("defaultCodexModel"),
+            defaultOpenCodeModel = o.str("defaultOpenCodeModel"),
             defaultModels = ProviderDefaultModels.parse(o.obj("defaultModels")),
             defaultThinkingEffort = o.str("defaultThinkingEffort"),
             cardDefaults = CardExpandDefaults.parse(o.obj("cardDefaults")),

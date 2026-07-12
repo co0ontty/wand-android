@@ -638,8 +638,12 @@ private fun PtyProviderBadge(provider: String?) {
             .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(8.dp)),
     ) {
         Icon(
-            if (isCodex) BrandLogos.codex else BrandLogos.claude,
-            contentDescription = if (isCodex) "Codex" else "Claude",
+            BrandLogos.forProvider(provider),
+            contentDescription = when (provider) {
+                "codex" -> "Codex"
+                "opencode" -> "OpenCode"
+                else -> "Claude"
+            },
             tint = tint,
             modifier = Modifier.size(15.dp),
         )

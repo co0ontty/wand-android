@@ -1111,7 +1111,7 @@ private fun ProviderMark(
 ) {
     val isCodex = provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
-    val icon = if (isCodex) BrandLogos.codex else BrandLogos.claude
+    val icon = BrandLogos.forProvider(provider)
     val shape = RoundedCornerShape(if (compact) 10.dp else 12.dp)
     val outerSize = if (compact) 40.dp else 44.dp
     val markSize = if (compact) 36.dp else 40.dp

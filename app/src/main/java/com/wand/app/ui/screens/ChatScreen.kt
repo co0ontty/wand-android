@@ -821,8 +821,12 @@ private fun ChatProviderBadge(provider: String?) {
             .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(8.dp)),
     ) {
         Icon(
-            if (isCodex) BrandLogos.codex else BrandLogos.claude,
-            contentDescription = if (isCodex) "Codex" else "Claude",
+            BrandLogos.forProvider(provider),
+            contentDescription = when (provider) {
+                "codex" -> "Codex"
+                "opencode" -> "OpenCode"
+                else -> "Claude"
+            },
             tint = tint,
             modifier = Modifier.size(15.dp),
         )
@@ -1893,7 +1897,13 @@ private fun MenuSectionHeader(text: String) {
 /** 执行模式徽标 + 下拉菜单（中途切换 managed/full-access/...）。codex 锁 full-access。 */
 @Composable
 private fun ModeChip(store: ChatStore, compact: Boolean = false) {
-    val isCodex = store.snapshot?.provider == "codex"
+    val provider = store.snapshot?.provider
+    val isCodex = provider == "codex"
+    val supportedModeIds = when (provider) {
+        "codex" -> setOf("full-access")
+        "opencode" -> setOf("default", "full-access", "managed")
+        else -> SESSION_MODES.mapTo(mutableSetOf()) { it.first }
+    }
     var open by remember { mutableStateOf(false) }
     // 高权限模式（托管 / 全权限）用橙色提示，其余用次要色。
     val tint = if (store.mode == "full-access" || store.mode == "managed")
@@ -1915,7 +1925,7 @@ private fun ModeChip(store: ChatStore, compact: Boolean = false) {
             onDismissRequest = { open = false },
             containerColor = WandColors.surface,
         ) {
-            SESSION_MODES.forEach { (id, label) ->
+            SESSION_MODES.filter { it.first in supportedModeIds }.forEach { (id, label) ->
                 SettingsMenuOption(label, selected = store.mode == id) {
                     store.chooseMode(id)
                     open = false

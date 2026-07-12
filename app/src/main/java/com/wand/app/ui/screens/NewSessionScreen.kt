@@ -107,11 +107,14 @@ fun NewSessionScreen(
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
     var provider by remember { mutableStateOf("claude") }
     var isStructured by remember { mutableStateOf(true) }
-    // 默认托管模式（claude 全自动完成）；codex 切换时 clamp 成全权限。
+    // 默认托管模式（Claude / OpenCode 全自动完成）；Codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
     var availableModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
     var codexModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
-    var serverDefaultModels by remember { mutableStateOf(ProviderDefaultModels(claude = null, codex = null)) }
+    var opencodeModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
+    var serverDefaultModels by remember {
+        mutableStateOf(ProviderDefaultModels(claude = null, codex = null, opencode = null))
+    }
     var selectedModel by remember { mutableStateOf("") }
     var thinkingEffort by remember { mutableStateOf("off") }
     var firstMessage by remember { mutableStateOf("") }
@@ -119,8 +122,16 @@ fun NewSessionScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
 
-    val providerModels = if (provider == "codex") codexModels else availableModels
-    val serverDefaultModel = if (provider == "codex") serverDefaultModels.codex else serverDefaultModels.claude
+    val providerModels = when (provider) {
+        "codex" -> codexModels
+        "opencode" -> opencodeModels
+        else -> availableModels
+    }
+    val serverDefaultModel = when (provider) {
+        "codex" -> serverDefaultModels.codex
+        "opencode" -> serverDefaultModels.opencode
+        else -> serverDefaultModels.claude
+    }
     val thinkingLevels = thinkingEffortOptions(provider, selectedModel, serverDefaultModel, providerModels)
     val supportedModes = supportedModeIds(provider)
 
@@ -130,13 +141,18 @@ fun NewSessionScreen(
         } catch (_: Exception) {
             null
         }
-        val configuredProvider = if (config?.defaultProvider == "codex") "codex" else "claude"
+        val configuredProvider = when (config?.defaultProvider) {
+            "codex" -> "codex"
+            "opencode" -> "opencode"
+            else -> "claude"
+        }
         provider = configuredProvider
         isStructured = config?.defaultSessionKind != "pty"
         mode = supportedModeFor(config?.defaultMode ?: "managed", configuredProvider)
         serverDefaultModels = config?.defaultModels ?: ProviderDefaultModels(
             claude = config?.defaultModel,
             codex = config?.defaultCodexModel,
+            opencode = config?.defaultOpenCodeModel,
         )
         selectedModel = ""
         thinkingEffort = config?.defaultThinkingEffort ?: "off"
@@ -144,9 +160,11 @@ fun NewSessionScreen(
             val response = api.models()
             availableModels = response.models
             codexModels = response.codexModels
+            opencodeModels = response.opencodeModels
             serverDefaultModels = response.defaultModels ?: ProviderDefaultModels(
                 claude = response.defaultModel,
                 codex = response.defaultCodexModel,
+                opencode = response.defaultOpenCodeModel,
             )
         } catch (_: Exception) {
         }
@@ -206,8 +224,7 @@ fun NewSessionScreen(
         errorMessage = null
         val path = cwd.trim()
         val prompt = firstMessage.trim().ifEmpty { null }
-        // codex 仅支持 full-access，对齐 Web getSafeModeForTool 的 clamp。
-        val effectiveMode = if (provider == "codex") "full-access" else mode
+        val effectiveMode = supportedModeFor(mode, provider)
         val model = selectedModel.ifEmpty { null }
         scope.launch {
             try {
@@ -344,7 +361,11 @@ fun NewSessionScreen(
             // —— Provider（分段控件）——
             SectionHeader("Provider")
             WandSegmented(
-                options = listOf("claude" to "Claude", "codex" to "Codex"),
+                options = listOf(
+                    "claude" to "Claude",
+                    "codex" to "Codex",
+                    "opencode" to "OpenCode",
+                ),
                 selected = provider,
                 onSelect = { newProvider ->
                     provider = newProvider
@@ -800,31 +821,48 @@ private val SESSION_MODES = listOf(
     SessionMode("native", "原生", "原生结构化输出"),
 )
 
-/** codex 仅支持 full-access，对齐 Web getSupportedModes。 */
-private fun supportedModeIds(provider: String): Set<String> =
-    if (provider == "codex") setOf("full-access")
-    else SESSION_MODES.mapTo(mutableSetOf()) { it.id }
+/** Provider 支持的模式，与 Web getSupportedModes 保持一致。 */
+private fun supportedModeIds(provider: String): Set<String> = when (provider) {
+    "codex" -> setOf("full-access")
+    "opencode" -> setOf("default", "full-access", "managed")
+    else -> SESSION_MODES.mapTo(mutableSetOf()) { it.id }
+}
 
 /** 切换 provider 时把当前 mode clamp 到该 provider 支持的集合（对齐 iOS supportedMode）。 */
 private fun supportedModeFor(value: String, provider: String): String {
     if (provider == "codex") return "full-access"
-    return if (SESSION_MODES.any { it.id == value }) value else "managed"
+    val supported = supportedModeIds(provider)
+    if (value in supported) return value
+    return if ("managed" in supported) "managed" else supported.first()
 }
 
 /** 会话类型动态说明，文案对齐 Web getSessionKindHint。 */
 private fun sessionKindHint(provider: String, structured: Boolean): String =
     if (structured) {
-        if (provider == "codex") "Codex JSONL 结构化聊天界面，支持多轮对话和工具调用展示。"
-        else "结构化聊天界面，支持多轮对话、流式输出和工具调用展示。"
+        when (provider) {
+            "codex" -> "Codex JSONL 结构化聊天界面，支持多轮对话和工具调用展示。"
+            "opencode" -> "OpenCode JSON 结构化聊天界面，支持多轮对话和工具调用展示。"
+            else -> "结构化聊天界面，支持多轮对话、流式输出和工具调用展示。"
+        }
     } else {
-        if (provider == "codex") "Codex PTY 终端会话；terminal 是原始输出，chat 是解析后的阅读视图。"
-        else "原始 PTY 终端会话，支持持续交互、终端视图和权限流。"
+        when (provider) {
+            "codex" -> "Codex PTY 终端会话；terminal 是原始输出，chat 是解析后的阅读视图。"
+            "opencode" -> "OpenCode TUI 终端会话，支持持续交互和终端视图。"
+            else -> "原始 PTY 终端会话，支持持续交互、终端视图和权限流。"
+        }
     }
 
 /** 模式动态说明，文案对齐 Web getToolModeHint。 */
 private fun modeHint(provider: String, mode: String): String {
     if (provider == "codex") {
         return "Codex 支持 PTY 终端与结构化（JSONL）两种会话，结构化模式按 full-access 启动。"
+    }
+    if (provider == "opencode") {
+        return if (mode == "full-access" || mode == "managed") {
+            "OpenCode 将自动批准未显式拒绝的权限；支持 TUI 与 JSON 结构化会话。"
+        } else {
+            "OpenCode 使用自身权限配置；结构化模式会自动拒绝未批准的权限请求。"
+        }
     }
     return when (mode) {
         "full-access" -> "自动确认权限请求与高权限操作，适合你确认环境安全后的连续修改。"

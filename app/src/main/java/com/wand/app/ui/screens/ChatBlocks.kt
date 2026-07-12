@@ -1,5 +1,6 @@
 package com.wand.app.ui.screens
 
+import android.animation.ValueAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -8,6 +9,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -3771,6 +3773,23 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
         animationSpec = tween(350),
         label = "todoProgress",
     )
+    // Keep the completed ratio anchored while a small highlight orbits it to signal
+    // that work is still in progress. Android's animator accessibility setting stops it.
+    val motionEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    val ringRotation = if (motionEnabled) {
+        val transition = rememberInfiniteTransition(label = "todoProgressSpin")
+        val rotation by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900, easing = LinearEasing),
+            ),
+            label = "todoProgressRotation",
+        )
+        rotation
+    } else {
+        0f
+    }
 
     Column(
         modifier = Modifier
@@ -3784,6 +3803,9 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickableWithoutRipple { expanded = !expanded }
+                .semantics {
+                    stateDescription = "正在进行第 $currentStep 步，共 ${todos.size} 步：$activeTask"
+                }
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
@@ -3808,6 +3830,20 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
                     ),
                     style = stroke,
                 )
+                if (motionEnabled) {
+                    drawArc(
+                        color = ringColor.copy(alpha = 0.55f),
+                        startAngle = -90f + ringRotation,
+                        sweepAngle = 48f,
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = androidx.compose.ui.geometry.Size(
+                            size.width - strokeWidth,
+                            size.height - strokeWidth,
+                        ),
+                        style = stroke,
+                    )
+                }
             }
             Text(
                 "$currentStep/${todos.size}",
