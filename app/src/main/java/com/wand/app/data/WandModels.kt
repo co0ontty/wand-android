@@ -25,18 +25,18 @@ internal inline fun <T> JSONArray.parseEach(block: (JSONObject) -> T?): List<T> 
 internal fun JSONObject.str(key: String): String? =
     if (has(key) && !isNull(key)) optString(key) else null
 
-internal fun JSONObject.bool(key: String): Boolean? =
-    if (has(key) && !isNull(key) && opt(key) is Boolean) getBoolean(key) else null
+internal fun JSONObject.bool(key: String): Boolean? = opt(key) as? Boolean
 
-internal fun JSONObject.int(key: String): Int? =
-    if (has(key) && !isNull(key) && opt(key) is Number) (opt(key) as Number).toInt() else null
+internal fun JSONObject.int(key: String): Int? = (opt(key) as? Number)?.toInt()
 
-internal fun JSONObject.dbl(key: String): Double? =
-    if (has(key) && !isNull(key) && opt(key) is Number) (opt(key) as Number).toDouble() else null
+internal fun JSONObject.dbl(key: String): Double? = (opt(key) as? Number)?.toDouble()
 
 internal fun JSONObject.obj(key: String): JSONObject? = optJSONObject(key)
 
 internal fun JSONObject.arr(key: String): JSONArray? = optJSONArray(key)
+
+internal fun JSONArray.nonEmptyStrings(): List<String> =
+    (0 until length()).mapNotNull { optString(it).takeIf { value -> value.isNotEmpty() } }
 
 /**
  * 读取 tool_use input 里的数组字段，容忍服务端把数组拍成 JSON 字符串。
@@ -71,6 +71,8 @@ fun summaryText(value: Any?): String = when (value) {
  * 工具结果既可能是纯字符串，也可能是 Responses/MCP 风格的 content part 数组。
  * 不认识的 part 不能静默丢弃：优先抽取常见文本字段，否则保留格式化 JSON 作为兜底。
  */
+private val STRUCTURED_TEXT_KEYS = listOf("text", "output_text", "input_text", "message", "summary")
+
 private fun structuredContentText(value: Any?): String = when (value) {
     null, JSONObject.NULL -> ""
     is String -> value
@@ -80,10 +82,8 @@ private fun structuredContentText(value: Any?): String = when (value) {
         }
     }.joinToString("\n")
     is JSONObject -> {
-        val textKeys = listOf("text", "output_text", "input_text", "message", "summary")
-        textKeys.firstNotNullOfOrNull { key ->
-            if (!value.has(key) || value.isNull(key)) null
-            else structuredContentText(value.opt(key)).takeIf { it.isNotBlank() }
+        STRUCTURED_TEXT_KEYS.firstNotNullOfOrNull { key ->
+            structuredContentText(value.opt(key)).takeIf { it.isNotBlank() }
         } ?: try {
             value.toString(2)
         } catch (_: Exception) {
@@ -205,19 +205,10 @@ data class ConversationTurn(
 ) {
     companion object {
         fun parse(o: JSONObject): ConversationTurn {
-            val blocks = mutableListOf<ContentBlock>()
-            val arr = o.arr("content")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    // 逐块容错：单个块解析失败不拖垮整条消息。
-                    val blockObj = arr.optJSONObject(i) ?: continue
-                    try {
-                        blocks.add(ContentBlock.parse(blockObj))
-                    } catch (_: Exception) {
-                        // skip bad block
-                    }
-                }
-            }
+            // 逐块容错：单个块解析失败不拖垮整条消息。
+            val blocks = o.arr("content")?.parseEach {
+                try { ContentBlock.parse(it) } catch (_: Exception) { null }
+            } ?: emptyList()
             return ConversationTurn(
                 role = o.str("role") ?: "assistant",
                 content = blocks,
@@ -378,9 +369,7 @@ data class SessionSnapshot(
             messages = ConversationTurn.parseList(o.arr("messages")),
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
-            queuedMessages = o.arr("queuedMessages")?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { it.isNotEmpty() } }
-            },
+            queuedMessages = o.arr("queuedMessages")?.nonEmptyStrings(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
             permissionBlocked = o.bool("permissionBlocked"),
@@ -653,9 +642,7 @@ data class WsData(
             messages = ConversationTurn.parseList(o.arr("messages")),
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
-            queuedMessages = o.arr("queuedMessages")?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { it.isNotEmpty() } }
-            },
+            queuedMessages = o.arr("queuedMessages")?.nonEmptyStrings(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
             permissionBlocked = o.bool("permissionBlocked"),
@@ -714,11 +701,10 @@ data class DirectoryListing(
     val truncated: Boolean?,
 ) {
     companion object {
-        fun parse(o: JSONObject): DirectoryListing {
-            val items = (o.arr("items") ?: return DirectoryListing(emptyList(), o.bool("truncated")))
-                .parseEach { DirectoryItem.parse(it) }
-            return DirectoryListing(items = items, truncated = o.bool("truncated"))
-        }
+        fun parse(o: JSONObject): DirectoryListing = DirectoryListing(
+            items = o.arr("items")?.parseEach { DirectoryItem.parse(it) } ?: emptyList(),
+            truncated = o.bool("truncated"),
+        )
     }
 }
 
@@ -735,13 +721,10 @@ data class RecentPath(
         }
 
     companion object {
-        fun parseList(arr: JSONArray): List<RecentPath> {
-            return arr.parseEach { p ->
-                p.str("path")?.let { path ->
-                    RecentPath(path, p.str("name"), p.str("lastUsedAt"))
-                }
+        fun parseList(arr: JSONArray): List<RecentPath> =
+            arr.parseEach { p ->
+                p.str("path")?.let { RecentPath(it, p.str("name"), p.str("lastUsedAt")) }
             }
-        }
     }
 }
 
@@ -816,19 +799,12 @@ data class GitStatusResult(
 ) {
     companion object {
         fun parse(o: JSONObject): GitStatusResult {
-            val files = o.arr("files")?.let { arr ->
-                val out = mutableListOf<GitFileEntry>()
-                for (i in 0 until arr.length()) {
-                    val f = arr.optJSONObject(i) ?: continue
-                    out.add(
-                        GitFileEntry(
-                            path = f.str("path") ?: "",
-                            status = f.str("status") ?: "",
-                            isSubmodule = f.bool("isSubmodule"),
-                        )
-                    )
-                }
-                out
+            val files = o.arr("files")?.parseEach { f ->
+                GitFileEntry(
+                    path = f.str("path") ?: "",
+                    status = f.str("status") ?: "",
+                    isSubmodule = f.bool("isSubmodule"),
+                )
             }
             val lastCommit = o.obj("lastCommit")
             return GitStatusResult(
