@@ -211,6 +211,16 @@ fun NewSessionScreen(
         val model = selectedModel.ifEmpty { null }
         scope.launch {
             try {
+                // 选择项的即时保存协程会随页面离开而取消。创建前再把当前完整选择
+                // 同步写入服务端，保证其它客户端下次打开新建页能拿到最终值。
+                api.updateNewSessionDefaults(
+                    mode = effectiveMode,
+                    model = model,
+                    modelProvider = provider,
+                    thinkingEffort = thinkingEffort,
+                    defaultProvider = provider,
+                    defaultSessionKind = if (isStructured) "structured" else "pty",
+                )
                 val snapshot = if (isStructured) {
                     api.createStructuredSession(
                         cwd = path,
