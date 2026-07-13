@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -80,6 +79,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
@@ -774,8 +774,8 @@ private fun SelectionBar(
 }
 
 /**
- * 可恢复会话卡：会话图标 + 首条用户消息 + 元信息行（provider 胶囊 + 相对时间）
- * + 工作目录路径独占一行（对齐 iOS HistorySessionRow）。
+ * 可恢复会话卡：独立 provider Logo + 首条用户消息 + 相对时间与一行上下文。
+ * Logo 不再嵌套装饰容器；“可恢复”状态在正文里明确表达，避免重复角标。
  */
 @Composable
 private fun HistorySessionCard(
@@ -790,7 +790,7 @@ private fun HistorySessionCard(
     val isCodex = history.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
     val providerLabel = if (isCodex) "Codex" else "Claude"
-    val shape = RoundedCornerShape(if (compact) 14.dp else 18.dp)
+    val shape = RoundedCornerShape(if (compact) 14.dp else 16.dp)
     WandCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -800,34 +800,25 @@ private fun HistorySessionCard(
         selected = selected,
         shape = shape,
         containerColor = if (selected) {
-            lerp(WandColors.surface, WandColors.brand, 0.10f)
+            lerp(WandColors.surface, WandColors.brand, 0.12f)
         } else {
-            WandColors.surface.copy(alpha = 0.78f)
+            WandColors.surface.copy(alpha = 0.88f)
         },
         contentPadding = PaddingValues(
-            horizontal = if (compact) 10.dp else 12.dp,
-            vertical = if (compact) 9.dp else 11.dp,
+            horizontal = if (compact) 11.dp else 14.dp,
+            vertical = if (compact) 10.dp else 12.dp,
         ),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 11.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selecting) {
-                Icon(
-                    if (selected) WandIcons.statusDone else WandIcons.statusPending,
-                    contentDescription = if (selected) "已选中" else "未选中",
-                    tint = if (selected) WandColors.brand else WandColors.textSecondary,
-                    modifier = Modifier.size(22.dp),
-                )
+                SelectionMark(selected = selected, compact = compact)
+            } else {
+                ProviderMark(provider = history.provider, compact = compact)
             }
-            ProviderMark(
-                provider = history.provider,
-                contentDescription = "$providerLabel，可恢复会话",
-                badgeIcon = WandIcons.history,
-                compact = compact,
-            )
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp),
@@ -877,13 +868,16 @@ private fun relativeTimeLabel(timestamp: String?): String {
     } catch (_: Exception) {
         return ""
     }
-    return singleUnitDurationLabel(System.currentTimeMillis() - millis)
+    return when (val relative = singleUnitDurationLabel(System.currentTimeMillis() - millis)) {
+        "刚刚" -> relative
+        else -> "${relative}前"
+    }
 }
 
 /**
- * 单位时长文案（AGENTS.md 约定：duration / relative chip 只显示一个单位）。
+ * 单位相对时间文案（列表时间只显示一个单位）。
  * - 刚刚 / N分钟 / N小时 / N天
- * 秒数由调用方提供：相对时间传 (now - 当时)，会话时长传 (end - start)。
+ * 会话持续时长单独在 sessionDurationLabel 中处理，避免出现“持续 刚刚”。
  */
 private fun singleUnitDurationLabel(deltaMillis: Long): String {
     val minutes = (deltaMillis.coerceAtLeast(0L) / 60_000L)
@@ -909,10 +903,12 @@ private fun SwipeRevealRow(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     // 滑动行程：留出按钮宽度 + 两侧呼吸间距，让删除键像「浮起」的独立按钮而非贴边红块。
-    val buttonWidth = 64.dp
-    val gap = 10.dp
+    val buttonWidth = 56.dp
+    val gap = 8.dp
     val revealWidth = buttonWidth + gap * 2
     val revealPx = with(density) { revealWidth.toPx() }
+    // 手势仍保留完整揭示行程，卡片本体只做轻微视差位移；Logo 不会被推到屏幕外。
+    val contentShiftPx = with(density) { 12.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
     val revealed = offsetX.value <= -revealPx + 1f
     val snapSpec = WandMotion.springSpec<Float>()
@@ -931,7 +927,9 @@ private fun SwipeRevealRow(
         // （玻璃卡片半透明，静止时红底会透出来）。随滑动进度淡入 + 轻微放大，避免硬切。
         if (offsetX.value < -1f) {
             Box(
-                modifier = Modifier.matchParentSize(),
+                modifier = Modifier
+                    .matchParentSize()
+                    .zIndex(1f),
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Box(
@@ -952,6 +950,7 @@ private fun SwipeRevealRow(
                         .clickable(
                             interactionSource = interactionSource,
                             indication = LocalIndication.current,
+                            enabled = revealed,
                         ) {
                             closeReveal()
                             onDelete()
@@ -980,7 +979,10 @@ private fun SwipeRevealRow(
         }
         Box(
             modifier = Modifier
-                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .offset {
+                    val progress = (-offsetX.value / revealPx).coerceIn(0f, 1f)
+                    IntOffset((-contentShiftPx * progress).roundToInt(), 0)
+                }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
@@ -1005,8 +1007,8 @@ private fun SwipeRevealRow(
 }
 
 /**
- * 单条会话卡片：provider 标识、标题、无底色时间与一行上下文。
- * 状态同时以圆点和文字表达，避免只靠颜色传递信息。
+ * 单条会话卡片：独立 provider Logo、标题、无底色时间与一行上下文。
+ * 状态圆点移到文字元信息旁，Logo 本身保持完整、干净。
  */
 @Composable
 private fun SessionCard(
@@ -1017,7 +1019,7 @@ private fun SessionCard(
     onClick: () -> Unit,
 ) {
     val status = derivedStatus(session)
-    val shape = RoundedCornerShape(if (compact) 14.dp else 18.dp)
+    val shape = RoundedCornerShape(if (compact) 14.dp else 16.dp)
     WandCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -1026,34 +1028,25 @@ private fun SessionCard(
         selected = selected,
         shape = shape,
         containerColor = if (selected) {
-            lerp(WandColors.surface, WandColors.brand, 0.10f)
+            lerp(WandColors.surface, WandColors.brand, 0.12f)
         } else {
-            WandColors.surface.copy(alpha = 0.78f)
+            WandColors.surface.copy(alpha = 0.88f)
         },
         contentPadding = PaddingValues(
-            horizontal = if (compact) 10.dp else 12.dp,
-            vertical = if (compact) 9.dp else 11.dp,
+            horizontal = if (compact) 11.dp else 14.dp,
+            vertical = if (compact) 10.dp else 12.dp,
         ),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 11.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selecting) {
-                Icon(
-                    if (selected) WandIcons.statusDone else WandIcons.statusPending,
-                    contentDescription = if (selected) "已选中" else "未选中",
-                    tint = if (selected) WandColors.brand else WandColors.textSecondary,
-                    modifier = Modifier.size(22.dp),
-                )
+                SelectionMark(selected = selected, compact = compact)
+            } else {
+                ProviderMark(provider = session.provider, compact = compact)
             }
-            ProviderMark(
-                provider = session.provider,
-                contentDescription = "${session.providerLabel}，${sessionListTitle(session)}",
-                status = status,
-                compact = compact,
-            )
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp),
@@ -1079,7 +1072,7 @@ private fun SessionCard(
                     }
                 }
                 ConversationContextLine(
-                    icon = if (session.isStructured) WandIcons.chat else WandIcons.terminal,
+                    status = status,
                     label = buildString {
                         append(session.providerLabel)
                         append(" · ")
@@ -1102,80 +1095,56 @@ private fun sessionListTitle(session: SessionSnapshot): String {
 }
 
 /**
- * 左侧助手标识：普通会话叠加状态点；可恢复历史叠加 history 小标。
+ * 左侧助手标识：只展示 provider 的品牌 Logo。
+ *
+ * 会话状态与“可恢复”语义已经在正文元信息和 TalkBack stateDescription 中表达，
+ * 因此这里不再套浅色圆角底，也不再叠加角标，让列表首列更轻、更容易扫读。
  */
 @Composable
 private fun ProviderMark(
     provider: String?,
-    contentDescription: String,
-    status: String? = null,
-    badgeIcon: ImageVector? = null,
     compact: Boolean = false,
 ) {
     val isCodex = provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
     val icon = BrandLogos.forProvider(provider)
-    val shape = RoundedCornerShape(if (compact) 10.dp else 12.dp)
-    val outerSize = if (compact) 40.dp else 44.dp
-    val markSize = if (compact) 36.dp else 40.dp
-    val logoSize = if (compact) 17.dp else 18.dp
-    val dotSize = if (compact) 9.dp else 10.dp
-
-    Box(modifier = Modifier.size(outerSize)) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .size(markSize)
-                .clip(shape)
-                .background(tint.copy(alpha = 0.095f))
-                .border(0.55.dp, tint.copy(alpha = 0.14f), shape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                icon,
-                contentDescription = contentDescription,
-                tint = tint.copy(alpha = 0.82f),
-                modifier = Modifier.size(logoSize),
-            )
-        }
-        if (status != null || badgeIcon != null) {
-            val badgeSize = if (badgeIcon != null) {
-                if (compact) 13.dp else 15.dp
-            } else {
-                dotSize
-            }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(badgeSize)
-                    .clip(CircleShape)
-                    .background(WandColors.surface)
-                    .border(0.7.dp, WandColors.borderStrong.copy(alpha = 0.34f), CircleShape)
-                    .padding(if (badgeIcon != null) 2.5.dp else 1.7.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (badgeIcon != null) {
-                    Icon(
-                        badgeIcon,
-                        contentDescription = null,
-                        tint = tint,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else if (status != null) {
-                    StatusDot(status, modifier = Modifier.fillMaxSize())
-                }
-            }
-        }
+    Box(
+        modifier = Modifier.size(if (compact) 34.dp else 38.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            // Provider 已在右侧元信息中朗读；Logo 仅作视觉识别，避免 TalkBack 重复标题。
+            contentDescription = null,
+            tint = tint.copy(alpha = 0.94f),
+            modifier = Modifier.size(if (compact) 23.dp else 26.dp),
+        )
     }
 }
 
-/** 无底色的 trailing 时间，避免与标题、状态争抢层级；恢复时原位切成进度反馈。 */
+/** 多选图标复用 Logo 的固定槽位，进入选择模式时标题不会左右跳动。 */
+@Composable
+private fun SelectionMark(selected: Boolean, compact: Boolean) {
+    Box(
+        modifier = Modifier.size(if (compact) 34.dp else 38.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (selected) WandIcons.statusDone else WandIcons.statusPending,
+            contentDescription = if (selected) "已选中" else "未选中",
+            tint = if (selected) WandColors.brand else WandColors.textSecondary,
+            modifier = Modifier.size(if (compact) 21.dp else 22.dp),
+        )
+    }
+}
+
+/** 无底色、无重复时钟图标的 trailing 时间；恢复时原位切成进度反馈。 */
 @Composable
 private fun ConversationTimeLabel(
     text: String,
     compact: Boolean,
     loading: Boolean = false,
-    tint: Color = WandColors.textMuted,
+    tint: Color = lerp(WandColors.textSecondary, WandColors.textMuted, 0.46f),
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -1188,17 +1157,10 @@ private fun ConversationTimeLabel(
                 strokeWidth = 1.5.dp,
                 modifier = Modifier.size(if (compact) 11.dp else 12.dp),
             )
-        } else {
-            Icon(
-                WandIcons.clock,
-                contentDescription = null,
-                tint = tint,
-                modifier = Modifier.size(if (compact) 11.dp else 12.dp),
-            )
         }
         Text(
             text,
-            fontSize = if (compact) 10.5.sp else 11.5.sp,
+            fontSize = if (compact) 11.sp else 12.sp,
             lineHeight = 16.sp,
             fontWeight = FontWeight.Medium,
             color = tint,
@@ -1208,34 +1170,43 @@ private fun ConversationTimeLabel(
 }
 
 /**
- * 统一第二层信息：类型/状态保持可读文字，路径占用剩余空间并优先露出末端。
- * 只有一条视觉基线，不再为每个元数据套胶囊。
+ * 统一第二层信息：运行状态用圆点 + 文字，历史记录用场景图标；路径占用剩余空间。
+ * 只有一条视觉基线，不为每个元数据套胶囊，弱文字也保持浅色模式可读对比度。
  */
 @Composable
 private fun ConversationContextLine(
-    icon: ImageVector,
+    icon: ImageVector? = null,
+    status: String? = null,
     label: String,
     path: String,
     compact: Boolean,
     tint: Color = WandColors.textSecondary,
 ) {
+    val metadataColor = lerp(WandColors.textSecondary, WandColors.textMuted, 0.42f)
+    val pathColor = lerp(WandColors.textSecondary, WandColors.textMuted, 0.70f)
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = tint.copy(alpha = 0.88f),
-            modifier = Modifier.size(if (compact) 12.dp else 13.dp),
-        )
-        Spacer(modifier = Modifier.width(4.dp))
+        when {
+            status != null -> StatusDot(
+                status = status,
+                modifier = Modifier.size(if (compact) 5.dp else 6.dp),
+            )
+            icon != null -> Icon(
+                icon,
+                contentDescription = null,
+                tint = tint.copy(alpha = 0.92f),
+                modifier = Modifier.size(if (compact) 12.dp else 13.dp),
+            )
+        }
+        if (status != null || icon != null) Spacer(modifier = Modifier.width(5.dp))
         Text(
             label,
             fontSize = if (compact) 10.5.sp else 11.5.sp,
             lineHeight = 16.sp,
-            fontWeight = FontWeight.Normal,
-            color = WandColors.textSecondary.copy(alpha = 0.90f),
+            fontWeight = FontWeight.Medium,
+            color = metadataColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1245,7 +1216,7 @@ private fun ConversationContextLine(
                 modifier = Modifier
                     .size(3.dp)
                     .clip(CircleShape)
-                    .background(WandColors.textMuted.copy(alpha = 0.48f)),
+                    .background(pathColor.copy(alpha = 0.52f)),
             )
             Spacer(modifier = Modifier.width(7.dp))
             Text(
@@ -1254,7 +1225,7 @@ private fun ConversationContextLine(
                 fontSize = if (compact) 9.8.sp else 10.8.sp,
                 lineHeight = 16.sp,
                 fontFamily = FontFamily.Monospace,
-                color = WandColors.textMuted,
+                color = pathColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1308,5 +1279,12 @@ private fun sessionDurationLabel(session: SessionSnapshot): String {
     } catch (_: Exception) {
         null
     }
-    return singleUnitDurationLabel((ended ?: System.currentTimeMillis()) - started)
+    val deltaMillis = ((ended ?: System.currentTimeMillis()) - started).coerceAtLeast(0L)
+    val minutes = deltaMillis / 60_000L
+    if (minutes < 1) return "不足1分钟"
+    val hours = minutes / 60
+    if (hours < 1) return "${minutes}分钟"
+    val days = hours / 24
+    if (days < 1) return "${hours}小时"
+    return "${days}天"
 }

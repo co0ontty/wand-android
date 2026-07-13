@@ -657,21 +657,17 @@ private fun CollapsedRailTile(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
-    val badgeShape = RoundedCornerShape(
-        topStart = 7.dp,
-        topEnd = 5.dp,
-        bottomEnd = 8.dp,
-        bottomStart = 5.dp,
-    )
+    val badgeShape = RoundedCornerShape(8.dp)
+    val showContainer = outlined || selected
     val background = when {
         outlined -> WandColors.brand.copy(alpha = 0.06f)
-        selected -> tint.copy(alpha = 0.22f)
-        else -> tint.copy(alpha = 0.10f)
+        selected -> tint.copy(alpha = 0.12f)
+        else -> Color.Transparent
     }
     val borderColor = when {
         outlined -> WandColors.brand.copy(alpha = 0.50f)
-        selected -> tint.copy(alpha = 0.72f)
-        else -> tint.copy(alpha = 0.20f)
+        selected -> tint.copy(alpha = 0.52f)
+        else -> Color.Transparent
     }
     Box(
         modifier = Modifier
@@ -682,16 +678,23 @@ private fun CollapsedRailTile(
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .clip(shape)
-                .background(background)
-                .border(if (selected || outlined) 1.dp else 0.55.dp, borderColor, shape),
+                .then(
+                    if (showContainer) {
+                        Modifier
+                            .clip(shape)
+                            .background(background)
+                            .border(1.dp, borderColor, shape)
+                    } else {
+                        Modifier
+                    }
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 icon,
                 contentDescription = contentDescription,
-                tint = tint.copy(alpha = if (outlined) 0.86f else 0.90f),
-                modifier = Modifier.size(if (outlined) 20.dp else 19.dp),
+                tint = tint.copy(alpha = if (outlined) 0.86f else 0.94f),
+                modifier = Modifier.size(if (outlined) 20.dp else 25.dp),
             )
         }
         if (badge != null) {
