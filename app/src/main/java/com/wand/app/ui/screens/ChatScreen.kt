@@ -18,6 +18,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -99,6 +100,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -122,7 +124,6 @@ import com.wand.app.ui.ChatStore
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.ThinkingEffortOption
-import com.wand.app.ui.ThinkingEffortSlider
 import com.wand.app.ui.thinkingEffortOptions
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
@@ -1029,11 +1030,13 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         color = WandColors.border,
                         modifier = Modifier.padding(start = 60.dp),
                     )
-                    ThinkingEffortSlider(
-                        options = thinkingLevels(store),
-                        selection = store.thinkingEffort,
-                        onSelect = store::chooseThinkingEffort,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                    LaunchSettingPicker(
+                        icon = WandIcons.thinking,
+                        label = "思考深度",
+                        value = thinkingLabel(store, store.thinkingEffort),
+                        options = thinkingLevels(store).map { it.id to it.menuLabel },
+                        selected = store.thinkingEffort,
+                        onSelect = { it?.let(store::chooseThinkingEffort) },
                     )
                 }
             }
@@ -1058,7 +1061,11 @@ private fun LaunchSettingPicker(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = true }
+                .heightIn(min = 48.dp)
+                .semantics(mergeDescendants = true) {
+                    stateDescription = "当前为$value"
+                }
+                .clickable(role = Role.DropdownList) { expanded = true }
                 .padding(horizontal = 14.dp, vertical = 13.dp),
         ) {
             // 左侧品牌色图标片，让两行各有清晰的身份（模型 / 思考深度）。
@@ -1094,7 +1101,7 @@ private fun LaunchSettingPicker(
             }
             Icon(
                 WandIcons.chevronRight,
-                contentDescription = "选择$label",
+                contentDescription = null,
                 tint = WandColors.textMuted,
                 modifier = Modifier.size(18.dp),
             )
@@ -1120,16 +1127,21 @@ private fun LaunchSettingPicker(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
                         )
                         options.forEach { (id, optionLabel) ->
+                            val isSelected = selected == id
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(
-                                        if (selected == id) WandColors.brandSoft else Color.Transparent,
+                                        if (isSelected) WandColors.brandSoft else Color.Transparent,
                                     )
-                                    .clickable {
+                                    .selectable(
+                                        selected = isSelected,
+                                        role = Role.RadioButton,
+                                    ) {
                                         onSelect(id)
                                         expanded = false
                                     }
@@ -1138,14 +1150,14 @@ private fun LaunchSettingPicker(
                                 Text(
                                     optionLabel,
                                     fontSize = 14.sp,
-                                    fontWeight = if (selected == id) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (selected == id) WandColors.brand else WandColors.textPrimary,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSelected) WandColors.brand else WandColors.textPrimary,
                                     modifier = Modifier.weight(1f),
                                 )
-                                if (selected == id) {
+                                if (isSelected) {
                                     Icon(
                                         WandIcons.check,
-                                        contentDescription = "当前选中",
+                                        contentDescription = null,
                                         tint = WandColors.brand,
                                         modifier = Modifier.size(18.dp),
                                     )
@@ -1166,6 +1178,13 @@ private fun thinkingLevels(store: ChatStore): List<ThinkingEffortOption> =
         defaultModel = store.defaultModel,
         models = store.availableModels,
     )
+
+private fun thinkingLabel(store: ChatStore, id: String): String {
+    val levels = thinkingLevels(store)
+    return levels.firstOrNull { it.id == id }?.label
+        ?: levels.firstOrNull()?.label
+        ?: "自动"
+}
 
 private fun thinkingShortLabel(store: ChatStore, id: String): String =
     thinkingLevels(store).firstOrNull { it.id == id }?.shortLabel ?: "自"
@@ -1223,7 +1242,7 @@ private fun SettingsMenuOption(label: String, selected: Boolean, onClick: () -> 
             if (selected) {
                 Icon(
                     WandIcons.check,
-                    contentDescription = "当前选中",
+                    contentDescription = null,
                     tint = WandColors.brand,
                     modifier = Modifier.size(16.dp),
                 )
@@ -1232,6 +1251,10 @@ private fun SettingsMenuOption(label: String, selected: Boolean, onClick: () -> 
             }
         },
         onClick = onClick,
+        modifier = Modifier.semantics {
+            this.selected = selected
+            role = Role.RadioButton
+        },
     )
 }
 
@@ -1979,12 +2002,12 @@ private fun ModelThinkingChip(
             }
             HorizontalDivider(color = WandColors.border)
             MenuSectionHeader("思考深度")
-            ThinkingEffortSlider(
-                options = thinkingLevels(store),
-                selection = store.thinkingEffort,
-                onSelect = store::chooseThinkingEffort,
-                modifier = Modifier.widthIn(min = 260.dp).padding(horizontal = 8.dp, vertical = 4.dp),
-            )
+            thinkingLevels(store).forEach { level ->
+                SettingsMenuOption(level.menuLabel, selected = store.thinkingEffort == level.id) {
+                    store.chooseThinkingEffort(level.id)
+                    open = false
+                }
+            }
         }
     }
 }

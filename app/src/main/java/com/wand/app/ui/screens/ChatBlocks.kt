@@ -5,11 +5,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -89,10 +89,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.foundation.Canvas
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.CardExpandDefaults
@@ -3776,47 +3772,41 @@ fun currentTodos(messages: List<ConversationTurn>): List<TodoEntry> {
     return if (derived.isNotEmpty() && derived.all { it.status == "completed" }) emptyList() else derived
 }
 
-/** 输入栏上方的悬浮进度条：环形进度 + N/M + 当前任务，点击展开任务列表。 */
+/**
+ * 当前执行项：协议明确标记 in_progress 时优先使用；Codex 只有 pending/completed
+ * 二态时，把首个 pending 推导为正在执行，避免列表与实际运行状态相互矛盾。
+ */
+internal fun activeTodoIndex(todos: List<TodoEntry>): Int? {
+    val explicit = todos.indexOfFirst { it.status == "in_progress" }
+    if (explicit >= 0) return explicit
+    val inferred = todos.indexOfFirst { it.status == "pending" }
+    return inferred.takeIf { it >= 0 }
+}
+
+/** 输入栏上方的悬浮任务状态：执行中 + 第 N/M 步 + 当前任务，点击展开任务列表。 */
 @Composable
 fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
     if (todos.isEmpty()) return
     val completed = todos.count { it.status == "completed" }
-    // 1-indexed「正在干第 N 个」：completed+1 封顶（对齐 Web currentStep）。
-    val currentStep = minOf(completed + 1, todos.size)
-    // 右侧当前步骤描述：优先取首个 in_progress 的 activeForm / content；
-    // 没有进行中项时（模型已标完上一步、还没标下一步 in_progress），回退到首个
-    // pending 任务的描述；都没有再兜底「准备中…」——保证右侧空白区始终有内容
-    // （对齐 Web / macOS fallback）。
+    val activeIndex = activeTodoIndex(todos)
+    val currentStep = activeIndex?.plus(1) ?: minOf(completed + 1, todos.size)
     fun TodoEntry.label(): String? =
         (activeForm?.ifEmpty { null } ?: content).ifEmpty { null }
-    val activeTask = todos.firstOrNull { it.status == "in_progress" }?.label()
-        ?: todos.firstOrNull { it.status == "pending" }?.label()
+    val activeTask = activeIndex?.let { todos[it].label() }
         ?: "准备中…"
     var expanded by remember { mutableStateOf(false) }
-    val ringColor = WandColors.brand
-    val trackColor = WandColors.border
-    val progress = currentStep.toFloat() / todos.size.toFloat()
-    val animatedProgress by animateFloatAsState(
-        targetValue = progress,
-        animationSpec = tween(350),
-        label = "todoProgress",
-    )
-    // Keep the completed ratio anchored while a small highlight orbits it to signal
-    // that work is still in progress. Android's animator accessibility setting stops it.
     val motionEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
-    val ringRotation = if (motionEnabled) {
-        val transition = rememberInfiniteTransition(label = "todoProgressSpin")
-        val rotation by transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 900, easing = LinearEasing),
-            ),
-            label = "todoProgressRotation",
+    val activityAlpha = if (motionEnabled) {
+        val transition = rememberInfiniteTransition(label = "todoActivityBreath")
+        val alpha by transition.animateFloat(
+            initialValue = 0.72f,
+            targetValue = 1f,
+            animationSpec = WandMotion.breath(),
+            label = "todoActivityAlpha",
         )
-        rotation
+        alpha
     } else {
-        0f
+        1f
     }
 
     Column(
@@ -3831,50 +3821,31 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickableWithoutRipple { expanded = !expanded }
-                .semantics {
-                    stateDescription = "正在进行第 $currentStep 步，共 ${todos.size} 步：$activeTask"
+                .semantics(mergeDescendants = true) {
+                    stateDescription = "已完成 $completed 项，共 ${todos.size} 项；正在执行第 $currentStep 步：$activeTask"
                 }
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            Canvas(modifier = Modifier.size(18.dp)) {
-                val strokeWidth = 3.dp.toPx()
-                val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                val inset = strokeWidth / 2
-                drawCircle(
-                    color = trackColor,
-                    radius = (size.minDimension - strokeWidth) / 2,
-                    style = stroke,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.graphicsLayer { alpha = activityAlpha },
+            ) {
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .background(WandColors.brand, CircleShape),
                 )
-                drawArc(
-                    color = ringColor,
-                    startAngle = -90f,
-                    sweepAngle = 360f * animatedProgress,
-                    useCenter = false,
-                    topLeft = Offset(inset, inset),
-                    size = androidx.compose.ui.geometry.Size(
-                        size.width - strokeWidth,
-                        size.height - strokeWidth,
-                    ),
-                    style = stroke,
+                Text(
+                    "执行中",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.brand,
                 )
-                if (motionEnabled) {
-                    drawArc(
-                        color = ringColor.copy(alpha = 0.55f),
-                        startAngle = -90f + ringRotation,
-                        sweepAngle = 48f,
-                        useCenter = false,
-                        topLeft = Offset(inset, inset),
-                        size = androidx.compose.ui.geometry.Size(
-                            size.width - strokeWidth,
-                            size.height - strokeWidth,
-                        ),
-                        style = stroke,
-                    )
-                }
             }
             Text(
-                "$currentStep/${todos.size}",
+                "· 第 $currentStep/${todos.size} 步",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = FontFamily.Monospace,
@@ -3899,47 +3870,62 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
             ) {
-                todos.forEach { todo ->
+                todos.forEachIndexed { index, todo ->
+                    val isActive = index == activeIndex
+                    val rowBackground by animateColorAsState(
+                        targetValue = if (isActive) WandColors.brandSoft else Color.Transparent,
+                        animationSpec = WandMotion.tweenFast(),
+                        label = "todoRowBackground",
+                    )
+                    val rowTextColor by animateColorAsState(
+                        targetValue = if (isActive) WandColors.textPrimary else WandColors.textSecondary,
+                        animationSpec = WandMotion.tweenFast(),
+                        label = "todoRowText",
+                    )
                     Row(
                         verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (todo.status == "in_progress") {
-                                    WandColors.brandSoft
-                                } else {
-                                    Color.Transparent
+                            .background(rowBackground)
+                            .semantics(mergeDescendants = true) {
+                                stateDescription = when {
+                                    todo.status == "completed" -> "已完成：${todo.content}"
+                                    isActive -> "进行中：${todo.content}"
+                                    else -> "待处理：${todo.content}"
                                 }
-                            )
+                            }
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                     ) {
-                        Text(
-                            when (todo.status) {
-                                "completed" -> "✓"
-                                "in_progress" -> "›"
-                                else -> "○"
-                            },
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = when (todo.status) {
-                                "completed" -> WandColors.success
-                                "in_progress" -> WandColors.brand
-                                else -> WandColors.textMuted
-                            },
-                            modifier = Modifier.width(14.dp),
-                        )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.width(14.dp).height(17.dp),
+                        ) {
+                            when {
+                                todo.status == "completed" -> Icon(
+                                    WandIcons.check,
+                                    contentDescription = null,
+                                    tint = WandColors.success,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                isActive -> Box(
+                                    Modifier
+                                        .size(7.dp)
+                                        .background(WandColors.brand, CircleShape),
+                                )
+                                else -> Box(
+                                    Modifier
+                                        .size(7.dp)
+                                        .border(1.dp, WandColors.textMuted, CircleShape),
+                                )
+                            }
+                        }
                         Text(
                             todo.content,
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
-                            color = if (todo.status == "in_progress") {
-                                WandColors.textPrimary
-                            } else {
-                                WandColors.textSecondary
-                            },
+                            color = rowTextColor,
                             textDecoration = if (todo.status == "completed") {
                                 TextDecoration.LineThrough
                             } else {

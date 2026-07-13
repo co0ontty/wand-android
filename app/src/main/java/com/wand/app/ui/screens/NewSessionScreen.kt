@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,6 +59,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -78,7 +83,6 @@ import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.thinkingEffortOptions
-import com.wand.app.ui.ThinkingEffortSlider
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
@@ -86,6 +90,8 @@ import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.secondaryBarGlass
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 新建会话：
@@ -102,6 +108,9 @@ fun NewSessionScreen(
     onCreated: (SessionSnapshot) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val defaultsUpdateMutex = remember { Mutex() }
+    val defaultModelGenerations = remember { mutableMapOf<String, Int>() }
+    var defaultsUpdateGeneration by remember { mutableIntStateOf(0) }
 
     var cwd by remember { mutableStateOf("") }
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
@@ -113,6 +122,9 @@ fun NewSessionScreen(
     var codexModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
     var opencodeModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
     var serverDefaultModels by remember {
+        mutableStateOf(ProviderDefaultModels(claude = null, codex = null, opencode = null))
+    }
+    var confirmedDefaultModels by remember {
         mutableStateOf(ProviderDefaultModels(claude = null, codex = null, opencode = null))
     }
     var selectedModel by remember { mutableStateOf("") }
@@ -133,6 +145,13 @@ fun NewSessionScreen(
         else -> serverDefaultModels.claude
     }
     val thinkingLevels = thinkingEffortOptions(provider, selectedModel, serverDefaultModel, providerModels)
+    val thinkingLevelIds = thinkingLevels.map { it.id }
+    val canValidateThinkingEffort = provider != "codex" || providerModels.isNotEmpty()
+    val selectedThinkingLabel = thinkingLevels
+        .firstOrNull { it.id == thinkingEffort }
+        ?.label
+        ?: thinkingLevels.firstOrNull()?.label
+        ?: "自动"
     val supportedModes = supportedModeIds(provider)
 
     LaunchedEffect(Unit) {
@@ -149,11 +168,13 @@ fun NewSessionScreen(
         provider = configuredProvider
         isStructured = config?.defaultSessionKind != "pty"
         mode = supportedModeFor(config?.defaultMode ?: "managed", configuredProvider)
-        serverDefaultModels = config?.defaultModels ?: ProviderDefaultModels(
+        val configuredDefaults = config?.defaultModels ?: ProviderDefaultModels(
             claude = config?.defaultModel,
             codex = config?.defaultCodexModel,
             opencode = config?.defaultOpenCodeModel,
         )
+        serverDefaultModels = configuredDefaults
+        confirmedDefaultModels = configuredDefaults
         selectedModel = ""
         thinkingEffort = config?.defaultThinkingEffort ?: "off"
         try {
@@ -161,11 +182,13 @@ fun NewSessionScreen(
             availableModels = response.models
             codexModels = response.codexModels
             opencodeModels = response.opencodeModels
-            serverDefaultModels = response.defaultModels ?: ProviderDefaultModels(
+            val detectedDefaults = response.defaultModels ?: ProviderDefaultModels(
                 claude = response.defaultModel,
                 codex = response.defaultCodexModel,
                 opencode = response.defaultOpenCodeModel,
             )
+            serverDefaultModels = detectedDefaults
+            confirmedDefaultModels = detectedDefaults
         } catch (_: Exception) {
         }
         recentPaths = try {
@@ -201,20 +224,55 @@ fun NewSessionScreen(
         thinkingEffort: String? = null,
         defaultProvider: String? = null,
         defaultSessionKind: String? = null,
+        onSuccess: (() -> Unit)? = null,
+        onFailure: (() -> Unit)? = null,
     ) {
+        val generation = ++defaultsUpdateGeneration
         scope.launch {
-            try {
-                api.updateNewSessionDefaults(
-                    mode = mode,
-                    model = model,
-                    modelProvider = modelProvider,
-                    thinkingEffort = thinkingEffort,
-                    defaultProvider = defaultProvider,
-                    defaultSessionKind = defaultSessionKind,
-                )
-            } catch (e: Exception) {
-                errorMessage = e.message
+            defaultsUpdateMutex.withLock {
+                try {
+                    api.updateNewSessionDefaults(
+                        mode = mode,
+                        model = model,
+                        modelProvider = modelProvider,
+                        thinkingEffort = thinkingEffort,
+                        defaultProvider = defaultProvider,
+                        defaultSessionKind = defaultSessionKind,
+                    )
+                    onSuccess?.invoke()
+                } catch (e: Exception) {
+                    onFailure?.invoke()
+                    // 后续操作已经排队时，不让旧请求的迟到错误覆盖当前选择反馈。
+                    if (generation == defaultsUpdateGeneration) errorMessage = e.message
+                }
             }
+        }
+    }
+
+    fun normalizeThinkingEffort(nextProvider: String, nextModel: String?) {
+        val models = when (nextProvider) {
+            "codex" -> codexModels
+            "opencode" -> opencodeModels
+            else -> availableModels
+        }
+        if (nextProvider == "codex" && models.isEmpty()) return
+        val defaultModel = when (nextProvider) {
+            "codex" -> serverDefaultModels.codex
+            "opencode" -> serverDefaultModels.opencode
+            else -> serverDefaultModels.claude
+        }
+        val supported = thinkingEffortOptions(nextProvider, nextModel, defaultModel, models)
+            .any { it.id == thinkingEffort }
+        if (!supported) {
+            thinkingEffort = "off"
+            persistDefaults(thinkingEffort = "off")
+        }
+    }
+
+    LaunchedEffect(provider, selectedModel, thinkingLevelIds, thinkingEffort, canValidateThinkingEffort) {
+        if (canValidateThinkingEffort && thinkingEffort !in thinkingLevelIds) {
+            thinkingEffort = "off"
+            persistDefaults(thinkingEffort = "off")
         }
     }
 
@@ -226,35 +284,41 @@ fun NewSessionScreen(
         val prompt = firstMessage.trim().ifEmpty { null }
         val effectiveMode = supportedModeFor(mode, provider)
         val model = selectedModel.ifEmpty { null }
+        val sessionProvider = provider
+        val sessionThinkingEffort = thinkingEffort
+        val sessionKindIsStructured = isStructured
+        ++defaultsUpdateGeneration
         scope.launch {
             try {
                 // 选择项的即时保存协程会随页面离开而取消。创建前再把当前完整选择
                 // 同步写入服务端，保证其它客户端下次打开新建页能拿到最终值。
-                api.updateNewSessionDefaults(
-                    mode = effectiveMode,
-                    model = model,
-                    modelProvider = provider,
-                    thinkingEffort = thinkingEffort,
-                    defaultProvider = provider,
-                    defaultSessionKind = if (isStructured) "structured" else "pty",
-                )
-                val snapshot = if (isStructured) {
+                defaultsUpdateMutex.withLock {
+                    api.updateNewSessionDefaults(
+                        mode = effectiveMode,
+                        model = model,
+                        modelProvider = sessionProvider,
+                        thinkingEffort = sessionThinkingEffort,
+                        defaultProvider = sessionProvider,
+                        defaultSessionKind = if (sessionKindIsStructured) "structured" else "pty",
+                    )
+                }
+                val snapshot = if (sessionKindIsStructured) {
                     api.createStructuredSession(
                         cwd = path,
                         mode = effectiveMode,
                         prompt = prompt,
-                        provider = provider,
+                        provider = sessionProvider,
                         model = model,
-                        thinkingEffort = thinkingEffort,
+                        thinkingEffort = sessionThinkingEffort,
                     )
                 } else {
                     api.createPtySession(
                         cwd = path,
                         mode = effectiveMode,
                         initialInput = prompt,
-                        provider = provider,
+                        provider = sessionProvider,
                         model = model,
-                        thinkingEffort = thinkingEffort,
+                        thinkingEffort = sessionThinkingEffort,
                     )
                 }
                 creating = false
@@ -372,6 +436,7 @@ fun NewSessionScreen(
                     persistDefaults(defaultProvider = newProvider)
                     mode = supportedModeFor(mode, newProvider)
                     selectedModel = ""
+                    normalizeThinkingEffort(newProvider, "")
                 },
             )
 
@@ -411,19 +476,54 @@ fun NewSessionScreen(
                     },
                     selectedId = selectedModel,
                     onSelect = {
+                        val modelProvider = provider
+                        val newDefault = it
+                        val modelGeneration = (defaultModelGenerations[modelProvider] ?: 0) + 1
+                        defaultModelGenerations[modelProvider] = modelGeneration
                         selectedModel = it
-                        persistDefaults(model = it, modelProvider = provider)
+                        serverDefaultModels = serverDefaultModels.withDefault(modelProvider, newDefault)
+                        persistDefaults(
+                            model = newDefault,
+                            modelProvider = modelProvider,
+                            onSuccess = {
+                                confirmedDefaultModels = confirmedDefaultModels.withDefault(
+                                    modelProvider,
+                                    newDefault,
+                                )
+                                if (defaultModelGenerations[modelProvider] == modelGeneration) {
+                                    serverDefaultModels = serverDefaultModels.withDefault(
+                                        modelProvider,
+                                        newDefault,
+                                    )
+                                }
+                            },
+                            onFailure = {
+                                // 只回退该 Provider 的最新请求；旧失败不能覆盖更新的选择。
+                                // explicit selectedModel 仍作为“本次会话选择”保留；失败的只是默认偏好保存。
+                                // 切走 Provider 时 explicit 会被清空，切回后即展示这里回退的已确认默认值。
+                                if (defaultModelGenerations[modelProvider] == modelGeneration) {
+                                    serverDefaultModels = serverDefaultModels.withDefault(
+                                        modelProvider,
+                                        confirmedDefaultModels.defaultFor(modelProvider),
+                                    )
+                                }
+                            },
+                        )
+                        normalizeThinkingEffort(modelProvider, newDefault)
                     },
                     modifier = Modifier.weight(1f),
                 )
-                ThinkingEffortSlider(
-                    options = thinkingLevels,
-                    selection = thinkingEffort,
+                OptionMenuCard(
+                    title = "思考深度",
+                    value = selectedThinkingLabel,
+                    icon = WandIcons.thinking,
+                    options = thinkingLevels.map { it.id to it.menuLabel },
+                    selectedId = thinkingEffort,
                     onSelect = {
                         thinkingEffort = it
                         persistDefaults(thinkingEffort = it)
                     },
-                    modifier = Modifier.weight(1f).selectCard(selected = false),
+                    modifier = Modifier.weight(1f),
                 )
             }
 
@@ -467,6 +567,19 @@ fun NewSessionScreen(
     }
 }
 
+private fun ProviderDefaultModels.defaultFor(provider: String): String? = when (provider) {
+    "codex" -> codex
+    "opencode" -> opencode
+    else -> claude
+}
+
+private fun ProviderDefaultModels.withDefault(provider: String, value: String?): ProviderDefaultModels =
+    when (provider) {
+        "codex" -> copy(codex = value)
+        "opencode" -> copy(opencode = value)
+        else -> copy(claude = value)
+    }
+
 /** iOS 风格选择卡底：纯色 surface 平面 + 1pt 描边；选中切 brand 软底 + brand 1.5pt 描边。 */
 @Composable
 private fun Modifier.selectCard(selected: Boolean): Modifier {
@@ -499,7 +612,8 @@ private fun <T> WandSegmented(
         selected = selected,
         onSelect = onSelect,
         modifier = modifier,
-        minHeight = 42.dp,
+        // 非 flat 形态有上下各 3dp 的容器内边距；54dp 可确保内部每一项仍有 48dp 触控高度。
+        minHeight = 54.dp,
         labelFontSize = 14.sp,
     )
 }
@@ -526,8 +640,12 @@ private fun OptionMenuCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 48.dp)
                 .selectCard(selected = false)
-                .clickable { expanded = true }
+                .semantics(mergeDescendants = true) {
+                    stateDescription = "当前为$value"
+                }
+                .clickable(role = Role.DropdownList) { expanded = true }
                 .padding(horizontal = 10.dp, vertical = 8.dp),
         ) {
             Box(
@@ -587,9 +705,13 @@ private fun OptionMenuCard(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (isSel) WandColors.brandSoft else Color.Transparent)
-                                    .clickable {
+                                    .selectable(
+                                        selected = isSel,
+                                        role = Role.RadioButton,
+                                    ) {
                                         onSelect(id)
                                         expanded = false
                                     }
@@ -631,8 +753,14 @@ private fun ModeCard(
         verticalArrangement = Arrangement.spacedBy(2.dp),
         modifier = modifier
             .alpha(if (enabled) 1f else 0.4f)
+            .heightIn(min = 48.dp)
             .selectCard(selected)
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
             .padding(horizontal = 11.dp, vertical = 8.dp),
     ) {
         Text(
@@ -688,9 +816,10 @@ private fun CwdCard(
                 },
                 modifier = Modifier
                     .weight(1f)
+                    .heightIn(min = 48.dp)
                     .padding(start = 12.dp, top = 11.dp, bottom = 11.dp),
             )
-            IconButton(onClick = onBrowse, modifier = Modifier.size(44.dp)) {
+            IconButton(onClick = onBrowse, modifier = Modifier.size(48.dp)) {
                 Icon(
                     WandIcons.folder,
                     contentDescription = "浏览目录",
@@ -708,7 +837,8 @@ private fun CwdCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onPickRecent(recent.path) }
+                        .heightIn(min = 48.dp)
+                        .clickable(role = Role.Button) { onPickRecent(recent.path) }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
                     Icon(

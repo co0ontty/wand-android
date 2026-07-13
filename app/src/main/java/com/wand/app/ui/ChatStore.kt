@@ -13,6 +13,8 @@ import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import com.wand.app.data.WsData
 import com.wand.app.data.WsIncoming
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 
 /**
@@ -99,6 +101,16 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private val socket = WandSocket(api.baseUrl)
     private var started = false
     private var queuePromotePending = false
+    private val settingsMutationMutex = Mutex()
+    private var modelMutationGeneration = 0L
+    private var thinkingMutationGeneration = 0L
+    private var modeMutationGeneration = 0L
+    private var pendingModelMutations = 0
+    private var pendingThinkingMutations = 0
+    private var pendingModeMutations = 0
+    private var confirmedModel: String? = null
+    private var confirmedThinkingEffort = "off"
+    private var confirmedMode = "default"
 
     val isStructured: Boolean get() = snapshot?.isStructured ?: true
     val sessionEnded: Boolean get() = status in listOf("exited", "failed", "stopped")
@@ -172,9 +184,14 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         pendingEscalation = snap.pendingEscalation
         permissionBlocked = snap.permissionBlocked ?: (snap.pendingEscalation != null)
         currentTaskTitle = snap.currentTaskTitle
-        selectedModel = snap.selectedModel
-        thinkingEffort = snap.thinkingEffort ?: "off"
-        mode = snap.mode ?: mode
+        confirmedModel = snap.selectedModel
+        confirmedThinkingEffort = snap.thinkingEffort ?: "off"
+        if (pendingModelMutations == 0) selectedModel = confirmedModel
+        if (pendingThinkingMutations == 0) thinkingEffort = confirmedThinkingEffort
+        snap.mode?.let {
+            confirmedMode = it
+            if (pendingModeMutations == 0) mode = it
+        }
         if (snap.pendingEscalation != null) legacyPermissionPrompt = null
     }
 
@@ -265,52 +282,111 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             }
         }
         data.currentTaskTitle?.let { currentTaskTitle = it }
-        data.selectedModel?.let { selectedModel = it }
-        data.thinkingEffort?.let { thinkingEffort = it }
-        data.mode?.let { mode = it }
+        data.selectedModel?.let {
+            confirmedModel = it
+            if (pendingModelMutations == 0) selectedModel = it
+        }
+        data.thinkingEffort?.let {
+            confirmedThinkingEffort = it
+            if (pendingThinkingMutations == 0) thinkingEffort = it
+        }
+        data.mode?.let {
+            confirmedMode = it
+            if (pendingModeMutations == 0) mode = it
+        }
     }
 
-    // MARK: - 模型与思考深度（对齐 iOS setModel / setThinkingEffort：乐观更新 + 失败回滚）
+    // MARK: - 模型与思考深度（乐观更新 + 串行请求 + generation 防旧响应覆盖）
 
     fun setModel(model: String?) {
-        val previous = selectedModel
+        val generation = ++modelMutationGeneration
+        pendingModelMutations++
         selectedModel = model
         scope.launch {
+            var shouldNormalizeThinking = false
             try {
-                val snap = api.setModel(sessionId, model)
-                apply(snap)
+                settingsMutationMutex.withLock {
+                    val snap = api.setModel(sessionId, model)
+                    // 即使已有更新的本地选择，也记录服务端此刻的已确认基线；只让最新同字段操作改 UI。
+                    confirmedModel = snap.selectedModel
+                    confirmedThinkingEffort = snap.thinkingEffort ?: "off"
+                    if (generation == modelMutationGeneration) {
+                        selectedModel = confirmedModel
+                        shouldNormalizeThinking = true
+                    }
+                }
             } catch (e: Exception) {
-                selectedModel = previous
-                toast = e.message ?: "切换模型失败"
+                if (generation == modelMutationGeneration) {
+                    selectedModel = confirmedModel
+                    toast = e.message ?: "切换模型失败"
+                }
+            } finally {
+                pendingModelMutations--
             }
+            // 只有模型切换已被服务端确认且仍是最新选择时，才联动收敛思考档位。
+            // 模型请求失败时保留旧模型的真实思考深度。
+            if (shouldNormalizeThinking) normalizeThinkingEffortFor(confirmedModel)
         }
     }
 
     fun chooseThinkingEffort(effort: String) {
-        val previous = thinkingEffort
+        val generation = ++thinkingMutationGeneration
+        pendingThinkingMutations++
         thinkingEffort = effort
         scope.launch {
             try {
-                val snap = api.setThinkingEffort(sessionId, effort)
-                apply(snap)
+                settingsMutationMutex.withLock {
+                    val snap = api.setThinkingEffort(sessionId, effort)
+                    confirmedModel = snap.selectedModel
+                    confirmedThinkingEffort = snap.thinkingEffort ?: "off"
+                    if (generation == thinkingMutationGeneration) {
+                        thinkingEffort = confirmedThinkingEffort
+                    }
+                }
             } catch (e: Exception) {
-                thinkingEffort = previous
-                toast = e.message ?: "调整思考深度失败"
+                if (generation == thinkingMutationGeneration) {
+                    thinkingEffort = confirmedThinkingEffort
+                    toast = e.message ?: "调整思考深度失败"
+                }
+            } finally {
+                pendingThinkingMutations--
             }
         }
     }
 
+    /** 模型切换后若当前档位已不可用，立即把真实状态与服务端一起收敛到自动。 */
+    private fun normalizeThinkingEffortFor(model: String?) {
+        val provider = snapshot?.provider ?: "claude"
+        // Codex 的动态元数据尚未返回时不能用 legacy fallback 误判并覆盖服务端值。
+        if (provider == "codex" && availableModels.isEmpty()) return
+        val supported = thinkingEffortOptions(
+            provider = provider,
+            selectedModel = model,
+            defaultModel = defaultModel,
+            models = availableModels,
+        ).any { it.id == thinkingEffort }
+        if (!supported) chooseThinkingEffort("off")
+    }
+
     /** 中途切换执行模式（乐观更新 + 失败回滚）。codex 会话固定 full-access，调用方负责拦。 */
     fun chooseMode(newMode: String) {
-        val previous = mode
+        val generation = ++modeMutationGeneration
+        pendingModeMutations++
         mode = newMode
         scope.launch {
             try {
-                val snap = api.setMode(sessionId, newMode)
-                apply(snap)
+                settingsMutationMutex.withLock {
+                    val snap = api.setMode(sessionId, newMode)
+                    confirmedMode = snap.mode ?: newMode
+                    if (generation == modeMutationGeneration) mode = confirmedMode
+                }
             } catch (e: Exception) {
-                mode = previous
-                toast = e.message ?: "切换模式失败"
+                if (generation == modeMutationGeneration) {
+                    mode = confirmedMode
+                    toast = e.message ?: "切换模式失败"
+                }
+            } finally {
+                pendingModeMutations--
             }
         }
     }
@@ -328,6 +404,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             else -> response.models
         }
         defaultModel = response.defaultModelFor(provider)
+        normalizeThinkingEffortFor(selectedModel)
     }
 
     private suspend fun loadCardDefaults() {
