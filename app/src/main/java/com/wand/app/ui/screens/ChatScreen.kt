@@ -67,12 +67,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,6 +111,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.SessionWatcher
@@ -124,6 +128,7 @@ import com.wand.app.ui.ChatStore
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.ThinkingEffortOption
+import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.thinkingEffortOptions
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.LoadingState
@@ -153,6 +158,13 @@ private enum class ChatScrollMode {
     StickToBottom,
     Manual,
 }
+
+private data class HistoryScrollRequest(
+    val expanded: Boolean,
+    val anchorAbsoluteIndex: Int?,
+)
+
+private const val UNOBSERVED_TURN_INDEX = Int.MIN_VALUE
 
 /**
  * 原生聊天视图 —— 对称 iOS ChatView.swift：
@@ -196,8 +208,8 @@ fun ChatScreen(
 
     var draft by rememberSaveable(sessionId) { mutableStateOf("") }
     // 发送后跟随列表底部；用户手动浏览时暂停跟随。
-    var scrollMode by remember { mutableStateOf(ChatScrollMode.StickToBottom) }
-    val listState = rememberLazyListState()
+    var scrollMode by rememberSaveable(sessionId) { mutableStateOf(ChatScrollMode.StickToBottom) }
+    val listState = key(sessionId) { rememberLazyListState() }
     val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
 
@@ -214,9 +226,8 @@ fun ChatScreen(
     val focusManager = LocalFocusManager.current
 
     // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
-    // 历史不再折成单张「展开历史对话」摘要卡，改为每条助手回复各自带折叠头
-    // （头像 + 名字 + 折叠开关，见 TurnView / AssistantReplyHeader）：旧回复默认折起、当前展开，
-    // 像抽纸一样一截一截往上收。
+    // 最后一条用户消息之前的上文由一个稳定的边界控件折叠；展开后直接显示
+    // 完整 turn，不再叠加第二层「每条历史回复默认折叠」。
     val displayItems = remember(store.messages) { groupExplorationTurns(store.messages) }
     val lastUserTurnIndex = remember(store.messages) {
         store.messages.indexOfLast { it.role == "user" }
@@ -227,31 +238,95 @@ fun ChatScreen(
     val latestAssistantTurnIndex = remember(store.messages) {
         if (store.messages.lastOrNull()?.role != "user") store.messages.lastIndex else -1
     }
-    var historyExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
-    var expandedCurrentReplyIndex by rememberSaveable(sessionId) { mutableStateOf(-1) }
-    val historyItems = remember(displayItems, lastUserTurnIndex) {
-        if (lastUserTurnIndex > 0) {
+    val absoluteLatestAssistantTurnIndex = remember(store.loadedOffset, latestAssistantTurnIndex) {
+        if (latestAssistantTurnIndex >= 0) store.loadedOffset + latestAssistantTurnIndex else -1
+    }
+    var expandedHistoryBoundaryAbsoluteIndex by rememberSaveable(sessionId) {
+        mutableIntStateOf(-1)
+    }
+    var expandedCurrentReplyAbsoluteIndex by rememberSaveable(sessionId) { mutableIntStateOf(-1) }
+    var currentReplyWasExpandedBeforeHistory by rememberSaveable(sessionId) {
+        mutableStateOf(false)
+    }
+    var historyScrollRequest by remember(sessionId) {
+        mutableStateOf<HistoryScrollRequest?>(null)
+    }
+    var revealHistoryAfterBoundaryLoad by remember(sessionId) { mutableStateOf(false) }
+    var observedLastUserAbsoluteIndex by rememberSaveable(sessionId) {
+        mutableIntStateOf(UNOBSERVED_TURN_INDEX)
+    }
+    var observedLatestAssistantAbsoluteIndex by rememberSaveable(sessionId) {
+        mutableIntStateOf(UNOBSERVED_TURN_INDEX)
+    }
+    val effectiveExpandedCurrentReplyAbsoluteIndex =
+        if (
+            absoluteLatestAssistantTurnIndex >= 0 &&
+            observedLatestAssistantAbsoluteIndex != absoluteLatestAssistantTurnIndex
+        ) {
+            // 新回复第一次进入 composition 时先按默认展开渲染，避免等下一帧
+            // LaunchedEffect 写状态期间短暂闪成折叠头。
+            absoluteLatestAssistantTurnIndex
+        } else {
+            expandedCurrentReplyAbsoluteIndex
+        }
+    val historyExpanded =
+        absoluteLastUserTurnIndex >= 2 &&
+            expandedHistoryBoundaryAbsoluteIndex == absoluteLastUserTurnIndex
+    // 至少有一整轮旧对话（通常是 user + assistant 两个 turn）才折叠；只有一条
+    // 旧消息时直接展示，避免为了很短的上文多一次点击。
+    val hasCollapsedHistory = absoluteLastUserTurnIndex >= 2
+    val historyItems = remember(displayItems, lastUserTurnIndex, hasCollapsedHistory) {
+        if (hasCollapsedHistory && lastUserTurnIndex > 0) {
             displayItems.filter { messageItemTurnIndex(it) < lastUserTurnIndex }
         } else {
             emptyList()
         }
     }
-    val currentItems = remember(displayItems, lastUserTurnIndex) {
-        if (lastUserTurnIndex >= 0) {
+    val currentItems = remember(displayItems, lastUserTurnIndex, hasCollapsedHistory) {
+        if (hasCollapsedHistory && lastUserTurnIndex >= 0) {
             displayItems.filter { messageItemTurnIndex(it) >= lastUserTurnIndex }
         } else {
             displayItems
         }
     }
-    LaunchedEffect(absoluteLastUserTurnIndex, latestAssistantTurnIndex) {
-        historyExpanded = false
-        expandedCurrentReplyIndex = latestAssistantTurnIndex
+    // 只在新的用户/助手 turn 出现时重置。loadEarlier() 会改变局部下标，
+    // 但绝对下标不变，因此分页不会把刚展开的历史又自动收起。
+    LaunchedEffect(
+        absoluteLastUserTurnIndex,
+        absoluteLatestAssistantTurnIndex,
+        store.loading,
+    ) {
+        // Activity 重建时 ChatStore 会先短暂回到空窗口；跳过这个中间态，避免
+        // 把 rememberSaveable 恢复出的折叠状态立即清空。
+        if (store.loading && store.messages.isEmpty()) return@LaunchedEffect
+        val boundaryChanged =
+            observedLastUserAbsoluteIndex != absoluteLastUserTurnIndex ||
+                observedLatestAssistantAbsoluteIndex != absoluteLatestAssistantTurnIndex
+        if (boundaryChanged) {
+            val revealLoadedHistory =
+                revealHistoryAfterBoundaryLoad && absoluteLastUserTurnIndex >= 2
+            if (revealLoadedHistory) {
+                currentReplyWasExpandedBeforeHistory = absoluteLatestAssistantTurnIndex >= 0
+                expandedCurrentReplyAbsoluteIndex = -1
+                expandedHistoryBoundaryAbsoluteIndex = absoluteLastUserTurnIndex
+                historyScrollRequest = HistoryScrollRequest(
+                    expanded = true,
+                    anchorAbsoluteIndex = null,
+                )
+                revealHistoryAfterBoundaryLoad = false
+            } else {
+                expandedHistoryBoundaryAbsoluteIndex = -1
+                historyScrollRequest = null
+                expandedCurrentReplyAbsoluteIndex = absoluteLatestAssistantTurnIndex
+                currentReplyWasExpandedBeforeHistory = absoluteLatestAssistantTurnIndex >= 0
+                if (absoluteLastUserTurnIndex >= 0) revealHistoryAfterBoundaryLoad = false
+            }
+            observedLastUserAbsoluteIndex = absoluteLastUserTurnIndex
+            observedLatestAssistantAbsoluteIndex = absoluteLatestAssistantTurnIndex
+        }
     }
-    val unloadedHistoryCount = remember(store.loadedOffset, absoluteLastUserTurnIndex) {
-        if (absoluteLastUserTurnIndex > 0) minOf(store.loadedOffset, absoluteLastUserTurnIndex) else 0
-    }
-    val hasCollapsedHistory = historyItems.isNotEmpty() || unloadedHistoryCount > 0
-    val collapsedHistoryCount = historyItems.size + unloadedHistoryCount
+    // 绝对下标恰好等于当前用户消息之前的 turn 数，不会因探索卡合并而失真。
+    val collapsedHistoryCount = absoluteLastUserTurnIndex.coerceAtLeast(0)
 
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
     // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
@@ -269,42 +344,81 @@ fun ChatScreen(
         )
     }
 
-    // 监听完整消息列表而不是 size：流式回复会原地替换最后一条消息，数量不变。
-    // 顶部「加载更早」哨兵与历史折叠条都占项；跟随最新时锚到最后一条用户消息。
-    // 当前助手回复内部会把旧正文折进头部摘要，所以锚点不需要跟到整条消息尾部。
-    val headerOffset = if (store.canLoadEarlier) 1 else 0
-    val visibleHistoryCount = when {
-        !hasCollapsedHistory -> 0
-        historyExpanded -> historyItems.size + 1
-        else -> 0
+    // 有历史边界时只在展开态提供分页；若当前尾窗里完全没有 user turn，则必须
+    // 常驻一个显式入口，否则 loadedOffset > 0 的更早消息会永远不可达。
+    val showLoadEarlierSentinel = shouldShowLoadEarlierControl(
+        historyExpanded = historyExpanded,
+        hasCollapsedHistory = hasCollapsedHistory,
+        canLoadEarlier = store.canLoadEarlier,
+    )
+    val headerOffset = if (showLoadEarlierSentinel) 1 else 0
+    val visibleHistoryCount =
+        (if (historyExpanded) historyItems.size else 0) +
+            (if (hasCollapsedHistory) 1 else 0)
+    // bottomIndex 是最后的 chat-bottom 哨兵下标（即它之前的项数）。
+    val bottomIndex = headerOffset + visibleHistoryCount + currentItems.size +
+        if (store.isResponding) 1 else 0
+
+    // 折叠/展开后的定位必须等新列表真正进入布局；固定 delay 会和网络分页、慢设备
+    // 竞争。请求在分页结束后跨一帧执行，锚点始终按最新 loadedOffset 重新解析。
+    LaunchedEffect(
+        historyScrollRequest,
+        store.loadingEarlier,
+        store.loadedOffset,
+    ) {
+        val request = historyScrollRequest ?: return@LaunchedEffect
+        if (request.expanded != historyExpanded) return@LaunchedEffect
+        if (request.expanded && store.loadingEarlier) return@LaunchedEffect
+        withFrameNanos { }
+        if (historyScrollRequest != request) return@LaunchedEffect
+        val target = if (request.expanded) {
+            request.anchorAbsoluteIndex?.let { anchor ->
+                historyAnchorListIndex(
+                    historyItems = historyItems,
+                    loadedOffset = store.loadedOffset,
+                    anchorAbsoluteIndex = anchor,
+                    hasLoadEarlierSentinel = showLoadEarlierSentinel,
+                )
+            } ?: historyDisclosureListIndex(
+                historyItemCount = historyItems.size,
+                hasLoadEarlierSentinel = showLoadEarlierSentinel,
+            )
+        } else {
+            0
+        }
+        try {
+            listState.animateScrollToItem(target.coerceAtLeast(0))
+        } finally {
+            // 用户手势可中断动画；无论完成还是被打断，都消费这次请求，避免
+            // 后续分页更新又把用户拉回旧锚点。新请求不会被旧协程清掉。
+            if (historyScrollRequest == request) historyScrollRequest = null
+        }
     }
-    val bottomIndex = headerOffset + visibleHistoryCount + currentItems.size + if (store.isResponding) 1 else 0
-    // 完整回复展开后，滚动只浏览内容，不再把下拉手势解释为“恢复折叠”。
-    // 收起/折叠交给标题行的显式按钮，避免用户正常阅读时被意外带回摘要态。
-    val followPauseConnection = remember(density, expandedCurrentReplyIndex, focusManager) {
+
+    // 用户只要开始向上浏览旧内容就暂停贴底跟随；无需先拉到整个列表顶部。
+    val followPauseConnection = remember(density, focusManager) {
         val manualThresholdPx = with(density) { 18.dp.toPx() }
         object : NestedScrollConnection {
-            private var pulledDown = 0f
+            private var pulledTowardHistory = 0f
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput) {
                     if (available.y != 0f) focusManager.clearFocus()
                     if (available.y > 0f) {
-                        // 只有列表已滚到顶部无法继续向上滚时，累计下拉距离；
-                        // 否则用户是在展开内容中向下浏览，不应触发收起。
-                        val atTop = !listState.canScrollBackward
-                        if (atTop) {
-                            pulledDown += available.y
-                        } else {
-                            pulledDown = 0f
-                        }
-                        if (pulledDown > manualThresholdPx) {
+                        pulledTowardHistory += available.y
+                        if (pulledTowardHistory > manualThresholdPx) {
                             scrollMode = ChatScrollMode.Manual
                         }
                     } else if (available.y < 0f) {
-                        pulledDown = 0f
+                        pulledTowardHistory = 0f
                     }
                 }
                 return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                // 每次拖动独立计阈值，避免多个很小的下拉手势累积成误触发。
+                pulledTowardHistory = 0f
+                return Velocity.Zero
             }
         }
     }
@@ -325,38 +439,76 @@ fun ChatScreen(
     }
     // 展开某条折叠回复时，把它的「头（第一行）」滚到顶部区域来读，且不被顶出屏幕上沿；
     // 同时暂停贴底跟随，免得流式刷新又把视图拽回底部。
-    val scrollReplyToTop: (Int) -> Unit = { turnIdx ->
+    val scrollReplyToTop: (Int) -> Unit = { absoluteTurnIndex ->
         scrollMode = ChatScrollMode.Manual
-        expandedCurrentReplyIndex = -1
+        expandedCurrentReplyAbsoluteIndex = -1
         scrollScope.launch {
-            val visibleItems = if (historyExpanded) historyItems + currentItems else currentItems
-            val p = visibleItems.indexOfFirst { messageItemTurnIndex(it) == turnIdx }
-            if (p >= 0) listState.animateScrollToItem(headerOffset + p)
+            val historyPosition = if (historyExpanded) {
+                historyItems.indexOfFirst {
+                    store.loadedOffset + messageItemTurnIndex(it) == absoluteTurnIndex
+                }
+            } else {
+                -1
+            }
+            val currentPosition = currentItems.indexOfFirst {
+                store.loadedOffset + messageItemTurnIndex(it) == absoluteTurnIndex
+            }
+            val target = when {
+                historyPosition >= 0 -> headerOffset + historyPosition
+                currentPosition >= 0 -> headerOffset +
+                    (if (historyExpanded) historyItems.size else 0) +
+                    (if (hasCollapsedHistory) 1 else 0) +
+                    currentPosition
+                else -> -1
+            }
+            if (target >= 0) listState.animateScrollToItem(target)
         }
     }
     val toggleHistory: () -> Unit = {
         val next = !historyExpanded
-        scrollMode = if (next) ChatScrollMode.Manual else ChatScrollMode.StickToBottom
-        if (next) expandedCurrentReplyIndex = -1
-        historyExpanded = next
-        if (next) store.loadEarlier()
-        scrollScope.launch {
-            delay(50)
-            listState.animateScrollToItem(headerOffset)
+        val boundaryAnchorAbsoluteIndex = historyItems.lastOrNull()?.let {
+            store.loadedOffset + messageItemTurnIndex(it)
+        }
+        scrollMode = ChatScrollMode.Manual
+        if (next) {
+            currentReplyWasExpandedBeforeHistory =
+                absoluteLatestAssistantTurnIndex >= 0 &&
+                    effectiveExpandedCurrentReplyAbsoluteIndex == absoluteLatestAssistantTurnIndex
+            expandedCurrentReplyAbsoluteIndex = -1
+        } else {
+            expandedCurrentReplyAbsoluteIndex =
+                if (currentReplyWasExpandedBeforeHistory) absoluteLatestAssistantTurnIndex else -1
+        }
+        expandedHistoryBoundaryAbsoluteIndex =
+            if (next) absoluteLastUserTurnIndex else -1
+        historyScrollRequest = HistoryScrollRequest(
+            expanded = next,
+            anchorAbsoluteIndex = boundaryAnchorAbsoluteIndex,
+        )
+        // 本地已有历史时先直接展示，继续向上滚到哨兵再分页；只有当前窗口
+        // 完全没有历史内容时才预取一页，避免每次开合都无条件请求网络。
+        if (next && historyItems.isEmpty()) {
+            store.loadEarlier()
         }
     }
-    val expandCurrentReplyToBottom: (Int) -> Unit = { turnIdx ->
-        expandedCurrentReplyIndex = turnIdx
-        historyExpanded = false
+    val expandCurrentReplyToBottom: (Int) -> Unit = { absoluteTurnIndex ->
+        expandedCurrentReplyAbsoluteIndex = absoluteTurnIndex
+        currentReplyWasExpandedBeforeHistory = true
+        expandedHistoryBoundaryAbsoluteIndex = -1
+        historyScrollRequest = null
         scrollMode = ChatScrollMode.StickToBottom
         scrollScope.launch {
             for (waitMs in listOf(50L, 150L, 350L, 700L)) {
                 delay(waitMs)
-                if (expandedCurrentReplyIndex != turnIdx) break
+                if (
+                    expandedCurrentReplyAbsoluteIndex != absoluteTurnIndex ||
+                    scrollMode == ChatScrollMode.Manual
+                ) break
+                val target = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
                 if (waitMs == 50L) {
-                    listState.animateScrollToItem(bottomIndex)
+                    listState.animateScrollToItem(target)
                 } else {
-                    listState.scrollToItem(bottomIndex)
+                    listState.scrollToItem(target)
                 }
             }
         }
@@ -463,8 +615,10 @@ fun ChatScreen(
             draft = ""
             pendingAttachments = emptyList()
             scrollMode = ChatScrollMode.StickToBottom
-            historyExpanded = false
-            expandedCurrentReplyIndex = -1
+            expandedHistoryBoundaryAbsoluteIndex = -1
+            historyScrollRequest = null
+            expandedCurrentReplyAbsoluteIndex = -1
+            currentReplyWasExpandedBeforeHistory = false
             store.send(text)
         } },
     ) { padding ->
@@ -505,47 +659,69 @@ fun ChatScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        // 窗口化：顶部还有更早消息时放一个哨兵项。滚到顶进入视口即自动拉
-                        // 下一页（prepend）。初始固定在底部，哨兵不在视口，不会误触发。
-                        if (store.canLoadEarlier) {
+                        // 显式分页控件：有边界时随历史展开出现；尾窗没有 user 时
+                        // 常驻在顶部，保证更早消息始终可达。
+                        if (showLoadEarlierSentinel) {
                             item(key = "chat-load-earlier") {
-                                LaunchedEffect(Unit) { store.loadEarlier() }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically,
+                                TextButton(
+                                    onClick = {
+                                        if (!hasCollapsedHistory) {
+                                            revealHistoryAfterBoundaryLoad = true
+                                        }
+                                        store.loadEarlier()
+                                    },
+                                    enabled = !store.loadingEarlier,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp),
                                 ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = WandColors.brand,
-                                    )
-                                    Spacer(Modifier.size(8.dp))
+                                    if (store.loadingEarlier) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = WandColors.brand,
+                                        )
+                                        Spacer(Modifier.size(8.dp))
+                                    } else {
+                                        Icon(
+                                            WandIcons.history,
+                                            contentDescription = null,
+                                            tint = WandColors.brand,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(Modifier.size(8.dp))
+                                    }
                                     Text(
-                                        "加载更早的消息…",
+                                        if (store.loadingEarlier) "正在加载更早消息…" else "加载更早消息",
                                         fontSize = 12.sp,
                                         color = WandColors.textSecondary,
                                     )
                                 }
                             }
                         }
-                        // key = index：流式原地替换最后一条时 key 不变不触发动画，
-                        // 只有真正新增的消息才走 animateItem 淡入。
+                        // key 基于绝对 turn 位置/稳定工具 id：prepend 分页不会重建所有卡片。
                         if (hasCollapsedHistory) {
                             if (historyExpanded && historyItems.isNotEmpty()) {
                                 itemsIndexed(
                                     historyItems,
-                                    key = { _, item -> "history-${messageItemKey(item)}" },
+                                    key = { _, item ->
+                                        "history-${messageItemKey(
+                                            item = item,
+                                            loadedOffset = store.loadedOffset,
+                                            anchorExplorationAtEnd = true,
+                                        )}"
+                                    },
                                 ) { _, item ->
-                                    Box(modifier = Modifier.animateItem()) {
+                                    Box {
                                         when (item) {
                                             is MessageDisplayItem.Turn -> TurnView(
                                                 item.turn,
                                                 isLastTurn = false,
                                                 isResponding = false,
-                                                turnIndex = item.index,
-                                                historyBoundary = lastUserTurnIndex,
-                                                onUserExpand = { scrollReplyToTop(item.index) },
+                                                compactUser = true,
+                                                onUserExpand = {
+                                                    scrollReplyToTop(store.loadedOffset + item.index)
+                                                },
                                                 askSelections = store.askUserSelections,
                                                 onAskToggle = { toolUseId, qIdx, optIdx, multi ->
                                                     store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
@@ -563,102 +739,60 @@ fun ChatScreen(
                                     }
                                 }
                             }
-                            if (historyExpanded) {
-                                item(key = "history-summary") {
-                                    HistorySummaryStrip(
-                                        count = collapsedHistoryCount,
-                                        preview = historyPreview(store.messages, lastUserTurnIndex),
-                                        expanded = true,
-                                        onToggle = toggleHistory,
-                                    )
-                                }
-                            }
-                            if (historyExpanded && store.loadingEarlier && historyItems.isEmpty()) {
-                                item(key = "history-loading-earlier") {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = WandColors.brand,
-                                        )
-                                        Spacer(Modifier.size(8.dp))
-                                        Text(
-                                            "正在展开历史消息…",
-                                            fontSize = 12.sp,
-                                            color = WandColors.textSecondary,
-                                        )
-                                    }
-                                }
+                            item(key = "history-boundary-$absoluteLastUserTurnIndex") {
+                                HistoryDisclosureRow(
+                                    count = collapsedHistoryCount,
+                                    preview = historyPreview(store.messages, lastUserTurnIndex),
+                                    expanded = historyExpanded,
+                                    onToggle = toggleHistory,
+                                )
                             }
                         }
                         itemsIndexed(
                             currentListItems,
-                            key = { _, item -> "current-${messageItemKey(item)}" },
+                            key = { _, item ->
+                                "current-${messageItemKey(item, store.loadedOffset)}"
+                            },
                         ) { _, item ->
                             Box(modifier = Modifier.animateItem()) {
                                 when (item) {
                                     is MessageDisplayItem.Turn -> {
+                                        val absoluteTurnIndex = store.loadedOffset + item.index
                                         val controlsCurrentReplyExpansion = item.index == store.messages.lastIndex &&
                                             item.turn.role != "user"
-                                        val showInlineHistory = hasCollapsedHistory &&
-                                            !historyExpanded &&
-                                            item.index == lastUserTurnIndex &&
-                                            item.turn.role == "user"
-                                        val renderTurn: @Composable () -> Unit = {
-                                            TurnView(
-                                                item.turn,
-                                                isLastTurn = item.index == store.messages.lastIndex,
-                                                isResponding = store.isResponding,
-                                                compactUser = false,
-                                                currentReplyExpandedOverride =
+                                        TurnView(
+                                            item.turn,
+                                            isLastTurn = item.index == store.messages.lastIndex,
+                                            isResponding = store.isResponding,
+                                            compactUser = false,
+                                            currentReplyExpandedOverride =
                                                     if (controlsCurrentReplyExpansion) {
-                                                        expandedCurrentReplyIndex == item.index
-                                                    } else {
-                                                        null
-                                                    },
-                                                turnIndex = item.index,
-                                                historyBoundary = lastUserTurnIndex,
-                                                showHeader = true,
-                                                onUserExpand = { scrollReplyToTop(item.index) },
-                                                onCurrentReplyExpandedChange = { expanded ->
-                                                    if (controlsCurrentReplyExpansion) {
-                                                        expandedCurrentReplyIndex = if (expanded) item.index else -1
-                                                    }
+                                                        effectiveExpandedCurrentReplyAbsoluteIndex == absoluteTurnIndex
+                                                } else {
+                                                    null
                                                 },
-                                                onCurrentReplyExpandToBottom = {
-                                                    if (controlsCurrentReplyExpansion) {
-                                                        expandCurrentReplyToBottom(item.index)
-                                                    }
-                                                },
-                                                askSelections = store.askUserSelections,
-                                                onAskToggle = { toolUseId, qIdx, optIdx, multi ->
-                                                    store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
-                                                },
-                                                onAskSubmit = { toolUseId, answerText ->
-                                                    scrollMode = ChatScrollMode.StickToBottom
-                                                    store.submitAskUser(toolUseId, answerText)
-                                                },
-                                            )
-                                        }
-                                        if (showInlineHistory) {
-                                            Column(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                            ) {
-                                                InlineHistoryChip(
-                                                    count = collapsedHistoryCount,
-                                                    onToggle = toggleHistory,
-                                                    modifier = Modifier.padding(start = 2.dp),
-                                                )
-                                                renderTurn()
-                                            }
-                                        } else {
-                                            renderTurn()
-                                        }
+                                            showHeader = true,
+                                            onUserExpand = { scrollReplyToTop(absoluteTurnIndex) },
+                                            onCurrentReplyExpandedChange = { expanded ->
+                                                if (controlsCurrentReplyExpansion) {
+                                                    expandedCurrentReplyAbsoluteIndex =
+                                                        if (expanded) absoluteTurnIndex else -1
+                                                }
+                                            },
+                                            onCurrentReplyExpandToBottom = {
+                                                if (controlsCurrentReplyExpansion) {
+                                                    expandCurrentReplyToBottom(absoluteTurnIndex)
+                                                }
+                                            },
+                                            askSelections = store.askUserSelections,
+                                            onAskToggle = { toolUseId, qIdx, optIdx, multi ->
+                                                store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
+                                            },
+                                            onAskSubmit = { toolUseId, answerText ->
+                                                scrollMode = ChatScrollMode.StickToBottom
+                                                store.submitAskUser(toolUseId, answerText)
+                                            },
+                                        )
                                     }
                                     is MessageDisplayItem.Exploration -> ExplorationGroupCard(
                                         tools = item.tools,
@@ -702,22 +836,6 @@ fun ChatScreen(
                 visible = !store.connected,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
-            AnimatedVisibility(
-                visible = historyExpanded && hasCollapsedHistory,
-                enter = fadeIn(WandMotion.tweenFast()) +
-                    scaleIn(initialScale = 0.88f, animationSpec = WandMotion.tweenFast()),
-                exit = fadeOut(WandMotion.tweenFast()) +
-                    scaleOut(targetScale = 0.88f, animationSpec = WandMotion.tweenFast()),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, bottom = 12.dp),
-            ) {
-                InlineHistoryChip(
-                    count = collapsedHistoryCount,
-                    expanded = true,
-                    onToggle = toggleHistory,
-                )
-            }
             // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。用户上滚后点它，回到真正的列表底部。
             AnimatedVisibility(
                 visible = !store.loading &&
@@ -739,7 +857,11 @@ fun ChatScreen(
                         .glassSurface(glassBackdrop, CircleShape, WandGlass.accent)
                         .clickable {
                             scrollMode = ChatScrollMode.StickToBottom
-                            historyExpanded = false
+                            expandedHistoryBoundaryAbsoluteIndex = -1
+                            historyScrollRequest = null
+                            expandedCurrentReplyAbsoluteIndex = absoluteLatestAssistantTurnIndex
+                            currentReplyWasExpandedBeforeHistory =
+                                absoluteLatestAssistantTurnIndex >= 0
                             scrollScope.launch {
                                 delay(50)
                                 val target = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
@@ -861,113 +983,168 @@ private fun compactChatPath(path: String?): String? {
 }
 
 @Composable
-private fun HistorySummaryStrip(
+private fun HistoryDisclosureRow(
     count: Int,
     preview: String,
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(12.dp)
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clip(CircleShape)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.62f))
-            .border(0.55.dp, WandColors.border.copy(alpha = 0.42f), CircleShape)
-            .clickable(onClick = onToggle)
+            .clip(shape)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
+            .border(0.55.dp, WandColors.border.copy(alpha = 0.52f), shape)
+            .clickable(
+                onClickLabel = if (expanded) "收起历史对话" else "展开历史对话",
+                role = Role.Button,
+                onClick = onToggle,
+            )
+            .semantics(mergeDescendants = true) {
+                stateDescription = if (expanded) "历史已展开" else "历史已收起"
+            }
+            .heightIn(min = 56.dp)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Icon(
-            WandIcons.expand,
-            contentDescription = null,
-            tint = WandColors.textMuted,
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(15.dp)
-                .graphicsLayer { rotationZ = if (expanded) 90f else -90f },
-        )
-        Text(
-            "已收起 $count 段上文",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = WandColors.textSecondary,
-            maxLines = 1,
-        )
-        if (preview.isNotBlank()) {
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(WandColors.brandSoft),
+        ) {
+            Icon(
+                WandIcons.history,
+                contentDescription = null,
+                tint = WandColors.brand,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        Column(
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+            modifier = Modifier.weight(1f),
+        ) {
             Text(
-                preview,
-                fontSize = 12.sp,
-                color = WandColors.textMuted,
+                if (expanded) "收起早些对话" else "查看早些对话",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+            )
+            Text(
+                buildString {
+                    append(count)
+                    append(" 条消息")
+                    if (preview.isNotBlank()) {
+                        append(" · ")
+                        append(preview)
+                    }
+                },
+                fontSize = 11.sp,
+                color = WandColors.textSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
             )
-        } else {
-            Spacer(modifier = Modifier.weight(1f))
         }
-        Text(
-            if (expanded) "收起" else "展开",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = WandColors.brand,
-        )
-    }
-}
-
-@Composable
-private fun InlineHistoryChip(
-    count: Int,
-    expanded: Boolean = false,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        modifier = modifier
-            .widthIn(max = 132.dp)
-            .clip(CircleShape)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.62f))
-            .border(0.55.dp, WandColors.border.copy(alpha = 0.42f), CircleShape)
-            .clickable(onClick = onToggle)
-            .padding(horizontal = 8.dp, vertical = 7.dp),
-    ) {
-        Icon(
-            WandIcons.expand,
+        ExpandChevron(
+            expanded = expanded,
+            tint = WandColors.textSecondary,
+            size = 18.dp,
             contentDescription = null,
-            tint = WandColors.textMuted,
-            modifier = Modifier
-                .size(13.dp)
-                .graphicsLayer { rotationZ = if (expanded) 90f else -90f },
-        )
-        Text(
-            if (expanded) "收起上文" else "已收起 $count 段",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = WandColors.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
-private fun historyPreview(messages: List<ConversationTurn>, beforeTurnIndex: Int): String {
+internal fun historyPreview(messages: List<ConversationTurn>, beforeTurnIndex: Int): String {
     if (beforeTurnIndex <= 0) return ""
-    for (turn in messages.take(beforeTurnIndex).asReversed()) {
-        val text = turn.content
-            .filterIsInstance<ContentBlock.Text>()
-            .joinToString(" ") { it.text }
-            .trim()
-            .replace(Regex("\\s+"), " ")
-        if (text.isNotEmpty()) return text
-    }
-    return ""
+    val previousTurns = messages.take(beforeTurnIndex).asReversed()
+    return previousTurns.asSequence()
+        .filter { it.role == "user" }
+        .map(::conversationTurnPreview)
+        .firstOrNull { it.isNotBlank() }
+        ?: previousTurns.asSequence()
+            .map(::conversationTurnPreview)
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
 }
 
-private fun messageItemKey(item: MessageDisplayItem): String = when (item) {
-    is MessageDisplayItem.Turn -> "turn-${item.index}"
-    is MessageDisplayItem.Exploration -> "explore-${item.lastTurnIndex}"
+internal fun conversationTurnPreview(turn: ConversationTurn): String {
+    val rawText = turn.content
+        .filterIsInstance<ContentBlock.Text>()
+        .joinToString(" ") { it.text }
+    if (rawText.isNotBlank()) {
+        val parsed = if (turn.role == "user") parseUserAttachmentText(rawText) else null
+        val body = compactPreviewText(parsed?.body ?: rawText)
+        if (body.isNotBlank()) return body
+        parsed?.paths?.takeIf { it.isNotEmpty() }?.let { paths ->
+            return "${paths.size} 个附件"
+        }
+    }
+    val toolCount = turn.content.count { it is ContentBlock.ToolUse }
+    return if (toolCount > 0) "$toolCount 个工具调用" else ""
 }
+
+internal fun compactPreviewText(text: String): String {
+    val compacted = text
+        .lineSequence()
+        .map { line ->
+            line.trim().replaceFirst(Regex("^(#{1,6}|[-+*>])\\s+"), "")
+        }
+        .joinToString(" ")
+        .replace(Regex("\\[([^]]+)]\\([^)]+\\)"), "$1")
+        // 下划线常属于文件名/标识符；不要像 Markdown 装饰符一样全局删除。
+        .replace(Regex("[`*~]+"), "")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    val preview = compacted.take(240)
+    return if (preview.lastOrNull()?.isHighSurrogate() == true) preview.dropLast(1) else preview
+}
+
+internal fun messageItemKey(
+    item: MessageDisplayItem,
+    loadedOffset: Int,
+    anchorExplorationAtEnd: Boolean = false,
+): String = when (item) {
+    is MessageDisplayItem.Turn -> "turn-${loadedOffset + item.index}"
+    is MessageDisplayItem.Exploration -> {
+        // 当前流式分组从右侧增长，用首个 tool id；历史分页从左侧 prepend，
+        // 用绝对右边界。两类列表分别锚住不变的一端，避免局部展开状态抖动。
+        val stableIdentity = if (anchorExplorationAtEnd) {
+            (loadedOffset + item.lastTurnIndex).toString()
+        } else {
+            item.tools.firstOrNull()?.use?.id?.takeIf { it.isNotBlank() }
+                ?: (loadedOffset + item.lastTurnIndex).toString()
+        }
+        "explore-$stableIdentity"
+    }
+}
+
+internal fun historyAnchorListIndex(
+    historyItems: List<MessageDisplayItem>,
+    loadedOffset: Int,
+    anchorAbsoluteIndex: Int,
+    hasLoadEarlierSentinel: Boolean,
+): Int {
+    val anchorPosition = historyItems.indexOfFirst {
+        loadedOffset + messageItemTurnIndex(it) == anchorAbsoluteIndex
+    }
+    val targetPosition = if (anchorPosition >= 0) anchorPosition else historyItems.size
+    return (if (hasLoadEarlierSentinel) 1 else 0) + targetPosition
+}
+
+internal fun historyDisclosureListIndex(
+    historyItemCount: Int,
+    hasLoadEarlierSentinel: Boolean,
+): Int = historyItemCount.coerceAtLeast(0) + if (hasLoadEarlierSentinel) 1 else 0
+
+internal fun shouldShowLoadEarlierControl(
+    historyExpanded: Boolean,
+    hasCollapsedHistory: Boolean,
+    canLoadEarlier: Boolean,
+): Boolean = canLoadEarlier && (historyExpanded || !hasCollapsedHistory)
 
 /** 空结构化会话的居中启动卡：首条消息前显示模型/思考深度，发送后自然消失。 */
 @Composable

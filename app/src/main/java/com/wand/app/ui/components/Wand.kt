@@ -72,7 +72,10 @@ import com.wand.app.ui.theme.surfaceSheenBrush
 
 /** 用于卡片内部折叠标题行，避免默认 ripple 在圆角卡片里扩散成白色矩形。 */
 @Composable
-fun Modifier.clickableWithoutRipple(onClick: () -> Unit): Modifier {
+fun Modifier.clickableWithoutRipple(
+    onClickLabel: String? = null,
+    onClick: () -> Unit,
+): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressAlpha by animateFloatAsState(
@@ -84,6 +87,7 @@ fun Modifier.clickableWithoutRipple(onClick: () -> Unit): Modifier {
         .clickable(
             interactionSource = interaction,
             indication = null,
+            onClickLabel = onClickLabel,
             role = Role.Button,
             onClick = onClick,
         )

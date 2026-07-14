@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -56,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -68,10 +70,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,7 +83,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
@@ -100,6 +103,7 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlin.math.roundToInt
 import kotlinx.coroutines.async
@@ -145,12 +149,18 @@ class SessionListState(val api: WandApi) {
     /** 本机可恢复会话：过滤空记录 / 已被 wand 纳管的记录。 */
     val visibleHistorySessions: List<HistorySession>
         get() {
-            val managedIds = sessions.mapNotNull { it.claudeSessionId }.toSet()
+            val managedKeys = sessions.mapNotNull { session ->
+                session.claudeSessionId?.let { providerSessionId ->
+                    historyApiProvider(session.provider)?.let { provider ->
+                        provider to providerSessionId
+                    }
+                }
+            }.toSet()
             return historySessions
                 .filter {
                     (it.hasConversation ?: true) &&
                         !(it.managedByWand ?: false) &&
-                        it.claudeSessionId !in managedIds
+                        (it.apiProvider to it.claudeSessionId) !in managedKeys
                 }
                 .sortedByDescending { it.mtimeMs ?: 0.0 }
         }
@@ -164,13 +174,18 @@ class SessionListState(val api: WandApi) {
     suspend fun load(silent: Boolean = false) {
         if (!silent) loading = true
         try {
+            val previousClaude = historySessions.filter { it.apiProvider == "claude" }
+            val previousCodex = historySessions.filter { it.apiProvider == "codex" }
             coroutineScope {
                 val active = async { api.listSessions() }
-                // 历史扫描端点单独容错：失败不拖垮会话列表本身。
-                val claude = async { runCatching { api.listClaudeHistory() }.getOrDefault(emptyList()) }
-                val codex = async { runCatching { api.listCodexHistory() }.getOrDefault(emptyList()) }
+                // 历史扫描端点单独容错：失败不拖垮会话列表，也不让一次瞬时
+                // 故障把上一轮成功加载的 provider 历史整批清空。
+                val claude = async { runCatching { api.listClaudeHistory() } }
+                val codex = async { runCatching { api.listCodexHistory() } }
                 sessions = active.await()
-                historySessions = claude.await() + codex.await()
+                historySessions =
+                    claude.await().getOrElse { previousClaude } +
+                        codex.await().getOrElse { previousCodex }
             }
             loadError = null
         } catch (e: Exception) {
@@ -188,7 +203,11 @@ class SessionListState(val api: WandApi) {
     fun removeLocally(session: SessionSnapshot) {
         sessions = sessions.filter { it.id != session.id }
         session.claudeSessionId?.let { providerSessionId ->
-            historySessions = historySessions.filter { it.claudeSessionId != providerSessionId }
+            historyApiProvider(session.provider)?.let { provider ->
+                historySessions = historySessions.filter {
+                    it.claudeSessionId != providerSessionId || it.apiProvider != provider
+                }
+            }
         }
     }
 
@@ -202,6 +221,12 @@ class SessionListState(val api: WandApi) {
         val keys = targets.mapTo(mutableSetOf()) { it.apiProvider to it.id }
         historySessions = historySessions.filter { (it.apiProvider to it.id) !in keys }
     }
+}
+
+private fun historyApiProvider(provider: String?): String? = when (provider) {
+    "codex" -> "codex"
+    null, "", "claude" -> "claude"
+    else -> null
 }
 
 /**
@@ -229,6 +254,8 @@ fun SessionListScreen(
     var isSelecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var restoringHistoryKey by remember { mutableStateOf<String?>(null) }
+    // 同一时间只保留一条侧滑操作，避免多个红色操作区悬在列表里造成状态混乱。
+    var revealedEntryKey by remember { mutableStateOf<String?>(null) }
     // 多选拖拽：行 id → 窗口坐标 bounds；拖动经过的行连续加入选择（对齐 iOS 范围选择）。
     val rowBounds = remember { mutableMapOf<String, Rect>() }
     var dragAnchorId by remember { mutableStateOf<String?>(null) }
@@ -245,6 +272,11 @@ fun SessionListScreen(
     val selectableKeys = visibleEntries.map { it.key }.toSet()
     LaunchedEffect(selectableKeys, isSelecting) {
         if (isSelecting) selectedIds = selectedIds.intersect(selectableKeys)
+        if (isSelecting || revealedEntryKey !in selectableKeys) revealedEntryKey = null
+    }
+    LaunchedEffect(state.scrollState.isScrollInProgress) {
+        // 开始纵向浏览时收起操作区，避免删除按钮跟着列表长距离滚动。
+        if (state.scrollState.isScrollInProgress) revealedEntryKey = null
     }
     LaunchedEffect(state.loadError, visibleEntries.isNotEmpty()) {
         val message = state.loadError ?: return@LaunchedEffect
@@ -254,18 +286,6 @@ fun SessionListScreen(
         }
     }
 
-    val context = LocalContext.current
-    LaunchedEffect(Unit) {
-        state.load(silent = state.sessions.isNotEmpty())
-        while (true) {
-            delay(10_000)
-            state.load(silent = true)
-        }
-    }
-    // 会话列表变化时同步长按图标快捷项（对称 iOS updateRecentSessionShortcuts）。
-    LaunchedEffect(state.sessions) {
-        com.wand.app.WandShortcuts.update(context, state.sessions)
-    }
     // 液态玻璃：列表是 backdrop 捕获源，顶栏/多选栏悬浮其上采样模糊。
     val glassBackdrop = rememberGlassBackdrop()
     // 顶栏玻璃去掉厚重投影：全幅栏的大软影只在底缘可见，糊成一道脏脏的「接缝」。
@@ -473,6 +493,17 @@ fun SessionListScreen(
                                         } else {
                                             SwipeRevealRow(
                                                 modifier = rowModifier,
+                                                expanded = revealedEntryKey == entry.key,
+                                                onExpandedChange = { expanded ->
+                                                    revealedEntryKey = when {
+                                                        expanded -> entry.key
+                                                        revealedEntryKey == entry.key -> null
+                                                        else -> revealedEntryKey
+                                                    }
+                                                },
+                                                onSwipeStart = {
+                                                    if (revealedEntryKey != entry.key) revealedEntryKey = null
+                                                },
                                                 onDelete = {
                                                     state.removeLocally(session)
                                                     scope.launch {
@@ -490,7 +521,12 @@ fun SessionListScreen(
                                                     selected = session.id == selectedSessionId,
                                                     compact = compactLayout,
                                                     onClick = {
-                                                        if (revealed) closeReveal() else onOpenSession(session)
+                                                        if (revealed || revealedEntryKey != null) {
+                                                            revealedEntryKey = null
+                                                            closeReveal()
+                                                        } else {
+                                                            onOpenSession(session)
+                                                        }
                                                     },
                                                 )
                                             }
@@ -519,6 +555,17 @@ fun SessionListScreen(
                                         } else {
                                             SwipeRevealRow(
                                                 modifier = rowModifier,
+                                                expanded = revealedEntryKey == entry.key,
+                                                onExpandedChange = { expanded ->
+                                                    revealedEntryKey = when {
+                                                        expanded -> entry.key
+                                                        revealedEntryKey == entry.key -> null
+                                                        else -> revealedEntryKey
+                                                    }
+                                                },
+                                                onSwipeStart = {
+                                                    if (revealedEntryKey != entry.key) revealedEntryKey = null
+                                                },
                                                 onDelete = {
                                                     state.removeHistoryLocally(session)
                                                     scope.launch { runCatching { state.api.deleteHistory(session) } }
@@ -532,7 +579,8 @@ fun SessionListScreen(
                                                     compact = compactLayout,
                                                     restoring = restoringHistoryKey == entry.key,
                                                     onClick = {
-                                                        if (revealed) {
+                                                        if (revealed || revealedEntryKey != null) {
+                                                            revealedEntryKey = null
                                                             closeReveal()
                                                         } else if (restoringHistoryKey == null) {
                                                             restoringHistoryKey = entry.key
@@ -670,7 +718,6 @@ private fun SessionListTopBar(
                 }
             }
         }
-        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
     }
 }
 
@@ -898,21 +945,38 @@ private fun singleUnitDurationLabel(deltaMillis: Long): String {
 private fun SwipeRevealRow(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    expanded: Boolean = false,
+    onExpandedChange: (Boolean) -> Unit = {},
+    onSwipeStart: () -> Unit = {},
     content: @Composable (revealed: Boolean, closeReveal: () -> Unit) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    // 滑动行程：留出按钮宽度 + 两侧呼吸间距，让删除键像「浮起」的独立按钮而非贴边红块。
+    // 操作键与卡片之间、操作键与列表末端之间各留 8dp，边界靠留白而非重描边建立。
     val buttonWidth = 56.dp
     val gap = 8.dp
     val revealWidth = buttonWidth + gap * 2
     val revealPx = with(density) { revealWidth.toPx() }
-    // 手势仍保留完整揭示行程，卡片本体只做轻微视差位移；Logo 不会被推到屏幕外。
-    val contentShiftPx = with(density) { 12.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
     val revealed = offsetX.value <= -revealPx + 1f
     val snapSpec = WandMotion.springSpec<Float>()
-    val closeReveal: () -> Unit = { scope.launch { offsetX.animateTo(0f, snapSpec) } }
+
+    LaunchedEffect(expanded, revealPx) {
+        val target = if (expanded) -revealPx else 0f
+        if (kotlin.math.abs(offsetX.value - target) > 1f) {
+            offsetX.animateTo(target, snapSpec)
+        }
+    }
+
+    fun settle(shouldReveal: Boolean) {
+        if (shouldReveal != expanded) {
+            onExpandedChange(shouldReveal)
+        } else {
+            scope.launch { offsetX.animateTo(if (shouldReveal) -revealPx else 0f, snapSpec) }
+        }
+    }
+
+    val closeReveal: () -> Unit = { settle(false) }
 
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -921,15 +985,32 @@ private fun SwipeRevealRow(
         animationSpec = WandMotion.springSpec(),
         label = "deletePress",
     )
+    // 暗色主题的 danger token 偏亮；压暗按钮底可维持白字对比，同时仍清楚表达危险动作。
+    val actionContainerColor = if (isWandDarkTheme()) {
+        lerp(WandColors.danger, Color.Black, 0.28f)
+    } else {
+        WandColors.danger
+    }
 
-    Box(modifier = modifier) {
-        // 揭示出的删除按钮：右侧浮起的圆角红键，只在行有位移时绘制
-        // （玻璃卡片半透明，静止时红底会透出来）。随滑动进度淡入 + 轻微放大，避免硬切。
+    Box(
+        modifier = modifier
+            .semantics {
+                // TalkBack 不依赖精细的横向手势，也能从“操作”菜单执行同一动作。
+                customActions = listOf(
+                    CustomAccessibilityAction("删除会话") {
+                        onDelete()
+                        true
+                    },
+                )
+            },
+    ) {
+        // 操作键和卡片以相同行程从右向左移动，始终保持 8dp 空隙；不会再压在半透明卡片之上。
         if (offsetX.value < -1f) {
             Box(
+                // 只裁剪滑入的操作层，保留卡片原有的 1dp 轻投影。
                 modifier = Modifier
                     .matchParentSize()
-                    .zIndex(1f),
+                    .clipToBounds(),
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Box(
@@ -939,18 +1020,22 @@ private fun SwipeRevealRow(
                         .width(buttonWidth)
                         .graphicsLayer {
                             val progress = (-offsetX.value / revealPx).coerceIn(0f, 1f)
-                            val enter = 0.82f + 0.18f * progress
+                            // 闭合时整个操作键位于裁剪区外；随手指进入，和卡片边缘保持稳定间距。
+                            translationX = revealPx + offsetX.value
+                            val enter = 0.92f + 0.08f * progress
                             val s = enter * pressScale
                             scaleX = s
                             scaleY = s
-                            alpha = progress
+                            alpha = ((progress - 0.08f) / 0.92f).coerceIn(0f, 1f)
                         }
                         .clip(WandShapes.md)
-                        .background(WandColors.danger)
+                        .background(actionContainerColor)
+                        .border(0.8.dp, Color.White.copy(alpha = 0.20f), WandShapes.md)
                         .clickable(
                             interactionSource = interactionSource,
                             indication = LocalIndication.current,
                             enabled = revealed,
+                            role = Role.Button,
                         ) {
                             closeReveal()
                             onDelete()
@@ -963,7 +1048,7 @@ private fun SwipeRevealRow(
                     ) {
                         Icon(
                             WandIcons.delete,
-                            contentDescription = "删除",
+                            contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(22.dp),
                         )
@@ -980,23 +1065,21 @@ private fun SwipeRevealRow(
         Box(
             modifier = Modifier
                 .offset {
-                    val progress = (-offsetX.value / revealPx).coerceIn(0f, 1f)
-                    IntOffset((-contentShiftPx * progress).roundToInt(), 0)
+                    IntOffset(offsetX.value.roundToInt(), 0)
                 }
-                .pointerInput(Unit) {
+                .pointerInput(expanded, revealPx) {
                     detectHorizontalDragGestures(
+                        onDragStart = { onSwipeStart() },
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
                             val next = (offsetX.value + dragAmount).coerceIn(-revealPx, 0f)
                             scope.launch { offsetX.snapTo(next) }
                         },
                         onDragEnd = {
-                            val target = if (offsetX.value < -revealPx / 2) -revealPx else 0f
-                            scope.launch { offsetX.animateTo(target, snapSpec) }
+                            settle(offsetX.value < -revealPx / 2)
                         },
                         onDragCancel = {
-                            val target = if (offsetX.value < -revealPx / 2) -revealPx else 0f
-                            scope.launch { offsetX.animateTo(target, snapSpec) }
+                            settle(offsetX.value < -revealPx / 2)
                         },
                     )
                 },

@@ -35,13 +35,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -56,6 +56,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -151,7 +152,7 @@ fun ExpandChevron(
     tint: Color,
     modifier: Modifier = Modifier,
     size: Dp = 18.dp,
-    contentDescription: String = if (expanded) "收起" else "展开",
+    contentDescription: String? = if (expanded) "收起" else "展开",
 ) {
     val rotation by animateFloatAsState(
         if (expanded) 180f else 0f,
@@ -173,8 +174,6 @@ fun TurnView(
     isResponding: Boolean = false,
     compactUser: Boolean = false,
     currentReplyExpandedOverride: Boolean? = null,
-    turnIndex: Int = -1,
-    historyBoundary: Int = -1,
     showHeader: Boolean = true,
     showContent: Boolean = true,
     onUserExpand: () -> Unit = {},
@@ -188,14 +187,16 @@ fun TurnView(
         UserTurnView(turn, compact = compactUser)
         return
     }
-    val shouldFoldCurrentReply = isLastTurn && turnIndex > historyBoundary
-    val segments = remember(turn.content) { splitBySubagent(turn.content) }
-    val preview = remember(turn.content) { replyPreview(turn.content) }
-    // 抽纸折叠：历史回复（位于最后一条用户消息之前）默认折起，当前一轮展开。
-    // historyBoundary 变化（= 发了新消息）即按新归属重置：旧回复自动折回去、丢弃手动展开。
-    val defaultCollapsed = turnIndex in 0 until historyBoundary
-    var localCollapsed by remember(historyBoundary) { mutableStateOf(defaultCollapsed) }
+    // 整段历史已经由 ChatScreen 的单一边界控件管理。展开历史后直接看到
+    // 回复正文，不再让用户二次点开每一条助手回复；仍可手动逐条收起。
+    var localCollapsed by rememberSaveable { mutableStateOf(false) }
     val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
+    val segments = remember(turn.content, collapsed) {
+        if (collapsed) emptyList() else splitBySubagent(turn.content)
+    }
+    val preview = remember(turn.content, collapsed) {
+        if (collapsed) replyPreview(turn.content) else ""
+    }
     val setCollapsed: (Boolean) -> Unit = { next ->
         if (currentReplyExpandedOverride == null) {
             localCollapsed = next
@@ -204,9 +205,7 @@ fun TurnView(
     }
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(WandMotion.tweenNormal()),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         if (showHeader) {
             // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
@@ -214,12 +213,11 @@ fun TurnView(
             AssistantReplyHeader(
                 collapsed = collapsed,
                 preview = preview,
-                summary = "",
                 onToggle = {
                     val next = !collapsed
                     setCollapsed(next)
                     if (!next) {
-                        if (shouldFoldCurrentReply) onCurrentReplyExpandToBottom() else onUserExpand()
+                        if (isLastTurn) onCurrentReplyExpandToBottom() else onUserExpand()
                     }
                 },
             )
@@ -263,98 +261,93 @@ fun TurnView(
 }
 
 /**
- * 助手回复折叠头（用户诉求「抽纸效应」）：左上角「头像 + 名字 + 折叠开关」，开关与「收起
- * 临界线」都落在这一行 —— 收起时只留这一行（名字后跟一行正文预览，给「折进去的是什么」的线索），
- * 展开时正文接在临界线下方。历史回复一截一截往上收，盒口（这一行）始终露着。
+ * 助手回复折叠头：收起时用弱底色和一行正文预览交代内容，展开时回到
+ * 透明标题行。不再在每条回复下画贯穿整屏的分隔线，层级由留白和局部底色表达。
  */
 @Composable
 private fun AssistantReplyHeader(
     collapsed: Boolean,
     preview: String,
-    summary: String,
     onToggle: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(WandShapes.full)
-                .clickableWithoutRipple { onToggle() }
-                .semantics(mergeDescendants = true) {
-                    stateDescription = if (collapsed) "已收起" else "已展开"
-                }
-                .heightIn(min = 48.dp)
-                .padding(vertical = 3.dp),
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(WandColors.brand.copy(alpha = 0.14f)),
-            ) {
-                Icon(
-                    WandIcons.sparkle,
-                    contentDescription = null,
-                    tint = WandColors.brand,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
-            Text(
-                "Wand",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
+    val background by animateColorAsState(
+        targetValue = if (collapsed) {
+            WandColors.surfaceSoft.copy(alpha = 0.58f)
+        } else {
+            Color.Transparent
+        },
+        animationSpec = WandMotion.tweenFast(),
+        label = "assistantReplyHeaderBackground",
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.sm)
+            .background(background)
+            .clickableWithoutRipple(
+                onClickLabel = if (collapsed) "展开回复" else "收起回复",
+                onClick = onToggle,
             )
-            if (collapsed && preview.isNotBlank()) {
-                Text(
-                    preview,
-                    fontSize = 12.sp,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            } else if (!collapsed && summary.isNotBlank()) {
-                Text(
-                    summary,
-                    fontSize = 11.sp,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                Spacer(modifier = Modifier.weight(1f))
+            .semantics(mergeDescendants = true) {
+                stateDescription = if (collapsed) "已收起" else "已展开"
             }
-            ExpandChevron(
-                expanded = !collapsed,
-                tint = WandColors.textSecondary,
-                size = 15.dp,
-                contentDescription = if (collapsed) "展开回复" else "收起回复",
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(WandColors.brand.copy(alpha = 0.14f)),
+        ) {
+            Icon(
+                WandIcons.sparkle,
+                contentDescription = null,
+                tint = WandColors.brand,
+                modifier = Modifier.size(14.dp),
             )
         }
-        // 收起临界线：分隔「头」与「正文」的细线，落在头像 / 名字这一行下沿。
-        HorizontalDivider(
-            thickness = 0.5.dp,
-            color = WandColors.border.copy(alpha = 0.34f),
-            modifier = Modifier.padding(start = 32.dp),
+        Text(
+            "Wand",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textPrimary,
+        )
+        if (collapsed && preview.isNotBlank()) {
+            Text(
+                preview,
+                fontSize = 12.sp,
+                color = WandColors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+        Text(
+            if (collapsed) "展开" else "收起",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textPrimary,
+            maxLines = 1,
+        )
+        ExpandChevron(
+            expanded = !collapsed,
+            tint = WandColors.textSecondary,
+            size = 16.dp,
+            contentDescription = null,
         )
     }
 }
 
 /** 折叠态下名字后的一行正文预览：优先取文本，纯工具调用时给「N 个工具调用」线索。 */
-private fun replyPreview(content: List<ContentBlock>): String {
-    val text = content.filterIsInstance<ContentBlock.Text>()
-        .joinToString(" ") { it.text }
-        .trim()
-        .replace(Regex("\\s+"), " ")
-    if (text.isNotEmpty()) return text
-    val toolCount = content.count { it is ContentBlock.ToolUse }
-    return if (toolCount > 0) "$toolCount 个工具调用" else ""
-}
+private fun replyPreview(content: List<ContentBlock>): String = conversationTurnPreview(
+    ConversationTurn(role = "assistant", content = content),
+)
 
 /** Codex/Claude 单轮 token 与费用摘要；文本可换行，窄屏不会横向溢出。 */
 @Composable
@@ -489,7 +482,8 @@ private fun formatUsd(value: Double): String = when {
     else -> String.format(Locale.US, "%.4f", value)
 }
 
-private const val COMPACT_USER_MIN_CHARS = 140
+// 历史用户消息只承担“话题提示”，约三行手机正文就进入两行摘要态。
+private const val COMPACT_USER_MIN_CHARS = 72
 
 /** user turn 也可能携带 Task tool_result；保留普通用户气泡，并把子代理回包独立成面板。 */
 @Composable
@@ -813,7 +807,7 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
     val parsed = remember(rawText) { parseUserAttachmentText(rawText) }
     val baseUrl = LocalServerBaseUrl.current
     val canCompact = compact && shouldCompactUserBody(parsed.body)
-    var expanded by remember(parsed.body, compact) { mutableStateOf(!canCompact) }
+    var expanded by rememberSaveable(parsed.body, compact) { mutableStateOf(!canCompact) }
     val collapsed = canCompact && !expanded
     val bubbleShape = RoundedCornerShape(
         topStart = WandShapes.radiusLg,
@@ -863,16 +857,22 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
                         )
                     }
                     if (canCompact) {
-                        Text(
-                            if (collapsed) "展开" else "收起",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = brand,
+                        TextButton(
+                            onClick = { expanded = !expanded },
                             modifier = Modifier
                                 .align(Alignment.End)
-                                .padding(top = 4.dp)
-                                .clickableWithoutRipple { expanded = !expanded },
-                        )
+                                .semantics {
+                                    stateDescription =
+                                        if (collapsed) "用户消息已收起" else "用户消息已展开"
+                                },
+                        ) {
+                            Text(
+                                if (collapsed) "展开" else "收起",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WandColors.textSecondary,
+                            )
+                        }
                     }
                 }
             }
@@ -1200,16 +1200,21 @@ private fun ActivityDetailSheet(
     showSubagentTags: Boolean,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    // 关闭拖拽后直接以完整详情态打开，避免停在一个无法手势扩展的半展开状态。
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val statusLabel = activityStatusLabel(group)
     val statusColor = activityStatusColor(group)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        // 详情里同时存在纵向长内容、横向表格和可展开卡片。禁用整张 sheet 的
+        // 拖拽后，纵向手势只由内容滚动消费，横向手势只由表格消费，轻触标题
+        // 才会展开卡片，避免三层手势在触摸阈值附近互相抢占。
+        sheetGesturesEnabled = false,
         containerColor = WandColors.bgElevated.copy(alpha = 0.98f),
         scrimColor = Color.Black.copy(alpha = 0.46f),
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-        dragHandle = { BottomSheetDefaults.DragHandle() },
+        dragHandle = null,
     ) {
         NoOverscroll {
             Column(
@@ -1247,6 +1252,17 @@ private fun ActivityDetailSheet(
                             .background(statusColor.copy(alpha = 0.12f))
                             .padding(horizontal = 9.dp, vertical = 5.dp),
                     )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            WandIcons.close,
+                            contentDescription = "关闭执行详情",
+                            tint = WandColors.textSecondary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
                 group.items.forEachIndexed { index, item ->
                     RenderDisplayItem(

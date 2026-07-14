@@ -6,8 +6,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +22,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +53,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -74,6 +80,7 @@ import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
 import com.wand.app.ui.screens.SettingsScreen
 import java.time.Instant
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -185,11 +192,26 @@ private fun ReadyContent(
     val nav = rememberSaveable(saver = NavState.Saver) { NavState() }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     // 列表状态提升到这里：进聊天再返回时不丢已加载的会话与滚动位置。
-    val listState = remember { SessionListState(api) }
+    val listState = remember(api) { SessionListState(api) }
+    val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
+    var restoringHistoryKey by remember { mutableStateOf<String?>(null) }
     val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+
+    // 会话同步跟随 ReadyContent 生命周期，而不是跟随“完整列表是否正在组合”。
+    // 宽屏折叠 rail、聊天详情和列表页因此始终共享同一份加载/轮询状态。
+    LaunchedEffect(listState) {
+        listState.load(silent = listState.sessions.isNotEmpty())
+        while (true) {
+            delay(10_000)
+            listState.load(silent = true)
+        }
+    }
+    LaunchedEffect(listState.sessions) {
+        com.wand.app.WandShortcuts.update(context, listState.sessions)
+    }
 
     fun dismissSettings() {
         scope.launch {
@@ -228,14 +250,20 @@ private fun ReadyContent(
             openDetail(session.detailScreen())
         }
         val openHistory: (HistorySession) -> Unit = { history ->
-            scope.launch {
-                try {
-                    val resumed = listState.api.resumeHistory(history)
-                    listState.removeHistoryLocally(history)
-                    listState.prepend(resumed)
-                    openDetail(resumed.detailScreen())
-                } catch (e: Exception) {
-                    listState.loadError = e.message ?: "恢复失败"
+            val key = "${history.apiProvider}:${history.id}"
+            if (restoringHistoryKey == null) {
+                restoringHistoryKey = key
+                scope.launch {
+                    try {
+                        val resumed = listState.api.resumeHistory(history)
+                        listState.removeHistoryLocally(history)
+                        listState.prepend(resumed)
+                        openDetail(resumed.detailScreen())
+                    } catch (e: Exception) {
+                        listState.loadError = e.message ?: "恢复失败"
+                    } finally {
+                        if (restoringHistoryKey == key) restoringHistoryKey = null
+                    }
                 }
             }
         }
@@ -259,6 +287,7 @@ private fun ReadyContent(
                 listPaneWidth = listPaneWidth,
                 sidebarCollapsed = sidebarCollapsed,
                 selectedSessionId = nav.current.sessionIdOrNull(),
+                restoringHistoryKey = restoringHistoryKey,
                 onOpenSession = openSession,
                 onOpenHistory = openHistory,
                 onNewSession = openNewSession,
@@ -358,6 +387,7 @@ private fun WideReadyContent(
     listPaneWidth: Dp,
     sidebarCollapsed: Boolean,
     selectedSessionId: String?,
+    restoringHistoryKey: String?,
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: () -> Unit,
@@ -393,6 +423,7 @@ private fun WideReadyContent(
                     CollapsedSessionRail(
                         listState = listState,
                         selectedSessionId = selectedSessionId,
+                        restoringHistoryKey = restoringHistoryKey,
                         onOpenSession = onOpenSession,
                         onOpenHistory = onOpenHistory,
                         onNewSession = onNewSession,
@@ -482,10 +513,11 @@ private fun SplitPaneCollapseHandle(
 ) {
     val trackShape = RoundedCornerShape(999.dp)
     val knobShape = RoundedCornerShape(12.dp)
+    val actionLabel = if (collapsed) "展开会话栏" else "收起会话栏"
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(18.dp),
+            .width(48.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -497,17 +529,26 @@ private fun SplitPaneCollapseHandle(
         )
         Box(
             modifier = Modifier
-                .width(20.dp)
-                .height(48.dp)
-                .clip(knobShape)
-                .background(WandColors.bgElevated.copy(alpha = 0.88f))
-                .border(0.6.dp, WandColors.borderStrong.copy(alpha = 0.34f), knobShape)
-                .clickable(onClick = onClick),
+                .size(48.dp)
+                .clickable(
+                    onClickLabel = actionLabel,
+                    role = Role.Button,
+                    onClick = onClick,
+                )
+                .semantics { contentDescription = actionLabel },
             contentAlignment = Alignment.Center,
         ) {
+            Box(
+                modifier = Modifier
+                    .width(20.dp)
+                    .height(48.dp)
+                    .clip(knobShape)
+                    .background(WandColors.bgElevated.copy(alpha = 0.88f))
+                    .border(0.6.dp, WandColors.borderStrong.copy(alpha = 0.34f), knobShape),
+            )
             Icon(
                 WandIcons.chevronRight,
-                contentDescription = if (collapsed) "展开会话栏" else "收起会话栏",
+                contentDescription = null,
                 tint = WandColors.textSecondary,
                 modifier = Modifier
                     .size(15.dp)
@@ -521,6 +562,7 @@ private fun SplitPaneCollapseHandle(
 private fun CollapsedSessionRail(
     listState: SessionListState,
     selectedSessionId: String?,
+    restoringHistoryKey: String?,
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: () -> Unit,
@@ -537,26 +579,52 @@ private fun CollapsedSessionRail(
             .padding(horizontal = 4.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            entries.forEachIndexed { index, entry ->
-                when (entry) {
-                    is CollapsedRailEntry.Managed -> CollapsedSessionTile(
-                        session = entry.session,
-                        index = index + 1,
-                        selected = entry.session.id == selectedSessionId,
-                        onClick = { onOpenSession(entry.session) },
-                    )
-                    is CollapsedRailEntry.Recoverable -> CollapsedRecoverableSessionTile(
-                        history = entry.history,
-                        index = index + 1,
-                        onClick = { onOpenHistory(entry.history) },
-                    )
+        if (listState.loading && entries.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    color = WandColors.brand,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                itemsIndexed(
+                    items = entries,
+                    key = { _, entry ->
+                        when (entry) {
+                            is CollapsedRailEntry.Managed -> "managed-${entry.session.id}"
+                            is CollapsedRailEntry.Recoverable ->
+                                "recoverable-${entry.history.apiProvider}-${entry.history.id}"
+                        }
+                    },
+                ) { index, entry ->
+                    when (entry) {
+                        is CollapsedRailEntry.Managed -> CollapsedSessionTile(
+                            session = entry.session,
+                            index = index + 1,
+                            selected = entry.session.id == selectedSessionId,
+                            onClick = { onOpenSession(entry.session) },
+                        )
+                        is CollapsedRailEntry.Recoverable -> CollapsedRecoverableSessionTile(
+                            history = entry.history,
+                            index = index + 1,
+                            loading = restoringHistoryKey ==
+                                "${entry.history.apiProvider}:${entry.history.id}",
+                            onClick = { onOpenHistory(entry.history) },
+                        )
+                    }
                 }
             }
         }
@@ -608,6 +676,7 @@ private fun CollapsedSessionTile(
         icon = icon,
         tint = tint,
         selected = selected,
+        selectionStateEnabled = true,
         badge = index.toString(),
         contentDescription = "$index. ${session.providerLabel} ${session.displayTitle}",
         onClick = onClick,
@@ -618,6 +687,7 @@ private fun CollapsedSessionTile(
 private fun CollapsedRecoverableSessionTile(
     history: HistorySession,
     index: Int,
+    loading: Boolean,
     onClick: () -> Unit,
 ) {
     val isCodex = history.provider == "codex"
@@ -628,7 +698,14 @@ private fun CollapsedRecoverableSessionTile(
         tint = tint,
         selected = false,
         badge = index.toString(),
-        contentDescription = "$index. ${if (isCodex) "Codex" else "Claude"} ${history.firstUserMessage.ifEmpty { "会话" }}",
+        contentDescription = buildString {
+            append(index)
+            append(". 可恢复的 ")
+            append(if (isCodex) "Codex" else "Claude")
+            append(' ')
+            append(history.firstUserMessage.ifEmpty { "会话" })
+        },
+        loading = loading,
         onClick = onClick,
     )
 }
@@ -653,7 +730,9 @@ private fun CollapsedRailTile(
     selected: Boolean,
     badge: String?,
     contentDescription: String,
+    selectionStateEnabled: Boolean = false,
     outlined: Boolean = false,
+    loading: Boolean = false,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
@@ -672,7 +751,17 @@ private fun CollapsedRailTile(
     Box(
         modifier = Modifier
             .size(48.dp)
-            .clickable(onClick = onClick),
+            .clickable(
+                enabled = !loading,
+                onClickLabel = contentDescription,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .semantics {
+                this.contentDescription = contentDescription
+                if (selectionStateEnabled) this.selected = selected
+                if (loading) stateDescription = "正在恢复会话"
+            },
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -690,12 +779,20 @@ private fun CollapsedRailTile(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                icon,
-                contentDescription = contentDescription,
-                tint = tint.copy(alpha = if (outlined) 0.86f else 0.94f),
-                modifier = Modifier.size(if (outlined) 20.dp else 25.dp),
-            )
+            if (loading) {
+                CircularProgressIndicator(
+                    color = tint,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(20.dp),
+                )
+            } else {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = tint.copy(alpha = if (outlined) 0.86f else 0.94f),
+                    modifier = Modifier.size(if (outlined) 20.dp else 25.dp),
+                )
+            }
         }
         if (badge != null) {
             val badgeWidth = when {
