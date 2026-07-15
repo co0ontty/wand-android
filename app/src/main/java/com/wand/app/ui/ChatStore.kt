@@ -365,7 +365,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         scope.launch {
             try {
                 if (isStructured) {
-                    api.sendInput(sessionId, trimmed)
+                    // 结构化回复通过事件流持续更新；HTTP 只需确认服务端已接收。
+                    // 若等待整轮完成，首轮生成标题与模型回复可能超过 30 秒并被误报为网络超时。
+                    api.sendInput(sessionId, trimmed, respondImmediately = !queueing)
                 } else {
                     api.sendInput(sessionId, trimmed + "\n", view = "chat")
                 }
@@ -418,7 +420,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         scope.launch {
             try {
                 if (isStructured) {
-                    api.sendInput(sessionId, answerText)
+                    api.sendInput(sessionId, answerText, respondImmediately = true)
                 } else {
                     api.sendInput(sessionId, answerText + "\n", view = "chat")
                 }

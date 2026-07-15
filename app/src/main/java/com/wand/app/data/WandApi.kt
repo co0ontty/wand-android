@@ -164,10 +164,12 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         input: String,
         view: String? = null,
         shortcutKey: String? = null,
+        respondImmediately: Boolean = false,
     ): SessionSnapshot {
         val body = JSONObject().put("input", input)
         if (view != null) body.put("view", view)
         if (shortcutKey != null) body.put("shortcutKey", shortcutKey)
+        if (respondImmediately) body.put("respondImmediately", true)
         return SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/input", body))
     }
 
