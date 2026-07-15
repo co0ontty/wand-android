@@ -51,7 +51,6 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -80,6 +79,7 @@ import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
 import com.wand.app.ui.screens.SettingsScreen
 import java.time.Instant
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -141,6 +141,34 @@ private sealed class AuthPhase {
     data object Ready : AuthPhase()
     data class Failed(val message: String) : AuthPhase()
 }
+
+private val WideLayoutMinWidth = 640.dp
+private val WideLayoutMinHeight = 480.dp
+private val MediumSidebarMinWidth = 232.dp
+private val MediumSidebarMaxWidth = 280.dp
+private val ExpandedSidebarMinWidth = 280.dp
+private val ExpandedSidebarMaxWidth = 360.dp
+private val ExpandedDetailMinWidth = 560.dp
+
+/**
+ * 展开折叠屏与平板会在运行时反复跨越这个边界；只依据当前窗口尺寸，
+ * 不依赖设备类型或物理方向，才能同时覆盖分屏和自由窗口。
+ */
+internal fun usesWideListDetail(width: Dp, height: Dp): Boolean =
+    width >= WideLayoutMinWidth && height >= WideLayoutMinHeight
+
+/**
+ * 中等宽度优先给详情区留下可读空间；840dp 起再逐步放宽列表栏，
+ * 避免旧的固定 304/336/368dp 阶梯在断点处突然挤压主内容。
+ */
+internal fun wideListPaneWidth(windowWidth: Dp): Dp =
+    if (windowWidth < 840.dp) {
+        (windowWidth.value * 0.36f).roundToInt().dp
+            .coerceIn(MediumSidebarMinWidth, MediumSidebarMaxWidth)
+    } else {
+        (windowWidth - ExpandedDetailMinWidth)
+            .coerceIn(ExpandedSidebarMinWidth, ExpandedSidebarMaxWidth)
+    }
 
 @Composable
 private fun AuthProgress() {
@@ -237,12 +265,8 @@ private fun ReadyContent(
     BackHandler(enabled = nav.stack.size > 1 && !showSettings) { nav.pop() }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val wideLayout = maxWidth >= 640.dp && maxHeight >= 480.dp
-        val listPaneWidth = when {
-            maxWidth < 760.dp -> 304.dp
-            maxWidth < 900.dp -> 336.dp
-            else -> 368.dp
-        }
+        val wideLayout = usesWideListDetail(maxWidth, maxHeight)
+        val listPaneWidth = wideListPaneWidth(maxWidth)
         val openDetail: (Screen) -> Unit = { screen ->
             if (wideLayout) nav.setDetail(screen) else nav.push(screen)
         }
@@ -395,11 +419,9 @@ private fun WideReadyContent(
     onToggleSidebarCollapsed: () -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
 ) {
-    val sidebarEndGutter = 8.dp
-    val sidebarVerticalInset = 10.dp
     val sidebarContentWidth = if (sidebarCollapsed) 56.dp else listPaneWidth
     val sidebarWidth by animateDpAsState(
-        targetValue = sidebarContentWidth + sidebarEndGutter,
+        targetValue = sidebarContentWidth,
         animationSpec = tween(durationMillis = 180),
         label = "wideSidebarWidth",
     )
@@ -411,12 +433,7 @@ private fun WideReadyContent(
         Box(
             modifier = Modifier
                 .width(sidebarWidth)
-                .fillMaxHeight()
-                .padding(
-                    top = sidebarVerticalInset,
-                    end = sidebarEndGutter,
-                    bottom = sidebarVerticalInset,
-                ),
+                .fillMaxHeight(),
         ) {
             WideSidebarPanel(modifier = Modifier.fillMaxSize()) {
                 if (sidebarCollapsed) {
@@ -427,6 +444,7 @@ private fun WideReadyContent(
                         onOpenSession = onOpenSession,
                         onOpenHistory = onOpenHistory,
                         onNewSession = onNewSession,
+                        onExpandSidebar = onToggleSidebarCollapsed,
                     )
                 } else {
                     SessionListScreen(
@@ -440,15 +458,11 @@ private fun WideReadyContent(
                         onOpenSettings = onOpenSettings,
                         onOpenWeb = actions.openWeb,
                         onSwitchServer = actions.switchServer,
+                        onCollapseSidebar = onToggleSidebarCollapsed,
                     )
                 }
             }
         }
-        SplitPaneCollapseHandle(
-            collapsed = sidebarCollapsed,
-            onClick = onToggleSidebarCollapsed,
-            modifier = Modifier.padding(vertical = sidebarVerticalInset),
-        )
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -483,7 +497,7 @@ private fun WideSidebarPanel(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    val shape = RoundedCornerShape(topEnd = 22.dp, bottomEnd = 22.dp)
+    val shape = RoundedCornerShape(0.dp)
     val rimColor = WandColors.borderStrong.copy(alpha = 0.32f)
     Box(
         modifier = modifier
@@ -491,70 +505,16 @@ private fun WideSidebarPanel(
             .background(WandColors.bgElevated.copy(alpha = 0.86f))
             .drawBehind {
                 val x = size.width - 0.6.dp.toPx()
-                val yInset = 22.dp.toPx()
                 drawLine(
                     color = rimColor,
-                    start = Offset(x, yInset),
-                    end = Offset(x, size.height - yInset),
+                    start = Offset(x, 0f),
+                    end = Offset(x, size.height),
                     strokeWidth = 0.8.dp.toPx(),
                     cap = StrokeCap.Round,
                 )
             },
     ) {
         content()
-    }
-}
-
-@Composable
-private fun SplitPaneCollapseHandle(
-    collapsed: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val trackShape = RoundedCornerShape(999.dp)
-    val knobShape = RoundedCornerShape(12.dp)
-    val actionLabel = if (collapsed) "展开会话栏" else "收起会话栏"
-    Box(
-        modifier = modifier
-            .fillMaxHeight()
-            .width(48.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(2.dp)
-                .height(116.dp)
-                .clip(trackShape)
-                .background(WandColors.borderStrong.copy(alpha = 0.24f)),
-        )
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clickable(
-                    onClickLabel = actionLabel,
-                    role = Role.Button,
-                    onClick = onClick,
-                )
-                .semantics { contentDescription = actionLabel },
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(20.dp)
-                    .height(48.dp)
-                    .clip(knobShape)
-                    .background(WandColors.bgElevated.copy(alpha = 0.88f))
-                    .border(0.6.dp, WandColors.borderStrong.copy(alpha = 0.34f), knobShape),
-            )
-            Icon(
-                WandIcons.chevronRight,
-                contentDescription = null,
-                tint = WandColors.textSecondary,
-                modifier = Modifier
-                    .size(15.dp)
-                    .graphicsLayer { scaleX = if (collapsed) 1f else -1f },
-            )
-        }
     }
 }
 
@@ -566,6 +526,7 @@ private fun CollapsedSessionRail(
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: () -> Unit,
+    onExpandSidebar: () -> Unit,
 ) {
     val entries = remember(listState.sessions, listState.historySessions) {
         collapsedRailEntries(listState)
@@ -579,6 +540,16 @@ private fun CollapsedSessionRail(
             .padding(horizontal = 4.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        CollapsedRailTile(
+            icon = WandIcons.chevronRight,
+            tint = WandColors.textSecondary,
+            selected = false,
+            badge = null,
+            contentDescription = "展开会话栏",
+            outlined = true,
+            onClick = onExpandSidebar,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
         if (listState.loading && entries.isEmpty()) {
             Box(
                 modifier = Modifier

@@ -10,6 +10,8 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,7 +55,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -103,6 +107,7 @@ fun PtyTerminalScreen(
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val quickCommit = remember(sessionId) {
         QuickCommitStore(sessionId, api) { msg -> toast = msg }
@@ -206,6 +211,12 @@ fun PtyTerminalScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(focusManager) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        focusManager.clearFocus()
+                    }
+                }
                 .glassBackdropSource(glassBackdrop),
         ) {
             AmbientBackground(Modifier.fillMaxSize())
@@ -345,7 +356,8 @@ private fun PtyNativeInputBar(
     var refocusAfterSend by remember { mutableStateOf(false) }
     var voiceMode by remember { mutableStateOf(false) }
     var focusAfterExitVoice by remember { mutableStateOf(false) }
-    val expanded = isFocused || voiceMode || draft.isNotBlank() || pendingAttachments.isNotEmpty()
+    // 与聊天输入框一致：失焦后收回单行最小态，草稿和附件仍保留。
+    val expanded = isFocused || voiceMode
 
     LaunchedEffect(refocusAfterSend, sending) {
         if (refocusAfterSend && !sending && !voiceMode) {
@@ -399,7 +411,7 @@ private fun PtyNativeInputBar(
                     .weight(1f)
                     .heightIn(min = 34.dp),
             ) {
-                if (pendingAttachments.isNotEmpty() && !voiceMode) {
+                if (expanded && pendingAttachments.isNotEmpty() && !voiceMode) {
                     PendingAttachmentsPreview(
                         attachments = pendingAttachments,
                         baseUrl = baseUrl,
@@ -431,11 +443,11 @@ private fun PtyNativeInputBar(
                             ),
                             cursorBrush = SolidColor(WandColors.brand),
                             minLines = 1,
-                            maxLines = 6,
+                            maxLines = if (expanded) 6 else 1,
                             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 34.dp, max = 132.dp)
+                                .heightIn(min = 34.dp, max = if (expanded) 132.dp else 34.dp)
                                 .focusRequester(focusRequester)
                                 .onFocusChanged { isFocused = it.isFocused },
                             decorationBox = { innerTextField ->

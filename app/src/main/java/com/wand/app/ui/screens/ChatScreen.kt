@@ -92,6 +92,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -210,6 +211,7 @@ fun ChatScreen(
     // 发送后跟随列表底部；用户手动浏览时暂停跟随。
     var scrollMode by rememberSaveable(sessionId) { mutableStateOf(ChatScrollMode.StickToBottom) }
     val listState = key(sessionId) { rememberLazyListState() }
+    var listViewportHeightPx by remember(sessionId) { mutableIntStateOf(0) }
     val scrollScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
 
@@ -422,7 +424,17 @@ fun ChatScreen(
             }
         }
     }
-    LaunchedEffect(store.messages, store.isResponding, store.loading, bottomIndex, scrollMode) {
+    // 输入栏聚焦后会从单行胶囊变成双行卡片，IME 弹出/收起也会改变列表视口。
+    // 贴底模式必须把这些尺寸变化视作一次新的定位请求，否则最后一行会落到
+    // 变高的输入栏之后；手动浏览模式则保持用户当前阅读位置，不主动跳转。
+    LaunchedEffect(
+        store.messages,
+        store.isResponding,
+        store.loading,
+        bottomIndex,
+        scrollMode,
+        listViewportHeightPx,
+    ) {
         if (!store.loading && scrollMode != ChatScrollMode.Manual) {
             fun targetIndex(): Int = when (scrollMode) {
                 ChatScrollMode.StickToBottom ->
@@ -627,6 +639,12 @@ fun ChatScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(focusManager) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        focusManager.clearFocus()
+                    }
+                }
                 .glassBackdropSource(glassBackdrop),
         ) {
             AmbientBackground(Modifier.fillMaxSize())
@@ -649,7 +667,7 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(bottom = if (scrollMode == ChatScrollMode.Manual) 50.dp else 0.dp)
+                            .onSizeChanged { listViewportHeightPx = it.height }
                             .nestedScroll(followPauseConnection),
                         contentPadding = PaddingValues(
                             start = 14.dp,
@@ -742,7 +760,6 @@ fun ChatScreen(
                             item(key = "history-boundary-$absoluteLastUserTurnIndex") {
                                 HistoryDisclosureRow(
                                     count = collapsedHistoryCount,
-                                    preview = historyPreview(store.messages, lastUserTurnIndex),
                                     expanded = historyExpanded,
                                     onToggle = toggleHistory,
                                 )
@@ -929,19 +946,14 @@ fun ChatScreen(
     }
 }
 
-/** 顶栏左侧 provider 小徽标：品牌色弱底圆角方块 + 品牌 logo，标明当前 Claude / Codex。 */
+/** 顶栏左侧 provider 标识：与会话列表一致，仅展示透明背景的品牌 logo。 */
 @Composable
 private fun ChatProviderBadge(provider: String?) {
     val isCodex = provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
-    val background = if (isCodex) WandColors.infoSoft else WandColors.brandSoft
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(background.copy(alpha = 0.72f))
-            .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(8.dp)),
+        modifier = Modifier.size(28.dp),
     ) {
         Icon(
             BrandLogos.forProvider(provider),
@@ -950,8 +962,8 @@ private fun ChatProviderBadge(provider: String?) {
                 "opencode" -> "OpenCode"
                 else -> "Claude"
             },
-            tint = tint,
-            modifier = Modifier.size(15.dp),
+            tint = tint.copy(alpha = 0.94f),
+            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -985,14 +997,13 @@ private fun compactChatPath(path: String?): String? {
 @Composable
 private fun HistoryDisclosureRow(
     count: Int,
-    preview: String,
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(10.dp)
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
@@ -1006,69 +1017,35 @@ private fun HistoryDisclosureRow(
             .semantics(mergeDescendants = true) {
                 stateDescription = if (expanded) "历史已展开" else "历史已收起"
             }
-            .heightIn(min = 56.dp)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(WandColors.brandSoft),
-        ) {
-            Icon(
-                WandIcons.history,
-                contentDescription = null,
-                tint = WandColors.brand,
-                modifier = Modifier.size(17.dp),
-            )
-        }
-        Column(
-            verticalArrangement = Arrangement.spacedBy(1.dp),
+        Icon(
+            WandIcons.history,
+            contentDescription = null,
+            tint = WandColors.brand,
+            modifier = Modifier.size(15.dp),
+        )
+        Text(
+            buildString {
+                append(if (expanded) "收起早些对话" else "查看早些对话")
+                append(" · ")
+                append(count)
+                append(" 条")
+            },
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = WandColors.textSecondary,
+            maxLines = 1,
             modifier = Modifier.weight(1f),
-        ) {
-            Text(
-                if (expanded) "收起早些对话" else "查看早些对话",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-            )
-            Text(
-                buildString {
-                    append(count)
-                    append(" 条消息")
-                    if (preview.isNotBlank()) {
-                        append(" · ")
-                        append(preview)
-                    }
-                },
-                fontSize = 11.sp,
-                color = WandColors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        )
         ExpandChevron(
             expanded = expanded,
             tint = WandColors.textSecondary,
-            size = 18.dp,
+            size = 16.dp,
             contentDescription = null,
         )
     }
-}
-
-internal fun historyPreview(messages: List<ConversationTurn>, beforeTurnIndex: Int): String {
-    if (beforeTurnIndex <= 0) return ""
-    val previousTurns = messages.take(beforeTurnIndex).asReversed()
-    return previousTurns.asSequence()
-        .filter { it.role == "user" }
-        .map(::conversationTurnPreview)
-        .firstOrNull { it.isNotBlank() }
-        ?: previousTurns.asSequence()
-            .map(::conversationTurnPreview)
-            .firstOrNull { it.isNotBlank() }
-            .orEmpty()
 }
 
 internal fun conversationTurnPreview(turn: ConversationTurn): String {
@@ -1770,8 +1747,8 @@ private fun InputBar(
             runCatching { focusRequester.requestFocus() }
         }
     }
-    // 展开态（聚焦 / 语音模式 / 有草稿）：长成卡片，底部多一条控制行；否则收成单行胶囊。
-    val expanded = isFocused || voiceMode || draft.isNotBlank() || pendingAttachments.isNotEmpty()
+    // 展开态只由焦点与语音模式驱动；草稿和附件在失焦收起后继续保留。
+    val expanded = isFocused || voiceMode
     LaunchedEffect(expanded) {
         onExpandedChange(expanded)
     }
@@ -1782,7 +1759,7 @@ private fun InputBar(
                 .weight(1f)
                 .heightIn(min = 34.dp),
         ) {
-            if (pendingAttachments.isNotEmpty() && !voiceMode) {
+            if (expanded && pendingAttachments.isNotEmpty() && !voiceMode) {
                 PendingAttachmentsPreview(
                     attachments = pendingAttachments,
                     baseUrl = baseUrl,
@@ -1813,7 +1790,7 @@ private fun InputBar(
                         ),
                         cursorBrush = SolidColor(WandColors.brand),
                         minLines = 1,
-                        maxLines = 6,
+                        maxLines = if (expanded) 6 else 1,
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences,
                         ),
@@ -1838,7 +1815,7 @@ private fun InputBar(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 34.dp, max = 132.dp)
+                            .heightIn(min = 34.dp, max = if (expanded) 132.dp else 34.dp)
                             .focusRequester(focusRequester)
                             .onFocusChanged { isFocused = it.isFocused },
                     )

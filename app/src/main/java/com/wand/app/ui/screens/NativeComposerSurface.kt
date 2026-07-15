@@ -15,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
@@ -50,20 +49,18 @@ fun NativeComposerSurface(
             tintAlpha = if (darkGlass) 0.70f else 0.82f,
             fallbackAlpha = if (darkGlass) 0.94f else 0.96f,
             blurRadius = 12.dp,
-            refractionHeight = 2.dp,
-            refractionAmount = 5.dp,
-            shadowElevation = 0.8.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.16f else 0.05f),
+            refractionHeight = 0.dp,
+            refractionAmount = 0.dp,
+            shadowElevation = 0.dp,
         )
     } else {
         WandGlass.regular.copy(
             tintAlpha = if (darkGlass) 0.62f else 0.76f,
             fallbackAlpha = if (darkGlass) 0.90f else 0.92f,
             blurRadius = 10.dp,
-            refractionHeight = 1.dp,
-            refractionAmount = 4.dp,
-            shadowElevation = 0.5.dp,
-            shadowColor = Color.Black.copy(alpha = if (darkGlass) 0.14f else 0.04f),
+            refractionHeight = 0.dp,
+            refractionAmount = 0.dp,
+            shadowElevation = 0.dp,
         )
     }
 
@@ -76,7 +73,12 @@ fun NativeComposerSurface(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .glassSurface(backdrop, composerShape, composerGlass)
+                .glassSurface(
+                    backdrop = backdrop,
+                    shape = composerShape,
+                    style = composerGlass,
+                    drawRim = false,
+                )
                 .border(
                     width = if (focused) 1.dp else 0.5.dp,
                     color = if (focused) {

@@ -255,12 +255,15 @@ fun Modifier.glassBackdropSource(backdrop: GlassBackdrop): Modifier {
  * @param edgeToEdge 全幅贴边栏（顶栏 / 底栏，shape 为 RoundedCornerShape(0.dp)）置 true：
  *   去掉四周的玻璃高光 / rim 描边 —— 这道亮边在贴着屏幕边沿的栏上会描出一条难看的白边。
  *   栏与内容的分隔交给软阴影或发丝分隔线，不靠 rim。
+ * @param drawRim 是否绘制玻璃引擎自带的动态高光 / 降级渐变 rim。组件若已有独立的
+ *   均匀描边，可关闭它来避免两层边缘叠成不规则光晕。
  */
 fun Modifier.glassSurface(
     backdrop: GlassBackdrop?,
     shape: Shape,
     style: GlassStyle,
     edgeToEdge: Boolean = false,
+    drawRim: Boolean = !edgeToEdge,
 ): Modifier {
     val layer = backdrop?.layer
     return if (layer != null && glassBlurSupported) {
@@ -274,8 +277,8 @@ fun Modifier.glassSurface(
                     lens(style.refractionHeight.toPx(), style.refractionAmount.toPx())
                 }
             },
-            // 贴边栏不画边缘高光：高光沿屏幕边沿会糊出一道白边。
-            highlight = if (edgeToEdge) null else ({ Highlight.Default }),
+            // 贴边栏或已有独立描边的组件不再叠加动态高光。
+            highlight = if (drawRim) ({ Highlight.Default }) else null,
             shadow = if (style.shadowElevation > 0.dp) {
                 { BackdropShadow(radius = style.shadowElevation * 2.5f, color = style.shadowColor) }
             } else null,
@@ -295,9 +298,9 @@ fun Modifier.glassSurface(
             )
             .clip(shape)
             .background(style.tint.copy(alpha = style.fallbackAlpha))
-            // 降级路径同理：贴边栏跳过 rim 描边（白色 rimLight 贴边即白边）。
+            // 降级路径同理：避免渐变 rim 与组件自身描边叠加。
             .then(
-                if (edgeToEdge) Modifier
+                if (!drawRim) Modifier
                 else Modifier.border(
                     1.dp,
                     bevelRimBrush(style.rimLight, style.rimShade),

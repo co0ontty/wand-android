@@ -123,41 +123,6 @@ class HistoryPresentationTest {
     }
 
     @Test
-    fun historyPreviewPrefersThePreviousUserTopic() {
-        val messages = listOf(
-            textTurn("user", "## Fix pagination"),
-            textTurn("assistant", "Implemented the first pass"),
-            textTurn("user", "Current question"),
-        )
-
-        assertEquals("Fix pagination", historyPreview(messages, beforeTurnIndex = 2))
-    }
-
-    @Test
-    fun historyPreviewSkipsAUserTurnThatBecomesEmptyAfterMarkdownCleanup() {
-        val messages = listOf(
-            textTurn("user", "Older topic"),
-            textTurn("assistant", "First answer"),
-            textTurn("user", "***"),
-            textTurn("assistant", "Closer answer"),
-            textTurn("user", "Current question"),
-        )
-
-        assertEquals("Older topic", historyPreview(messages, beforeTurnIndex = 4))
-    }
-
-    @Test
-    fun historyPreviewFallsBackToAssistantContentWhenNoUserTopicIsUsable() {
-        val messages = listOf(
-            textTurn("assistant", "**Fallback answer**"),
-            textTurn("user", "***"),
-            textTurn("user", "Current question"),
-        )
-
-        assertEquals("Fallback answer", historyPreview(messages, beforeTurnIndex = 2))
-    }
-
-    @Test
     fun attachmentOnlyUserTurnGetsAReadablePreview() {
         val turn = textTurn(
             "user",

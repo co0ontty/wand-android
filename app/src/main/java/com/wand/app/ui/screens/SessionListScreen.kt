@@ -246,6 +246,7 @@ fun SessionListScreen(
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
+    onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -316,6 +317,7 @@ fun SessionListScreen(
                 },
                 onOpenWeb = onOpenWeb,
                 onSwitchServer = onSwitchServer,
+                onCollapseSidebar = onCollapseSidebar,
             )
         },
         bottomBar = {
@@ -628,6 +630,7 @@ private fun SessionListTopBar(
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
+    onCollapseSidebar: (() -> Unit)?,
 ) {
     Column(
         modifier = Modifier
@@ -679,6 +682,14 @@ private fun SessionListTopBar(
                         lineHeight = 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = WandColors.textMuted,
+                    )
+                }
+                if (onCollapseSidebar != null) {
+                    ToolbarIconButton(
+                        icon = WandIcons.chevronRight,
+                        contentDescription = "收起会话栏",
+                        onClick = onCollapseSidebar,
+                        modifier = Modifier.graphicsLayer { scaleX = -1f },
                     )
                 }
                 TopBarPrimaryAction(onClick = onNewSession)
