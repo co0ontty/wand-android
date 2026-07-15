@@ -107,6 +107,7 @@ import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.WandAsyncImage
 import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
+import com.wand.app.ui.WandServerFileLink
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.NoOverscroll
@@ -1066,10 +1067,26 @@ private fun shouldSkipDisplayItem(item: DisplayItem): Boolean =
 private fun isHiddenDispatchTool(use: ContentBlock.ToolUse): Boolean =
     use.subagent?.taskId == use.id && use.name in setOf("Task", "Agent")
 
+/**
+ * 待办更新承载当前任务的主进度，不应和文件编辑、命令等执行活动一起折叠。
+ * 同时兼容 Claude 的 TodoWrite 与 Codex 风格的 update_plan 命名。
+ */
+internal fun isTodoUpdateToolName(name: String): Boolean {
+    val operation = name.lowercase().substringAfterLast("__")
+    return operation == "update_plan" ||
+        (operation.contains("todo") &&
+            !operation.contains("read") &&
+            !operation.contains("get") &&
+            !operation.contains("list"))
+}
+
+internal fun shouldCollapseToolInActivity(name: String): Boolean =
+    name != "AskUserQuestion" && !isTodoUpdateToolName(name)
+
 private fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
     is DisplayItem.Plain -> item.block !is ContentBlock.Text && item.block !is ContentBlock.Unknown
     is DisplayItem.Exploration -> true
-    is DisplayItem.Tool -> item.use.name != "AskUserQuestion"
+    is DisplayItem.Tool -> shouldCollapseToolInActivity(item.use.name)
 }
 
 private fun isDisplayItemRunning(
@@ -1353,6 +1370,7 @@ private fun activityVerb(name: String): String = when (activityKind(name)) {
 private fun activityKind(name: String): String {
     val lower = name.lowercase()
     return when {
+        isTodoUpdateToolName(name) -> "todo"
         lower.startsWith("read") || lower.contains("notebook") -> "read"
         lower == "bash" || lower.contains("command") || lower.contains("shell") -> "command"
         lower.contains("grep") || lower.contains("glob") ||
@@ -1957,6 +1975,9 @@ private fun isTableSeparator(line: String, columnCount: Int): Boolean {
 private fun inlineMarkdown(raw: String): AnnotatedString {
     val linkColor = WandColors.info
     val codeColor = WandColors.brand.copy(alpha = 0.82f)
+    val context = LocalContext.current
+    val baseUrl = LocalServerBaseUrl.current
+    val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
     return buildAnnotatedString {
         var i = 0
@@ -2013,7 +2034,7 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                 raw[i] == '[' -> {
                     val closeText = raw.indexOf(']', i + 1)
                     val openUrl = if (closeText >= 0) raw.getOrNull(closeText + 1) else null
-                    val closeUrl = if (openUrl == '(') raw.indexOf(')', closeText + 2) else -1
+                    val closeUrl = if (openUrl == '(') markdownLinkDestinationEnd(raw, closeText + 2) else -1
                     if (closeText > i + 1 && closeUrl > closeText + 2) {
                         val url = raw.substring(closeText + 2, closeUrl).trim()
                         withLink(
@@ -2027,7 +2048,23 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                                 ),
                                 linkInteractionListener = { link ->
                                     (link as? LinkAnnotation.Url)?.url?.let { target ->
-                                        runCatching { uriHandler.openUri(target) }
+                                        val serverPath = WandServerFileLink.serverPath(target)
+                                        if (serverPath != null && baseUrl.isNotBlank()) {
+                                            Toast.makeText(context, "正在从服务端下载…", Toast.LENGTH_SHORT).show()
+                                            scope.launch {
+                                                runCatching {
+                                                    WandServerFileLink.downloadAndOpen(context, baseUrl, serverPath)
+                                                }.onFailure { error ->
+                                                    Toast.makeText(
+                                                        context,
+                                                        "文件下载失败：${error.message ?: "未知错误"}",
+                                                        Toast.LENGTH_LONG,
+                                                    ).show()
+                                                }
+                                            }
+                                        } else {
+                                            runCatching { uriHandler.openUri(target) }
+                                        }
                                     }
                                 },
                             )
@@ -2063,6 +2100,26 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
     }
 }
 
+/** Finds the closing parenthesis while preserving angle-wrapped paths and parentheses in file names. */
+private fun markdownLinkDestinationEnd(raw: String, start: Int): Int {
+    if (start !in raw.indices) return -1
+    if (raw[start] == '<') {
+        val closeAngle = raw.indexOf('>', start + 1)
+        return if (closeAngle >= 0 && raw.getOrNull(closeAngle + 1) == ')') closeAngle + 1 else -1
+    }
+    var depth = 0
+    var index = start
+    while (index < raw.length) {
+        when (raw[index]) {
+            '\\' -> index++
+            '(' -> depth++
+            ')' -> if (depth == 0) return index else depth--
+        }
+        index++
+    }
+    return -1
+}
+
 private fun inlineMarkdownPlain(raw: String): String =
     raw.replace("\\*", "*").replace("\\_", "_").replace("\\`", "`")
 
@@ -2081,6 +2138,7 @@ private fun nextInlineMarkerIndex(raw: String, start: Int): Int {
 private fun toolLabel(name: String): String {
     val lower = name.lowercase()
     return when {
+        isTodoUpdateToolName(name) -> "更新待办"
         lower.startsWith("codex/") -> when (lower.substringAfter('/')) {
             "spawn_agent" -> "启动子代理"
             "send_input", "send_message" -> "发送子任务消息"
@@ -2140,11 +2198,12 @@ fun ToolCard(
     running: Boolean = false,
     initiallyExpanded: Boolean = false,
 ) {
+    val compactTodoUpdate = isTodoUpdateToolName(use.name)
     val isError = result?.isError == true
     val declaredStatus = use.input.str("status")?.lowercase()
     val completedWithoutResult = result == null && !running && (
         declaredStatus in setOf("completed", "success", "succeeded", "done") ||
-            use.name == "TodoWrite"
+            compactTodoUpdate
         )
     val isSuccess = (result != null && !isError) || completedWithoutResult
     val hasInput = use.input.length() > 0
@@ -2176,23 +2235,32 @@ fun ToolCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (hasBody) Modifier.clickableWithoutRipple { expanded = !expanded } else Modifier)
-                .padding(horizontal = 11.dp, vertical = 10.dp),
+                .then(if (compactTodoUpdate) Modifier.heightIn(min = 48.dp) else Modifier)
+                .padding(
+                    horizontal = 11.dp,
+                    vertical = if (compactTodoUpdate) 6.dp else 10.dp,
+                ),
         ) {
-            ToolStatusIconBox(statusColor = statusColor, running = running) {
+            ToolStatusIconBox(
+                statusColor = statusColor,
+                running = running,
+                boxSize = if (compactTodoUpdate) 28.dp else 34.dp,
+            ) {
                 Icon(
                     toolIcon(use.name),
                     contentDescription = null,
                     tint = statusColor,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(if (compactTodoUpdate) 15.dp else 16.dp),
                 )
             }
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.weight(1f),
-            ) {
+            if (compactTodoUpdate) {
+                val summary = remember(use.input) {
+                    todoUpdateSummary(todoUpdateItemCount(use.input))
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f),
                 ) {
                     Text(
                         toolLabel(use.name),
@@ -2203,30 +2271,61 @@ fun ToolCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    sourceLabel?.let { source ->
+                    if (summary.isNotEmpty()) {
                         Text(
-                            source,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.info,
+                            "· $summary",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = WandColors.textSecondary,
                             maxLines = 1,
-                            modifier = Modifier
-                                .clip(WandShapes.full)
-                                .background(WandColors.infoSoft)
-                                .padding(horizontal = 5.dp, vertical = 2.dp),
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
-                val summary = toolSummary(use.description, use.input)
-                if (summary.isNotEmpty()) {
-                    Text(
-                        summary,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = WandColors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+            } else {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            toolLabel(use.name),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isError) WandColors.danger else WandColors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        sourceLabel?.let { source ->
+                            Text(
+                                source,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WandColors.info,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .clip(WandShapes.full)
+                                    .background(WandColors.infoSoft)
+                                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                    val summary = toolSummary(use.description, use.input)
+                    if (summary.isNotEmpty()) {
+                        Text(
+                            summary,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = WandColors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
             Text(
@@ -2237,13 +2336,16 @@ fun ToolCard(
                 modifier = Modifier
                     .clip(WandShapes.full)
                     .background(statusColor.copy(alpha = 0.10f))
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                    .padding(
+                        horizontal = if (compactTodoUpdate) 6.dp else 7.dp,
+                        vertical = if (compactTodoUpdate) 3.dp else 4.dp,
+                    ),
             )
             if (hasBody) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(24.dp)
+                        .size(if (compactTodoUpdate) 22.dp else 24.dp)
                         .clip(CircleShape)
                         .background(WandColors.bgPrimary),
                 ) {
@@ -2298,12 +2400,13 @@ private fun readImagePath(input: JSONObject): String? {
 private fun ToolStatusIconBox(
     statusColor: Color,
     running: Boolean,
+    boxSize: Dp = 34.dp,
     icon: @Composable () -> Unit,
 ) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(34.dp)
+            .size(boxSize)
             .clip(RoundedCornerShape(9.dp))
             .background(statusColor.copy(alpha = 0.11f)),
     ) {
@@ -2969,6 +3072,12 @@ fun PermissionCard(
 }
 
 // MARK: - 工具参数摘要
+
+private fun todoUpdateItemCount(input: JSONObject): Int? =
+    input.arrayField("todos")?.length() ?: input.arrayField("plan")?.length()
+
+/** 待办更新的默认态只展示数量，避免把 todos JSON 撑成第二行。 */
+internal fun todoUpdateSummary(itemCount: Int?): String = itemCount?.let { "$it 项" }.orEmpty()
 
 /** 摘要优先级：常见关键参数 > 有意义的 description > 第一个参数。 */
 private fun toolSummary(description: String?, input: JSONObject): String {

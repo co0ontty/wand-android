@@ -294,6 +294,7 @@ private fun ReadyContent(
         val openNewSession = { openDetail(Screen.NewSession) }
         val onCreated: (SessionSnapshot) -> Unit = { snapshot ->
             listState.prepend(snapshot)
+            listState.requestScrollToLatest()
             if (wideLayout) {
                 nav.setDetail(snapshot.detailScreen())
             } else {

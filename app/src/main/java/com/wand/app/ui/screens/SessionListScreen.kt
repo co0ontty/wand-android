@@ -140,8 +140,10 @@ class SessionListState(val api: WandApi) {
     var historySessions by mutableStateOf<List<HistorySession>>(emptyList())
     var loading by mutableStateOf(true)
     var loadError by mutableStateOf<String?>(null)
-    /** 状态与列表同生命周期，进入详情再返回时保留阅读位置。 */
+    /** 状态与列表同生命周期；重新进入列表时由页面主动回到最新条目。 */
     val scrollState = LazyListState()
+    var scrollToLatestRequest by mutableStateOf(0L)
+        private set
 
     val visibleSessions: List<SessionSnapshot>
         get() = sessions
@@ -198,6 +200,11 @@ class SessionListState(val api: WandApi) {
 
     fun prepend(snapshot: SessionSnapshot) {
         sessions = listOf(snapshot) + sessions.filter { it.id != snapshot.id }
+    }
+
+    /** 新会话进入列表后通知常驻的宽屏侧栏回到顶部。 */
+    fun requestScrollToLatest() {
+        scrollToLatestRequest += 1
     }
 
     fun removeLocally(session: SessionSnapshot) {
@@ -261,6 +268,12 @@ fun SessionListScreen(
     val rowBounds = remember { mutableMapOf<String, Rect>() }
     var dragAnchorId by remember { mutableStateOf<String?>(null) }
     var dragBaseIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    // 单栏布局每次从详情返回都会重新进入组合；宽屏列表常驻时，新建会话会递增请求值。
+    // 两种路径都回到第 0 项，保证用户立即看到按时间排序后的最新会话。
+    LaunchedEffect(state.scrollToLatestRequest) {
+        state.scrollState.scrollToItem(0)
+    }
 
     fun endSelection() {
         isSelecting = false
