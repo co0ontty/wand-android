@@ -85,7 +85,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionSnapshot
-import com.wand.app.data.WandApi
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
@@ -106,135 +105,9 @@ import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlin.math.roundToInt
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
-
-sealed interface SessionListEntry {
-    val key: String
-    val sortTimestamp: Long
-
-    data class Managed(val session: SessionSnapshot) : SessionListEntry {
-        override val key: String = "session-${session.id}"
-        override val sortTimestamp: Long = parseIsoMillis(session.startedAt)
-    }
-
-    data class Recoverable(val session: HistorySession) : SessionListEntry {
-        // provider 必须进入 key：Claude / Codex 的历史 ID 分属不同接口，不能在多选时混淆。
-        override val key: String = "recoverable-${session.apiProvider}-${session.id}"
-        override val sortTimestamp: Long = session.mtimeMs?.toLong() ?: parseIsoMillis(session.timestamp)
-    }
-}
-
-private fun parseIsoMillis(value: String?): Long =
-    value?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrDefault(0L) } ?: 0L
-
-/**
- * 会话列表状态。提升到导航栈外层持有（remember 于 WandApp），
- * 进聊天后返回不重新加载。对称 iOS SessionListView 的 @State。
- */
-class SessionListState(val api: WandApi) {
-    var sessions by mutableStateOf<List<SessionSnapshot>>(emptyList())
-    var historySessions by mutableStateOf<List<HistorySession>>(emptyList())
-    var loading by mutableStateOf(true)
-    var loadError by mutableStateOf<String?>(null)
-    /** 状态与列表同生命周期；重新进入列表时由页面主动回到最新条目。 */
-    val scrollState = LazyListState()
-    var scrollToLatestRequest by mutableStateOf(0L)
-        private set
-
-    val visibleSessions: List<SessionSnapshot>
-        get() = sessions
-
-    /** 本机可恢复会话：过滤空记录 / 已被 wand 纳管的记录。 */
-    val visibleHistorySessions: List<HistorySession>
-        get() {
-            val managedKeys = sessions.mapNotNull { session ->
-                session.claudeSessionId?.let { providerSessionId ->
-                    historyApiProvider(session.provider)?.let { provider ->
-                        provider to providerSessionId
-                    }
-                }
-            }.toSet()
-            return historySessions
-                .filter {
-                    (it.hasConversation ?: true) &&
-                        !(it.managedByWand ?: false) &&
-                        (it.apiProvider to it.claudeSessionId) !in managedKeys
-                }
-                .sortedByDescending { it.mtimeMs ?: 0.0 }
-        }
-
-    val visibleEntries: List<SessionListEntry>
-        get() = buildList {
-            visibleSessions.forEach { add(SessionListEntry.Managed(it)) }
-            visibleHistorySessions.forEach { add(SessionListEntry.Recoverable(it)) }
-        }.sortedByDescending { it.sortTimestamp }
-
-    suspend fun load(silent: Boolean = false) {
-        if (!silent) loading = true
-        try {
-            val previousClaude = historySessions.filter { it.apiProvider == "claude" }
-            val previousCodex = historySessions.filter { it.apiProvider == "codex" }
-            coroutineScope {
-                val active = async { api.listSessions() }
-                // 历史扫描端点单独容错：失败不拖垮会话列表，也不让一次瞬时
-                // 故障把上一轮成功加载的 provider 历史整批清空。
-                val claude = async { runCatching { api.listClaudeHistory() } }
-                val codex = async { runCatching { api.listCodexHistory() } }
-                sessions = active.await()
-                historySessions =
-                    claude.await().getOrElse { previousClaude } +
-                        codex.await().getOrElse { previousCodex }
-            }
-            loadError = null
-        } catch (e: Exception) {
-            if (!silent || sessions.isEmpty()) {
-                loadError = e.message ?: "加载失败"
-            }
-        }
-        loading = false
-    }
-
-    fun prepend(snapshot: SessionSnapshot) {
-        sessions = listOf(snapshot) + sessions.filter { it.id != snapshot.id }
-    }
-
-    /** 新会话进入列表后通知常驻的宽屏侧栏回到顶部。 */
-    fun requestScrollToLatest() {
-        scrollToLatestRequest += 1
-    }
-
-    fun removeLocally(session: SessionSnapshot) {
-        sessions = sessions.filter { it.id != session.id }
-        session.claudeSessionId?.let { providerSessionId ->
-            historyApiProvider(session.provider)?.let { provider ->
-                historySessions = historySessions.filter {
-                    it.claudeSessionId != providerSessionId || it.apiProvider != provider
-                }
-            }
-        }
-    }
-
-    fun removeHistoryLocally(history: HistorySession) {
-        historySessions = historySessions.filter {
-            it.id != history.id || it.apiProvider != history.apiProvider
-        }
-    }
-
-    fun removeHistoryLocally(targets: Collection<HistorySession>) {
-        val keys = targets.mapTo(mutableSetOf()) { it.apiProvider to it.id }
-        historySessions = historySessions.filter { (it.apiProvider to it.id) !in keys }
-    }
-}
-
-private fun historyApiProvider(provider: String?): String? = when (provider) {
-    "codex" -> "codex"
-    null, "", "claude" -> "claude"
-    else -> null
-}
 
 /**
  * 统一会话列表：普通、已归档和本机可恢复会话按时间混排。
@@ -261,7 +134,6 @@ fun SessionListScreen(
     var refreshing by remember { mutableStateOf(false) }
     var isSelecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var restoringHistoryKey by remember { mutableStateOf<String?>(null) }
     // 同一时间只保留一条侧滑操作，避免多个红色操作区悬在列表里造成状态混乱。
     var revealedEntryKey by remember { mutableStateOf<String?>(null) }
     // 多选拖拽：行 id → 窗口坐标 bounds；拖动经过的行连续加入选择（对齐 iOS 范围选择）。
@@ -296,7 +168,7 @@ fun SessionListScreen(
         val message = state.loadError ?: return@LaunchedEffect
         if (visibleEntries.isNotEmpty()) {
             snackbarHostState.showSnackbar(message)
-            if (state.loadError == message) state.loadError = null
+            state.clearError(message)
         }
     }
 
@@ -348,27 +220,8 @@ fun SessionListScreen(
                     },
                     onDelete = {
                         val targets = visibleEntries.filter { it.key in selectedIds }
-                        val managed = targets.filterIsInstance<SessionListEntry.Managed>().map { it.session }
-                        val history = targets.filterIsInstance<SessionListEntry.Recoverable>().map { it.session }
-                        managed.forEach { state.removeLocally(it) }
-                        state.removeHistoryLocally(history)
                         endSelection()
-                        scope.launch {
-                            var failed = false
-                            managed.forEach { session ->
-                                if (runCatching { state.api.deleteSession(session.id) }.isFailure) failed = true
-                            }
-                            history.groupBy { it.apiProvider }.forEach { (provider, sessions) ->
-                                if (runCatching {
-                                        state.api.deleteHistoryBatch(provider, sessions.map { it.claudeSessionId })
-                                    }.isFailure
-                                ) {
-                                    failed = true
-                                }
-                            }
-                            // 乐观删除失败时从服务端重拉，让未实际删除的项目恢复显示。
-                            if (failed) state.load(silent = true)
-                        }
+                        scope.launch { state.delete(targets) }
                     },
                     onDone = { endSelection() },
                 )
@@ -520,14 +373,7 @@ fun SessionListScreen(
                                                     if (revealedEntryKey != entry.key) revealedEntryKey = null
                                                 },
                                                 onDelete = {
-                                                    state.removeLocally(session)
-                                                    scope.launch {
-                                                        try {
-                                                            state.api.deleteSession(session.id)
-                                                        } catch (_: Exception) {
-                                                            state.load(silent = true)
-                                                        }
-                                                    }
+                                                    scope.launch { state.delete(entry) }
                                                 },
                                             ) { revealed, closeReveal ->
                                                 SessionCard(
@@ -582,34 +428,23 @@ fun SessionListScreen(
                                                     if (revealedEntryKey != entry.key) revealedEntryKey = null
                                                 },
                                                 onDelete = {
-                                                    state.removeHistoryLocally(session)
-                                                    scope.launch { runCatching { state.api.deleteHistory(session) } }
+                                                    scope.launch { state.delete(entry) }
                                                 },
                                             ) { revealed, closeReveal ->
                                                 HistorySessionCard(
                                                     history = session,
-                                                    enabled = restoringHistoryKey == null,
+                                                    enabled = !state.isRestoringHistory,
                                                     selecting = false,
                                                     selected = false,
                                                     compact = compactLayout,
-                                                    restoring = restoringHistoryKey == entry.key,
+                                                    restoring = state.isRestoring(session),
                                                     onClick = {
                                                         if (revealed || revealedEntryKey != null) {
                                                             revealedEntryKey = null
                                                             closeReveal()
-                                                        } else if (restoringHistoryKey == null) {
-                                                            restoringHistoryKey = entry.key
+                                                        } else if (!state.isRestoringHistory) {
                                                             scope.launch {
-                                                                try {
-                                                                    val resumed = state.api.resumeHistory(session)
-                                                                    state.removeHistoryLocally(session)
-                                                                    state.prepend(resumed)
-                                                                    state.loadError = null
-                                                                    onOpenSession(resumed)
-                                                                } catch (e: Exception) {
-                                                                    state.loadError = e.message ?: "恢复失败"
-                                                                }
-                                                                restoringHistoryKey = null
+                                                                state.restore(session)?.let(onOpenSession)
                                                             }
                                                         }
                                                     },

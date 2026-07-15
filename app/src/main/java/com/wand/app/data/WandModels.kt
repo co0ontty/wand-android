@@ -562,7 +562,7 @@ data class UploadedFile(
  * /ws 推送的统一包络。data 的形状随 type 不同，用「超集类」WsData 承接：
  * init 的 data 就是 SessionSnapshot；output/status/ended 的 data 是其子集 + 增量字段。
  */
-data class WsIncoming(
+internal data class WsIncoming(
     val type: String,
     val sessionId: String?,
     val seq: Int?,
@@ -582,7 +582,7 @@ data class WsIncoming(
     }
 }
 
-data class WsData(
+internal data class WsData(
     // —— 快照公共字段（init / status / ended）——
     val id: String?,
     val sessionKind: String?,

@@ -9,11 +9,12 @@ import android.os.Bundle
 import android.os.SystemClock
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.MessageUpdate
+import com.wand.app.data.SessionChanges
+import com.wand.app.data.SessionEvent
 import com.wand.app.data.arrayField
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
-import com.wand.app.data.WsData
-import com.wand.app.data.WsIncoming
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,10 +45,6 @@ import org.json.JSONObject
  */
 object SessionWatcher {
 
-    private const val ENDED_NOTIF_THROTTLE_MS = 10_000L
-    private const val TURN_NOTIF_THROTTLE_MS = 10_000L
-    private const val TASK_NOTIF_THROTTLE_MS = 90_000L
-    private const val PERM_NOTIF_THROTTLE_MS = 60_000L
     private const val LIST_REFRESH_MIN_INTERVAL_MS = 5_000L
 
     /** 单个被观察会话的轻量状态（只存进度通知需要的字段，不存完整消息）。 */
@@ -72,7 +69,7 @@ object SessionWatcher {
     private var appToken: String? = null
 
     private val sessions = HashMap<String, Watched>()
-    private val notifHistory = HashMap<String, Long>()
+    private val notificationPolicy = SessionNotificationPolicy { SystemClock.elapsedRealtime() }
     private var lastListRefreshAt = 0L
 
     /** ChatScreen 注册的「正在看」的会话；前台 + 正在看 → 抑制该会话的打扰通知。 */
@@ -113,7 +110,7 @@ object SessionWatcher {
         scope = null
         helper?.cancelAllProgress()
         sessions.clear()
-        notifHistory.clear()
+        notificationPolicy.reset()
         serverUrl = ""
     }
 
@@ -167,14 +164,15 @@ object SessionWatcher {
 
     // MARK: - 事件分发（WandSocket 已保证主线程 FIFO）
 
-    private fun handle(event: WsIncoming) {
+    private fun handle(event: SessionEvent) {
         val sid = event.sessionId ?: return
-        when (event.type) {
-            "task" -> handleTask(sid, event.data)
-            "status" -> handleStatus(sid, event.data ?: return)
-            "output" -> handleOutput(sid, event.data ?: return)
-            "ended" -> handleEnded(sid, event.data)
-            "started" -> refreshSessions(force = true)
+        when (event) {
+            is SessionEvent.TaskChanged -> handleTask(sid, event.title)
+            is SessionEvent.StatusChanged -> handleStatus(sid, event)
+            is SessionEvent.Output -> handleOutput(sid, event)
+            is SessionEvent.Ended -> handleEnded(sid, event)
+            is SessionEvent.Started -> refreshSessions(force = true)
+            is SessionEvent.Initialized, is SessionEvent.Error -> Unit
         }
     }
 
@@ -184,69 +182,69 @@ object SessionWatcher {
         Watched()
     }
 
-    private fun handleTask(sid: String, data: WsData?) {
+    private fun handleTask(sid: String, title: String?) {
         val w = watched(sid)
-        val title = data?.taskTitle
-        // 「任务进行中」：对齐 notifyTaskProgress —— onlyWhenHidden + 90s/标题 节流。
-        if (!title.isNullOrEmpty() && !appInForeground && !throttled("task:$sid:$title", TASK_NOTIF_THROTTLE_MS)) {
-            sendNotification("任务进行中", labelOf(sid, w) + "\n" + title, "task:wand-task-$sid")
-        }
+        deliver(notificationPolicy.taskProgress(sid, labelOf(sid, w), title, visibility()))
         syncProgress(sid, w)
     }
 
-    private fun handleStatus(sid: String, data: WsData) {
+    private fun handleStatus(sid: String, event: SessionEvent.StatusChanged) {
         val w = watched(sid)
-        applyCommon(w, data)
+        applyCommon(w, event.changes)
 
         // 权限通知：PTY 的 permissionRequest 与结构化的 pendingEscalation 同语义。
-        val perm = data.permissionRequest
-        val esc = data.pendingEscalation
+        val perm = event.permissionRequest
+        val esc = event.changes.pendingEscalation
         if (perm != null || esc != null) {
             w.permissionBlocked = true
             val detail = perm?.prompt?.takeIf { it.isNotEmpty() }
                 ?: esc?.reason?.takeIf { it.isNotEmpty() }
                 ?: "需要权限审批"
             val target = perm?.target ?: esc?.target
-            val body = labelOf(sid, w) + "\n" + detail + (if (target.isNullOrEmpty()) "" else " · $target")
-            if (shouldDisturb(sid) && !throttled("perm:$sid", PERM_NOTIF_THROTTLE_MS)) {
-                sendNotification("需要你的授权", body, "permission:wand-perm-$sid")
-            }
+            deliver(
+                notificationPolicy.permissionRequired(
+                    sid, labelOf(sid, w), detail, target, visibility(),
+                ),
+            )
         }
 
-        data.structuredState?.inFlight?.let { updateBusy(sid, w, it) }
+        event.responding?.let { updateBusy(sid, w, it) }
         syncProgress(sid, w)
     }
 
-    private fun handleOutput(sid: String, data: WsData) {
+    private fun handleOutput(sid: String, event: SessionEvent.Output) {
         val w = watched(sid)
-        applyCommon(w, data)
-        data.messages?.let { scanTurns(w, it) }
-        data.lastMessage?.let { scanTurns(w, listOf(it)) }
-        data.isResponding?.let { updateBusy(sid, w, it) }
+        applyCommon(w, event.changes)
+        when (val messages = event.messages) {
+            is MessageUpdate.Full -> scanTurns(w, messages.messages)
+            is MessageUpdate.Incremental -> scanTurns(w, listOf(messages.message))
+            MessageUpdate.None -> Unit
+        }
+        event.responding?.let { updateBusy(sid, w, it) }
         // 对齐网页：output 不主动刷进度通知（task/status 事件才刷），避免高频写通知。
     }
 
-    private fun handleEnded(sid: String, data: WsData?) {
+    private fun handleEnded(sid: String, event: SessionEvent.Ended) {
         val w = watched(sid)
-        w.status = data?.status ?: "exited"
+        applyCommon(w, event.changes)
+        w.status = event.status
         w.busy = false
-        data?.messages?.let { scanTurns(w, it) }
-        val exitCode = data?.exitCode
+        event.messages?.let { scanTurns(w, it.messages) }
+        val exitCode = event.exitCode
         val isError = exitCode != null && exitCode != 0
-        val title = if (isError) "任务异常结束" else "任务已完成"
-        var body = labelOf(sid, w)
-        if (!isError && w.latestAssistantText.isNotEmpty()) body += "\n" + w.latestAssistantText
-        if (shouldDisturb(sid) && !throttled("ended:$sid", ENDED_NOTIF_THROTTLE_MS)) {
-            sendNotification(title, body, "task-ended:wand-ended-$sid")
-        }
+        deliver(
+            notificationPolicy.sessionEnded(
+                sid, labelOf(sid, w), w.latestAssistantText, isError, visibility(),
+            ),
+        )
         helper?.clearSessionProgress(sid)
     }
 
-    private fun applyCommon(w: Watched, data: WsData) {
-        data.status?.let { w.status = it }
-        data.archived?.let { w.archived = it }
-        data.summary?.takeIf { it.isNotEmpty() }?.let { w.label = it }
-        data.permissionBlocked?.let { w.permissionBlocked = it }
+    private fun applyCommon(w: Watched, changes: SessionChanges) {
+        changes.status?.let { w.status = it }
+        changes.archived?.let { w.archived = it }
+        changes.summary?.takeIf { it.isNotEmpty() }?.let { w.label = it }
+        changes.permissionBlocked?.let { w.permissionBlocked = it }
     }
 
     /** busy true→false 即「回合完成」——两个 runner 的完成信号都汇到这里。 */
@@ -254,13 +252,16 @@ object SessionWatcher {
         val was = w.busy
         w.busy = busy
         if (!was || busy) return
-        if (w.permissionBlocked) return // 等授权不是完成
-        if (w.status in ENDED_STATUSES) return // ended 事件单独报
-        if (shouldDisturb(sid) && !throttled("turn:$sid", TURN_NOTIF_THROTTLE_MS)) {
-            var body = labelOf(sid, w)
-            if (w.latestAssistantText.isNotEmpty()) body += "\n" + w.latestAssistantText
-            sendNotification("回复完成", body, "task-ended:wand-turn-$sid")
-        }
+        deliver(
+            notificationPolicy.responseCompleted(
+                sid,
+                labelOf(sid, w),
+                w.latestAssistantText,
+                w.permissionBlocked,
+                w.status,
+                visibility(),
+            ),
+        )
     }
 
     // MARK: - 消息扫描（latest texts + TodoWrite todos）
@@ -353,29 +354,19 @@ object SessionWatcher {
     private fun labelOf(sid: String, w: Watched): String =
         w.label.ifEmpty { sid.take(8) }
 
-    /**
-     * 打扰类通知（授权 / 完成）的抑制规则：前台且正在看该会话 → 不发。
-     * 网页版前台靠应用内气泡兜底；原生没有全局气泡，所以「前台但没在看」也发。
-     */
-    private fun shouldDisturb(sid: String): Boolean =
-        !(appInForeground && activeChatSessionId == sid)
+    private fun visibility() = NotificationVisibility(appInForeground, activeChatSessionId)
 
-    private fun throttled(key: String, minIntervalMs: Long): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        val last = notifHistory[key]
-        if (last != null && now - last < minIntervalMs) return true
-        notifHistory[key] = now
-        // 防止无限增长：超过 64 条时清掉过期项。
-        if (notifHistory.size > 64) {
-            notifHistory.entries.removeAll { now - it.value > TASK_NOTIF_THROTTLE_MS }
-        }
-        return false
-    }
-
-    private fun sendNotification(title: String, body: String, tag: String) {
+    private fun deliver(notification: SessionNotification?) {
+        notification ?: return
         val h = helper ?: return
         val store = serverStore ?: return
-        h.sendNotification(title, body, tag, contentIntent(), store)
+        h.sendNotification(
+            notification.title,
+            notification.body,
+            notification.tag,
+            contentIntent(),
+            store,
+        )
     }
 
     private fun contentIntent(): PendingIntent? {
@@ -395,6 +386,5 @@ object SessionWatcher {
         )
     }
 
-    private val ENDED_STATUSES = setOf("exited", "failed", "stopped")
     private val CLEAR_PROGRESS_STATUSES = setOf("idle", "archived", "exited", "failed", "stopped")
 }

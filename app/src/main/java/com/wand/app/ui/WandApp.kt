@@ -36,6 +36,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -80,7 +81,6 @@ import com.wand.app.ui.screens.SessionListState
 import com.wand.app.ui.screens.SettingsScreen
 import java.time.Instant
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -101,7 +101,7 @@ fun WandApp(
     LaunchedEffect(retryKey) {
         phase = AuthPhase.Authenticating
         phase = try {
-            if (actions.hasToken && api.token != null) {
+            if (actions.connection.hasToken && api.token != null) {
                 WandAuth.loginWithToken(api.baseUrl, api.token)
             } else {
                 // 裸地址连接（无 token）：直接试列表，401 时引导重新连接。
@@ -111,7 +111,7 @@ fun WandApp(
             AuthPhase.Ready
         } catch (e: Exception) {
             val msg = e.message ?: "未知错误"
-            if (actions.hasToken) {
+            if (actions.connection.hasToken) {
                 AuthPhase.Failed(msg)
             } else {
                 AuthPhase.Failed("无法访问服务器：$msg\n如果服务器设有密码，请用「连接码」重新连接。")
@@ -129,7 +129,7 @@ fun WandApp(
             is AuthPhase.Failed -> AuthFailed(
                 message = p.message,
                 onRetry = { retryKey++ },
-                onSwitchServer = actions.switchServer,
+                onSwitchServer = actions.navigation.switchServer,
             )
             is AuthPhase.Ready -> ReadyContent(api, actions, initialQuickAction)
         }
@@ -224,18 +224,14 @@ private fun ReadyContent(
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
-    var restoringHistoryKey by remember { mutableStateOf<String?>(null) }
     val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // 会话同步跟随 ReadyContent 生命周期，而不是跟随“完整列表是否正在组合”。
     // 宽屏折叠 rail、聊天详情和列表页因此始终共享同一份加载/轮询状态。
-    LaunchedEffect(listState) {
-        listState.load(silent = listState.sessions.isNotEmpty())
-        while (true) {
-            delay(10_000)
-            listState.load(silent = true)
-        }
+    DisposableEffect(listState) {
+        listState.startSync()
+        onDispose { listState.shutdown() }
     }
     LaunchedEffect(listState.sessions) {
         com.wand.app.WandShortcuts.update(context, listState.sessions)
@@ -254,7 +250,7 @@ private fun ReadyContent(
             initialQuickActionConsumed = true
             when (val action = initialQuickAction) {
                 is QuickAction.NewSession -> nav.push(Screen.NewSession)
-                is QuickAction.OpenWeb -> actions.openWeb()
+                is QuickAction.OpenWeb -> actions.navigation.openWeb()
                 is QuickAction.OpenSession -> nav.push(Screen.Chat(action.sessionId))
                 null -> {}
             }
@@ -274,27 +270,17 @@ private fun ReadyContent(
             openDetail(session.detailScreen())
         }
         val openHistory: (HistorySession) -> Unit = { history ->
-            val key = "${history.apiProvider}:${history.id}"
-            if (restoringHistoryKey == null) {
-                restoringHistoryKey = key
+            if (!listState.isRestoringHistory) {
                 scope.launch {
-                    try {
-                        val resumed = listState.api.resumeHistory(history)
-                        listState.removeHistoryLocally(history)
-                        listState.prepend(resumed)
+                    listState.restore(history)?.let { resumed ->
                         openDetail(resumed.detailScreen())
-                    } catch (e: Exception) {
-                        listState.loadError = e.message ?: "恢复失败"
-                    } finally {
-                        if (restoringHistoryKey == key) restoringHistoryKey = null
                     }
                 }
             }
         }
         val openNewSession = { openDetail(Screen.NewSession) }
         val onCreated: (SessionSnapshot) -> Unit = { snapshot ->
-            listState.prepend(snapshot)
-            listState.requestScrollToLatest()
+            listState.addCreated(snapshot)
             if (wideLayout) {
                 nav.setDetail(snapshot.detailScreen())
             } else {
@@ -312,7 +298,6 @@ private fun ReadyContent(
                 listPaneWidth = listPaneWidth,
                 sidebarCollapsed = sidebarCollapsed,
                 selectedSessionId = nav.current.sessionIdOrNull(),
-                restoringHistoryKey = restoringHistoryKey,
                 onOpenSession = openSession,
                 onOpenHistory = openHistory,
                 onNewSession = openNewSession,
@@ -354,7 +339,9 @@ private fun ReadyContent(
                 ) {
                     SettingsScreen(
                         api = api,
-                        actions = actions,
+                        connection = actions.connection,
+                        navigation = actions.navigation,
+                        settings = actions.settings,
                         onBack = { dismissSettings() },
                     )
                 }
@@ -380,19 +367,19 @@ private fun SinglePaneContent(
             onOpenSession = onOpenSession,
             onNewSession = onNewSession,
             onOpenSettings = onOpenSettings,
-            onOpenWeb = actions.openWeb,
-            onSwitchServer = actions.switchServer,
+            onOpenWeb = actions.navigation.openWeb,
+            onSwitchServer = actions.navigation.switchServer,
         )
         is Screen.Chat -> ChatScreen(
             api = api,
             sessionId = screen.sessionId,
-            isHapticEnabled = actions.isHapticEnabled,
+            isHapticEnabled = actions.settings.isHapticEnabled,
             onBack = { nav.pop() },
         )
         is Screen.PtyTerminal -> PtyTerminalScreen(
             api = api,
             sessionId = screen.sessionId,
-            isHapticEnabled = actions.isHapticEnabled,
+            isHapticEnabled = actions.settings.isHapticEnabled,
             onBack = { nav.pop() },
         )
         is Screen.NewSession -> NewSessionScreen(
@@ -412,7 +399,6 @@ private fun WideReadyContent(
     listPaneWidth: Dp,
     sidebarCollapsed: Boolean,
     selectedSessionId: String?,
-    restoringHistoryKey: String?,
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: () -> Unit,
@@ -441,7 +427,6 @@ private fun WideReadyContent(
                     CollapsedSessionRail(
                         listState = listState,
                         selectedSessionId = selectedSessionId,
-                        restoringHistoryKey = restoringHistoryKey,
                         onOpenSession = onOpenSession,
                         onOpenHistory = onOpenHistory,
                         onNewSession = onNewSession,
@@ -457,8 +442,8 @@ private fun WideReadyContent(
                         onOpenSession = onOpenSession,
                         onNewSession = onNewSession,
                         onOpenSettings = onOpenSettings,
-                        onOpenWeb = actions.openWeb,
-                        onSwitchServer = actions.switchServer,
+                        onOpenWeb = actions.navigation.openWeb,
+                        onSwitchServer = actions.navigation.switchServer,
                         onCollapseSidebar = onToggleSidebarCollapsed,
                     )
                 }
@@ -474,13 +459,13 @@ private fun WideReadyContent(
                 is Screen.Chat -> ChatScreen(
                     api = api,
                     sessionId = screen.sessionId,
-                    isHapticEnabled = actions.isHapticEnabled,
+                    isHapticEnabled = actions.settings.isHapticEnabled,
                     onBack = { nav.pop() },
                 )
                 is Screen.PtyTerminal -> PtyTerminalScreen(
                     api = api,
                     sessionId = screen.sessionId,
-                    isHapticEnabled = actions.isHapticEnabled,
+                    isHapticEnabled = actions.settings.isHapticEnabled,
                     onBack = { nav.pop() },
                 )
                 is Screen.NewSession -> NewSessionScreen(
@@ -523,7 +508,6 @@ private fun WideSidebarPanel(
 private fun CollapsedSessionRail(
     listState: SessionListState,
     selectedSessionId: String?,
-    restoringHistoryKey: String?,
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: () -> Unit,
@@ -592,8 +576,7 @@ private fun CollapsedSessionRail(
                         is CollapsedRailEntry.Recoverable -> CollapsedRecoverableSessionTile(
                             history = entry.history,
                             index = index + 1,
-                            loading = restoringHistoryKey ==
-                                "${entry.history.apiProvider}:${entry.history.id}",
+                            loading = listState.isRestoring(entry.history),
                             onClick = { onOpenHistory(entry.history) },
                         )
                     }

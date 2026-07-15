@@ -20,7 +20,7 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
  * 复用 WandHttp（自签证书放行 + 共享 CookieJar），登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
-class WandApi(baseUrl: String, val token: String?) {
+class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSessionPort {
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
 
@@ -134,7 +134,7 @@ class WandApi(baseUrl: String, val token: String?) {
 
     // MARK: - 会话
 
-    suspend fun listSessions(): List<SessionSnapshot> =
+    override suspend fun listSessions(): List<SessionSnapshot> =
         SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
 
     suspend fun getSession(id: String): SessionSnapshot =
@@ -196,7 +196,7 @@ class WandApi(baseUrl: String, val token: String?) {
         requestData("DELETE", "/api/structured-sessions/$id/queued")
     }
 
-    suspend fun deleteSession(id: String) {
+    override suspend fun deleteSession(id: String) {
         requestData("DELETE", "/api/sessions/$id")
     }
 
@@ -205,7 +205,7 @@ class WandApi(baseUrl: String, val token: String?) {
 
     // MARK: - 模型与思考深度
 
-    suspend fun models(): ModelsResponse =
+    override suspend fun models(): ModelsResponse =
         ModelsResponse.parse(requestObject("GET", "/api/models"))
 
     /** model 传 null 表示恢复默认（服务端收 JSON null）。 */
@@ -268,13 +268,13 @@ class WandApi(baseUrl: String, val token: String?) {
 
     // MARK: - 历史会话
 
-    suspend fun listClaudeHistory(): List<HistorySession> =
+    override suspend fun listClaudeHistory(): List<HistorySession> =
         HistorySession.parseList(requestArray("GET", "/api/claude-history"), provider = "claude")
 
-    suspend fun listCodexHistory(): List<HistorySession> =
+    override suspend fun listCodexHistory(): List<HistorySession> =
         HistorySession.parseList(requestArray("GET", "/api/codex-history"), provider = "codex")
 
-    suspend fun resumeHistory(history: HistorySession): SessionSnapshot {
+    override suspend fun resumeHistory(history: HistorySession): SessionSnapshot {
         val provider = history.apiProvider
         return SessionSnapshot.parse(
             requestObject(
@@ -285,12 +285,7 @@ class WandApi(baseUrl: String, val token: String?) {
         )
     }
 
-    suspend fun deleteHistory(history: HistorySession) {
-        val provider = history.apiProvider
-        requestData("DELETE", "/api/$provider-history/${encode(history.claudeSessionId)}")
-    }
-
-    suspend fun deleteHistoryBatch(provider: String, ids: List<String>) {
+    override suspend fun deleteHistoryBatch(provider: String, ids: List<String>) {
         if (ids.isEmpty()) return
         val body = JSONObject().put("claudeSessionIds", JSONArray(ids))
         requestData("POST", "/api/$provider-history/batch-delete", body)
@@ -323,13 +318,13 @@ class WandApi(baseUrl: String, val token: String?) {
      * 对齐 Web createStructuredSession：Codex / OpenCode 显式指定各自 runner，
      * Claude 不传 runner、由服务端按默认（claude-cli-print）解析。
      */
-    suspend fun createStructuredSession(
+    override suspend fun createStructuredSession(
         cwd: String,
         mode: String?,
         prompt: String?,
-        provider: String = "claude",
-        model: String? = null,
-        thinkingEffort: String? = null,
+        provider: String,
+        model: String?,
+        thinkingEffort: String?,
     ): SessionSnapshot {
         val body = JSONObject().put("cwd", cwd).put("provider", provider)
         when (provider) {
@@ -344,13 +339,13 @@ class WandApi(baseUrl: String, val token: String?) {
     }
 
     /** PTY 会话：POST /api/commands。对齐 Web runPtyCommandFromModal：command 即 provider。 */
-    suspend fun createPtySession(
+    override suspend fun createPtySession(
         cwd: String,
         mode: String?,
         initialInput: String?,
-        provider: String = "claude",
-        model: String? = null,
-        thinkingEffort: String? = null,
+        provider: String,
+        model: String?,
+        thinkingEffort: String?,
     ): SessionSnapshot {
         val body = JSONObject().put("command", provider).put("provider", provider).put("cwd", cwd)
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
@@ -361,13 +356,13 @@ class WandApi(baseUrl: String, val token: String?) {
     }
 
     /** 将「新建会话」默认项持久化到服务端配置。 */
-    suspend fun updateNewSessionDefaults(
-        mode: String? = null,
-        model: String? = null,
-        modelProvider: String = "claude",
-        thinkingEffort: String? = null,
-        defaultProvider: String? = null,
-        defaultSessionKind: String? = null,
+    override suspend fun updateNewSessionDefaults(
+        mode: String?,
+        model: String?,
+        modelProvider: String,
+        thinkingEffort: String?,
+        defaultProvider: String?,
+        defaultSessionKind: String?,
     ) {
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
@@ -455,9 +450,9 @@ class WandApi(baseUrl: String, val token: String?) {
     suspend fun listDirectory(query: String): DirectoryListing =
         DirectoryListing.parse(requestObject("GET", "/api/directory?q=${encode(query)}"))
 
-    suspend fun recentPaths(): List<RecentPath> =
+    override suspend fun recentPaths(): List<RecentPath> =
         RecentPath.parseList(requestArray("GET", "/api/recent-paths"))
 
-    suspend fun serverConfig(): ServerConfigInfo =
+    override suspend fun serverConfig(): ServerConfigInfo =
         ServerConfigInfo.parse(requestObject("GET", "/api/config"))
 }

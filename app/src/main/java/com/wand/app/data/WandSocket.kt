@@ -21,7 +21,7 @@ import org.json.JSONObject
 class WandSocket(baseUrl: String) {
 
     /** 解析后的服务端推送，主线程回调。 */
-    var onEvent: ((WsIncoming) -> Unit)? = null
+    var onEvent: ((SessionEvent) -> Unit)? = null
 
     /** 连接状态变化（true=已连上），主线程回调。 */
     var onConnectionChange: ((Boolean) -> Unit)? = null
@@ -170,7 +170,7 @@ class WandSocket(baseUrl: String) {
                 }
             }
         }
-        onEvent?.invoke(incoming)
+        incoming.toSessionEvent()?.let { onEvent?.invoke(it) }
     }
 
     private fun sendJson(payload: JSONObject) {

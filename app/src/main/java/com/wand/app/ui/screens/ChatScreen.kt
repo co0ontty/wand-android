@@ -1638,8 +1638,13 @@ private fun BottomBar(
             .padding(bottom = 4.dp),
     ) {
         // 待办进度条：当前 turn 有未完成 todos 时悬浮在输入栏上方（对齐 Web todo-progress）。
+        // 会话不再 running（turn 已结束、idle/exited/archived）时直接收起：模型经常
+        // 漏发最后一条全 completed 的 TodoWrite，否则进度条会卡在最后一项 in_progress
+        // 直到下一次发消息才被刷新，看着像「永远执行中」（对齐 Web updateTodoProgress
+        // 用 session.status 而不是 inFlight 判定，避免流式间隙闪烁）。
         val todos = remember(store.messages) { currentTodos(store.messages) }
-        if (todos.isNotEmpty()) {
+        val todoSessionActive = store.status == "running"
+        if (todos.isNotEmpty() && todoSessionActive) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 TodoProgressBar(todos, backdrop)
             }

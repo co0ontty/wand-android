@@ -74,7 +74,9 @@ import com.wand.app.R
 import com.wand.app.data.WandApi
 import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SttModelManager
-import com.wand.app.ui.HomeActions
+import com.wand.app.ui.HomeConnectionInfo
+import com.wand.app.ui.HomeNavigationActions
+import com.wand.app.ui.HomeSettingsActions
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
@@ -93,20 +95,22 @@ import com.wand.app.ui.theme.isWandDarkTheme
 @Composable
 fun SettingsScreen(
     api: WandApi,
-    actions: HomeActions,
+    connection: HomeConnectionInfo,
+    navigation: HomeNavigationActions,
+    settings: HomeSettingsActions,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var serverVersion by remember { mutableStateOf<String?>(null) }
     var showDisconnectConfirm by remember { mutableStateOf(false) }
 
-    var selectedSound by remember { mutableStateOf(actions.getNotificationSound()) }
-    var volume by remember { mutableFloatStateOf(actions.getNotificationVolume().toFloat()) }
-    var hapticEnabled by remember { mutableStateOf(actions.isHapticEnabled()) }
-    var appIcon by remember { mutableStateOf(actions.getAppIcon()) }
+    var selectedSound by remember { mutableStateOf(settings.getNotificationSound()) }
+    var volume by remember { mutableFloatStateOf(settings.getNotificationVolume().toFloat()) }
+    var hapticEnabled by remember { mutableStateOf(settings.isHapticEnabled()) }
+    var appIcon by remember { mutableStateOf(settings.getAppIcon()) }
     var keepAlive by remember { mutableStateOf(false) }
-    var betaChannel by remember { mutableStateOf(actions.isBetaChannel()) }
-    var appearanceMode by remember { mutableStateOf(actions.getAppearanceMode()) }
+    var betaChannel by remember { mutableStateOf(settings.isBetaChannel()) }
+    var appearanceMode by remember { mutableStateOf(settings.getAppearanceMode()) }
     val motionEnabled = rememberSettingsMotionEnabled()
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
@@ -148,7 +152,7 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showDisconnectConfirm = false
-                    actions.disconnect()
+                    navigation.disconnect()
                 }) {
                     Text(
                         "断开连接",
@@ -189,7 +193,7 @@ fun SettingsScreen(
                         selected = appearanceMode,
                         onSelected = { mode ->
                             appearanceMode = mode
-                            actions.setAppearanceMode(mode)
+                            settings.setAppearanceMode(mode)
                         },
                     )
                     RowDivider()
@@ -199,17 +203,17 @@ fun SettingsScreen(
                         hapticEnabled = hapticEnabled,
                         onSoundSelected = { id ->
                             selectedSound = id
-                            actions.setNotificationSound(id)
-                            actions.previewSound(id)
+                            settings.setNotificationSound(id)
+                            settings.previewSound(id)
                         },
                         onVolumeChange = { volume = it },
                         onVolumeCommit = {
-                            actions.setNotificationVolume(volume.toInt())
-                            actions.previewSound(selectedSound)
+                            settings.setNotificationVolume(volume.toInt())
+                            settings.previewSound(selectedSound)
                         },
                         onHapticChange = {
                             hapticEnabled = it
-                            actions.setHapticEnabled(it)
+                            settings.setHapticEnabled(it)
                         },
                     )
                 }
@@ -226,13 +230,13 @@ fun SettingsScreen(
             ) {
                 SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     ServerConnectionRow(
-                        serverUrl = actions.serverUrl,
-                        hasConnectionCode = actions.hasToken,
+                        serverUrl = connection.serverUrl,
+                        hasConnectionCode = connection.hasToken,
                     )
                     RowDivider()
                     ConnectionActionsRow(
-                        onOpenWeb = actions.openWeb,
-                        onSwitchServer = actions.switchServer,
+                        onOpenWeb = navigation.openWeb,
+                        onSwitchServer = navigation.switchServer,
                     )
                     RowDivider()
                     ActionRow(
@@ -259,15 +263,15 @@ fun SettingsScreen(
                         if (enabled && Build.VERSION.SDK_INT >= 33) {
                             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
-                        actions.setKeepAlive(enabled)
+                        settings.setKeepAlive(enabled)
                     }
                     RowDivider()
                     ActionRow(
                         label = "检查更新",
                         icon = WandIcons.update,
-                        trailingText = "v${actions.appVersion}",
+                        trailingText = "v${settings.appVersion}",
                         iconTint = WandColors.success,
-                    ) { actions.manualCheckUpdate() }
+                    ) { settings.manualCheckUpdate() }
                     RowDivider()
                     SwitchRow(
                         label = "Beta 通道",
@@ -276,7 +280,7 @@ fun SettingsScreen(
                         iconTint = WandColors.warning,
                     ) {
                         betaChannel = it
-                        actions.setBetaChannel(it)
+                        settings.setBetaChannel(it)
                     }
                 }
             }
@@ -290,12 +294,12 @@ fun SettingsScreen(
                         motionEnabled = motionEnabled,
                         onSelect = { icon ->
                             appIcon = icon
-                            actions.setAppIcon(icon)
+                            settings.setAppIcon(icon)
                         },
                     )
                     RowDivider()
                     SettingsAboutContent(
-                        appVersion = actions.appVersion,
+                        appVersion = settings.appVersion,
                         serverVersion = serverVersion,
                     )
                 }

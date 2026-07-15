@@ -16,6 +16,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.WandApi
 import com.wand.app.ui.HomeActions
+import com.wand.app.ui.HomeConnectionInfo
+import com.wand.app.ui.HomeNavigationActions
+import com.wand.app.ui.HomeSettingsActions
 import com.wand.app.ui.QuickAction
 import com.wand.app.ui.WandApp
 import com.wand.app.ui.theme.WandAppearanceMode
@@ -71,36 +74,38 @@ class HomeActivity : AppCompatActivity() {
         }
 
         val actions = HomeActions(
-            serverUrl = api.baseUrl,
-            hasToken = !appToken.isNullOrEmpty(),
-            appVersion = appVersion,
-            openWeb = { openWebFallback(serverUrl, appToken) },
-            openWebSession = { sessionId -> openWebFallback(serverUrl, appToken, sessionId) },
-            switchServer = { switchServer() },
-            disconnect = { disconnect(serverStore) },
-            manualCheckUpdate = {
-                Toast.makeText(this, "正在检查更新…", Toast.LENGTH_SHORT).show()
-                checkUpdate(manager)
-            },
-            isBetaChannel = { serverStore.isBetaChannel },
-            setBetaChannel = { serverStore.setBetaChannel(it) },
-            getAppIcon = { serverStore.appIcon },
-            setAppIcon = { AppIconSwitcher.setAppIcon(this, serverStore, it) },
-            getNotificationSound = { serverStore.notificationSound },
-            setNotificationSound = { serverStore.notificationSound = it },
-            previewSound = { name ->
-                notificationHelper.playPresetSound(name, serverStore.notificationVolume / 100f)
-            },
-            getNotificationVolume = { serverStore.notificationVolume },
-            setNotificationVolume = { serverStore.notificationVolume = it },
-            isHapticEnabled = { serverStore.isHapticEnabled },
-            setHapticEnabled = { serverStore.setHapticEnabled(it) },
-            setKeepAlive = { enabled -> setKeepAlive(enabled, serverUrl, appToken) },
-            getAppearanceMode = { appearanceMode },
-            setAppearanceMode = { mode ->
-                appearanceMode = mode
-                serverStore.appearanceMode = mode.storageValue
-            },
+            connection = HomeConnectionInfo(api.baseUrl, !appToken.isNullOrEmpty()),
+            navigation = HomeNavigationActions(
+                openWeb = { openWebFallback(serverUrl, appToken) },
+                switchServer = { switchServer() },
+                disconnect = { disconnect(serverStore) },
+            ),
+            settings = HomeSettingsActions(
+                appVersion = appVersion,
+                manualCheckUpdate = {
+                    Toast.makeText(this, "正在检查更新…", Toast.LENGTH_SHORT).show()
+                    checkUpdate(manager)
+                },
+                isBetaChannel = { serverStore.isBetaChannel },
+                setBetaChannel = { serverStore.setBetaChannel(it) },
+                getAppIcon = { serverStore.appIcon },
+                setAppIcon = { AppIconSwitcher.setAppIcon(this, serverStore, it) },
+                getNotificationSound = { serverStore.notificationSound },
+                setNotificationSound = { serverStore.notificationSound = it },
+                previewSound = { name ->
+                    notificationHelper.playPresetSound(name, serverStore.notificationVolume / 100f)
+                },
+                getNotificationVolume = { serverStore.notificationVolume },
+                setNotificationVolume = { serverStore.notificationVolume = it },
+                isHapticEnabled = { serverStore.isHapticEnabled },
+                setHapticEnabled = { serverStore.setHapticEnabled(it) },
+                setKeepAlive = { enabled -> setKeepAlive(enabled, serverUrl, appToken) },
+                getAppearanceMode = { appearanceMode },
+                setAppearanceMode = { mode ->
+                    appearanceMode = mode
+                    serverStore.appearanceMode = mode.storageValue
+                },
+            ),
         )
 
         applyEdgeToEdge(appearanceMode == WandAppearanceMode.Dark)

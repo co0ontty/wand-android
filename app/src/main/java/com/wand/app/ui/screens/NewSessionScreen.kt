@@ -108,6 +108,7 @@ fun NewSessionScreen(
     onCreated: (SessionSnapshot) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val workflow = remember(api) { NewSessionWorkflow(api) }
     val defaultsUpdateMutex = remember { Mutex() }
     val defaultModelGenerations = remember { mutableMapOf<String, Int>() }
     var defaultsUpdateGeneration by remember { mutableIntStateOf(0) }
@@ -122,10 +123,10 @@ fun NewSessionScreen(
     var codexModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
     var opencodeModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
     var serverDefaultModels by remember {
-        mutableStateOf(ProviderDefaultModels(claude = null, codex = null, opencode = null))
+        mutableStateOf(NewSessionWorkflow.EMPTY_DEFAULT_MODELS)
     }
     var confirmedDefaultModels by remember {
-        mutableStateOf(ProviderDefaultModels(claude = null, codex = null, opencode = null))
+        mutableStateOf(NewSessionWorkflow.EMPTY_DEFAULT_MODELS)
     }
     var selectedModel by remember { mutableStateOf("") }
     var thinkingEffort by remember { mutableStateOf("off") }
@@ -152,53 +153,24 @@ fun NewSessionScreen(
         ?.label
         ?: thinkingLevels.firstOrNull()?.label
         ?: "自动"
-    val supportedModes = supportedModeIds(provider)
+    val supportedModes = workflow.supportedModes(provider)
 
     LaunchedEffect(Unit) {
-        val config = try {
-            api.serverConfig()
-        } catch (_: Exception) {
-            null
-        }
-        val configuredProvider = when (config?.defaultProvider) {
-            "codex" -> "codex"
-            "opencode" -> "opencode"
-            else -> "claude"
-        }
-        provider = configuredProvider
-        isStructured = config?.defaultSessionKind != "pty"
-        mode = supportedModeFor(config?.defaultMode ?: "managed", configuredProvider)
-        val configuredDefaults = config?.defaultModels ?: ProviderDefaultModels(
-            claude = config?.defaultModel,
-            codex = config?.defaultCodexModel,
-            opencode = config?.defaultOpenCodeModel,
-        )
-        serverDefaultModels = configuredDefaults
-        confirmedDefaultModels = configuredDefaults
+        val initial = workflow.bootstrap()
+        provider = initial.provider
+        isStructured = initial.structured
+        mode = initial.mode
+        serverDefaultModels = initial.defaultModels
+        confirmedDefaultModels = initial.defaultModels
         selectedModel = ""
-        thinkingEffort = config?.defaultThinkingEffort ?: "off"
-        try {
-            val response = api.models()
+        thinkingEffort = initial.thinkingEffort
+        initial.models?.let { response ->
             availableModels = response.models
             codexModels = response.codexModels
             opencodeModels = response.opencodeModels
-            val detectedDefaults = response.defaultModels ?: ProviderDefaultModels(
-                claude = response.defaultModel,
-                codex = response.defaultCodexModel,
-                opencode = response.defaultOpenCodeModel,
-            )
-            serverDefaultModels = detectedDefaults
-            confirmedDefaultModels = detectedDefaults
-        } catch (_: Exception) {
         }
-        recentPaths = try {
-            api.recentPaths()
-        } catch (_: Exception) {
-            emptyList()
-        }
-        if (cwd.isEmpty()) {
-            cwd = recentPaths.firstOrNull()?.path ?: config?.defaultCwd ?: ""
-        }
+        recentPaths = initial.recentPaths
+        if (cwd.isEmpty()) cwd = initial.cwd
     }
 
     if (showBrowser) {
@@ -231,7 +203,7 @@ fun NewSessionScreen(
         scope.launch {
             defaultsUpdateMutex.withLock {
                 try {
-                    api.updateNewSessionDefaults(
+                    workflow.persistDefaults(
                         mode = mode,
                         model = model,
                         modelProvider = modelProvider,
@@ -250,21 +222,17 @@ fun NewSessionScreen(
     }
 
     fun normalizeThinkingEffort(nextProvider: String, nextModel: String?) {
-        val models = when (nextProvider) {
-            "codex" -> codexModels
-            "opencode" -> opencodeModels
-            else -> availableModels
-        }
-        if (nextProvider == "codex" && models.isEmpty()) return
-        val defaultModel = when (nextProvider) {
-            "codex" -> serverDefaultModels.codex
-            "opencode" -> serverDefaultModels.opencode
-            else -> serverDefaultModels.claude
-        }
-        val supported = thinkingEffortOptions(nextProvider, nextModel, defaultModel, models)
-            .any { it.id == thinkingEffort }
-        if (!supported) {
-            thinkingEffort = "off"
+        val normalized = workflow.normalizeThinkingEffort(
+            provider = nextProvider,
+            selectedModel = nextModel,
+            currentEffort = thinkingEffort,
+            defaultModels = serverDefaultModels,
+            claudeModels = availableModels,
+            codexModels = codexModels,
+            opencodeModels = opencodeModels,
+        )
+        if (normalized != thinkingEffort) {
+            thinkingEffort = normalized
             persistDefaults(thinkingEffort = "off")
         }
     }
@@ -280,45 +248,20 @@ fun NewSessionScreen(
         if (!canCreate) return
         creating = true
         errorMessage = null
-        val path = cwd.trim()
-        val prompt = firstMessage.trim().ifEmpty { null }
-        val effectiveMode = supportedModeFor(mode, provider)
-        val model = selectedModel.ifEmpty { null }
-        val sessionProvider = provider
-        val sessionThinkingEffort = thinkingEffort
-        val sessionKindIsStructured = isStructured
         ++defaultsUpdateGeneration
         scope.launch {
             try {
-                // 选择项的即时保存协程会随页面离开而取消。创建前再把当前完整选择
-                // 同步写入服务端，保证其它客户端下次打开新建页能拿到最终值。
-                defaultsUpdateMutex.withLock {
-                    api.updateNewSessionDefaults(
-                        mode = effectiveMode,
-                        model = model,
-                        modelProvider = sessionProvider,
-                        thinkingEffort = sessionThinkingEffort,
-                        defaultProvider = sessionProvider,
-                        defaultSessionKind = if (sessionKindIsStructured) "structured" else "pty",
-                    )
-                }
-                val snapshot = if (sessionKindIsStructured) {
-                    api.createStructuredSession(
-                        cwd = path,
-                        mode = effectiveMode,
-                        prompt = prompt,
-                        provider = sessionProvider,
-                        model = model,
-                        thinkingEffort = sessionThinkingEffort,
-                    )
-                } else {
-                    api.createPtySession(
-                        cwd = path,
-                        mode = effectiveMode,
-                        initialInput = prompt,
-                        provider = sessionProvider,
-                        model = model,
-                        thinkingEffort = sessionThinkingEffort,
+                val snapshot = defaultsUpdateMutex.withLock {
+                    workflow.create(
+                        NewSessionDraft(
+                            cwd = cwd,
+                            provider = provider,
+                            structured = isStructured,
+                            mode = mode,
+                            model = selectedModel,
+                            thinkingEffort = thinkingEffort,
+                            firstMessage = firstMessage,
+                        ),
                     )
                 }
                 creating = false
@@ -434,7 +377,7 @@ fun NewSessionScreen(
                 onSelect = { newProvider ->
                     provider = newProvider
                     persistDefaults(defaultProvider = newProvider)
-                    mode = supportedModeFor(mode, newProvider)
+                    mode = workflow.clampMode(mode, newProvider)
                     selectedModel = ""
                     normalizeThinkingEffort(newProvider, "")
                 },
@@ -566,19 +509,6 @@ fun NewSessionScreen(
         }
     }
 }
-
-private fun ProviderDefaultModels.defaultFor(provider: String): String? = when (provider) {
-    "codex" -> codex
-    "opencode" -> opencode
-    else -> claude
-}
-
-private fun ProviderDefaultModels.withDefault(provider: String, value: String?): ProviderDefaultModels =
-    when (provider) {
-        "codex" -> copy(codex = value)
-        "opencode" -> copy(opencode = value)
-        else -> copy(claude = value)
-    }
 
 /** iOS 风格选择卡底：纯色 surface 平面 + 1pt 描边；选中切 brand 软底 + brand 1.5pt 描边。 */
 @Composable
@@ -950,21 +880,6 @@ private val SESSION_MODES = listOf(
     SessionMode("default", "标准", "逐步确认操作"),
     SessionMode("native", "原生", "原生结构化输出"),
 )
-
-/** Provider 支持的模式，与 Web getSupportedModes 保持一致。 */
-private fun supportedModeIds(provider: String): Set<String> = when (provider) {
-    "codex" -> setOf("full-access")
-    "opencode" -> setOf("default", "full-access", "managed")
-    else -> SESSION_MODES.mapTo(mutableSetOf()) { it.id }
-}
-
-/** 切换 provider 时把当前 mode clamp 到该 provider 支持的集合（对齐 iOS supportedMode）。 */
-private fun supportedModeFor(value: String, provider: String): String {
-    if (provider == "codex") return "full-access"
-    val supported = supportedModeIds(provider)
-    if (value in supported) return value
-    return if ("managed" in supported) "managed" else supported.first()
-}
 
 /** 会话类型动态说明，文案对齐 Web getSessionKindHint。 */
 private fun sessionKindHint(provider: String, structured: Boolean): String =

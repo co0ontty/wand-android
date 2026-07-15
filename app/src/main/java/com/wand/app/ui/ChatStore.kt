@@ -5,14 +5,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.CardExpandDefaults
+import com.wand.app.data.ChatSessionEventReducer
+import com.wand.app.data.ChatSessionEventState
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.ModelInfo
+import com.wand.app.data.PendingSessionSettings
 import com.wand.app.data.PermissionRequestInfo
+import com.wand.app.data.SessionEvent
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
-import com.wand.app.data.WsData
-import com.wand.app.data.WsIncoming
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
@@ -146,154 +148,74 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     // MARK: - 推送合流
 
-    /**
-     * 应用一份「窗口化」快照消息（init / 全量 output / ended / REST）。约束：
-     *   - 绝不用「空」覆盖「非空」（停止/重连/丢帧时服务端可能回推空 messages）。
-     *   - 不丢弃用户已翻页加载的更早消息：快照只含尾部窗口时，把本地更早的前缀拼回去。
-     */
-    private fun applyWindowedMessages(incoming: List<ConversationTurn>?, offset: Int?, total: Int?) {
-        if (incoming == null) return
-        val snapOffset = offset ?: 0
-        val snapTotal = total ?: maxOf(snapOffset + incoming.size, incoming.size)
-        if (incoming.isEmpty() && messages.isNotEmpty() && snapTotal == 0) return
-
-        when {
-            messages.isEmpty() -> {
-                messages = incoming
-                loadedOffset = snapOffset
-            }
-            loadedOffset <= snapOffset -> {
-                // 本地持有的 [loadedOffset, snapOffset) 是更早、已加载的前缀，保留它。
-                val keep = (snapOffset - loadedOffset).coerceIn(0, messages.size)
-                messages = messages.subList(0, keep) + incoming
-            }
-            else -> {
-                messages = incoming
-                loadedOffset = snapOffset
-            }
-        }
-        messageTotal = maxOf(snapTotal, loadedOffset + messages.size)
-    }
-
     private fun apply(snap: SessionSnapshot) {
-        snapshot = snap
-        applyWindowedMessages(snap.messages, snap.messageOffset, snap.messageTotal)
-        status = snap.status ?: status
-        isResponding = snap.isResponding
-        queuedMessages = snap.queuedMessages ?: emptyList()
-        pendingEscalation = snap.pendingEscalation
-        permissionBlocked = snap.permissionBlocked ?: (snap.pendingEscalation != null)
-        currentTaskTitle = snap.currentTaskTitle
-        confirmedModel = snap.selectedModel
-        confirmedThinkingEffort = snap.thinkingEffort ?: "off"
-        if (pendingModelMutations == 0) selectedModel = confirmedModel
-        if (pendingThinkingMutations == 0) thinkingEffort = confirmedThinkingEffort
-        snap.mode?.let {
-            confirmedMode = it
-            if (pendingModeMutations == 0) mode = it
-        }
-        if (snap.pendingEscalation != null) legacyPermissionPrompt = null
+        applyRealtimeState(
+            ChatSessionEventReducer.applySnapshot(
+                current = realtimeState(),
+                snapshot = snap,
+                pending = PendingSessionSettings(
+                    model = pendingModelMutations > 0,
+                    thinkingEffort = pendingThinkingMutations > 0,
+                    mode = pendingModeMutations > 0,
+                ),
+            ),
+        )
     }
 
-    private fun handle(event: WsIncoming) {
+    private fun handle(event: SessionEvent) {
         if (event.sessionId != null && event.sessionId != sessionId) return
-        when (event.type) {
-            "init" -> event.data?.let {
-                applyWsSnapshot(it)
-                loading = false
-            }
-            "output" -> event.data?.let { applyOutput(it) }
-            "status" -> event.data?.let { applyStatus(it) }
-            // 当前任务实时更新（对齐网页 state.currentTask）；data 为 null 表示任务清空。
-            "task" -> currentTaskTitle = event.data?.taskTitle
-            "ended" -> {
-                val data = event.data
-                if (data != null) {
-                    applyWindowedMessages(data.messages, data.messageOffset, data.messageTotal)
-                    status = data.status ?: "exited"
-                    isResponding = false
-                    applyCommonFields(data)
-                } else {
-                    status = "exited"
-                    isResponding = false
-                }
-            }
-            "error" -> event.error?.takeIf { it.isNotEmpty() }?.let { toast = it }
-        }
+        val next = ChatSessionEventReducer.reduce(
+            current = realtimeState(),
+            event = event,
+            pending = PendingSessionSettings(
+                model = pendingModelMutations > 0,
+                thinkingEffort = pendingThinkingMutations > 0,
+                mode = pendingModeMutations > 0,
+            ),
+        )
+        applyRealtimeState(next)
     }
 
-    /** init 的 data 就是一份完整 SessionSnapshot（以 WsData 超集形状承接）。 */
-    private fun applyWsSnapshot(data: WsData) {
-        applyWindowedMessages(data.messages, data.messageOffset, data.messageTotal)
-        status = data.status ?: status
-        data.structuredState?.let { isResponding = it.inFlight ?: false }
-        applyCommonFields(data)
-        if (snapshot == null) {
-            // 极端情况：REST 快照还没回来 WS init 先到，补一份最小 snapshot。
-            data.toSnapshot()?.let { snapshot = it }
-        }
-    }
+    private fun realtimeState() = ChatSessionEventState(
+        messages = messages,
+        loadedOffset = loadedOffset,
+        messageTotal = messageTotal,
+        status = status,
+        isResponding = isResponding,
+        queuedMessages = queuedMessages,
+        pendingEscalation = pendingEscalation,
+        legacyPermissionPrompt = legacyPermissionPrompt,
+        permissionBlocked = permissionBlocked,
+        currentTaskTitle = currentTaskTitle,
+        snapshot = snapshot,
+        selectedModel = selectedModel,
+        thinkingEffort = thinkingEffort,
+        mode = mode,
+        confirmedModel = confirmedModel,
+        confirmedThinkingEffort = confirmedThinkingEffort,
+        confirmedMode = confirmedMode,
+    )
 
-    private fun applyOutput(data: WsData) {
-        val incremental = data.incremental ?: false
-        val full = data.messages
-        val incoming = data.lastMessage
-        if (full != null) {
-            // 全量赢（窗口合并：空不覆盖非空、保留已加载的更早前缀）。
-            applyWindowedMessages(full, data.messageOffset, data.messageTotal)
-        } else if (incremental && incoming != null) {
-            // expected 是完整历史总数；本地绝对条数 = loadedOffset + messages.size。
-            val expected = data.messageCount ?: 0
-            val last = messages.lastOrNull()
-            if (last != null && last.role == incoming.role) {
-                messages = messages.dropLast(1) + incoming
-            } else if (loadedOffset + messages.size < expected || expected == 0) {
-                messages = messages + incoming
-            }
-            if (expected > 0) messageTotal = maxOf(messageTotal, expected)
-        }
-        data.isResponding?.let { isResponding = it }
-        applyCommonFields(data)
-    }
-
-    private fun applyStatus(data: WsData) {
-        data.status?.let { status = it }
-        applyCommonFields(data)
-        // PTY 旧式权限提示：status 事件带 permissionRequest（无结构化 escalation 时启用）。
-        val prompt = data.permissionRequest
-        if (prompt != null && pendingEscalation == null) {
-            legacyPermissionPrompt = prompt
-            permissionBlocked = true
-        }
-    }
-
-    private fun applyCommonFields(data: WsData) {
-        data.structuredState?.let { isResponding = it.inFlight ?: isResponding }
-        data.queuedMessages?.let { queuedMessages = it }
-        data.pendingEscalation?.let {
-            pendingEscalation = it
-            legacyPermissionPrompt = null
-        }
-        data.permissionBlocked?.let { blocked ->
-            permissionBlocked = blocked
-            if (!blocked) {
-                pendingEscalation = null
-                legacyPermissionPrompt = null
-            }
-        }
-        data.currentTaskTitle?.let { currentTaskTitle = it }
-        data.selectedModel?.let {
-            confirmedModel = it
-            if (pendingModelMutations == 0) selectedModel = it
-        }
-        data.thinkingEffort?.let {
-            confirmedThinkingEffort = it
-            if (pendingThinkingMutations == 0) thinkingEffort = it
-        }
-        data.mode?.let {
-            confirmedMode = it
-            if (pendingModeMutations == 0) mode = it
-        }
+    private fun applyRealtimeState(next: ChatSessionEventState) {
+        messages = next.messages
+        loadedOffset = next.loadedOffset
+        messageTotal = next.messageTotal
+        status = next.status
+        isResponding = next.isResponding
+        queuedMessages = next.queuedMessages
+        pendingEscalation = next.pendingEscalation
+        legacyPermissionPrompt = next.legacyPermissionPrompt
+        permissionBlocked = next.permissionBlocked
+        currentTaskTitle = next.currentTaskTitle
+        snapshot = next.snapshot
+        selectedModel = next.selectedModel
+        thinkingEffort = next.thinkingEffort
+        mode = next.mode
+        confirmedModel = next.confirmedModel
+        confirmedThinkingEffort = next.confirmedThinkingEffort
+        confirmedMode = next.confirmedMode
+        next.errorMessage?.let { toast = it }
+        if (next.initialized) loading = false
     }
 
     // MARK: - 模型与思考深度（乐观更新 + 串行请求 + generation 防旧响应覆盖）

@@ -88,14 +88,19 @@ class NavState {
  * （ServerStore / NotificationHelper / UpdateManager / WandForegroundService）
  * 包成 lambda 给 ui 包用，避免 Kotlin 跨包访问不到 Java package-private 成员。
  */
-class HomeActions(
+data class HomeConnectionInfo(
     val serverUrl: String,
     val hasToken: Boolean,
-    val appVersion: String,
+)
+
+class HomeNavigationActions(
     val openWeb: () -> Unit,
-    val openWebSession: (String) -> Unit,
     val switchServer: () -> Unit,
     val disconnect: () -> Unit,
+)
+
+class HomeSettingsActions(
+    val appVersion: String,
     val manualCheckUpdate: () -> Unit,
     val isBetaChannel: () -> Boolean,
     val setBetaChannel: (Boolean) -> Unit,
@@ -111,4 +116,11 @@ class HomeActions(
     val setKeepAlive: (Boolean) -> Unit,
     val getAppearanceMode: () -> WandAppearanceMode,
     val setAppearanceMode: (WandAppearanceMode) -> Unit,
+)
+
+/** 宿主能力按连接信息、导航和设备设置分组，页面只向下传递实际需要的能力。 */
+class HomeActions(
+    val connection: HomeConnectionInfo,
+    val navigation: HomeNavigationActions,
+    val settings: HomeSettingsActions,
 )

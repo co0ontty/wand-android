@@ -23,12 +23,10 @@ import androidx.core.content.ContextCompat
  * → 非空文本回调 commit（追加进输入框草稿）。
  */
 class VoiceInputController(private val context: Context) {
-    var pressed by mutableStateOf(false)
-        private set
-    var canceling by mutableStateOf(false)
-        private set
-    var transcript by mutableStateOf("")
-        private set
+    private var session by mutableStateOf(VoiceSessionState())
+    val pressed: Boolean get() = session.pressed
+    val canceling: Boolean get() = session.canceling
+    val transcript: String get() = session.transcript
     var engineLabel by mutableStateOf("")
         private set
 
@@ -39,7 +37,7 @@ class VoiceInputController(private val context: Context) {
 
     private var engine: SpeechEngine? = null
     private var commit: ((String) -> Unit)? = null
-    private var awaitingFinal = false
+    private var listenerGeneration = 0
     private val main = Handler(Looper.getMainLooper())
     private var finalTimeout: Runnable? = null
 
@@ -58,6 +56,11 @@ class VoiceInputController(private val context: Context) {
     /** 手指按下（已确保有麦克风权限）。 */
     fun beginPress(onCommit: (String) -> Unit) {
         if (pressed) return
+        // 上一轮仍在等 final 时允许立即开始，但必须先废弃旧引擎及其迟到回调。
+        if (session.phase != VoiceSessionPhase.IDLE) {
+            engine?.cancel()
+            resetSession()
+        }
         val chosen: SpeechEngine? = when {
             SttModelManager.isReady(context) -> SherpaSpeechEngine(context)
             SystemSpeechEngine.isUsable(context) -> SystemSpeechEngine(context)
@@ -70,24 +73,21 @@ class VoiceInputController(private val context: Context) {
         engine?.destroy()
         engine = chosen
         commit = onCommit
-        pressed = true
-        canceling = false
-        transcript = ""
-        awaitingFinal = false
+        transition(VoiceSessionEvent.Begin)
         engineLabel = chosen.label
+        val generation = ++listenerGeneration
         chosen.start(object : SpeechEngine.Listener {
             override fun onPartial(text: String) {
-                if (pressed || awaitingFinal) transcript = text
+                if (generation == listenerGeneration) transition(VoiceSessionEvent.Partial(text))
             }
 
             override fun onFinal(text: String) {
-                deliver(text.ifBlank { transcript })
+                if (generation == listenerGeneration) deliver(text)
             }
 
             override fun onError(message: String) {
+                if (generation != listenerGeneration) return
                 onToast?.invoke(message)
-                pressed = false
-                canceling = false
                 resetSession()
             }
         })
@@ -95,51 +95,52 @@ class VoiceInputController(private val context: Context) {
 
     /** 手指移动：是否进入「松开取消」态。 */
     fun updateCancel(cancel: Boolean) {
-        if (pressed) canceling = cancel
+        transition(VoiceSessionEvent.CancelChanged(cancel))
     }
 
     /** 手指松开：取消态丢弃，否则限时等 final 后提交。 */
     fun endPress() {
         if (!pressed) return
-        pressed = false
-        val cancelled = canceling
-        canceling = false
-        val engine = engine ?: return
-        if (cancelled) {
-            engine.cancel()
-            resetSession()
-            return
+        when (transition(VoiceSessionEvent.Release)) {
+            VoiceSessionEffect.CancelEngine -> {
+                engine?.cancel()
+                resetSession()
+            }
+            VoiceSessionEffect.FinishEngine -> {
+                engine?.finish()
+                val fallback = Runnable { deliver(null) }
+                finalTimeout = fallback
+                main.postDelayed(fallback, finalGraceMs)
+            }
+            else -> Unit
         }
-        awaitingFinal = true
-        engine.finish()
-        val fallback = Runnable { deliver(transcript) }
-        finalTimeout = fallback
-        main.postDelayed(fallback, finalGraceMs)
     }
 
     fun destroy() {
         engine?.destroy()
         engine = null
-        pressed = false
-        canceling = false
         resetSession()
     }
 
     /** final 到达或限时兜底触发，二者只生效一次。 */
-    private fun deliver(text: String) {
-        if (!awaitingFinal) return
-        awaitingFinal = false
+    private fun deliver(text: String?) {
+        val effect = transition(VoiceSessionEvent.Complete(text)) as? VoiceSessionEffect.Commit ?: return
         val onCommit = commit
         resetSession()
-        val clean = text.trim()
-        if (clean.isNotEmpty()) onCommit?.invoke(clean)
+        effect.text?.let { onCommit?.invoke(it) }
     }
 
     private fun resetSession() {
         finalTimeout?.let { main.removeCallbacks(it) }
         finalTimeout = null
-        awaitingFinal = false
-        transcript = ""
+        transition(VoiceSessionEvent.Abort)
         commit = null
+        listenerGeneration += 1
+    }
+
+    private fun transition(event: VoiceSessionEvent): VoiceSessionEffect {
+        val result = VoiceSessionStateMachine.reduce(session, event)
+        session = result.state
+        return result.effect
     }
 }
