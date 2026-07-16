@@ -656,7 +656,11 @@ private fun FormPanel(
                 Spacer(Modifier.width(8.dp))
             }
             Text(
-                if (qc.pushing) "推送中…" else "推送 ↑$ahead 个待推 commit",
+                if (qc.pushing) {
+                    "推送中…"
+                } else {
+                    "推送 ↑$ahead 个待推 commit" + if (hasSubmodule) "（含子模块）" else ""
+                },
                 fontSize = 13.sp,
             )
         }

@@ -222,7 +222,10 @@ class QuickCommitStore(
                     sessionId = sessionId,
                     pushCommits = true,
                     pushTags = false,
-                    submodule = false,
+                    // 父仓库的待推 commit 可能引用尚未推到远端的 submodule HEAD。
+                    // 此时普通 git push 会被 --recurse-submodules=check 拒绝；快捷入口
+                    // 应先推声明的 submodule，再推父仓库，和「Sub + Push」一致。
+                    submodule = status?.hasSubmodule == true,
                     tag = null,
                 )
                 if (!res.error.isNullOrEmpty()) {
