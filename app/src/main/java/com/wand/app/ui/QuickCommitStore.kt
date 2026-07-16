@@ -173,18 +173,27 @@ class QuickCommitStore(
                     oldCommitSubject = before?.lastCommitSubject.orEmpty(),
                     submoduleCount = r.submoduleCommitCount ?: 0,
                 )
-                result = null
                 val message = buildString {
                     append(outcome.summaryText())
                     if (push && outcome.pushError == null) append("，已推送")
                     outcome.pushError?.let { append("，推送失败：").append(it) }
                 }
-                if (outcome.pushError == null) {
+                if (push && outcome.pushError == null) {
+                    result = null
                     onToast(message)
                     finishEntrySuccess()
                 } else {
-                    pushError = outcome.pushError
-                    failEntry(message)
+                    // Commit/tag 已经落地但没有完成 push 时保留结果面板，允许用户直接
+                    // “Push & Close”补推；此前这里清空 result，工作区变 clean 后便失去入口。
+                    result = outcome
+                    panelOpen = true
+                    if (outcome.pushError == null) {
+                        onToast(message)
+                        finishEntrySuccess()
+                    } else {
+                        pushError = outcome.pushError
+                        failEntry(message)
+                    }
                 }
                 loadStatus(force = true)
             } catch (e: Exception) {
