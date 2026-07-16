@@ -145,7 +145,8 @@ class QuickCommitStore(
 
         submitting = true
         beginEntryLoading()
-        panelOpen = false
+        // 保持面板打开：失败时用户能看到服务端错误，并直接修改 message/tag 后重试。
+        // 关闭面板会让错误只剩一个短 Toast，看起来像“提交按钮没有作用”。
         submoduleIntent = includeSubmodule
         autoGenerating = autoMessage || (withTag && userTag.isEmpty())
         error = null
@@ -180,6 +181,7 @@ class QuickCommitStore(
                 }
                 if (push && outcome.pushError == null) {
                     result = null
+                    panelOpen = false
                     onToast(message)
                     finishEntrySuccess()
                 } else {
@@ -212,7 +214,6 @@ class QuickCommitStore(
         if (inFlight) return
         pushing = true
         beginEntryLoading()
-        panelOpen = false
         error = null
         pushError = null
         scope.launch {
@@ -228,6 +229,7 @@ class QuickCommitStore(
                     pushError = res.error
                     failEntry(res.error)
                 } else {
+                    panelOpen = false
                     onToast("已推送 commits")
                     finishEntrySuccess()
                     loadStatus(force = true)
@@ -248,7 +250,6 @@ class QuickCommitStore(
         if (pushing) return
         pushing = true
         beginEntryLoading()
-        panelOpen = false
         pushError = null
         scope.launch {
             try {
@@ -268,6 +269,7 @@ class QuickCommitStore(
                         if (res.pushedCommits == true) add("commits")
                         if (res.pushedTags == true) add("tags")
                     }
+                    panelOpen = false
                     onToast("已推送 " + (if (parts.isEmpty()) "（无内容）" else parts.joinToString(" 和 ")))
                     finishEntrySuccess()
                     loadStatus(force = true)
