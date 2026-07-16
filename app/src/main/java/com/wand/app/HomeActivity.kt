@@ -37,6 +37,8 @@ class HomeActivity : AppCompatActivity() {
 
     private var updateExecutor: ExecutorService? = null
     private var updateManager: UpdateManager? = null
+    /** 同一 Activity 的认证重试不应重复弹出同一个更新提示。 */
+    private var autoUpdateCheckStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,6 +130,14 @@ class HomeActivity : AppCompatActivity() {
                         // 认证成功后启动会话通知中枢（全局 WS → 进度/完成/授权通知）。
                         // start 幂等，Activity 重建时复用既有连接。
                         SessionWatcher.start(this, api.baseUrl, appToken)
+                        // 自动检查必须等认证完成：更新接口会复用登录后的 Cookie。没有更新、
+                        // 已跳过或已下载的版本都静默处理；只有确有新包才弹出安装对话框。
+                        if (!autoUpdateCheckStarted) {
+                            autoUpdateCheckStarted = true
+                            manager.checkForUpdate { cur, latest, url, file, size, source, notes, channel ->
+                                manager.showUpdateDialog(cur, latest, url, file, size, source, notes, channel)
+                            }
+                        }
                     },
                 )
             }
