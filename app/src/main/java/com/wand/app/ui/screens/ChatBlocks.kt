@@ -918,6 +918,9 @@ data class ExplorationToolItem(
     val result: ContentBlock.ToolResult?,
 )
 
+/** 少量调用逐张展示；第 4 个连续工具调用起才收进聚合卡。 */
+private const val TOOL_CALL_GROUP_THRESHOLD = 4
+
 /** 跨消息分组后的渲染单元（对齐 iOS MessageDisplayItem）。 */
 sealed class MessageDisplayItem {
     data class Turn(val index: Int, val turn: ConversationTurn) : MessageDisplayItem()
@@ -940,12 +943,20 @@ fun messageItemTurnIndex(item: MessageDisplayItem): Int = when (item) {
 fun groupExplorationTurns(turns: List<ConversationTurn>): List<MessageDisplayItem> {
     val items = mutableListOf<MessageDisplayItem>()
     val pending = mutableListOf<ExplorationToolItem>()
+    val pendingTurns = mutableListOf<Pair<Int, ConversationTurn>>()
     var pendingLastIndex = -1
 
     fun flushPending() {
         if (pending.isNotEmpty()) {
-            items.add(MessageDisplayItem.Exploration(pending.toList(), pendingLastIndex))
+            if (pending.size >= TOOL_CALL_GROUP_THRESHOLD) {
+                items.add(MessageDisplayItem.Exploration(pending.toList(), pendingLastIndex))
+            } else {
+                pendingTurns.forEach { (index, turn) ->
+                    items.add(MessageDisplayItem.Turn(index, turn))
+                }
+            }
             pending.clear()
+            pendingTurns.clear()
             pendingLastIndex = -1
         }
     }
@@ -954,6 +965,7 @@ fun groupExplorationTurns(turns: List<ConversationTurn>): List<MessageDisplayIte
         val tools = explorationToolsOnly(turn)
         if (tools != null) {
             pending += tools
+            pendingTurns += index to turn
             pendingLastIndex = index
         } else {
             flushPending()
@@ -1017,16 +1029,22 @@ private fun collapseActivityItems(
     fun flushPending() {
         if (pending.isNotEmpty()) {
             val groupItems = pending.toList()
-            val groupRunning = groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) }
-            renderItems += SegmentRenderItem.Activity(
-                ActivityGroup(
-                    key = activityGroupKey(groupItems, pendingStartIndex),
-                    summary = activitySummary(groupItems),
-                    items = groupItems,
-                    running = groupRunning,
-                    failed = groupItems.any(::isDisplayItemFailed),
+            if (groupItems.size >= TOOL_CALL_GROUP_THRESHOLD) {
+                val groupRunning = groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) }
+                renderItems += SegmentRenderItem.Activity(
+                    ActivityGroup(
+                        key = activityGroupKey(groupItems, pendingStartIndex),
+                        summary = activitySummary(groupItems),
+                        items = groupItems,
+                        running = groupRunning,
+                        failed = groupItems.any(::isDisplayItemFailed),
+                    )
                 )
-            )
+            } else {
+                groupItems.forEachIndexed { offset, item ->
+                    renderItems += SegmentRenderItem.Item(pendingStartIndex + offset, item)
+                }
+            }
             pending.clear()
             pendingStartIndex = -1
         }
@@ -1387,17 +1405,19 @@ private fun activityKind(name: String): String {
 
 /**
  * 连续读取、搜索、网页获取通常只是模型探索上下文，不需要逐张占满对话流。
- * 至少连续两次才合并，单次操作仍保留完整工具卡（对齐 iOS collapseConsecutiveExplorationTools）。
+ * 连续 4 次及以上才合并；1～3 次操作仍保留完整工具卡。
  */
 private fun collapseConsecutiveExplorationTools(paired: List<DisplayItem>): List<DisplayItem> {
     val items = mutableListOf<DisplayItem>()
     val exploration = mutableListOf<ExplorationToolItem>()
 
     fun flushExploration() {
-        if (exploration.size >= 2) {
+        if (exploration.size >= TOOL_CALL_GROUP_THRESHOLD) {
             items.add(DisplayItem.Exploration(exploration.toList()))
         } else {
-            exploration.firstOrNull()?.let { items.add(DisplayItem.Tool(it.use, it.result)) }
+            exploration.forEach { tool ->
+                items.add(DisplayItem.Tool(tool.use, tool.result))
+            }
         }
         exploration.clear()
     }

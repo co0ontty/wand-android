@@ -84,6 +84,26 @@ class HistoryPresentationTest {
     }
 
     @Test
+    fun upToThreeExplorationCallsStayAsIndividualTurns() {
+        val turns = List(3) { index -> explorationTurn("tool-$index") }
+
+        val items = groupExplorationTurns(turns)
+
+        assertEquals(3, items.size)
+        assertTrue(items.all { it is MessageDisplayItem.Turn })
+    }
+
+    @Test
+    fun fourExplorationCallsCollapseIntoOneGroup() {
+        val turns = List(4) { index -> explorationTurn("tool-$index") }
+
+        val items = groupExplorationTurns(turns)
+
+        assertEquals(1, items.size)
+        assertTrue(items.single() is MessageDisplayItem.Exploration)
+    }
+
+    @Test
     fun compactPreviewRemovesCommonMarkdownAndWhitespace() {
         val source = """
             # Heading
@@ -103,10 +123,15 @@ class HistoryPresentationTest {
         content = listOf(ContentBlock.Text(text = text, subagent = null)),
     )
 
+    private fun explorationTurn(id: String) = ConversationTurn(
+        role = "assistant",
+        content = listOf(explorationTool(id).use),
+    )
+
     private fun explorationTool(id: String) = ExplorationToolItem(
         use = ContentBlock.ToolUse(
             id = id,
-            name = "Read",
+            name = "Grep",
             description = null,
             input = JSONObject(),
             subagent = null,
