@@ -54,72 +54,10 @@ class HistoryPresentationTest {
     }
 
     @Test
-    fun historyAnchorStillTargetsTheSameAbsoluteTurnAfterPrepend() {
-        val turn = ConversationTurn(role = "assistant", content = emptyList())
-        val refreshedHistory = (0..15).map { index -> MessageDisplayItem.Turn(index, turn) }
-
-        val target = historyAnchorListIndex(
-            historyItems = refreshedHistory,
-            loadedOffset = 90,
-            anchorAbsoluteIndex = 105,
-            hasLoadEarlierSentinel = true,
-        )
-
-        assertEquals(16, target)
-    }
-
-    @Test
-    fun missingHistoryAnchorFallsBackToTheDisclosureRow() {
-        val turn = ConversationTurn(role = "assistant", content = emptyList())
-        val history = (0..2).map { index -> MessageDisplayItem.Turn(index, turn) }
-
-        assertEquals(
-            4,
-            historyAnchorListIndex(
-                historyItems = history,
-                loadedOffset = 10,
-                anchorAbsoluteIndex = 999,
-                hasLoadEarlierSentinel = true,
-            ),
-        )
-    }
-
-    @Test
-    fun emptyHistoryDisclosureAccountsForTheLoadEarlierControl() {
-        assertEquals(1, historyDisclosureListIndex(0, hasLoadEarlierSentinel = true))
-        assertEquals(0, historyDisclosureListIndex(0, hasLoadEarlierSentinel = false))
-    }
-
-    @Test
-    fun loadEarlierRemainsReachableWhenTheTailWindowHasNoUserTurn() {
-        assertTrue(
-            shouldShowLoadEarlierControl(
-                historyExpanded = false,
-                hasCollapsedHistory = false,
-                canLoadEarlier = true,
-            ),
-        )
-        assertFalse(
-            shouldShowLoadEarlierControl(
-                historyExpanded = false,
-                hasCollapsedHistory = true,
-                canLoadEarlier = true,
-            ),
-        )
-        assertTrue(
-            shouldShowLoadEarlierControl(
-                historyExpanded = true,
-                hasCollapsedHistory = true,
-                canLoadEarlier = true,
-            ),
-        )
-        assertFalse(
-            shouldShowLoadEarlierControl(
-                historyExpanded = true,
-                hasCollapsedHistory = false,
-                canLoadEarlier = false,
-            ),
-        )
+    fun onlyRepliesBeforeTheLatestUserInputStartCollapsed() {
+        assertFalse(shouldCollapseReply(turnIndex = 5, lastUserTurnIndex = -1))
+        assertTrue(shouldCollapseReply(turnIndex = 3, lastUserTurnIndex = 4))
+        assertFalse(shouldCollapseReply(turnIndex = 5, lastUserTurnIndex = 4))
     }
 
     @Test

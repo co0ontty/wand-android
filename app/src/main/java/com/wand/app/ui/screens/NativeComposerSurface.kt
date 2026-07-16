@@ -23,8 +23,12 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
 
-/** 输入区圆形操作的可见尺寸；触控区仍统一保持 48dp。 */
-internal val ComposerActionVisualSize = 32.dp
+/** 输入区操作按钮统一规格：36dp 视觉区、18dp 图标、44dp 紧凑触控区。 */
+internal val ComposerActionVisualSize = 36.dp
+internal val ComposerActionIconSize = 18.dp
+internal val ComposerActionTouchSize = 44.dp
+// 44dp 触控盒在 36dp 视觉区两侧各留 4dp，不再叠加额外空隙。
+internal val ComposerActionSpacing = 0.dp
 
 @Composable
 fun NativeComposerSurface(
@@ -94,7 +98,7 @@ fun NativeComposerSurface(
         ) {
             Row(
                 verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (!expanded) {
@@ -108,7 +112,7 @@ fun NativeComposerSurface(
             if (expanded) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     expandedControls(controlsCompact)

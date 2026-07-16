@@ -174,6 +174,7 @@ fun TurnView(
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
     compactUser: Boolean = false,
+    initiallyCollapsed: Boolean = false,
     currentReplyExpandedOverride: Boolean? = null,
     showHeader: Boolean = true,
     showContent: Boolean = true,
@@ -188,9 +189,11 @@ fun TurnView(
         UserTurnView(turn, compact = compactUser)
         return
     }
-    // 整段历史已经由 ChatScreen 的单一边界控件管理。展开历史后直接看到
-    // 回复正文，不再让用户二次点开每一条助手回复；仍可手动逐条收起。
-    var localCollapsed by rememberSaveable { mutableStateOf(false) }
+    // 历史回复默认收起，但折叠状态属于每一条 turn；点击某条不影响其他回复。
+    // initiallyCollapsed 改变意味着当前回复刚转为历史，此时应立即回到默认收起态。
+    var localCollapsed by rememberSaveable(initiallyCollapsed) {
+        mutableStateOf(initiallyCollapsed)
+    }
     val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
     val segments = remember(turn.content, collapsed) {
         if (collapsed) emptyList() else splitBySubagent(turn.content)
