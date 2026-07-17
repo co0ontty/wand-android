@@ -625,7 +625,10 @@ private fun CollapsedSessionTile(
     onClick: () -> Unit,
 ) {
     val isCodex = session.provider == "codex"
-    val tint = if (isCodex) WandColors.info else WandColors.brand
+    val tint = BrandLogos.tintForProvider(
+        session.provider,
+        if (isCodex) WandColors.info else WandColors.brand,
+    )
     val icon = BrandLogos.forProvider(session.provider)
     CollapsedRailTile(
         icon = icon,

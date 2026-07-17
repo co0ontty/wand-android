@@ -1058,7 +1058,7 @@ private fun ProviderMark(
             icon,
             // Provider 已在右侧元信息中朗读；Logo 仅作视觉识别，避免 TalkBack 重复标题。
             contentDescription = null,
-            tint = tint.copy(alpha = 0.94f),
+            tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.94f)),
             modifier = Modifier.size(if (compact) 23.dp else 26.dp),
         )
     }

@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -73,6 +74,7 @@ import com.wand.app.data.ProviderDefaultModels
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
+import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
@@ -368,8 +370,8 @@ fun NewSessionScreen(
                 .padding(horizontal = 16.dp),
         ) {
             // —— Provider（分段控件）——
-            SectionHeader("Provider")
-            WandSegmented(
+            ProviderSectionHeader(providerLabel(provider))
+            ProviderPicker(
                 options = listOf(
                     "claude" to "Claude",
                     "codex" to "Codex",
@@ -511,6 +513,87 @@ fun NewSessionScreen(
             Spacer(modifier = Modifier.size(40.dp))
         }
     }
+}
+
+@Composable
+private fun ProviderSectionHeader(providerName: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        SectionHeader("Provider", modifier = Modifier.weight(1f))
+        Text(
+            providerName,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = WandColors.textSecondary,
+            modifier = Modifier.padding(top = 18.dp, bottom = 7.dp),
+        )
+    }
+}
+
+@Composable
+private fun ProviderPicker(
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 54.dp)
+            .clip(WandShapes.full)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.48f))
+            .border(0.55.dp, WandColors.borderStrong.copy(alpha = 0.26f), WandShapes.full)
+            .padding(3.dp),
+    ) {
+        options.forEach { (value, label) ->
+            val active = value == selected
+            val iconColor by animateColorAsState(
+                if (active) WandColors.brand else WandColors.textSecondary,
+                WandMotion.tweenFast(),
+                label = "providerIconColor",
+            )
+            val itemBackground by animateColorAsState(
+                if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
+                WandMotion.tweenFast(),
+                label = "providerItemBg",
+            )
+            val itemBorder by animateColorAsState(
+                if (active) WandColors.borderStrong.copy(alpha = 0.24f) else Color.Transparent,
+                WandMotion.tweenFast(),
+                label = "providerItemBorder",
+            )
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .clip(WandShapes.full)
+                    .background(itemBackground)
+                    .border(1.dp, itemBorder, WandShapes.full)
+                    .semantics { contentDescription = label }
+                    .selectable(selected = active, role = Role.Tab) { onSelect(value) },
+            ) {
+                Icon(
+                    imageVector = BrandLogos.forProvider(value),
+                    contentDescription = null,
+                    tint = BrandLogos.tintForProvider(value, iconColor),
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun providerLabel(provider: String): String = when (provider) {
+    "codex" -> "Codex"
+    "opencode" -> "OpenCode"
+    "grok" -> "Grok"
+    else -> "Claude"
 }
 
 /** iOS 风格选择卡底：纯色 surface 平面 + 1pt 描边；选中切 brand 软底 + brand 1.5pt 描边。 */

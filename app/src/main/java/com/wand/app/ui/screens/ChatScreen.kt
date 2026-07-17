@@ -695,7 +695,7 @@ private fun ChatProviderBadge(provider: String?) {
                 "grok" -> "Grok"
                 else -> "Claude"
             },
-            tint = tint.copy(alpha = 0.94f),
+            tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.94f)),
             modifier = Modifier.size(20.dp),
         )
     }

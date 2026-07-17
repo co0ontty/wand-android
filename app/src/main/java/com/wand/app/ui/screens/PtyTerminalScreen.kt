@@ -657,7 +657,7 @@ private fun PtyProviderBadge(provider: String?) {
                 "grok" -> "Grok"
                 else -> "Claude"
             },
-            tint = tint,
+            tint = BrandLogos.tintForProvider(provider, tint),
             modifier = Modifier.size(15.dp),
         )
     }
