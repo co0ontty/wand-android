@@ -1399,7 +1399,7 @@ private fun InputBar(
         }
     }
     // 文本聚焦、按住语音或草稿无法在最小态完整显示时展开。
-    val expanded = isFocused || voice.pressed || draftNeedsExpanded
+    val expanded = isFocused || voice.pressed || draftNeedsExpanded || pendingAttachments.isNotEmpty()
     LaunchedEffect(expanded) {
         onExpandedChange(expanded)
     }
@@ -1501,13 +1501,7 @@ private fun InputBar(
         focused = isFocused,
         collapsedLeading = { plusMenu() },
         inputContent = { inputContent() },
-        collapsedTrailing = {
-            if (store.isStructured) {
-                ModeChip(store, compact = true)
-                ModelThinkingChip(store, compact = true)
-            }
-            trailing()
-        },
+        collapsedTrailing = { trailing() },
         expandedControls = { controlsCompact ->
             // 控制行：+ / 模式徽标 / 模型·思考徽标 / 停止·语音·发送。
             Row(

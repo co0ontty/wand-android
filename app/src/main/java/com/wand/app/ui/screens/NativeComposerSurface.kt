@@ -23,11 +23,11 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
 
-/** 输入区操作按钮统一规格：36dp 视觉区、18dp 图标、44dp 紧凑触控区。 */
+/** 输入区操作按钮统一规格：36dp 视觉区、18dp 图标、48dp Material 触控区。 */
 internal val ComposerActionVisualSize = 36.dp
 internal val ComposerActionIconSize = 18.dp
-internal val ComposerActionTouchSize = 44.dp
-// 44dp 触控盒在 36dp 视觉区两侧各留 4dp，不再叠加额外空隙。
+internal val ComposerActionTouchSize = 48.dp
+// 48dp 触控盒在 36dp 视觉区两侧各留 6dp，不再叠加额外空隙。
 internal val ComposerActionSpacing = 0.dp
 
 @Composable

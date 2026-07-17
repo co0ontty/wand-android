@@ -356,8 +356,9 @@ private fun PtyNativeInputBar(
     var refocusAfterSend by remember { mutableStateOf(false) }
     var voiceMode by remember { mutableStateOf(false) }
     var focusAfterExitVoice by remember { mutableStateOf(false) }
-    // 与聊天输入框一致：失焦后收回单行最小态，草稿和附件仍保留。
-    val expanded = isFocused || voiceMode
+    var draftNeedsExpanded by remember { mutableStateOf(false) }
+    // 聚焦、语音、附件或多行草稿都使用两行布局，失焦后正文仍不会被截成单行。
+    val expanded = isFocused || voiceMode || draftNeedsExpanded || pendingAttachments.isNotEmpty()
 
     LaunchedEffect(refocusAfterSend, sending) {
         if (refocusAfterSend && !sending && !voiceMode) {
@@ -444,6 +445,10 @@ private fun PtyNativeInputBar(
                             cursorBrush = SolidColor(WandColors.brand),
                             minLines = 1,
                             maxLines = if (expanded) 6 else 1,
+                            onTextLayout = { layout ->
+                                draftNeedsExpanded = draft.isNotEmpty() &&
+                                    (layout.lineCount > 1 || layout.hasVisualOverflow)
+                            },
                             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
                             modifier = Modifier
                                 .fillMaxWidth()
