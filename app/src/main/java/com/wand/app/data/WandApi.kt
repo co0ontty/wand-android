@@ -341,7 +341,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         return SessionSnapshot.parse(requestObject("POST", "/api/structured-sessions", body))
     }
 
-    /** PTY 会话：POST /api/commands。对齐 Web runPtyCommandFromModal：command 即 provider。 */
+    /** PTY 会话：POST /api/commands。Qoder 的 provider ID 与可执行命令名称不同。 */
     override suspend fun createPtySession(
         cwd: String,
         mode: String?,
@@ -350,7 +350,8 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         model: String?,
         thinkingEffort: String?,
     ): SessionSnapshot {
-        val body = JSONObject().put("command", provider).put("provider", provider).put("cwd", cwd)
+        val command = if (provider == "qoder") "qodercli" else provider
+        val body = JSONObject().put("command", command).put("provider", provider).put("cwd", cwd)
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
         if (!model.isNullOrEmpty()) body.put("model", model)
         if (!thinkingEffort.isNullOrEmpty()) body.put("thinkingEffort", thinkingEffort)
