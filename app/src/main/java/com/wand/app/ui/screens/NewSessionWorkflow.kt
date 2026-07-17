@@ -7,7 +7,13 @@ import com.wand.app.data.ProviderDefaultModels
 import com.wand.app.data.RecentPath
 import com.wand.app.data.ServerConfigInfo
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.clampSessionMode
+import com.wand.app.data.defaultFor
+import com.wand.app.data.modelsForProvider
+import com.wand.app.data.supportedSessionModeIds
 import com.wand.app.ui.thinkingEffortOptions
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class NewSessionBootstrap(
     val provider: String,
@@ -31,6 +37,8 @@ data class NewSessionDraft(
 )
 
 class NewSessionWorkflow(private val port: NewSessionPort) {
+    private val defaultsMutex = Mutex()
+
     suspend fun bootstrap(): NewSessionBootstrap {
         val config = runCatching { port.serverConfig() }.getOrNull()
         val models = runCatching { port.models() }.getOrNull()
@@ -42,7 +50,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         return NewSessionBootstrap(
             provider = provider,
             structured = config?.defaultSessionKind != "pty",
-            mode = supportedModeFor(config?.defaultMode ?: "managed", provider),
+            mode = clampSessionMode(config?.defaultMode ?: "managed", provider),
             thinkingEffort = config?.defaultThinkingEffort ?: "off",
             cwd = recentPaths.firstOrNull()?.path ?: config?.defaultCwd.orEmpty(),
             recentPaths = recentPaths,
@@ -58,6 +66,24 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         thinkingEffort: String? = null,
         defaultProvider: String? = null,
         defaultSessionKind: String? = null,
+    ) = defaultsMutex.withLock {
+        persistDefaultsUnlocked(
+            mode = mode,
+            model = model,
+            modelProvider = modelProvider,
+            thinkingEffort = thinkingEffort,
+            defaultProvider = defaultProvider,
+            defaultSessionKind = defaultSessionKind,
+        )
+    }
+
+    private suspend fun persistDefaultsUnlocked(
+        mode: String?,
+        model: String?,
+        modelProvider: String,
+        thinkingEffort: String?,
+        defaultProvider: String?,
+        defaultSessionKind: String?,
     ) = port.updateNewSessionDefaults(
         mode = mode,
         model = model,
@@ -67,16 +93,16 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         defaultSessionKind = defaultSessionKind,
     )
 
-    suspend fun create(draft: NewSessionDraft): SessionSnapshot {
+    suspend fun create(draft: NewSessionDraft): SessionSnapshot = defaultsMutex.withLock {
         val cwd = draft.cwd.trim()
         require(cwd.isNotEmpty()) { "工作目录不能为空" }
         val provider = normalizeProvider(draft.provider)
-        val mode = supportedModeFor(draft.mode, provider)
+        val mode = clampSessionMode(draft.mode, provider)
         val model = draft.model.ifBlank { null }
         val prompt = draft.firstMessage.trim().ifEmpty { null }
 
         // 创建前持久化完整最终选择；页面即时保存即使被取消，也不会留下半套默认值。
-        persistDefaults(
+        persistDefaultsUnlocked(
             mode = mode,
             model = model,
             modelProvider = provider,
@@ -84,7 +110,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
             defaultProvider = provider,
             defaultSessionKind = if (draft.structured) "structured" else "pty",
         )
-        return if (draft.structured) {
+        if (draft.structured) {
             port.createStructuredSession(
                 cwd = cwd,
                 mode = mode,
@@ -113,8 +139,9 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         claudeModels: List<ModelInfo>,
         codexModels: List<ModelInfo>,
         opencodeModels: List<ModelInfo>,
+        qoderModels: List<ModelInfo> = emptyList(),
     ): String {
-        val models = modelsFor(provider, claudeModels, codexModels, opencodeModels)
+        val models = modelsForProvider(provider, claudeModels, codexModels, opencodeModels, qoderModels)
         if (provider == "codex" && models.isEmpty()) return currentEffort
         return if (thinkingEffortOptions(provider, selectedModel, defaultModels.defaultFor(provider), models)
                 .any { it.id == currentEffort }
@@ -125,32 +152,27 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         }
     }
 
-    fun supportedModes(provider: String): Set<String> = supportedModeIds(provider)
-    fun clampMode(mode: String, provider: String): String = supportedModeFor(mode, provider)
+    fun supportedModes(provider: String): Set<String> = supportedSessionModeIds(provider)
+    fun clampMode(mode: String, provider: String): String = clampSessionMode(mode, provider)
 
     companion object {
-        val EMPTY_DEFAULT_MODELS = ProviderDefaultModels(null, null, null)
+        val EMPTY_DEFAULT_MODELS = ProviderDefaultModels(null, null, null, null)
 
         fun normalizeProvider(provider: String?): String = when (provider) {
             "codex" -> "codex"
             "opencode" -> "opencode"
             "grok" -> "grok"
+            "qoder" -> "qoder"
             else -> "claude"
         }
     }
-}
-
-internal fun ProviderDefaultModels.defaultFor(provider: String): String? = when (provider) {
-    "codex" -> codex
-    "opencode" -> opencode
-    "grok" -> null
-    else -> claude
 }
 
 internal fun ProviderDefaultModels.withDefault(provider: String, value: String?): ProviderDefaultModels =
     when (provider) {
         "codex" -> copy(codex = value)
         "opencode" -> copy(opencode = value)
+        "qoder" -> copy(qoder = value)
         else -> copy(claude = value)
     }
 
@@ -159,29 +181,3 @@ private fun ModelsResponse.resolvedDefaults(): ProviderDefaultModels =
 
 private fun ServerConfigInfo.resolvedDefaults(): ProviderDefaultModels =
     defaultModels ?: ProviderDefaultModels(defaultModel, defaultCodexModel, defaultOpenCodeModel)
-
-private fun modelsFor(
-    provider: String,
-    claude: List<ModelInfo>,
-    codex: List<ModelInfo>,
-    opencode: List<ModelInfo>,
-): List<ModelInfo> = when (provider) {
-    "codex" -> codex
-    "opencode" -> opencode
-    "grok" -> emptyList()
-    else -> claude
-}
-
-private fun supportedModeIds(provider: String): Set<String> = when (provider) {
-    "codex" -> setOf("full-access")
-    "opencode" -> setOf("default", "full-access", "managed")
-    "grok" -> setOf("default", "full-access", "managed")
-    else -> setOf("managed", "full-access", "auto-edit", "default", "native")
-}
-
-private fun supportedModeFor(value: String, provider: String): String {
-    if (provider == "codex") return "full-access"
-    val supported = supportedModeIds(provider)
-    if (value in supported) return value
-    return if ("managed" in supported) "managed" else supported.first()
-}

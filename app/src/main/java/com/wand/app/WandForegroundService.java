@@ -6,7 +6,6 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.os.Build;
 import android.os.IBinder;
 
 import androidx.core.app.NotificationCompat;
@@ -69,16 +68,14 @@ public class WandForegroundService extends Service {
     }
 
     private void createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
-                NotificationChannel channel = new NotificationChannel(
-                        CHANNEL_ID, "Wand 后台保活", NotificationManager.IMPORTANCE_LOW);
-                channel.setDescription("保持会话在后台运行");
-                channel.setSound(null, null);
-                channel.setShowBadge(false);
-                nm.createNotificationChannel(channel);
-            }
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID, "Wand 后台保活", NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("保持会话在后台运行");
+            channel.setSound(null, null);
+            channel.setShowBadge(false);
+            nm.createNotificationChannel(channel);
         }
     }
 }

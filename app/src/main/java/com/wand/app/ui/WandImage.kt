@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -157,7 +158,7 @@ private fun FullscreenImageViewer(
     val context = LocalContext.current
     val loader = remember { WandImage.imageLoader(context) }
     val url = remember(baseUrl, path) { WandImage.fileRawUrl(baseUrl, path) }
-    var scale by remember { mutableStateOf(1f) }
+    var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     Dialog(
         onDismissRequest = onDismiss,

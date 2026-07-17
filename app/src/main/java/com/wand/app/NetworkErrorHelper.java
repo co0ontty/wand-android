@@ -1,5 +1,7 @@
 package com.wand.app;
 
+import java.util.Locale;
+
 /**
  * 网络错误描述工具：把连接/下载过程中的异常映射成面向用户的中文文案。
  * 合并 ConnectActivity.describeConnectionError 与 UpdateManager.friendlyDownloadError。
@@ -37,7 +39,7 @@ final class NetworkErrorHelper {
         }
         // 下载特有：存储空间
         String raw = e.getMessage() != null ? e.getMessage() : "";
-        if (raw.contains("ENOSPC") || raw.toLowerCase().contains("space")) {
+        if (raw.contains("ENOSPC") || raw.toLowerCase(Locale.ROOT).contains("space")) {
             return "存储空间不足，请清理后重试";
         }
         return raw.isEmpty() ? "操作失败，请稍后重试" : raw;

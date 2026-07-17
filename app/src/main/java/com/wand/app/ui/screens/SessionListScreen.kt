@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.ui.parseIsoMillis
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
@@ -107,7 +108,6 @@ import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.time.Instant
 
 /**
  * 统一会话列表：普通、已归档和本机可恢复会话按时间混排。
@@ -239,7 +239,10 @@ fun SessionListScreen(
             AmbientBackground(Modifier.fillMaxSize())
             when {
                 state.loading && state.sessions.isEmpty() && state.historySessions.isEmpty() -> {
-                    LoadingState("正在加载会话…", Modifier.padding(padding))
+                    LoadingState(
+                        modifier = Modifier.padding(padding),
+                        text = "正在加载会话…",
+                    )
                 }
                 state.loadError != null && state.sessions.isEmpty() &&
                     state.historySessions.isEmpty() -> {
@@ -768,12 +771,7 @@ private fun HistorySessionCard(
 
 /** ISO8601 时间 → 相对时间（单单位：刚刚 / N分钟 / N小时 / N天），解析失败返回空。 */
 private fun relativeTimeLabel(timestamp: String?): String {
-    if (timestamp.isNullOrEmpty()) return ""
-    val millis = try {
-        Instant.parse(timestamp).toEpochMilli()
-    } catch (_: Exception) {
-        return ""
-    }
+    val millis = parseIsoMillis(timestamp) ?: return ""
     return when (val relative = singleUnitDurationLabel(System.currentTimeMillis() - millis)) {
         "刚刚" -> relative
         else -> "${relative}前"
@@ -1049,13 +1047,12 @@ private fun ProviderMark(
 ) {
     val isCodex = provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
-    val icon = BrandLogos.forProvider(provider)
     Box(
         modifier = Modifier.size(if (compact) 34.dp else 38.dp),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            icon,
+            painter = BrandLogos.painterForProvider(provider),
             // Provider 已在右侧元信息中朗读；Logo 仅作视觉识别，避免 TalkBack 重复标题。
             contentDescription = null,
             tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.94f)),
@@ -1211,16 +1208,8 @@ private fun derivedStatus(session: SessionSnapshot): String = when {
 
 /** 会话从启动到当前（或结束）的持续时间。列表每 10 秒刷新，运行态会自然更新。 */
 private fun sessionDurationLabel(session: SessionSnapshot): String {
-    val started = try {
-        session.startedAt?.let(Instant::parse)?.toEpochMilli()
-    } catch (_: Exception) {
-        null
-    } ?: return ""
-    val ended = try {
-        session.endedAt?.let(Instant::parse)?.toEpochMilli()
-    } catch (_: Exception) {
-        null
-    }
+    val started = parseIsoMillis(session.startedAt) ?: return ""
+    val ended = parseIsoMillis(session.endedAt)
     val deltaMillis = ((ended ?: System.currentTimeMillis()) - started).coerceAtLeast(0L)
     val minutes = deltaMillis / 60_000L
     if (minutes < 1) return "不足1分钟"

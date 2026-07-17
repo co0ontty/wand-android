@@ -194,7 +194,7 @@ fun StatusBadge(status: String, modifier: Modifier = Modifier) {
 
 /** 全屏居中加载占位。 */
 @Composable
-fun LoadingState(text: String = "加载中…", modifier: Modifier = Modifier) {
+fun LoadingState(modifier: Modifier = Modifier, text: String = "加载中…") {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -212,7 +212,7 @@ fun LoadingState(text: String = "加载中…", modifier: Modifier = Modifier) {
 
 /** 全屏居中错误占位，可带重试按钮。 */
 @Composable
-fun ErrorState(message: String, onRetry: (() -> Unit)? = null, modifier: Modifier = Modifier) {
+fun ErrorState(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             modifier = Modifier.padding(horizontal = 32.dp),
@@ -245,10 +245,10 @@ fun ErrorState(message: String, onRetry: (() -> Unit)? = null, modifier: Modifie
 fun EmptyState(
     icon: ImageVector,
     title: String,
+    modifier: Modifier = Modifier,
     subtitle: String? = null,
     actionText: String? = null,
     onAction: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
 ) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(

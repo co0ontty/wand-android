@@ -52,7 +52,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -79,7 +81,6 @@ import com.wand.app.ui.screens.PtyTerminalScreen
 import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
 import com.wand.app.ui.screens.SettingsScreen
-import java.time.Instant
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -526,7 +527,7 @@ private fun CollapsedSessionRail(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CollapsedRailTile(
-            icon = WandIcons.chevronRight,
+            icon = rememberVectorPainter(WandIcons.chevronRight),
             tint = WandColors.textSecondary,
             selected = false,
             badge = null,
@@ -605,17 +606,14 @@ private sealed class CollapsedRailEntry {
 private fun collapsedRailEntries(listState: SessionListState): List<CollapsedRailEntry> {
     return buildList {
         listState.visibleSessions.forEach { session ->
-            add(CollapsedRailEntry.Managed(session, parseIsoMillis(session.startedAt)))
+            add(CollapsedRailEntry.Managed(session, parseIsoMillis(session.startedAt) ?: 0L))
         }
         listState.visibleHistorySessions.forEach { history ->
-            val sortKey = history.mtimeMs?.toLong() ?: parseIsoMillis(history.timestamp)
+            val sortKey = history.mtimeMs?.toLong() ?: parseIsoMillis(history.timestamp) ?: 0L
             add(CollapsedRailEntry.Recoverable(history, sortKey))
         }
     }.sortedByDescending { it.sortKey }
 }
-
-private fun parseIsoMillis(value: String?): Long =
-    value?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrDefault(0L) } ?: 0L
 
 @Composable
 private fun CollapsedSessionTile(
@@ -629,7 +627,7 @@ private fun CollapsedSessionTile(
         session.provider,
         if (isCodex) WandColors.info else WandColors.brand,
     )
-    val icon = BrandLogos.forProvider(session.provider)
+    val icon = BrandLogos.painterForProvider(session.provider)
     CollapsedRailTile(
         icon = icon,
         tint = tint,
@@ -650,7 +648,7 @@ private fun CollapsedRecoverableSessionTile(
 ) {
     val isCodex = history.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
-    val icon = if (isCodex) BrandLogos.codex else BrandLogos.claude
+    val icon = rememberVectorPainter(if (isCodex) BrandLogos.codex else BrandLogos.claude)
     CollapsedRailTile(
         icon = icon,
         tint = tint,
@@ -671,7 +669,7 @@ private fun CollapsedRecoverableSessionTile(
 @Composable
 private fun CollapsedNewSessionTile(onClick: () -> Unit) {
     CollapsedRailTile(
-        icon = WandIcons.add,
+        icon = rememberVectorPainter(WandIcons.add),
         tint = WandColors.brand,
         selected = false,
         badge = null,
@@ -683,7 +681,7 @@ private fun CollapsedNewSessionTile(onClick: () -> Unit) {
 
 @Composable
 private fun CollapsedRailTile(
-    icon: ImageVector,
+    icon: Painter,
     tint: Color,
     selected: Boolean,
     badge: String?,
@@ -745,7 +743,7 @@ private fun CollapsedRailTile(
                 )
             } else {
                 Icon(
-                    icon,
+                    painter = icon,
                     contentDescription = null,
                     tint = tint.copy(alpha = if (outlined) 0.86f else 0.94f),
                     modifier = Modifier.size(if (outlined) 20.dp else 25.dp),

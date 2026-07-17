@@ -121,6 +121,8 @@ import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
+import com.wand.app.data.providerDisplayName
+import com.wand.app.data.supportedSessionModeIds
 import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
@@ -447,7 +449,10 @@ fun ChatScreen(
         ) {
             AmbientBackground(Modifier.fillMaxSize())
             when {
-                store.loading -> LoadingState("正在加载会话…", Modifier.padding(padding))
+                store.loading -> LoadingState(
+                    modifier = Modifier.padding(padding),
+                    text = "正在加载会话…",
+                )
                 store.loadError != null ->
                     ErrorState(store.loadError ?: "加载失败", modifier = Modifier.padding(padding))
                 store.isStructured && store.messages.isEmpty() && !store.isResponding ->
@@ -688,13 +693,8 @@ private fun ChatProviderBadge(provider: String?) {
         modifier = Modifier.size(28.dp),
     ) {
         Icon(
-            BrandLogos.forProvider(provider),
-            contentDescription = when (provider) {
-                "codex" -> "Codex"
-                "opencode" -> "OpenCode"
-                "grok" -> "Grok"
-                else -> "Claude"
-            },
+            painter = BrandLogos.painterForProvider(provider),
+            contentDescription = providerDisplayName(provider),
             tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.94f)),
             modifier = Modifier.size(20.dp),
         )
@@ -1620,9 +1620,9 @@ private fun ControlChip(
     text: String,
     tint: Color,
     contentDescription: String,
+    modifier: Modifier = Modifier,
     enabled: Boolean = true,
     showText: Boolean = true,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val visualModifier = if (showText) {
@@ -1692,12 +1692,7 @@ private fun MenuSectionHeader(text: String) {
 private fun ModeChip(store: ChatStore, compact: Boolean = false) {
     val provider = store.snapshot?.provider
     val isCodex = provider == "codex"
-    val supportedModeIds = when (provider) {
-        "codex" -> setOf("full-access")
-        "opencode" -> setOf("default", "full-access", "managed")
-        "grok" -> setOf("default", "full-access", "managed")
-        else -> SESSION_MODES.mapTo(mutableSetOf()) { it.first }
-    }
+    val supportedModeIds = supportedSessionModeIds(provider)
     var open by remember { mutableStateOf(false) }
     // 高权限模式（托管 / 全权限）用橙色提示，其余用次要色。
     val tint = if (store.mode == "full-access" || store.mode == "managed")
@@ -1733,8 +1728,8 @@ private fun ModeChip(store: ChatStore, compact: Boolean = false) {
 @Composable
 private fun ModelThinkingChip(
     store: ChatStore,
-    compact: Boolean = false,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     val tint = when (store.thinkingEffort) {

@@ -5,7 +5,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -73,6 +72,24 @@ public class ConnectActivity extends AppCompatActivity {
     private ExecutorService networkExecutor;
     private Future<?> currentTask;
 
+    private static final class ConnectionResult {
+        final String serverUrl;
+        final String appToken;
+        final String error;
+        final boolean fromConnectCode;
+
+        ConnectionResult(String serverUrl, String appToken, String error, boolean fromConnectCode) {
+            this.serverUrl = serverUrl;
+            this.appToken = appToken;
+            this.error = error;
+            this.fromConnectCode = fromConnectCode;
+        }
+
+        boolean isSuccess() {
+            return error == null;
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -138,12 +155,8 @@ public class ConnectActivity extends AppCompatActivity {
     private void applyLightSystemBars() {
         getWindow().setStatusBarColor(getColor(R.color.background));
         getWindow().setNavigationBarColor(getColor(R.color.background));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-        }
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     }
 
     private void requestQrScan() {
@@ -259,53 +272,25 @@ public class ConnectActivity extends AppCompatActivity {
 
         cancelCurrentTask();
         currentTask = networkExecutor.submit(() -> {
-            Pair<String, String> decoded = WandAuth.decodeConnectCode(savedInput);
-
-            if (decoded != null) {
-                String serverUrl = decoded.getFirst();
-                String appToken = decoded.getSecond();
-                setAutoStatus("正在验证连接码…");
-                String error = testConnectionWithToken(serverUrl, appToken, 5000);
-                runOnUiThread(() -> {
-                    if (isDestroyed() || !autoConnecting) return;
-                    autoConnecting = false;
-                    if (error == null) {
-                        serverStore.setAppToken(appToken);
-                        launchWebView(serverUrl, appToken);
-                    } else {
-                        showFormWithMessage(error);
-                    }
-                });
-            } else {
-                final String normalizedUrl = WandHttp.normalizeBaseUrl(savedInput);
-
-                String savedToken = serverStore.getAppToken();
-                if (!TextUtils.isEmpty(savedToken)) {
-                    setAutoStatus("正在验证连接码…");
-                    String error = testConnectionWithToken(normalizedUrl, savedToken, 5000);
-                    if (error == null) {
-                        runOnUiThread(() -> {
-                            if (isDestroyed() || !autoConnecting) return;
-                            autoConnecting = false;
-                            launchWebView(normalizedUrl, savedToken);
-                        });
-                        return;
-                    }
-                }
-
-                setAutoStatus("正在尝试直接连接…");
-                String error = testConnection(normalizedUrl, 5000);
-                runOnUiThread(() -> {
-                    if (isDestroyed() || !autoConnecting) return;
-                    autoConnecting = false;
-                    if (error == null) {
-                        launchWebView(normalizedUrl, null);
-                    } else {
-                        showFormWithMessage(getString(R.string.auto_connect_failed));
-                    }
-                });
-            }
+            ConnectionResult result = verifyConnectionInput(savedInput, 5000, true);
+            runOnUiThread(() -> handleAutoConnectResult(result));
         });
+    }
+
+    private void handleAutoConnectResult(ConnectionResult result) {
+        if (isDestroyed() || !autoConnecting) return;
+        autoConnecting = false;
+        if (!result.isSuccess()) {
+            String message = result.fromConnectCode
+                    ? result.error
+                    : getString(R.string.auto_connect_failed);
+            showFormWithMessage(message);
+            return;
+        }
+        if (result.fromConnectCode) {
+            serverStore.setAppToken(result.appToken);
+        }
+        launchWebView(result.serverUrl, result.appToken);
     }
 
     /**
@@ -354,46 +339,59 @@ public class ConnectActivity extends AppCompatActivity {
 
         cancelCurrentTask();
         currentTask = networkExecutor.submit(() -> {
-            Pair<String, String> decoded = WandAuth.decodeConnectCode(rawInput);
-
-            if (decoded != null) {
-                String serverUrl = decoded.getFirst();
-                String appToken = decoded.getSecond();
-
-                String error = testConnectionWithToken(serverUrl, appToken, 8000);
-                runOnUiThread(() -> {
-                    if (isDestroyed()) return;
-                    connectButton.setEnabled(true);
-                    connectButton.setText(R.string.connect_button);
-
-                    if (error == null) {
-                        serverStore.setLastUrl(rawInput);
-                        serverStore.addRecentUrl(rawInput);
-                        serverStore.setAppToken(appToken);
-                        launchWebView(serverUrl, appToken);
-                    } else {
-                        showStatus(error);
-                    }
-                });
-            } else {
-                final String normalizedUrl = WandHttp.normalizeBaseUrl(rawInput);
-                String error = testConnection(normalizedUrl, 8000);
-                runOnUiThread(() -> {
-                    if (isDestroyed()) return;
-                    connectButton.setEnabled(true);
-                    connectButton.setText(R.string.connect_button);
-
-                    if (error == null) {
-                        serverStore.setLastUrl(normalizedUrl);
-                        serverStore.addRecentUrl(normalizedUrl);
-                        serverStore.clearAppToken();
-                        launchWebView(normalizedUrl, null);
-                    } else {
-                        showStatus(error);
-                    }
-                });
-            }
+            ConnectionResult result = verifyConnectionInput(rawInput, 8000, false);
+            runOnUiThread(() -> handleManualConnectResult(rawInput, result));
         });
+    }
+
+    private ConnectionResult verifyConnectionInput(
+            String rawInput,
+            int timeout,
+            boolean reuseSavedToken
+    ) {
+        Pair<String, String> decoded = WandAuth.decodeConnectCode(rawInput);
+        if (decoded != null) {
+            setAutoStatus("正在验证连接码…");
+            String serverUrl = decoded.getFirst();
+            String appToken = decoded.getSecond();
+            String error = testConnectionWithToken(serverUrl, appToken, timeout);
+            return new ConnectionResult(serverUrl, appToken, error, true);
+        }
+
+        String serverUrl = WandHttp.normalizeBaseUrl(rawInput);
+        if (reuseSavedToken) {
+            String savedToken = serverStore.getAppToken();
+            if (!TextUtils.isEmpty(savedToken)) {
+                setAutoStatus("正在验证连接码…");
+                String tokenError = testConnectionWithToken(serverUrl, savedToken, timeout);
+                if (tokenError == null) {
+                    return new ConnectionResult(serverUrl, savedToken, null, false);
+                }
+            }
+            setAutoStatus("正在尝试直接连接…");
+        }
+        String error = testConnection(serverUrl, timeout);
+        return new ConnectionResult(serverUrl, null, error, false);
+    }
+
+    private void handleManualConnectResult(String rawInput, ConnectionResult result) {
+        if (isDestroyed()) return;
+        connectButton.setEnabled(true);
+        connectButton.setText(R.string.connect_button);
+        if (!result.isSuccess()) {
+            showStatus(result.error);
+            return;
+        }
+
+        String savedInput = result.fromConnectCode ? rawInput : result.serverUrl;
+        serverStore.setLastUrl(savedInput);
+        serverStore.addRecentUrl(savedInput);
+        if (result.appToken == null) {
+            serverStore.clearAppToken();
+        } else {
+            serverStore.setAppToken(result.appToken);
+        }
+        launchWebView(result.serverUrl, result.appToken);
     }
 
     private void cancelCurrentTask() {

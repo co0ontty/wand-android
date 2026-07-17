@@ -1,6 +1,7 @@
 package com.wand.app.ui
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.ConversationTurn
@@ -9,6 +10,7 @@ import com.wand.app.data.ChatSessionEventReducer
 import com.wand.app.data.ChatSessionEventState
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.ModelInfo
+import com.wand.app.data.modelsForProvider
 import com.wand.app.data.PendingSessionSettings
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SessionEvent
@@ -91,9 +93,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     // 消息窗口化：messages 是完整历史的「后缀」，loadedOffset = messages[0] 的绝对下标，
     // messageTotal = 完整 turn 数。loadedOffset > 0 表示顶部还有更早的可加载。
-    var loadedOffset by mutableStateOf(0)
+    var loadedOffset by mutableIntStateOf(0)
         private set
-    var messageTotal by mutableStateOf(0)
+    var messageTotal by mutableIntStateOf(0)
         private set
     var loadingEarlier by mutableStateOf(false)
         private set
@@ -320,11 +322,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             return
         }
         val provider = snapshot?.provider ?: "claude"
-        availableModels = when (provider) {
-            "codex" -> response.codexModels
-            "opencode" -> response.opencodeModels
-            else -> response.models
-        }
+        availableModels = modelsForProvider(
+            provider = provider,
+            claude = response.models,
+            codex = response.codexModels,
+            opencode = response.opencodeModels,
+            qoder = response.qoderModels,
+        )
         defaultModel = response.defaultModelFor(provider)
         normalizeThinkingEffortFor(selectedModel)
     }

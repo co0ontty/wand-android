@@ -260,7 +260,7 @@ fun SettingsScreen(
                         iconTint = WandColors.success,
                     ) { enabled ->
                         keepAlive = enabled
-                        if (enabled && Build.VERSION.SDK_INT >= 33) {
+                        if (enabled) {
                             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                         settings.setKeepAlive(enabled)

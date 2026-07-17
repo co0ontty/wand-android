@@ -2,13 +2,14 @@ package com.wand.app.ui.screens
 
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListPort
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.ui.ScopedStore
-import java.time.Instant
+import com.wand.app.ui.parseIsoMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -23,18 +24,15 @@ sealed interface SessionListEntry {
 
     data class Managed(val session: SessionSnapshot) : SessionListEntry {
         override val key: String = "session-${session.id}"
-        override val sortTimestamp: Long = parseIsoMillis(session.startedAt)
+        override val sortTimestamp: Long = parseIsoMillis(session.startedAt) ?: 0L
     }
 
     data class Recoverable(val session: HistorySession) : SessionListEntry {
         // provider 必须进入 key：Claude / Codex 的历史 ID 分属不同接口，不能在多选时混淆。
         override val key: String = "recoverable-${session.apiProvider}-${session.id}"
-        override val sortTimestamp: Long = session.mtimeMs?.toLong() ?: parseIsoMillis(session.timestamp)
+        override val sortTimestamp: Long = session.mtimeMs?.toLong() ?: parseIsoMillis(session.timestamp) ?: 0L
     }
 }
-
-private fun parseIsoMillis(value: String?): Long =
-    value?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrDefault(0L) } ?: 0L
 
 /**
  * 会话列表 module。拥有加载、轮询、恢复、删除和本地/远端一致性；
@@ -51,7 +49,7 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
         private set
     /** 状态与列表同生命周期；重新进入列表时由页面主动回到最新条目。 */
     val scrollState = LazyListState()
-    var scrollToLatestRequest by mutableStateOf(0L)
+    var scrollToLatestRequest by mutableLongStateOf(0L)
         private set
     private var restoringHistoryKeys by mutableStateOf<Set<String>>(emptySet())
 

@@ -100,6 +100,22 @@ class NewSessionWorkflowTest {
     }
 
     @Test
+    fun qoderSupportsStructuredAndPtyPermissionModes() = runBlocking {
+        val port = FakeNewSessionPort()
+        val workflow = NewSessionWorkflow(port)
+        assertEquals("qoder", NewSessionWorkflow.normalizeProvider("qoder"))
+        assertEquals(
+            setOf("default", "full-access", "auto-edit", "managed"),
+            workflow.supportedModes("qoder"),
+        )
+
+        workflow.create(NewSessionDraft("/project", "qoder", true, "native", "performance", "off", "hello"))
+        assertEquals("qoder", port.lastProvider)
+        assertEquals("managed", port.lastMode)
+        assertEquals("performance", port.lastModel)
+    }
+
+    @Test
     fun unsupportedThinkingEffortNormalizesToAutomatic() {
         val workflow = NewSessionWorkflow(FakeNewSessionPort())
         val normalized = workflow.normalizeThinkingEffort(

@@ -2,7 +2,6 @@ package com.wand.app.speech
 
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -35,7 +34,7 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
             SpeechRecognizer.isRecognitionAvailable(context) || onDeviceAvailable(context)
 
         fun onDeviceAvailable(context: Context): Boolean =
-            Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
     }
 
     override fun start(listener: SpeechEngine.Listener) {

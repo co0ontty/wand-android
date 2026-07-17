@@ -1,17 +1,22 @@
 package com.wand.app.ui.components
 
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.wand.app.R
 
 /**
  * Provider 矢量图标（Claude / Codex 路径来自 simple-icons，CC0；24x24 viewBox）。
  * OpenCode 图标来自其官方仓库 packages/identity/mark.svg（MIT）。
  * path 字符串保持单行原样——SVG path 里空格是数字分隔符，断行拼接容易吞掉语义。
- * 单色 Logo 以黑色定义，显示色由 Icon(tint) 覆盖；OpenCode 保留官方三色填充，
+ * 单色 Logo 以黑色定义，显示色由 Icon(tint) 覆盖；OpenCode 与 Qoder 保留官方配色，
  * 调用方需通过 tintForProvider 避免 ColorFilter 覆盖品牌色。
  * 用于会话列表 ProviderMark 与新建会话 Provider 选择卡。
  */
@@ -28,16 +33,25 @@ object BrandLogos {
     /** Grok（xAI 官方 SVG 的 mark 路径）。 */
     val grok: ImageVector by lazy { brandIcon("BrandGrok", GROK_PATH, 34f, 33f) }
 
-    fun forProvider(provider: String?): ImageVector = when (provider) {
+    private fun vectorForProvider(provider: String?): ImageVector = when (provider) {
         "codex" -> codex
         "opencode" -> opencode
         "grok" -> grok
         else -> claude
     }
 
-    /** OpenCode 官方标志包含三种填充色，不应用 Compose Icon 的单色 tint。 */
+    /** Qoder 使用官网 favicon 原图，其余 provider 继续使用本地矢量路径。 */
+    @Composable
+    fun painterForProvider(provider: String?): Painter =
+        if (provider == "qoder") {
+            painterResource(R.drawable.qoder_logo)
+        } else {
+            rememberVectorPainter(vectorForProvider(provider))
+        }
+
+    /** OpenCode 与 Qoder 官方标志包含品牌配色，不应用 Compose Icon 的单色 tint。 */
     fun tintForProvider(provider: String?, tint: Color): Color =
-        if (provider == "opencode") Color.Unspecified else tint
+        if (provider == "opencode" || provider == "qoder") Color.Unspecified else tint
 }
 
 private fun brandIcon(

@@ -3,7 +3,6 @@ package com.wand.app;
 import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Build;
 import android.provider.Settings;
 import android.view.View;
 import android.webkit.CookieManager;
@@ -26,6 +25,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 
 final class UpdateManager {
@@ -337,8 +337,7 @@ final class UpdateManager {
     }
 
     void installApk(File apkFile) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && !activity.getPackageManager().canRequestPackageInstalls()) {
+        if (!activity.getPackageManager().canRequestPackageInstalls()) {
             pendingInstallFile = apkFile;
             new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
                 .setTitle(R.string.install_permission_title)
@@ -357,8 +356,7 @@ final class UpdateManager {
         File toInstall = pendingInstallFile;
         pendingInstallFile = null;
         if (toInstall == null) return true;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && activity.getPackageManager().canRequestPackageInstalls()) {
+        if (activity.getPackageManager().canRequestPackageInstalls()) {
             doInstallApk(toInstall);
         } else {
             Toast.makeText(activity, R.string.install_permission_denied, Toast.LENGTH_LONG).show();
@@ -409,7 +407,9 @@ final class UpdateManager {
 
     static String formatSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-        return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        if (bytes < 1024 * 1024) {
+            return String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0);
+        }
+        return String.format(Locale.getDefault(), "%.1f MB", bytes / (1024.0 * 1024.0));
     }
 }

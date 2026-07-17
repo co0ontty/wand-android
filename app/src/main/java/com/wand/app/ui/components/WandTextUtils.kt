@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,7 +72,7 @@ fun TailMarqueePathText(
             softWrap = false,
         ).size.width
     }
-    var containerWidthPx by remember { mutableStateOf(0) }
+    var containerWidthPx by remember { mutableIntStateOf(0) }
     val overflowPx = if (containerWidthPx > 0) {
         (textWidthPx - containerWidthPx).coerceAtLeast(0)
     } else {

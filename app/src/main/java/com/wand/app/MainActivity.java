@@ -9,7 +9,6 @@ import android.graphics.Bitmap;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.net.http.SslError;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
@@ -382,7 +381,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         @JavascriptInterface
         public String getPermission() {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return "granted";
             int result = ContextCompat.checkSelfPermission(
                     MainActivity.this, android.Manifest.permission.POST_NOTIFICATIONS);
             if (result == PackageManager.PERMISSION_GRANTED) return "granted";
@@ -394,12 +392,10 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         @JavascriptInterface
         public void requestPermission() {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                runOnUiThread(() -> ActivityCompat.requestPermissions(
-                        MainActivity.this,
-                        new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
-                        NOTIFICATION_PERMISSION_REQUEST));
-            }
+            runOnUiThread(() -> ActivityCompat.requestPermissions(
+                    MainActivity.this,
+                    new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                    NOTIFICATION_PERMISSION_REQUEST));
         }
 
         @JavascriptInterface
@@ -532,11 +528,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                     Intent serviceIntent = new Intent(MainActivity.this, WandForegroundService.class);
                     serviceIntent.putExtra("server_url", serverUrl);
                     serviceIntent.putExtra("app_token", appToken);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(serviceIntent);
-                    } else {
-                        startService(serviceIntent);
-                    }
+                    startForegroundService(serviceIntent);
                 } catch (Exception ignored) {}
             });
         }
@@ -559,37 +551,27 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                     getSystemService(android.content.Context.VIBRATOR_SERVICE);
             if (vibrator == null || !vibrator.hasVibrator()) return;
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    android.os.VibrationEffect effect;
-                    switch (pattern != null ? pattern : "light") {
-                        case "medium":
-                            effect = android.os.VibrationEffect.createOneShot(30,
-                                    android.os.VibrationEffect.DEFAULT_AMPLITUDE);
-                            break;
-                        case "success":
-                            effect = android.os.VibrationEffect.createWaveform(
-                                    new long[]{0, 10, 80, 10}, -1);
-                            break;
-                        case "error":
-                            effect = android.os.VibrationEffect.createWaveform(
-                                    new long[]{0, 30, 60, 30, 60, 30}, -1);
-                            break;
-                        case "light":
-                        default:
-                            effect = android.os.VibrationEffect.createOneShot(10,
-                                    android.os.VibrationEffect.DEFAULT_AMPLITUDE);
-                            break;
-                    }
-                    vibrator.vibrate(effect);
-                } else {
-                    switch (pattern != null ? pattern : "light") {
-                        case "medium": vibrator.vibrate(30); break;
-                        case "success": vibrator.vibrate(new long[]{0, 10, 80, 10}, -1); break;
-                        case "error": vibrator.vibrate(new long[]{0, 30, 60, 30, 60, 30}, -1); break;
-                        case "light":
-                        default: vibrator.vibrate(10); break;
-                    }
+                android.os.VibrationEffect effect;
+                switch (pattern != null ? pattern : "light") {
+                    case "medium":
+                        effect = android.os.VibrationEffect.createOneShot(30,
+                                android.os.VibrationEffect.DEFAULT_AMPLITUDE);
+                        break;
+                    case "success":
+                        effect = android.os.VibrationEffect.createWaveform(
+                                new long[]{0, 10, 80, 10}, -1);
+                        break;
+                    case "error":
+                        effect = android.os.VibrationEffect.createWaveform(
+                                new long[]{0, 30, 60, 30, 60, 30}, -1);
+                        break;
+                    case "light":
+                    default:
+                        effect = android.os.VibrationEffect.createOneShot(10,
+                                android.os.VibrationEffect.DEFAULT_AMPLITUDE);
+                        break;
                 }
+                vibrator.vibrate(effect);
             } catch (Exception ignored) {}
         }
 

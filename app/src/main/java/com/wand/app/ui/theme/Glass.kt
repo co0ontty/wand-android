@@ -1,6 +1,5 @@
 package com.wand.app.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -37,20 +36,11 @@ import com.kyant.backdrop.shadow.Shadow as BackdropShadow
  * 液态玻璃引擎抽象（视觉改造 v2）。
  *
  * 这是全 app **唯一**允许 import `com.kyant.backdrop.*` 的文件：
- * - API 33+（RuntimeShader）：真·液态玻璃 —— drawBackdrop 采样背后内容，
+ * - API 33+（本项目 minSdk）：真·液态玻璃 —— drawBackdrop 采样背后内容，
  *   vibrancy 提饱和 + blur 模糊 + lens 边缘折射 + 智能高光 + 软阴影。
- * - API 31-32：同管线但 lens 自动 no-op（库内部按 SDK 闸门），只有模糊。
- * - API < 31：完全不走 backdrop（捕获层零开销），降级为
- *   高 alpha 半透明底 + 对角 rim 渐变描边 + 软阴影 —— 配合 AmbientBackground
- *   依然读得出"玻璃"质感。
- *
- * 调用方永远不碰 Build.VERSION，也不碰 kyant 类型。
+ * 调用方不碰 kyant 类型；没有采样源的独立表面仍走半透明降级样式。
  * 换引擎（Haze / backdrop 升级）只改本文件。
  */
-
-/** 真模糊管线（RenderEffect）可用性，API 31+。lens 折射在库内部另由 API 33 闸门控制。 */
-private val glassBlurSupported: Boolean
-    get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
 // —— 玻璃样式 Token ——
 
@@ -225,19 +215,13 @@ object WandGlass {
 @Stable
 class GlassBackdrop internal constructor(internal val layer: LayerBackdrop?)
 
-private val NoopGlassBackdrop = GlassBackdrop(null)
-
 @Composable
-fun rememberGlassBackdrop(): GlassBackdrop =
-    if (glassBlurSupported) {
-        // SDK 版本是编译期之后不变的常量，分支在同一设备上恒定，条件调用 composable 安全。
-        val layer = rememberLayerBackdrop()
-        remember(layer) { GlassBackdrop(layer) }
-    } else {
-        NoopGlassBackdrop
-    }
+fun rememberGlassBackdrop(): GlassBackdrop {
+    val layer = rememberLayerBackdrop()
+    return remember(layer) { GlassBackdrop(layer) }
+}
 
-/** 标记玻璃 chrome 背后的内容区。API < 31 时是 no-op（零捕获开销）。 */
+/** 标记玻璃 chrome 背后的内容区。 */
 fun Modifier.glassBackdropSource(backdrop: GlassBackdrop): Modifier {
     val layer = backdrop.layer ?: return this
     return this.layerBackdrop(layer)
@@ -266,7 +250,7 @@ fun Modifier.glassSurface(
     drawRim: Boolean = !edgeToEdge,
 ): Modifier {
     val layer = backdrop?.layer
-    return if (layer != null && glassBlurSupported) {
+    return if (layer != null) {
         this.drawBackdrop(
             backdrop = layer,
             shape = { shape },

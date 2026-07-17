@@ -379,6 +379,10 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
                     body.put("defaultOpenCodeModel", model)
                     body.put("defaultModels", JSONObject().put("opencode", model))
                 }
+                "qoder" -> {
+                    body.put("defaultQoderModel", model)
+                    body.put("defaultModels", JSONObject().put("qoder", model))
+                }
                 else -> {
                     body.put("defaultModel", model)
                     body.put("defaultModels", JSONObject().put("claude", model))

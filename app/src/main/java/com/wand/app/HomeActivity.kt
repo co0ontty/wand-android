@@ -2,7 +2,6 @@ package com.wand.app
 
 import android.content.Intent
 import android.graphics.Color
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.SystemBarStyle
@@ -203,17 +202,13 @@ class HomeActivity : AppCompatActivity() {
 
     private fun setKeepAlive(enabled: Boolean, serverUrl: String, appToken: String?) {
         try {
+            val serviceIntent = Intent(this, WandForegroundService::class.java)
             if (enabled) {
-                val serviceIntent = Intent(this, WandForegroundService::class.java)
                 serviceIntent.putExtra("server_url", serverUrl)
                 if (appToken != null) serviceIntent.putExtra("app_token", appToken)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
-                }
+                startForegroundService(serviceIntent)
             } else {
-                stopService(Intent(this, WandForegroundService::class.java))
+                stopService(serviceIntent)
             }
         } catch (_: Exception) {
         }

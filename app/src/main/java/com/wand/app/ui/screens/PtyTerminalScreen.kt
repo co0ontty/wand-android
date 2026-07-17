@@ -69,6 +69,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
+import com.wand.app.data.providerDisplayName
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
@@ -655,13 +656,8 @@ private fun PtyProviderBadge(provider: String?) {
             .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(8.dp)),
     ) {
         Icon(
-            BrandLogos.forProvider(provider),
-            contentDescription = when (provider) {
-                "codex" -> "Codex"
-                "opencode" -> "OpenCode"
-                "grok" -> "Grok"
-                else -> "Claude"
-            },
+            painter = BrandLogos.painterForProvider(provider),
+            contentDescription = providerDisplayName(provider),
             tint = BrandLogos.tintForProvider(provider, tint),
             modifier = Modifier.size(15.dp),
         )

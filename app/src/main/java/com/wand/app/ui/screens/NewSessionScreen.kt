@@ -70,10 +70,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.ModelInfo
+import com.wand.app.data.ModelsResponse
 import com.wand.app.data.ProviderDefaultModels
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
+import com.wand.app.data.defaultFor
+import com.wand.app.data.modelsForProvider
+import com.wand.app.data.providerDisplayName
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
@@ -92,8 +96,6 @@ import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.secondaryBarGlass
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * 新建会话：
@@ -111,7 +113,6 @@ fun NewSessionScreen(
 ) {
     val scope = rememberCoroutineScope()
     val workflow = remember(api) { NewSessionWorkflow(api) }
-    val defaultsUpdateMutex = remember { Mutex() }
     val defaultModelGenerations = remember { mutableMapOf<String, Int>() }
     var defaultsUpdateGeneration by remember { mutableIntStateOf(0) }
 
@@ -121,9 +122,7 @@ fun NewSessionScreen(
     var isStructured by remember { mutableStateOf(true) }
     // 默认托管模式（Claude / OpenCode 全自动完成）；Codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
-    var availableModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
-    var codexModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
-    var opencodeModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
+    var modelsResponse by remember { mutableStateOf<ModelsResponse?>(null) }
     var serverDefaultModels by remember {
         mutableStateOf(NewSessionWorkflow.EMPTY_DEFAULT_MODELS)
     }
@@ -137,18 +136,10 @@ fun NewSessionScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
 
-    val providerModels = when (provider) {
-        "codex" -> codexModels
-        "opencode" -> opencodeModels
-        "grok" -> emptyList()
-        else -> availableModels
-    }
-    val serverDefaultModel = when (provider) {
-        "codex" -> serverDefaultModels.codex
-        "opencode" -> serverDefaultModels.opencode
-        "grok" -> null
-        else -> serverDefaultModels.claude
-    }
+    val providerModels = modelsResponse?.let { response ->
+        modelsForProvider(provider, response.models, response.codexModels, response.opencodeModels, response.qoderModels)
+    }.orEmpty()
+    val serverDefaultModel = serverDefaultModels.defaultFor(provider)
     val thinkingLevels = thinkingEffortOptions(provider, selectedModel, serverDefaultModel, providerModels)
     val thinkingLevelIds = thinkingLevels.map { it.id }
     val canValidateThinkingEffort = provider != "codex" || providerModels.isNotEmpty()
@@ -168,11 +159,7 @@ fun NewSessionScreen(
         confirmedDefaultModels = initial.defaultModels
         selectedModel = ""
         thinkingEffort = initial.thinkingEffort
-        initial.models?.let { response ->
-            availableModels = response.models
-            codexModels = response.codexModels
-            opencodeModels = response.opencodeModels
-        }
+        modelsResponse = initial.models
         recentPaths = initial.recentPaths
         if (cwd.isEmpty()) cwd = initial.cwd
     }
@@ -205,22 +192,20 @@ fun NewSessionScreen(
     ) {
         val generation = ++defaultsUpdateGeneration
         scope.launch {
-            defaultsUpdateMutex.withLock {
-                try {
-                    workflow.persistDefaults(
-                        mode = mode,
-                        model = model,
-                        modelProvider = modelProvider,
-                        thinkingEffort = thinkingEffort,
-                        defaultProvider = defaultProvider,
-                        defaultSessionKind = defaultSessionKind,
-                    )
-                    onSuccess?.invoke()
-                } catch (e: Exception) {
-                    onFailure?.invoke()
-                    // 后续操作已经排队时，不让旧请求的迟到错误覆盖当前选择反馈。
-                    if (generation == defaultsUpdateGeneration) errorMessage = e.message
-                }
+            try {
+                workflow.persistDefaults(
+                    mode = mode,
+                    model = model,
+                    modelProvider = modelProvider,
+                    thinkingEffort = thinkingEffort,
+                    defaultProvider = defaultProvider,
+                    defaultSessionKind = defaultSessionKind,
+                )
+                onSuccess?.invoke()
+            } catch (e: Exception) {
+                onFailure?.invoke()
+                // 后续操作已经排队时，不让旧请求的迟到错误覆盖当前选择反馈。
+                if (generation == defaultsUpdateGeneration) errorMessage = e.message
             }
         }
     }
@@ -231,9 +216,10 @@ fun NewSessionScreen(
             selectedModel = nextModel,
             currentEffort = thinkingEffort,
             defaultModels = serverDefaultModels,
-            claudeModels = availableModels,
-            codexModels = codexModels,
-            opencodeModels = opencodeModels,
+            claudeModels = modelsResponse?.models.orEmpty(),
+            codexModels = modelsResponse?.codexModels.orEmpty(),
+            opencodeModels = modelsResponse?.opencodeModels.orEmpty(),
+            qoderModels = modelsResponse?.qoderModels.orEmpty(),
         )
         if (normalized != thinkingEffort) {
             thinkingEffort = normalized
@@ -255,19 +241,17 @@ fun NewSessionScreen(
         ++defaultsUpdateGeneration
         scope.launch {
             try {
-                val snapshot = defaultsUpdateMutex.withLock {
-                    workflow.create(
-                        NewSessionDraft(
-                            cwd = cwd,
-                            provider = provider,
-                            structured = isStructured,
-                            mode = mode,
-                            model = selectedModel,
-                            thinkingEffort = thinkingEffort,
-                            firstMessage = firstMessage,
-                        ),
-                    )
-                }
+                val snapshot = workflow.create(
+                    NewSessionDraft(
+                        cwd = cwd,
+                        provider = provider,
+                        structured = isStructured,
+                        mode = mode,
+                        model = selectedModel,
+                        thinkingEffort = thinkingEffort,
+                        firstMessage = firstMessage,
+                    ),
+                )
                 creating = false
                 onCreated(snapshot)
             } catch (e: Exception) {
@@ -370,13 +354,14 @@ fun NewSessionScreen(
                 .padding(horizontal = 16.dp),
         ) {
             // —— Provider（分段控件）——
-            ProviderSectionHeader(providerLabel(provider))
+            ProviderSectionHeader(providerDisplayName(provider))
             ProviderPicker(
                 options = listOf(
                     "claude" to "Claude",
                     "codex" to "Codex",
                     "opencode" to "OpenCode",
                     "grok" to "Grok",
+                    "qoder" to "Qoder",
                 ),
                 selected = provider,
                 onSelect = { newProvider ->
@@ -579,7 +564,7 @@ private fun ProviderPicker(
                     .selectable(selected = active, role = Role.Tab) { onSelect(value) },
             ) {
                 Icon(
-                    imageVector = BrandLogos.forProvider(value),
+                    painter = BrandLogos.painterForProvider(value),
                     contentDescription = null,
                     tint = BrandLogos.tintForProvider(value, iconColor),
                     modifier = Modifier.size(22.dp),
@@ -587,13 +572,6 @@ private fun ProviderPicker(
             }
         }
     }
-}
-
-private fun providerLabel(provider: String): String = when (provider) {
-    "codex" -> "Codex"
-    "opencode" -> "OpenCode"
-    "grok" -> "Grok"
-    else -> "Claude"
 }
 
 /** iOS 风格选择卡底：纯色 surface 平面 + 1pt 描边；选中切 brand 软底 + brand 1.5pt 描边。 */
@@ -974,6 +952,7 @@ private fun sessionKindHint(provider: String, structured: Boolean): String =
             "codex" -> "Codex JSONL 结构化聊天界面，支持多轮对话和工具调用展示。"
             "opencode" -> "OpenCode JSON 结构化聊天界面，支持多轮对话和工具调用展示。"
             "grok" -> "Grok streaming-json 结构化聊天界面，支持多轮续聊与思考过程展示。"
+            "qoder" -> "Qoder stream-json 结构化聊天界面，支持续聊、思考过程和工具调用展示。"
             else -> "结构化聊天界面，支持多轮对话、流式输出和工具调用展示。"
         }
     } else {
@@ -981,6 +960,7 @@ private fun sessionKindHint(provider: String, structured: Boolean): String =
             "codex" -> "Codex PTY 终端会话；terminal 是原始输出，chat 是解析后的阅读视图。"
             "opencode" -> "OpenCode TUI 终端会话，支持持续交互和终端视图。"
             "grok" -> "Grok Build TUI 的原始 PTY 终端会话。"
+            "qoder" -> "Qoder CLI TUI 的原始 PTY 终端会话。"
             else -> "原始 PTY 终端会话，支持持续交互、终端视图和权限流。"
         }
     }
@@ -1002,6 +982,13 @@ private fun modeHint(provider: String, mode: String): String {
             "Grok 将以 always-approve 运行；支持 TUI 与 streaming-json 结构化会话。"
         } else {
             "Grok 使用自身权限确认；支持 TUI 与 streaming-json 结构化会话。"
+        }
+    }
+    if (provider == "qoder") {
+        return when (mode) {
+            "full-access", "managed" -> "Qoder 将以 bypass_permissions 运行；支持 TUI 与 stream-json 结构化会话。"
+            "auto-edit" -> "Qoder 将自动批准工作区内的安全编辑。"
+            else -> "Qoder 使用自身权限确认；结构化模式下未批准的操作会被拒绝。"
         }
     }
     return when (mode) {
@@ -1030,7 +1017,7 @@ fun DirectoryBrowserScreen(
     var items by remember { mutableStateOf<List<com.wand.app.data.DirectoryItem>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var loadKey by remember { mutableStateOf(0) }
+    var loadKey by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(loadKey) {
         loading = true
@@ -1131,7 +1118,7 @@ fun DirectoryBrowserScreen(
             }
 
             when {
-                loading -> LoadingState("加载目录中…")
+                loading -> LoadingState(text = "加载目录中…")
                 errorMessage != null -> ErrorState(
                     message = errorMessage ?: "加载失败",
                     onRetry = { loadKey++ },

@@ -1,5 +1,7 @@
 package com.wand.app;
 
+import android.annotation.SuppressLint;
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -61,7 +63,6 @@ final class NotificationHelper {
     }
 
     void createChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = context.getSystemService(NotificationManager.class);
         if (nm == null) return;
 
@@ -105,7 +106,6 @@ final class NotificationHelper {
     }
 
     boolean hasPostNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true;
         return ContextCompat.checkSelfPermission(context,
                 android.Manifest.permission.POST_NOTIFICATIONS)
                 == PackageManager.PERMISSION_GRANTED;
@@ -129,7 +129,7 @@ final class NotificationHelper {
 
     void playPresetSound(String soundName, float vol) {
         if (vol <= 0) return;
-        int resId = context.getResources().getIdentifier("notif_" + soundName, "raw", context.getPackageName());
+        int resId = soundResource(soundName);
         if (resId == 0) return;
         try {
             MediaPlayer mp = MediaPlayer.create(context, resId, NOTIF_AUDIO_ATTRS, 0);
@@ -139,6 +139,17 @@ final class NotificationHelper {
                 mp.start();
             }
         } catch (Exception ignored) {}
+    }
+
+    private static int soundResource(String name) {
+        if (name == null) return 0;
+        switch (name) {
+            case "chime": return R.raw.notif_chime;
+            case "bubble": return R.raw.notif_bubble;
+            case "meow": return R.raw.notif_meow;
+            case "bell": return R.raw.notif_bell;
+            default: return 0;
+        }
     }
 
     static boolean isValidSound(String name) {
@@ -161,10 +172,24 @@ final class NotificationHelper {
         return NotificationCompat.PRIORITY_DEFAULT;
     }
 
+    @SuppressLint("MissingPermission")
+    private boolean notifySafely(String tag, int id, Notification notification) {
+        if (!hasPostNotificationPermission()) return false;
+        try {
+            NotificationManagerCompat manager = NotificationManagerCompat.from(context);
+            if (tag == null) {
+                manager.notify(id, notification);
+            } else {
+                manager.notify(tag, id, notification);
+            }
+            return true;
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
     void sendNotification(String title, String body, String tag,
                           PendingIntent contentIntent, ServerStore serverStore) {
-        if (!hasPostNotificationPermission()) return;
-
         String channelId = resolveChannel(tag);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(R.drawable.ic_notification)
@@ -176,14 +201,13 @@ final class NotificationHelper {
                 .setAutoCancel(true)
                 .setSilent(true);
 
-        if (tag != null) {
-            NotificationManagerCompat.from(context).notify(tag, 0, builder.build());
-        } else {
-            NotificationManagerCompat.from(context).notify(
-                    NOTIFICATION_ID_BASE + (notificationCounter++ % 20), builder.build());
+        int id = tag == null
+                ? NOTIFICATION_ID_BASE + (notificationCounter % 20)
+                : 0;
+        if (notifySafely(tag, id, builder.build())) {
+            if (tag == null) notificationCounter++;
+            playNotificationSound(serverStore);
         }
-
-        playNotificationSound(serverStore);
     }
 
     void updateSessionProgress(String sessionId, String jsonData, PendingIntent contentIntent) {
@@ -303,7 +327,7 @@ final class NotificationHelper {
                 builder.setRequestPromotedOngoing(true);
             }
 
-            NotificationManagerCompat.from(context).notify("progress:" + sessionId, 0, builder.build());
+            notifySafely("progress:" + sessionId, 0, builder.build());
         } catch (Exception ignored) {}
     }
 
