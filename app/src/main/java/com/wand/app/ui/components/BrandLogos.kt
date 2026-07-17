@@ -52,6 +52,10 @@ object BrandLogos {
     /** OpenCode 与 Qoder 官方标志包含品牌配色，不应用 Compose Icon 的单色 tint。 */
     fun tintForProvider(provider: String?, tint: Color): Color =
         if (provider == "opencode" || provider == "qoder") Color.Unspecified else tint
+
+    /** 调整单色图标透明度，同时保留多色品牌资源的“不着色”语义。 */
+    fun tintWithAlpha(tint: Color, alpha: Float): Color =
+        if (tint == Color.Unspecified) Color.Unspecified else tint.copy(alpha = alpha)
 }
 
 private fun brandIcon(

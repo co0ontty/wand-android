@@ -528,7 +528,7 @@ private fun CollapsedSessionRail(
     ) {
         CollapsedRailTile(
             icon = rememberVectorPainter(WandIcons.chevronRight),
-            tint = WandColors.textSecondary,
+            iconTint = WandColors.textSecondary,
             selected = false,
             badge = null,
             contentDescription = "展开会话栏",
@@ -623,14 +623,16 @@ private fun CollapsedSessionTile(
     onClick: () -> Unit,
 ) {
     val isCodex = session.provider == "codex"
-    val tint = BrandLogos.tintForProvider(
+    val accentTint = if (isCodex) WandColors.info else WandColors.brand
+    val iconTint = BrandLogos.tintForProvider(
         session.provider,
-        if (isCodex) WandColors.info else WandColors.brand,
+        accentTint,
     )
     val icon = BrandLogos.painterForProvider(session.provider)
     CollapsedRailTile(
         icon = icon,
-        tint = tint,
+        iconTint = iconTint,
+        accentTint = accentTint,
         selected = selected,
         selectionStateEnabled = true,
         badge = index.toString(),
@@ -651,7 +653,7 @@ private fun CollapsedRecoverableSessionTile(
     val icon = rememberVectorPainter(if (isCodex) BrandLogos.codex else BrandLogos.claude)
     CollapsedRailTile(
         icon = icon,
-        tint = tint,
+        iconTint = tint,
         selected = false,
         badge = index.toString(),
         contentDescription = buildString {
@@ -670,7 +672,7 @@ private fun CollapsedRecoverableSessionTile(
 private fun CollapsedNewSessionTile(onClick: () -> Unit) {
     CollapsedRailTile(
         icon = rememberVectorPainter(WandIcons.add),
-        tint = WandColors.brand,
+        iconTint = WandColors.brand,
         selected = false,
         badge = null,
         contentDescription = "新建会话",
@@ -682,10 +684,11 @@ private fun CollapsedNewSessionTile(onClick: () -> Unit) {
 @Composable
 private fun CollapsedRailTile(
     icon: Painter,
-    tint: Color,
+    iconTint: Color,
     selected: Boolean,
     badge: String?,
     contentDescription: String,
+    accentTint: Color = iconTint,
     selectionStateEnabled: Boolean = false,
     outlined: Boolean = false,
     loading: Boolean = false,
@@ -696,12 +699,12 @@ private fun CollapsedRailTile(
     val showContainer = outlined || selected
     val background = when {
         outlined -> WandColors.brand.copy(alpha = 0.06f)
-        selected -> tint.copy(alpha = 0.12f)
+        selected -> accentTint.copy(alpha = 0.12f)
         else -> Color.Transparent
     }
     val borderColor = when {
         outlined -> WandColors.brand.copy(alpha = 0.50f)
-        selected -> tint.copy(alpha = 0.52f)
+        selected -> accentTint.copy(alpha = 0.52f)
         else -> Color.Transparent
     }
     Box(
@@ -737,7 +740,7 @@ private fun CollapsedRailTile(
         ) {
             if (loading) {
                 CircularProgressIndicator(
-                    color = tint,
+                    color = accentTint,
                     strokeWidth = 2.dp,
                     modifier = Modifier.size(20.dp),
                 )
@@ -745,7 +748,11 @@ private fun CollapsedRailTile(
                 Icon(
                     painter = icon,
                     contentDescription = null,
-                    tint = tint.copy(alpha = if (outlined) 0.86f else 0.94f),
+                    // Color.Unspecified must survive so multicolor assets do not receive a black filter.
+                    tint = BrandLogos.tintWithAlpha(
+                        iconTint,
+                        alpha = if (outlined) 0.86f else 0.94f,
+                    ),
                     modifier = Modifier.size(if (outlined) 20.dp else 25.dp),
                 )
             }
@@ -757,7 +764,7 @@ private fun CollapsedRailTile(
                 else -> 25.dp
             }
             val badgeBackground = WandColors.surfaceSoft.copy(alpha = if (selected) 0.98f else 0.92f)
-            val badgeBorder = tint.copy(alpha = if (selected) 0.78f else 0.46f)
+            val badgeBorder = accentTint.copy(alpha = if (selected) 0.78f else 0.46f)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -771,7 +778,7 @@ private fun CollapsedRailTile(
             ) {
                 Text(
                     badge,
-                    color = tint.copy(alpha = if (selected) 1f else 0.92f),
+                    color = accentTint.copy(alpha = if (selected) 1f else 0.92f),
                     fontSize = 9.sp,
                     lineHeight = 10.sp,
                     fontWeight = FontWeight.SemiBold,

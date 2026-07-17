@@ -58,6 +58,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -242,6 +244,8 @@ fun TurnView(
                     SubagentPanel(
                         meta = segment.subagent,
                         running = isLastTurn && isResponding && segmentIndex == segments.lastIndex,
+                        itemCount = remember(segment.blocks) { pairToolBlocks(segment.blocks).size },
+                        refreshToken = remember(segment.blocks) { subagentTailRefreshToken(segment.blocks) },
                     ) {
                         SegmentBlocks(
                             blocks = segment.blocks,
@@ -251,6 +255,7 @@ fun TurnView(
                             onAskToggle = onAskToggle,
                             onAskSubmit = onAskSubmit,
                             showSubagentTags = false,
+                            collapseActivities = false,
                         )
                     }
                 }
@@ -502,7 +507,12 @@ private fun UserTurnView(turn: ConversationTurn, compact: Boolean) {
             UserBubble(turn.copy(content = parentBlocks), compact = compact)
         }
         subagentSegments.forEach { segment ->
-            SubagentPanel(meta = segment.subagent ?: return@forEach, running = false) {
+            SubagentPanel(
+                meta = segment.subagent ?: return@forEach,
+                running = false,
+                itemCount = remember(segment.blocks) { pairToolBlocks(segment.blocks).size },
+                refreshToken = remember(segment.blocks) { subagentTailRefreshToken(segment.blocks) },
+            ) {
                 SegmentBlocks(
                     blocks = segment.blocks,
                     isLastTurn = false,
@@ -511,6 +521,7 @@ private fun UserTurnView(turn: ConversationTurn, compact: Boolean) {
                     onAskToggle = { _, _, _, _ -> },
                     onAskSubmit = { _, _ -> },
                     showSubagentTags = false,
+                    collapseActivities = false,
                 )
             }
         }
@@ -556,6 +567,37 @@ private fun ContentBlock.subagentMeta(): SubagentMeta? = when (this) {
     is ContentBlock.Unknown -> null
 }
 
+/** 数量/高度不变的流式替换也要驱动角色窗口重新跟尾。 */
+private fun subagentTailRefreshToken(blocks: List<ContentBlock>): Int {
+    var token = 1
+    fun mix(value: Any?) {
+        token = 31 * token + (value?.hashCode() ?: 0)
+    }
+    blocks.forEach { block ->
+        when (block) {
+            is ContentBlock.Text -> mix(block.text)
+            is ContentBlock.Thinking -> mix(block.thinking)
+            is ContentBlock.ToolUse -> {
+                mix(block.id)
+                mix(block.name)
+                mix(block.description)
+                mix(block.input.toString())
+            }
+            is ContentBlock.ToolResult -> {
+                mix(block.toolUseId)
+                mix(block.text)
+                mix(block.isError)
+                mix(block.truncated)
+            }
+            is ContentBlock.Unknown -> {
+                mix(block.type)
+                mix(block.payload)
+            }
+        }
+    }
+    return token
+}
+
 @Composable
 private fun SegmentBlocks(
     blocks: List<ContentBlock>,
@@ -565,11 +607,16 @@ private fun SegmentBlocks(
     onAskToggle: (String, Int, Int, Boolean) -> Unit,
     onAskSubmit: (String, String) -> Unit,
     showSubagentTags: Boolean = true,
+    collapseActivities: Boolean = true,
 ) {
     val cardDefaults = LocalCardExpandDefaults.current
     val items = remember(blocks) { pairToolBlocks(blocks) }
-    val renderItems = remember(items, isLastTurn, isResponding) {
-        collapseActivityItems(items, isLastTurn, isResponding)
+    val renderItems = remember(items, isLastTurn, isResponding, collapseActivities) {
+        if (collapseActivities) {
+            collapseActivityItems(items, isLastTurn, isResponding)
+        } else {
+            items.mapIndexed { index, item -> SegmentRenderItem.Item(index, item) }
+        }
     }
     var openActivityKey by remember { mutableStateOf<String?>(null) }
     val openActivity = remember(renderItems, openActivityKey) {
@@ -729,57 +776,47 @@ private fun RenderDisplayItem(
 private fun SubagentPanel(
     meta: SubagentMeta,
     running: Boolean,
+    itemCount: Int,
+    refreshToken: Int,
     content: @Composable () -> Unit,
 ) {
-    var expanded by remember(meta.taskId) { mutableStateOf(false) }
-    val title = meta.agentType?.takeIf { it.isNotBlank() } ?: "Sub-agent"
+    val rawTitle = meta.agentType?.takeIf { it.isNotBlank() } ?: "子 Agent"
+    val title = if (rawTitle.startsWith("猫猫")) rawTitle else "猫猫 $rawTitle"
     val description = meta.taskDescription?.takeIf { it.isNotBlank() }
+    val scrollState = rememberScrollState()
 
-    // 只让标题保持子代理语义卡；展开内容回归普通消息流，避免长任务被一条
-    // 贯穿多屏的蓝色大边框包住。
+    // 内容高度变化意味着流式文本或新的工具结果已经到达。只在这种刷新发生时
+    // 重回尾部；两次刷新之间，用户仍可自由向上滚动查看窗口内历史。
+    LaunchedEffect(scrollState) {
+        snapshotFlow { scrollState.maxValue }.collect { maxValue ->
+            scrollState.scrollTo(maxValue)
+        }
+    }
+    LaunchedEffect(refreshToken) {
+        withFrameNanos { }
+        scrollState.scrollTo(scrollState.maxValue)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize(WandMotion.tweenNormal()),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .glassCard(WandShapes.lg, tint = WandColors.infoSoft, rimTint = WandColors.info),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .glassCard(WandShapes.lg, tint = WandColors.infoSoft, rimTint = WandColors.info)
-                .clickableWithoutRipple { expanded = !expanded }
                 .padding(horizontal = 12.dp, vertical = 11.dp),
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(WandColors.info.copy(alpha = 0.14f)),
-            ) {
-                if (running) {
-                    CircularProgressIndicator(
-                        color = WandColors.info,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(16.dp),
-                    )
-                } else {
-                    Icon(
-                        WandIcons.agent,
-                        contentDescription = null,
-                        tint = WandColors.info,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     title,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = WandColors.info,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     description ?: if (running) "正在处理子任务" else "子任务输出",
@@ -790,23 +827,28 @@ private fun SubagentPanel(
                 )
             }
             Text(
-                if (expanded) "收起" else "查看",
-                fontSize = 11.sp,
+                if (running) "处理中" else "${itemCount.coerceAtLeast(1)} 条内容",
+                fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = WandColors.info,
-            )
-            ExpandChevron(
-                expanded = expanded,
-                tint = WandColors.info,
-                size = 16.dp,
-                contentDescription = if (expanded) "收起子任务" else "查看子任务",
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(WandColors.info.copy(alpha = 0.10f))
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
             )
         }
-        if (expanded) {
+        HorizontalDivider(color = WandColors.border)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp)
+                .background(WandColors.bgPrimary.copy(alpha = 0.45f))
+                .verticalScroll(scrollState),
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 2.dp),
+                    .padding(10.dp),
             ) {
                 content()
             }
