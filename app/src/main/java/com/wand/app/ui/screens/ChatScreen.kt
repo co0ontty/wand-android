@@ -1390,18 +1390,20 @@ private fun InputBar(
     var showStopConfirm by remember { mutableStateOf(false) }
     // 文本框是否聚焦：驱动「胶囊 ↔ 卡片」两态切换（对齐 Codex App）。
     var isFocused by remember { mutableStateOf(false) }
+    // 折叠为单行后若正文发生换行或溢出，立即保持展开，避免失焦后遮住草稿。
+    var draftNeedsExpanded by remember { mutableStateOf(false) }
     LaunchedEffect(refocusAfterSend, store.sessionEnded) {
         if (refocusAfterSend && !store.sessionEnded) {
             refocusAfterSend = false
             runCatching { focusRequester.requestFocus() }
         }
     }
-    // 文本聚焦或按住语音时展开；草稿和附件在失焦收起后继保留。
-    val expanded = isFocused || voice.pressed
+    // 文本聚焦、按住语音或草稿无法在最小态完整显示时展开。
+    val expanded = isFocused || voice.pressed || draftNeedsExpanded
     LaunchedEffect(expanded) {
         onExpandedChange(expanded)
     }
-    // 文本与语音共用同一输入区：轻点打开键盘，空草稿时按住直接说话。
+    // 文本框只负责文本编辑；语音手势由输入框外侧的独立按钮承载。
     val inputContent: @Composable RowScope.() -> Unit = {
         Column(
             modifier = Modifier
@@ -1428,6 +1430,10 @@ private fun InputBar(
                         cursorBrush = SolidColor(WandColors.brand),
                         minLines = 1,
                         maxLines = if (expanded) 6 else 1,
+                        onTextLayout = { layout ->
+                            draftNeedsExpanded = draft.isNotEmpty() &&
+                                (layout.lineCount > 1 || layout.hasVisualOverflow)
+                        },
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences,
                         ),
@@ -1440,48 +1446,15 @@ private fun InputBar(
                             ) {
                                 if (draft.isEmpty()) {
                                     Text(
-                                        when {
-                                            voice.pressed && voice.canceling -> "松开手指，取消输入"
-                                            voice.pressed -> "松开结束 · 上滑取消"
-                                            else -> "打字或按住说话"
-                                        },
-                                        fontSize = if (voice.pressed) 14.sp else 16.sp,
-                                        fontWeight = if (voice.pressed) FontWeight.Medium else FontWeight.Normal,
-                                        color = when {
-                                            voice.pressed && voice.canceling -> WandColors.danger
-                                            voice.pressed -> WandColors.brand
-                                            else -> WandColors.textMuted
-                                        },
+                                        "输入消息",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        color = WandColors.textMuted,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 innerTextField()
-                                // BasicTextField 内部会优先消费长按（选词/光标），
-                                // 空草稿时用透明覆盖层明确仲裁：轻点聚焦，按住语音。
-                                if (draft.isEmpty()) {
-                                    Box(
-                                        modifier = Modifier
-                                            .matchParentSize()
-                                            .semantics {
-                                                contentDescription = "消息输入框，轻点打字，按住说话"
-                                                stateDescription = when {
-                                                    voice.pressed && voice.canceling -> "松开取消"
-                                                    voice.pressed -> "正在录音"
-                                                    else -> "可输入"
-                                                }
-                                            }
-                                            .pointerInput(voice) {
-                                                voiceTapOrHoldGesture(
-                                                    voice = voice,
-                                                    onTap = {
-                                                        runCatching { focusRequester.requestFocus() }
-                                                    },
-                                                    onHoldStart = onMicDown,
-                                                )
-                                            },
-                                    )
-                                }
                             }
                         },
                         modifier = Modifier
@@ -1507,6 +1480,14 @@ private fun InputBar(
             store = store,
             canSend = canSend,
             onStop = { showStopConfirm = true },
+            voiceAction = {
+                VoiceMicButton(
+                    voice = voice,
+                    voiceMode = false,
+                    onToggleMode = { runCatching { focusRequester.requestFocus() } },
+                    onMicDown = onMicDown,
+                )
+            },
             onSend = {
                 onSend()
                 refocusAfterSend = true
@@ -1528,8 +1509,7 @@ private fun InputBar(
             trailing()
         },
         expandedControls = { controlsCompact ->
-            // 控制行：+ / 模式徽标 / 模型·思考徽标 / 发送·停止。
-            // 窄屏时退成图标芯片，右侧按钮始终保留固定空间。
+            // 控制行：+ / 模式徽标 / 模型·思考徽标 / 停止·语音·发送。
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
@@ -1585,9 +1565,11 @@ private fun TrailingSendStop(
     store: ChatStore,
     canSend: Boolean,
     onStop: () -> Unit,
+    voiceAction: @Composable () -> Unit,
     onSend: () -> Unit,
 ) {
     if (store.isResponding && !canSend) {
+        voiceAction()
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -1622,6 +1604,7 @@ private fun TrailingSendStop(
             )
         }
     }
+    voiceAction()
     ComposerIconButton(
         enabled = canSend,
         contentDescription = if (canSend) "发送消息" else "当前没有可发送内容",
@@ -1949,7 +1932,7 @@ private suspend fun PointerInputScope.voiceTapOrHoldGesture(
     }
 }
 
-/** 终端输入页仍使用的独立语音按钮。 */
+/** 输入框外侧的独立语音按钮：轻点聚焦输入，长按录音。 */
 @Composable
 internal fun VoiceMicButton(
     voice: VoiceInputController,

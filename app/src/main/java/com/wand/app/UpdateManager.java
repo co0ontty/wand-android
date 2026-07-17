@@ -57,15 +57,14 @@ final class UpdateManager {
     }
 
     void checkForUpdate(UpdateFoundCallback callback) {
-        checkForUpdate(callback, null, true);
+        performCheckForUpdate(callback, null);
     }
 
     void checkForUpdate(UpdateFoundCallback callback, NoUpdateCallback noUpdateCallback) {
-        checkForUpdate(callback, noUpdateCallback, false);
+        performCheckForUpdate(callback, noUpdateCallback);
     }
 
-    private void checkForUpdate(UpdateFoundCallback callback, NoUpdateCallback noUpdateCallback,
-                                boolean suppressDownloadedVersion) {
+    private void performCheckForUpdate(UpdateFoundCallback callback, NoUpdateCallback noUpdateCallback) {
         String currentVersion;
         try {
             currentVersion = activity.getPackageManager()
@@ -131,12 +130,6 @@ final class UpdateManager {
                     notifyNoUpdate(noUpdateCallback, "这个版本已被跳过。");
                     return;
                 }
-                if (suppressDownloadedVersion &&
-                        latestVersion.equals(serverStore.getDownloadedApkVersion(channel))) {
-                    notifyNoUpdate(noUpdateCallback, "这个版本已下载过。");
-                    return;
-                }
-
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
                     callback.onUpdateFound(currentVersion, latestVersion,
