@@ -134,6 +134,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         fun normalizeProvider(provider: String?): String = when (provider) {
             "codex" -> "codex"
             "opencode" -> "opencode"
+            "grok" -> "grok"
             else -> "claude"
         }
     }
@@ -142,6 +143,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
 internal fun ProviderDefaultModels.defaultFor(provider: String): String? = when (provider) {
     "codex" -> codex
     "opencode" -> opencode
+    "grok" -> null
     else -> claude
 }
 
@@ -166,12 +168,14 @@ private fun modelsFor(
 ): List<ModelInfo> = when (provider) {
     "codex" -> codex
     "opencode" -> opencode
+    "grok" -> emptyList()
     else -> claude
 }
 
 private fun supportedModeIds(provider: String): Set<String> = when (provider) {
     "codex" -> setOf("full-access")
     "opencode" -> setOf("default", "full-access", "managed")
+    "grok" -> setOf("default", "full-access", "managed")
     else -> setOf("managed", "full-access", "auto-edit", "default", "native")
 }
 

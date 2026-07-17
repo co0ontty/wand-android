@@ -13,6 +13,7 @@ import com.wand.app.data.MessageUpdate
 import com.wand.app.data.SessionChanges
 import com.wand.app.data.SessionEvent
 import com.wand.app.data.arrayField
+import com.wand.app.data.ToolUseSemantic
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import kotlinx.coroutines.CoroutineScope
@@ -290,9 +291,19 @@ object SessionWatcher {
         if (turns.size > 1) {
             outer@ for (i in turns.indices.reversed()) {
                 for (block in turns[i].content.reversed()) {
-                    if (block is ContentBlock.ToolUse && block.name == "TodoWrite") {
-                        block.input.arrayField("todos")?.let { w.todos = it }
-                        break@outer
+                    if (block is ContentBlock.ToolUse) {
+                        val semantic = block.semantic as? ToolUseSemantic.TaskList
+                        if (semantic != null) {
+                            w.todos = JSONArray(semantic.items.map { item ->
+                                JSONObject().put("content", item.content).put("status", item.status)
+                                    .put("activeForm", item.activeForm)
+                            })
+                            break@outer
+                        }
+                        if (block.name == "TodoWrite") {
+                            block.input.arrayField("todos")?.let { w.todos = it }
+                            break@outer
+                        }
                     }
                 }
             }
@@ -301,9 +312,19 @@ object SessionWatcher {
 
     private fun updateTodos(w: Watched, turn: ConversationTurn) {
         for (block in turn.content.reversed()) {
-            if (block is ContentBlock.ToolUse && block.name == "TodoWrite") {
-                block.input.arrayField("todos")?.let { w.todos = it }
-                return
+            if (block is ContentBlock.ToolUse) {
+                val semantic = block.semantic as? ToolUseSemantic.TaskList
+                if (semantic != null) {
+                    w.todos = JSONArray(semantic.items.map { item ->
+                        JSONObject().put("content", item.content).put("status", item.status)
+                            .put("activeForm", item.activeForm)
+                    })
+                    return
+                }
+                if (block.name == "TodoWrite") {
+                    block.input.arrayField("todos")?.let { w.todos = it }
+                    return
+                }
             }
         }
     }

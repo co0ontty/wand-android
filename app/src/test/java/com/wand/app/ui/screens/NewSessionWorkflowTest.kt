@@ -87,6 +87,19 @@ class NewSessionWorkflowTest {
     }
 
     @Test
+    fun grokSupportsStructuredAndPtyManagedModes() = runBlocking {
+        val port = FakeNewSessionPort()
+        val workflow = NewSessionWorkflow(port)
+        assertEquals("grok", NewSessionWorkflow.normalizeProvider("grok"))
+        assertEquals(setOf("default", "full-access", "managed"), workflow.supportedModes("grok"))
+
+        workflow.create(NewSessionDraft("/project", "grok", true, "native", "", "deep", "hello"))
+        assertEquals("managed", port.lastMode)
+        assertEquals("grok", port.lastProvider)
+        assertEquals(listOf("persist", "structured"), port.calls)
+    }
+
+    @Test
     fun unsupportedThinkingEffortNormalizesToAutomatic() {
         val workflow = NewSessionWorkflow(FakeNewSessionPort())
         val normalized = workflow.normalizeThinkingEffort(

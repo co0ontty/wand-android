@@ -138,11 +138,13 @@ fun NewSessionScreen(
     val providerModels = when (provider) {
         "codex" -> codexModels
         "opencode" -> opencodeModels
+        "grok" -> emptyList()
         else -> availableModels
     }
     val serverDefaultModel = when (provider) {
         "codex" -> serverDefaultModels.codex
         "opencode" -> serverDefaultModels.opencode
+        "grok" -> null
         else -> serverDefaultModels.claude
     }
     val thinkingLevels = thinkingEffortOptions(provider, selectedModel, serverDefaultModel, providerModels)
@@ -372,6 +374,7 @@ fun NewSessionScreen(
                     "claude" to "Claude",
                     "codex" to "Codex",
                     "opencode" to "OpenCode",
+                    "grok" to "Grok",
                 ),
                 selected = provider,
                 onSelect = { newProvider ->
@@ -887,12 +890,14 @@ private fun sessionKindHint(provider: String, structured: Boolean): String =
         when (provider) {
             "codex" -> "Codex JSONL 结构化聊天界面，支持多轮对话和工具调用展示。"
             "opencode" -> "OpenCode JSON 结构化聊天界面，支持多轮对话和工具调用展示。"
+            "grok" -> "Grok streaming-json 结构化聊天界面，支持多轮续聊与思考过程展示。"
             else -> "结构化聊天界面，支持多轮对话、流式输出和工具调用展示。"
         }
     } else {
         when (provider) {
             "codex" -> "Codex PTY 终端会话；terminal 是原始输出，chat 是解析后的阅读视图。"
             "opencode" -> "OpenCode TUI 终端会话，支持持续交互和终端视图。"
+            "grok" -> "Grok Build TUI 的原始 PTY 终端会话。"
             else -> "原始 PTY 终端会话，支持持续交互、终端视图和权限流。"
         }
     }
@@ -907,6 +912,13 @@ private fun modeHint(provider: String, mode: String): String {
             "OpenCode 将自动批准未显式拒绝的权限；支持 TUI 与 JSON 结构化会话。"
         } else {
             "OpenCode 使用自身权限配置；结构化模式会自动拒绝未批准的权限请求。"
+        }
+    }
+    if (provider == "grok") {
+        return if (mode == "full-access" || mode == "managed") {
+            "Grok 将以 always-approve 运行；支持 TUI 与 streaming-json 结构化会话。"
+        } else {
+            "Grok 使用自身权限确认；支持 TUI 与 streaming-json 结构化会话。"
         }
     }
     return when (mode) {

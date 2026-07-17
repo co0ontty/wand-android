@@ -692,6 +692,7 @@ private fun ChatProviderBadge(provider: String?) {
             contentDescription = when (provider) {
                 "codex" -> "Codex"
                 "opencode" -> "OpenCode"
+                "grok" -> "Grok"
                 else -> "Claude"
             },
             tint = tint.copy(alpha = 0.94f),
@@ -1717,6 +1718,7 @@ private fun ModeChip(store: ChatStore, compact: Boolean = false) {
     val supportedModeIds = when (provider) {
         "codex" -> setOf("full-access")
         "opencode" -> setOf("default", "full-access", "managed")
+        "grok" -> setOf("default", "full-access", "managed")
         else -> SESSION_MODES.mapTo(mutableSetOf()) { it.first }
     }
     var open by remember { mutableStateOf(false) }

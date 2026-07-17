@@ -96,6 +96,7 @@ import com.wand.app.data.CardExpandDefaults
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SubagentMeta
+import com.wand.app.data.ToolUseSemantic
 import com.wand.app.data.TurnUsage
 import com.wand.app.data.WandApi
 import com.wand.app.data.arrayField
@@ -655,10 +656,22 @@ private fun RenderDisplayItem(
             if (isHiddenDispatchTool(use)) return
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (showSubagentTags) SubagentTag(use.subagent)
-                val askQuestions = if (use.name == "AskUserQuestion") {
-                    remember(use.input) { AskUserQuestionData.parse(use.input) }
-                } else {
-                    emptyList()
+                val askQuestions = when (val semantic = use.semantic) {
+                    is ToolUseSemantic.QuestionRequest -> semantic.questions.map { question ->
+                        AskUserQuestionData(
+                            question = question.question,
+                            header = question.header,
+                            multiSelect = question.multiSelect,
+                            options = question.options.map { option ->
+                                AskUserQuestionData.Option(option.label, option.description)
+                            },
+                        )
+                    }
+                    else -> if (use.name == "AskUserQuestion") {
+                        remember(use.input) { AskUserQuestionData.parse(use.input) }
+                    } else {
+                        emptyList()
+                    }
                 }
                 when {
                     askQuestions.isNotEmpty() -> AskUserQuestionCard(
@@ -3853,6 +3866,16 @@ fun currentTodos(messages: List<ConversationTurn>): List<TodoEntry> {
         if (messages[i].role == "user") {
             startIdx = i + 1
             break
+        }
+    }
+    // Wand protocol v2：provider 的 TodoWrite / Task* 已由服务端归一化。
+    for (i in messages.indices.reversed()) {
+        if (i < startIdx) break
+        for (block in messages[i].content.reversed()) {
+            val semantic = (block as? ContentBlock.ToolUse)?.semantic as? ToolUseSemantic.TaskList ?: continue
+            val todos = semantic.items.map { TodoEntry(it.content, it.status, it.activeForm) }
+            if (todos.isEmpty()) continue
+            return if (todos.all { it.status == "completed" }) emptyList() else todos
         }
     }
     // 旧 TodoWrite 协议：最后一次写入就是完整快照，倒序取最新即可。

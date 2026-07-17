@@ -654,6 +654,7 @@ private fun PtyProviderBadge(provider: String?) {
             contentDescription = when (provider) {
                 "codex" -> "Codex"
                 "opencode" -> "OpenCode"
+                "grok" -> "Grok"
                 else -> "Claude"
             },
             tint = tint,

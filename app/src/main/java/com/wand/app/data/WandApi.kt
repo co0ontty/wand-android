@@ -332,6 +332,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         when (provider) {
             "codex" -> body.put("runner", "codex-cli-exec")
             "opencode" -> body.put("runner", "opencode-cli-run")
+            "grok" -> body.put("runner", "grok-cli-headless")
         }
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
         if (!model.isNullOrEmpty()) body.put("model", model)

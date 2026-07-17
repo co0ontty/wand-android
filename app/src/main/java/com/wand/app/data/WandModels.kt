@@ -108,6 +108,64 @@ data class SubagentMeta(
     }
 }
 
+data class SemanticQuestionOption(val label: String, val description: String?)
+
+data class SemanticQuestion(
+    val question: String,
+    val header: String?,
+    val multiSelect: Boolean,
+    val options: List<SemanticQuestionOption>,
+)
+
+data class SemanticTaskItem(
+    val id: String,
+    val content: String,
+    val status: String,
+    val activeForm: String?,
+)
+
+sealed class ToolUseSemantic {
+    data class QuestionRequest(val questions: List<SemanticQuestion>) : ToolUseSemantic()
+    data class TaskList(val items: List<SemanticTaskItem>) : ToolUseSemantic()
+
+    companion object {
+        fun parse(o: JSONObject?): ToolUseSemantic? {
+            if (o == null) return null
+            return when (o.str("kind")) {
+                "question_request" -> {
+                    val questions = o.arr("questions")?.parseEach { question ->
+                        val options = question.arr("options")?.parseEach { option ->
+                            SemanticQuestionOption(
+                                label = option.str("label") ?: "",
+                                description = option.str("description"),
+                            )
+                        } ?: emptyList()
+                        SemanticQuestion(
+                            question = question.str("question") ?: "",
+                            header = question.str("header"),
+                            multiSelect = question.bool("multiSelect") ?: false,
+                            options = options,
+                        )
+                    } ?: emptyList()
+                    QuestionRequest(questions)
+                }
+                "task_list" -> {
+                    val items = o.arr("items")?.parseEach { item ->
+                        SemanticTaskItem(
+                            id = item.str("id") ?: "",
+                            content = item.str("content") ?: "",
+                            status = item.str("status") ?: "pending",
+                            activeForm = item.str("activeForm"),
+                        )
+                    } ?: emptyList()
+                    TaskList(items)
+                }
+                else -> null
+            }
+        }
+    }
+}
+
 /** ConversationTurn.content 里的一个块。types.ts: ContentBlock 四种变体 + 容错。 */
 sealed class ContentBlock {
     data class Text(val text: String, val subagent: SubagentMeta?) : ContentBlock()
@@ -118,6 +176,7 @@ sealed class ContentBlock {
         val description: String?,
         val input: JSONObject,
         val subagent: SubagentMeta?,
+        val semantic: ToolUseSemantic? = null,
     ) : ContentBlock()
     data class ToolResult(
         val toolUseId: String,
@@ -141,6 +200,7 @@ sealed class ContentBlock {
                     description = o.str("description"),
                     input = o.obj("input") ?: JSONObject(),
                     subagent = subagent,
+                    semantic = ToolUseSemantic.parse(o.obj("semantic")),
                 )
                 "tool_result" -> {
                     val text = structuredContentText(o.opt("content"))
@@ -332,6 +392,7 @@ data class SessionSnapshot(
         get() = when (provider) {
             "codex" -> "Codex"
             "opencode" -> "OpenCode"
+            "grok" -> "Grok"
             else -> "Claude"
         }
 
