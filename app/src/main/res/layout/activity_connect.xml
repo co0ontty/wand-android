@@ -4,31 +4,35 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
-    android:background="@color/background">
+    android:background="@drawable/connect_ambient_background"
+    android:clipToPadding="false">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center_horizontal"
-        android:padding="32dp">
+        android:paddingStart="20dp"
+        android:paddingTop="28dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="32dp">
 
         <!-- Logo area -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="48dp"
+            android:layout_marginTop="36dp"
             android:text="Wand"
-            android:textSize="36sp"
+            android:textSize="34sp"
             android:textColor="@color/primary"
             android:textStyle="bold"
-            android:fontFamily="monospace" />
+            android:fontFamily="sans-serif" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:layout_marginBottom="48dp"
+            android:layout_marginBottom="32dp"
             android:text="远程 CLI 控制台"
             android:textSize="14sp"
             android:textColor="@color/text_secondary" />
@@ -40,6 +44,12 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:gravity="center_horizontal"
+            android:background="@drawable/liquid_panel_background"
+            android:elevation="1dp"
+            android:paddingStart="20dp"
+            android:paddingTop="28dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="24dp"
             android:visibility="gone">
 
             <ProgressBar
@@ -68,7 +78,7 @@
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/cancelAutoConnectButton"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    style="@style/Wand.Connect.TextButton"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/cancel_auto_connect"
@@ -76,7 +86,7 @@
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/switchServerButton"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    style="@style/Wand.Connect.TextButton"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
@@ -92,7 +102,13 @@
             android:id="@+id/formGroup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:background="@drawable/liquid_panel_background"
+            android:elevation="1dp"
+            android:paddingStart="18dp"
+            android:paddingTop="20dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="18dp">
 
             <!-- URL input -->
             <com.google.android.material.textfield.TextInputLayout
@@ -130,19 +146,19 @@
             <!-- Connect button -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/connectButton"
+                style="@style/Wand.Connect.PrimaryButton"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="52dp"
                 android:layout_marginTop="16dp"
                 android:text="@string/connect_button"
-                android:textSize="16sp"
-                android:backgroundTint="@color/primary" />
+                android:textSize="15sp" />
 
             <!-- Scan QR button -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/scanQrButton"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                style="@style/Wand.Connect.SecondaryButton"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="50dp"
                 android:layout_marginTop="10dp"
                 android:text="@string/scan_qr_button"
                 android:textSize="15sp"
@@ -154,11 +170,11 @@
                 android:id="@+id/recentLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="36dp"
+                android:layout_marginTop="30dp"
                 android:text="@string/recent_servers"
                 android:textSize="13sp"
                 android:textColor="@color/text_secondary"
-                android:textStyle="bold"
+                android:textStyle="normal"
                 android:visibility="gone" />
 
             <LinearLayout

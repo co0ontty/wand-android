@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.lerp
@@ -533,7 +532,7 @@ fun ToolbarIconButton(
     }
 }
 
-/** Wand 品牌标记：品牌渐变圆角方块 + 白色星芒图标（对称 iOS Theme.WandBrandMark）。 */
+/** Wand 品牌标记：克制的品牌色圆角方块 + 白色星芒图标。 */
 @Composable
 fun WandBrandMark(size: Int = 64) {
     val corner = RoundedCornerShape((size * 0.26f).dp)
@@ -542,17 +541,14 @@ fun WandBrandMark(size: Int = 64) {
         modifier = Modifier
             .size(size.dp)
             .shadow(
-                elevation = (size * 0.10f).dp,
+                elevation = 1.dp,
                 shape = corner,
-                ambientColor = WandColors.brand.copy(alpha = 0.18f),
-                spotColor = WandColors.brand.copy(alpha = 0.18f),
+                ambientColor = WandColors.brand.copy(alpha = 0.10f),
+                spotColor = WandColors.brand.copy(alpha = 0.10f),
             )
             .clip(corner)
-            .background(
-                Brush.linearGradient(
-                    listOf(lerp(WandColors.brand, Color.White, 0.06f), lerp(WandColors.brand, Color.Black, 0.06f))
-                )
-            ),
+            .background(WandColors.brand)
+            .border(0.7.dp, Color.White.copy(alpha = 0.18f), corner),
     ) {
         Icon(
             WandIcons.sparkle,

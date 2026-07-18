@@ -25,7 +25,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -82,9 +82,16 @@ import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wand.app.ui.theme.WandAppearanceMode
+import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.glassBackdropSource
+import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
+import com.wand.app.ui.theme.rememberGlassBackdrop
 
 /**
  * 原生设置页 —— 对称 iOS SettingsView，并把原 WebView 桥（WandNative）的
@@ -124,6 +131,8 @@ fun SettingsScreen(
             null
         }
     }
+
+    val glassBackdrop = rememberGlassBackdrop()
 
     if (showDisconnectConfirm) {
         AlertDialog(
@@ -169,156 +178,163 @@ fun SettingsScreen(
         )
     }
 
-    Column(
+    Box(
         modifier = modifier
-            .fillMaxWidth()
-            .fillMaxHeight()
+            .fillMaxSize()
             .navigationBarsPadding()
             .imePadding(),
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .glassBackdropSource(glassBackdrop),
+        ) {
+            AmbientBackground(Modifier.fillMaxSize())
+            SettingsContentLayout(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 56.dp),
+            ) {
+                SettingsSection(
+                    title = "外观与反馈",
+                    description = "调整这台设备上的主题、声音和触感。",
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        AppearanceModePicker(
+                            selected = appearanceMode,
+                            onSelected = { mode ->
+                                appearanceMode = mode
+                                settings.setAppearanceMode(mode)
+                            },
+                        )
+                        RowDivider()
+                        NotificationFeedbackContent(
+                            selectedSound = selectedSound,
+                            volume = volume,
+                            hapticEnabled = hapticEnabled,
+                            onSoundSelected = { id ->
+                                selectedSound = id
+                                settings.setNotificationSound(id)
+                                settings.previewSound(id)
+                            },
+                            onVolumeChange = { volume = it },
+                            onVolumeCommit = {
+                                settings.setNotificationVolume(volume.toInt())
+                                settings.previewSound(selectedSound)
+                            },
+                            onHapticChange = {
+                                hapticEnabled = it
+                                settings.setHapticEnabled(it)
+                            },
+                        )
+                    }
+                }
+
+                SettingsSection(
+                    title = "语音输入",
+                    description = "选择离线识别模型；缺少的模型会在选中后下载。",
+                ) {
+                    SttModelSection()
+                }
+
+                SettingsSection(
+                    title = "连接",
+                    description = "查看当前服务器，或切换到其他 Wand 服务。",
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        ServerConnectionRow(
+                            serverUrl = connection.serverUrl,
+                            hasConnectionCode = connection.hasToken,
+                        )
+                        RowDivider()
+                        ConnectionActionsRow(
+                            onOpenWeb = navigation.openWeb,
+                            onSwitchServer = navigation.switchServer,
+                        )
+                        RowDivider()
+                        ActionRow(
+                            label = "断开连接",
+                            icon = WandIcons.logout,
+                            danger = true,
+                        ) {
+                            showDisconnectConfirm = true
+                        }
+                    }
+                }
+
+                SettingsSection(
+                    title = "应用与更新",
+                    description = "控制后台运行方式和更新通道。",
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        SwitchRow(
+                            label = "后台保活",
+                            checked = keepAlive,
+                            icon = WandIcons.keepAlive,
+                            iconTint = WandColors.success,
+                        ) { enabled ->
+                            keepAlive = enabled
+                            if (enabled) {
+                                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            settings.setKeepAlive(enabled)
+                        }
+                        RowDivider()
+                        ActionRow(
+                            label = "检查更新",
+                            icon = WandIcons.update,
+                            trailingText = "v${settings.appVersion}",
+                            iconTint = WandColors.success,
+                        ) { settings.manualCheckUpdate() }
+                        RowDivider()
+                        SwitchRow(
+                            label = "Beta 通道",
+                            checked = betaChannel,
+                            icon = WandIcons.beta,
+                            iconTint = WandColors.warning,
+                        ) {
+                            betaChannel = it
+                            settings.setBetaChannel(it)
+                        }
+                    }
+                }
+
+                SettingsSection(
+                    title = "应用图标",
+                    description = "选择显示在桌面上的 Wand 图标。",
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        AppIconPickerContent(
+                            appIcon = appIcon,
+                            motionEnabled = motionEnabled,
+                            onSelect = { icon ->
+                                appIcon = icon
+                                settings.setAppIcon(icon)
+                            },
+                        )
+                    }
+                }
+
+                SettingsSection(
+                    title = "关于",
+                    description = "版本与运行环境信息。",
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        SettingsAboutContent(
+                            appVersion = settings.appVersion,
+                            serverVersion = serverVersion,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+        }
         SettingsSheetHeader(
+            backdrop = glassBackdrop,
             onBack = onBack,
         )
-        SettingsContentLayout(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            SettingsSection(
-                title = "外观与反馈",
-                description = "调整这台设备上的主题、声音和触感。",
-            ) {
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    AppearanceModePicker(
-                        selected = appearanceMode,
-                        onSelected = { mode ->
-                            appearanceMode = mode
-                            settings.setAppearanceMode(mode)
-                        },
-                    )
-                    RowDivider()
-                    NotificationFeedbackContent(
-                        selectedSound = selectedSound,
-                        volume = volume,
-                        hapticEnabled = hapticEnabled,
-                        onSoundSelected = { id ->
-                            selectedSound = id
-                            settings.setNotificationSound(id)
-                            settings.previewSound(id)
-                        },
-                        onVolumeChange = { volume = it },
-                        onVolumeCommit = {
-                            settings.setNotificationVolume(volume.toInt())
-                            settings.previewSound(selectedSound)
-                        },
-                        onHapticChange = {
-                            hapticEnabled = it
-                            settings.setHapticEnabled(it)
-                        },
-                    )
-                }
-            }
-
-            SettingsSection(
-                title = "语音输入",
-                description = "选择离线识别模型；缺少的模型会在选中后下载。",
-            ) {
-                SttModelSection()
-            }
-
-            SettingsSection(
-                title = "连接",
-                description = "查看当前服务器，或切换到其他 Wand 服务。",
-            ) {
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    ServerConnectionRow(
-                        serverUrl = connection.serverUrl,
-                        hasConnectionCode = connection.hasToken,
-                    )
-                    RowDivider()
-                    ConnectionActionsRow(
-                        onOpenWeb = navigation.openWeb,
-                        onSwitchServer = navigation.switchServer,
-                    )
-                    RowDivider()
-                    ActionRow(
-                        label = "断开连接",
-                        icon = WandIcons.logout,
-                        danger = true,
-                    ) {
-                        showDisconnectConfirm = true
-                    }
-                }
-            }
-
-            SettingsSection(
-                title = "应用与更新",
-                description = "控制后台运行方式和更新通道。",
-            ) {
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    SwitchRow(
-                        label = "后台保活",
-                        checked = keepAlive,
-                        icon = WandIcons.keepAlive,
-                        iconTint = WandColors.success,
-                    ) { enabled ->
-                        keepAlive = enabled
-                        if (enabled) {
-                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                        settings.setKeepAlive(enabled)
-                    }
-                    RowDivider()
-                    ActionRow(
-                        label = "检查更新",
-                        icon = WandIcons.update,
-                        trailingText = "v${settings.appVersion}",
-                        iconTint = WandColors.success,
-                    ) { settings.manualCheckUpdate() }
-                    RowDivider()
-                    SwitchRow(
-                        label = "Beta 通道",
-                        checked = betaChannel,
-                        icon = WandIcons.beta,
-                        iconTint = WandColors.warning,
-                    ) {
-                        betaChannel = it
-                        settings.setBetaChannel(it)
-                    }
-                }
-            }
-
-            SettingsSection(
-                title = "应用图标",
-                description = "选择显示在桌面上的 Wand 图标。",
-            ) {
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    AppIconPickerContent(
-                        appIcon = appIcon,
-                        motionEnabled = motionEnabled,
-                        onSelect = { icon ->
-                            appIcon = icon
-                            settings.setAppIcon(icon)
-                        },
-                    )
-                }
-            }
-
-            SettingsSection(
-                title = "关于",
-                description = "版本与运行环境信息。",
-            ) {
-                SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                    SettingsAboutContent(
-                        appVersion = settings.appVersion,
-                        serverVersion = serverVersion,
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-        }
     }
 }
 
@@ -564,9 +580,19 @@ private fun NotificationFeedbackContent(
 
 @Composable
 private fun SettingsSheetHeader(
+    backdrop: GlassBackdrop,
     onBack: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(0.dp),
+                style = WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
+                edgeToEdge = true,
+            ),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -893,16 +919,9 @@ private fun SettingsCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(14.dp)
-    val dark = isWandDarkTheme()
     Column(
         modifier = modifier
-            .clip(shape)
-            .background(WandColors.surface)
-            .border(
-                0.75.dp,
-                WandColors.borderStrong.copy(alpha = if (dark) 0.24f else 0.16f),
-                shape,
-            ),
+            .glassCard(shape = shape),
         content = content,
     )
 }

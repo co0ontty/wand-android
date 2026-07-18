@@ -36,13 +36,13 @@ import androidx.compose.ui.unit.dp
 
 // —— 亮色 Token ——
 private object LightTokens {
-    val bgPrimary = Color(0xFFF6F1E8)
-    val bgElevated = Color(0xFFFFFAF2)
-    val surface = Color(0xFFFFFBF5)
-    val surfaceSoft = Color(0xFFF0E5D7)
-    val textPrimary = Color(0xFF2A1F16)
-    val textSecondary = Color(0xFF5A4535)
-    val textMuted = Color(0xFF8C735F)
+    val bgPrimary = Color(0xFFF5F3EE)
+    val bgElevated = Color(0xFFFCFAF6)
+    val surface = Color(0xFFFFFDF9)
+    val surfaceSoft = Color(0xFFECE8E1)
+    val textPrimary = Color(0xFF28231F)
+    val textSecondary = Color(0xFF625A53)
+    val textMuted = Color(0xFF8B8279)
     val brand = Color(0xFFC5653D)
     val brandSoft = Color(0xFFC5653D).copy(alpha = 0.12f)
     val border = Color(0xFF967655).copy(alpha = 0.12f)
@@ -66,13 +66,13 @@ private object LightTokens {
 
 // —— 暗色 Token ——
 private object DarkTokens {
-    val bgPrimary = Color(0xFF17120F)
-    val bgElevated = Color(0xFF241E19)
-    val surface = Color(0xFF211B17)
-    val surfaceSoft = Color(0xFF2B241D)
-    val textPrimary = Color(0xFFF1E8DD)
-    val textSecondary = Color(0xFFCBBCAA)
-    val textMuted = Color(0xFF9F8F7E)
+    val bgPrimary = Color(0xFF13110F)
+    val bgElevated = Color(0xFF1D1A17)
+    val surface = Color(0xFF211E1A)
+    val surfaceSoft = Color(0xFF2A2621)
+    val textPrimary = Color(0xFFF3EEE7)
+    val textSecondary = Color(0xFFC7BEB4)
+    val textMuted = Color(0xFF958B81)
     val brand = Color(0xFFD47550)
     val brandSoft = Color(0xFFD47550).copy(alpha = 0.16f)
     val border = Color(0xFFEDE2D5).copy(alpha = 0.12f)

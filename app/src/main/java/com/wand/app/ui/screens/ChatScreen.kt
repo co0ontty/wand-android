@@ -116,7 +116,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.SessionWatcher
@@ -142,6 +141,7 @@ import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
@@ -163,6 +163,9 @@ private enum class ChatScrollMode {
     StickToBottom,
     Manual,
 }
+
+/** LazyColumn 中正向手指位移表示内容被拉向更早的消息。 */
+internal fun shouldPauseBottomFollow(userScrollDeltaY: Float): Boolean = userScrollDeltaY > 0f
 
 /**
  * 原生聊天视图 —— 对称 iOS ChatView.swift：
@@ -221,7 +224,6 @@ fun ChatScreen(
     val voice = voiceInput.voice
     val onMicDown = voiceInput.onMicDown
 
-    val density = LocalDensity.current
     val focusManager = LocalFocusManager.current
 
     // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
@@ -271,30 +273,19 @@ fun ChatScreen(
     // bottomIndex 是最后的 chat-bottom 哨兵下标（即它之前的项数）。
     val bottomIndex = headerOffset + displayItems.size
 
-    // 用户只要开始向上浏览旧内容就暂停贴底跟随；无需先拉到整个列表顶部。
-    val followPauseConnection = remember(density, focusManager) {
-        val manualThresholdPx = with(density) { 18.dp.toPx() }
+    // 用户一开始向上浏览旧内容就立即暂停贴底跟随。流式消息刷新很频繁，若等拖动
+    // 累计超过某个阈值才暂停，阈值内的新 token 会先把列表重新拽回底部。
+    // Manual 模式不会因用户自己滚回底部而退出；只有“回到底部”按钮或主动发送才恢复。
+    val followPauseConnection = remember(focusManager) {
         object : NestedScrollConnection {
-            private var pulledTowardHistory = 0f
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput) {
                     if (available.y != 0f) focusManager.clearFocus()
-                    if (available.y > 0f) {
-                        pulledTowardHistory += available.y
-                        if (pulledTowardHistory > manualThresholdPx) {
-                            scrollMode = ChatScrollMode.Manual
-                        }
-                    } else if (available.y < 0f) {
-                        pulledTowardHistory = 0f
+                    if (shouldPauseBottomFollow(available.y)) {
+                        scrollMode = ChatScrollMode.Manual
                     }
                 }
                 return Offset.Zero
-            }
-
-            override suspend fun onPreFling(available: Velocity): Velocity {
-                // 每次拖动独立计阈值，避免多个很小的下拉手势累积成误触发。
-                pulledTowardHistory = 0f
-                return Velocity.Zero
             }
         }
     }
@@ -394,13 +385,18 @@ fun ChatScreen(
                                 text = store.snapshot?.displayTitle ?: "对话详情",
                                 generating = store.snapshot?.titleGenerating == true,
                             )
-                            Text(
-                                chatContextSubtitle(store),
-                                fontSize = 11.sp,
-                                color = WandColors.textMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            chatWorkingPath(store.snapshot?.cwd)?.let { path ->
+                                TailMarqueePathText(
+                                    path = path,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    fontSize = 11.sp,
+                                    color = WandColors.textMuted,
+                                    fallback = "",
+                                    initialDelayMillis = 1_800L,
+                                    velocity = 28.dp,
+                                    revealOnce = true,
+                                )
+                            }
                         }
                     }
                 },
@@ -763,31 +759,13 @@ private fun ChatProviderBadge(provider: String?) {
     }
 }
 
-/** 顶栏第二行保持稳定，只交代 provider、运行状态和紧凑工作目录。 */
-private fun chatContextSubtitle(store: ChatStore): String {
-    val provider = store.snapshot?.providerLabel ?: "Wand"
-    val state = when {
-        !store.connected -> "重连中"
-        store.isResponding -> "运行中"
-        else -> "空闲"
-    }
-    return listOfNotNull(provider, state, compactChatPath(store.snapshot?.cwd)).joinToString(" · ")
-}
-
-private fun compactChatPath(path: String?): String? {
-    val normalized = path
+/** 顶栏副标题只展示完整工作目录；空间不足时由路径文本负责延迟滚动。 */
+private fun chatWorkingPath(path: String?): String? =
+    path
         ?.trim()
         ?.replace('\\', '/')
         ?.trimEnd('/')
         ?.takeIf { it.isNotEmpty() }
-        ?: return null
-    val segments = normalized.split('/').filter { it.isNotEmpty() }
-    return when {
-        segments.isEmpty() -> normalized
-        segments.size == 1 -> segments.first()
-        else -> "…/${segments.takeLast(2).joinToString("/")}"
-    }
-}
 
 internal fun conversationTurnPreview(turn: ConversationTurn): String {
     val rawText = turn.content

@@ -5,6 +5,13 @@ import org.junit.Test
 
 class ChatPresentationTest {
     @Test
+    fun scrollingTowardHistoryImmediatelyPausesBottomFollow() {
+        assertEquals(true, shouldPauseBottomFollow(0.01f))
+        assertEquals(false, shouldPauseBottomFollow(0f))
+        assertEquals(false, shouldPauseBottomFollow(-12f))
+    }
+
+    @Test
     fun launchModelLabelRemovesDuplicatedCaseInsensitiveId() {
         assertEquals(
             "GPT-5.6-Sol",

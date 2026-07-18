@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,7 +75,9 @@ import com.wand.app.data.WandAuth
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandBrandMark
+import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.NewSessionScreen
@@ -124,7 +127,7 @@ fun WandApp(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .ambientBackground()
     ) {
         when (val p = phase) {
             is AuthPhase.Authenticating -> AuthProgress()
@@ -179,7 +182,14 @@ private fun AuthProgress() {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        WandBrandMark(size = 52)
+        CircularProgressIndicator(
+            color = MaterialTheme.colorScheme.primary,
+            strokeWidth = 2.dp,
+            modifier = Modifier
+                .padding(top = 20.dp)
+                .size(20.dp),
+        )
         Text(
             "正在登录…",
             style = MaterialTheme.typography.bodyMedium,
@@ -191,24 +201,46 @@ private fun AuthProgress() {
 
 @Composable
 private fun AuthFailed(message: String, onRetry: () -> Unit, onSwitchServer: () -> Unit) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(
-            message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        Button(
-            onClick = onRetry,
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-        ) { Text("重试") }
-        OutlinedButton(onClick = onSwitchServer) { Text("重新连接") }
+        WandCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 420.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    WandIcons.error,
+                    contentDescription = null,
+                    tint = WandColors.danger,
+                    modifier = Modifier.size(28.dp),
+                )
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Button(
+                    onClick = onRetry,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("重试") }
+                OutlinedButton(
+                    onClick = onSwitchServer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("重新连接") }
+            }
+        }
     }
 }
 
@@ -328,7 +360,8 @@ private fun ReadyContent(
             // 设置页本身是长列表。关闭 sheet 拖拽后，纵向手势只交给内部 verticalScroll，
             // 避免列表到达边界时与 ModalBottomSheet 的嵌套滚动反复争抢位移而抖动。
             sheetGesturesEnabled = false,
-            containerColor = WandColors.bgElevated,
+            containerColor = Color.Transparent,
+            tonalElevation = 0.dp,
             scrimColor = Color.Black.copy(alpha = 0.42f),
             shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
             dragHandle = null,
@@ -417,7 +450,7 @@ private fun WideReadyContent(
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .background(WandColors.bgPrimary),
+            .ambientBackground(),
     ) {
         Box(
             modifier = Modifier
@@ -490,7 +523,7 @@ private fun WideSidebarPanel(
     Box(
         modifier = modifier
             .clip(shape)
-            .background(WandColors.bgElevated.copy(alpha = 0.86f))
+            .background(WandColors.bgElevated.copy(alpha = 0.76f))
             .drawBehind {
                 val x = size.width - 0.6.dp.toPx()
                 drawLine(
@@ -519,7 +552,6 @@ private fun CollapsedSessionRail(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(WandColors.bgPrimary)
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = 4.dp, vertical = 10.dp),
@@ -767,7 +799,7 @@ private fun DetailPlaceholder(onNewSession: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(WandColors.bgPrimary)
+            .ambientBackground()
             .padding(horizontal = 32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,

@@ -13,14 +13,14 @@ import android.util.AttributeSet;
 import android.view.View;
 
 public class QrScannerOverlayView extends View {
-    private static final int MASK_COLOR = 0x99000000;
+    private static final int MASK_COLOR = 0xA6000000;
     private static final int FRAME_COLOR = 0xFFFFFFFF;
     private static final int ACCENT_COLOR = 0xFFD97A4F;
-    private static final float FRAME_WIDTH_DP = 2.5f;
-    private static final float CORNER_WIDTH_DP = 5f;
-    private static final float CORNER_LENGTH_DP = 30f;
-    private static final float CORNER_RADIUS_DP = 24f;
-    private static final float SCAN_LINE_HEIGHT_DP = 3f;
+    private static final float FRAME_WIDTH_DP = 1.5f;
+    private static final float CORNER_WIDTH_DP = 3f;
+    private static final float CORNER_LENGTH_DP = 26f;
+    private static final float CORNER_RADIUS_DP = 20f;
+    private static final float SCAN_LINE_HEIGHT_DP = 1.5f;
 
     private final Paint maskPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint framePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -52,7 +52,7 @@ public class QrScannerOverlayView extends View {
         framePaint.setStyle(Paint.Style.STROKE);
         framePaint.setStrokeWidth(dp(FRAME_WIDTH_DP));
         framePaint.setColor(FRAME_COLOR);
-        framePaint.setAlpha(170);
+        framePaint.setAlpha(110);
         cornerPaint.setStyle(Paint.Style.STROKE);
         cornerPaint.setStrokeCap(Paint.Cap.ROUND);
         cornerPaint.setStrokeJoin(Paint.Join.ROUND);
@@ -60,7 +60,7 @@ public class QrScannerOverlayView extends View {
         cornerPaint.setColor(ACCENT_COLOR);
         scanLinePaint.setStyle(Paint.Style.FILL);
         scanLinePaint.setColor(ACCENT_COLOR);
-        scanLinePaint.setShadowLayer(dp(10), 0, 0, ACCENT_COLOR);
+        scanLinePaint.setAlpha(210);
         clearPaint.setColor(Color.TRANSPARENT);
         clearPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
     }
@@ -150,7 +150,7 @@ public class QrScannerOverlayView extends View {
     }
 
     private void drawScanLine(Canvas canvas) {
-        float progress = (System.currentTimeMillis() % 1800L) / 1800f;
+        float progress = (System.currentTimeMillis() % 2200L) / 2200f;
         float y = frameRect.top + dp(26) + (frameRect.height() - dp(52)) * progress;
         float inset = dp(22);
         RectF line = new RectF(

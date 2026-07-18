@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -108,7 +109,7 @@ fun cardShadowColors(): Pair<Color, Color> =
 fun surfaceSheenBrush(highlightScale: Float = 1f): Brush {
     val dark = isWandDarkTheme()
     // 高光只保留上沿的一点受光感；半透明着色卡按实心度衰减，避免白印。
-    val topWhite = (if (dark) 0.010f else 0.016f) * highlightScale.coerceIn(0f, 1f)
+    val topWhite = (if (dark) 0.020f else 0.030f) * highlightScale.coerceIn(0f, 1f)
     return Brush.verticalGradient(
         0f to Color.White.copy(alpha = topWhite),
         0.24f to Color.Transparent,
@@ -125,18 +126,18 @@ fun bevelRimBrush(rimLight: Color, rimShade: Color): Brush =
 
 // —— 亮色玻璃 ——
 private val LightGlassRegular = GlassStyle(
-    tint = Color(0xFFFFFBF5), tintAlpha = 0.72f, fallbackAlpha = 0.97f,
-    blurRadius = 10.dp, refractionHeight = 1.dp, refractionAmount = 3.dp,
-    rimLight = Color.White.copy(alpha = 0.20f),
-    rimShade = Color(0xFF7D5B39).copy(alpha = 0.055f),
-    shadowElevation = 0.6.dp, shadowColor = Color(0xFF593A20).copy(alpha = 0.045f),
+    tint = Color(0xFFFFFDF9), tintAlpha = 0.56f, fallbackAlpha = 0.92f,
+    blurRadius = 18.dp, refractionHeight = 0.75.dp, refractionAmount = 2.25.dp,
+    rimLight = Color.White.copy(alpha = 0.38f),
+    rimShade = Color(0xFF6D5848).copy(alpha = 0.075f),
+    shadowElevation = 0.8.dp, shadowColor = Color(0xFF493323).copy(alpha = 0.055f),
 )
 private val LightGlassClear = GlassStyle(
-    tint = Color(0xFFFFFCF7), tintAlpha = 0.62f, fallbackAlpha = 0.93f,
-    blurRadius = 7.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
-    rimLight = Color.White.copy(alpha = 0.18f),
-    rimShade = Color(0xFF7D5B39).copy(alpha = 0.045f),
-    shadowElevation = 0.35.dp, shadowColor = Color(0xFF593A20).copy(alpha = 0.04f),
+    tint = Color(0xFFFFFDF9), tintAlpha = 0.48f, fallbackAlpha = 0.88f,
+    blurRadius = 14.dp, refractionHeight = 0.5.dp, refractionAmount = 1.5.dp,
+    rimLight = Color.White.copy(alpha = 0.34f),
+    rimShade = Color(0xFF6D5848).copy(alpha = 0.065f),
+    shadowElevation = 0.5.dp, shadowColor = Color(0xFF493323).copy(alpha = 0.05f),
 )
 private val LightGlassAccent = GlassStyle(
     tint = Color(0xFFC5653D), tintAlpha = 0.92f, fallbackAlpha = 1f,
@@ -146,27 +147,27 @@ private val LightGlassAccent = GlassStyle(
     shadowElevation = 1.2.dp, shadowColor = Color(0xFFC5653D).copy(alpha = 0.12f),
 )
 private val LightGlassCard = GlassStyle(
-    tint = Color(0xFFFFFCF7), tintAlpha = 0.80f, fallbackAlpha = 0.94f,
+    tint = Color(0xFFFFFDF9), tintAlpha = 0.76f, fallbackAlpha = 0.90f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
-    rimLight = Color.White.copy(alpha = 0.18f),
-    rimShade = Color(0xFF7D5B39).copy(alpha = 0.055f),
-    shadowElevation = 0.6.dp, shadowColor = Color(0xFF593A20).copy(alpha = 0.04f),
+    rimLight = Color.White.copy(alpha = 0.30f),
+    rimShade = Color(0xFF6D5848).copy(alpha = 0.065f),
+    shadowElevation = 0.45.dp, shadowColor = Color(0xFF493323).copy(alpha = 0.04f),
 )
 
 // —— 暗色玻璃 ——
 private val DarkGlassRegular = GlassStyle(
-    tint = Color(0xFF241E19), tintAlpha = 0.66f, fallbackAlpha = 0.95f,
-    blurRadius = 10.dp, refractionHeight = 1.dp, refractionAmount = 3.dp,
-    rimLight = Color.White.copy(alpha = 0.065f),
-    rimShade = Color.Black.copy(alpha = 0.16f),
-    shadowElevation = 0.6.dp, shadowColor = Color.Black.copy(alpha = 0.20f),
+    tint = Color(0xFF1D1A17), tintAlpha = 0.54f, fallbackAlpha = 0.91f,
+    blurRadius = 18.dp, refractionHeight = 0.75.dp, refractionAmount = 2.25.dp,
+    rimLight = Color.White.copy(alpha = 0.11f),
+    rimShade = Color.Black.copy(alpha = 0.20f),
+    shadowElevation = 0.8.dp, shadowColor = Color.Black.copy(alpha = 0.22f),
 )
 private val DarkGlassClear = GlassStyle(
-    tint = Color(0xFF2B241D), tintAlpha = 0.52f, fallbackAlpha = 0.90f,
-    blurRadius = 7.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
-    rimLight = Color.White.copy(alpha = 0.055f),
-    rimShade = Color.Black.copy(alpha = 0.14f),
-    shadowElevation = 0.35.dp, shadowColor = Color.Black.copy(alpha = 0.16f),
+    tint = Color(0xFF211E1A), tintAlpha = 0.42f, fallbackAlpha = 0.86f,
+    blurRadius = 14.dp, refractionHeight = 0.5.dp, refractionAmount = 1.5.dp,
+    rimLight = Color.White.copy(alpha = 0.10f),
+    rimShade = Color.Black.copy(alpha = 0.18f),
+    shadowElevation = 0.5.dp, shadowColor = Color.Black.copy(alpha = 0.18f),
 )
 private val DarkGlassAccent = GlassStyle(
     tint = Color(0xFFD47550), tintAlpha = 0.84f, fallbackAlpha = 1f,
@@ -176,9 +177,9 @@ private val DarkGlassAccent = GlassStyle(
     shadowElevation = 1.2.dp, shadowColor = Color.Black.copy(alpha = 0.22f),
 )
 private val DarkGlassCard = GlassStyle(
-    tint = Color(0xFF211B17), tintAlpha = 0.58f, fallbackAlpha = 0.90f,
+    tint = Color(0xFF211E1A), tintAlpha = 0.56f, fallbackAlpha = 0.86f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
-    rimLight = Color.White.copy(alpha = 0.052f),
+    rimLight = Color.White.copy(alpha = 0.085f),
     rimShade = Color.Black.copy(alpha = 0.16f),
     shadowElevation = 0.6.dp, shadowColor = Color.Black.copy(alpha = 0.18f),
 )
@@ -346,13 +347,13 @@ fun Modifier.glassCard(
         .border(0.55.dp, bevelRimBrush(rimLight, style.rimShade), shape)
 }
 
-// —— 环境渐变背景 ——
+// —— 环境背景 ——
 
 /**
- * 页面环境背景：品牌色调的柔和层次洗色（静态绘制，零每帧开销）。
+ * 页面环境背景：品牌色调的低透明度平面色域（静态绘制，零每帧开销）。
  * 玻璃 chrome 需要背后有「东西」才能体现模糊与折射；
  * API < 31 时它也让半透明降级面板读出层次。
- * 放在 [glassBackdropSource] 的 Box 内部最底层，四个页面共用。
+ * 放在 [glassBackdropSource] 的 Box 内部最底层，所有原生 Compose 页面共用。
  */
 @Composable
 fun AmbientBackground(modifier: Modifier = Modifier) {
@@ -364,20 +365,23 @@ fun AmbientBackground(modifier: Modifier = Modifier) {
 fun Modifier.ambientBackground(): Modifier {
     val dark = isWandDarkTheme()
     val base = WandColors.bgPrimary
-    val topWash = if (dark) Color(0xFFD47550).copy(alpha = 0.022f) else Color(0xFFC5653D).copy(alpha = 0.018f)
-    val bottomWash = if (dark) Color.Black.copy(alpha = 0.10f) else Color(0xFF7D5B39).copy(alpha = 0.018f)
+    val topWash = if (dark) Color(0xFFD47550).copy(alpha = 0.030f) else Color(0xFFC5653D).copy(alpha = 0.034f)
+    val sideWash = if (dark) Color(0xFF8A705D).copy(alpha = 0.020f) else Color(0xFFB49B86).copy(alpha = 0.024f)
     return this.then(
         Modifier.drawBehind {
             drawRect(base)
             val w = size.width
             val h = size.height
             if (w <= 0f || h <= 0f) return@drawBehind
-            drawRect(
-                Brush.verticalGradient(
-                    0f to topWash,
-                    0.42f to Color.Transparent,
-                    1f to bottomWash,
-                )
+            drawCircle(
+                color = topWash,
+                radius = maxOf(w, h) * 0.42f,
+                center = Offset(w * 0.08f, -h * 0.04f),
+            )
+            drawCircle(
+                color = sideWash,
+                radius = maxOf(w, h) * 0.30f,
+                center = Offset(w * 1.02f, h * 0.42f),
             )
         }
     )

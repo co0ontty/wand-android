@@ -89,6 +89,7 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
@@ -722,8 +723,8 @@ private fun SelectionBar(
 }
 
 /**
- * 可恢复会话卡：独立 provider Logo + 首条用户消息 + 相对时间与一行上下文。
- * Logo 不再嵌套装饰容器；“可恢复”状态在正文里明确表达，避免重复角标。
+ * 可恢复会话卡：左列为 provider Logo + 相对时间，右列为消息标题 + 一行上下文。
+ * 时间与右侧状态共用同一基线；上下文不再重复具体 CLI 名称。
  */
 @Composable
 private fun HistorySessionCard(
@@ -737,45 +738,50 @@ private fun HistorySessionCard(
 ) {
     val isCodex = history.provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
-    val providerLabel = if (isCodex) "Codex" else "Claude"
     val shape = RoundedCornerShape(if (compact) 14.dp else 16.dp)
-    WandCard(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .graphicsLayer { alpha = if (enabled || restoring) 1f else 0.48f }
-            .semantics { stateDescription = if (restoring) "正在恢复" else "可恢复" },
-        onClick = if (enabled) onClick else null,
-        selected = selected,
-        shape = shape,
-        containerColor = if (selected) {
-            lerp(WandColors.surface, WandColors.brand, 0.12f)
-        } else {
-            WandColors.surface.copy(alpha = 0.88f)
-        },
-        contentPadding = PaddingValues(
-            horizontal = if (compact) 11.dp else 14.dp,
-            vertical = if (compact) 10.dp else 12.dp,
-        ),
+            .graphicsLayer { alpha = if (enabled || restoring) 1f else 0.48f },
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (selecting) {
-                SelectionMark(selected = selected, compact = compact)
+        WandCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    stateDescription = "聊天模式，${if (restoring) "正在恢复" else "可恢复"}"
+                },
+            onClick = if (enabled) onClick else null,
+            selected = selected,
+            shape = shape,
+            containerColor = if (selected) {
+                lerp(WandColors.surface, WandColors.brand, 0.12f)
             } else {
-                ProviderMark(provider = history.provider, compact = compact)
-            }
+                WandColors.surface.copy(alpha = 0.88f)
+            },
+            contentPadding = PaddingValues(
+                horizontal = if (compact) 11.dp else 14.dp,
+                vertical = if (compact) 10.dp else 12.dp,
+            ),
+        ) {
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
+                    SessionLeadingSlot(compact = compact) {
+                        if (selecting) {
+                            SelectionMark(selected = selected, compact = compact)
+                        } else {
+                            ProviderMark(
+                                provider = history.provider,
+                                compact = compact,
+                            )
+                        }
+                    }
                     Text(
                         history.firstUserMessage.ifEmpty { "空会话" },
                         modifier = Modifier.weight(1f),
@@ -786,23 +792,32 @@ private fun HistorySessionCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    val relative = relativeTimeLabel(history.timestamp)
-                    if (relative.isNotEmpty() || restoring) {
-                        ConversationTimeLabel(
-                            text = if (restoring) "恢复中" else relative,
-                            compact = compact,
-                            loading = restoring,
-                            tint = if (restoring) tint else WandColors.textMuted,
-                        )
-                    }
                 }
-                ConversationContextLine(
-                    icon = WandIcons.history,
-                    label = "$providerLabel · 可恢复",
-                    path = history.cwd,
-                    compact = compact,
-                    tint = tint,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val relative = relativeTimeLabel(history.timestamp)
+                    SessionLeadingSlot(compact = compact) {
+                        if (relative.isNotEmpty() || restoring) {
+                            ConversationTimeLabel(
+                                text = if (restoring) "恢复中" else relative,
+                                compact = compact,
+                                loading = restoring,
+                                tint = if (restoring) tint else WandColors.textMuted,
+                            )
+                        }
+                    }
+                    ConversationContextLine(
+                        icon = WandIcons.history,
+                        label = "可恢复",
+                        path = history.cwd,
+                        compact = compact,
+                        tint = tint,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
@@ -986,8 +1001,8 @@ private fun SwipeRevealRow(
 }
 
 /**
- * 单条会话卡片：独立 provider Logo、标题、无底色时间与一行上下文。
- * 状态圆点移到文字元信息旁，Logo 本身保持完整、干净。
+ * 单条会话卡片：左列为 provider Logo + 时间，右列为标题 + 状态上下文。
+ * 时间与状态共用同一基线；上下文不再重复具体 CLI 名称。
  */
 @Composable
 private fun SessionCard(
@@ -999,42 +1014,48 @@ private fun SessionCard(
 ) {
     val status = derivedStatus(session)
     val shape = RoundedCornerShape(if (compact) 14.dp else 16.dp)
-    WandCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { stateDescription = sessionStatusLabel(status) },
-        onClick = onClick,
-        selected = selected,
-        shape = shape,
-        containerColor = if (selected) {
-            lerp(WandColors.surface, WandColors.brand, 0.12f)
-        } else {
-            WandColors.surface.copy(alpha = 0.88f)
-        },
-        contentPadding = PaddingValues(
-            horizontal = if (compact) 11.dp else 14.dp,
-            vertical = if (compact) 10.dp else 12.dp,
-        ),
+    Box(
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (selecting) {
-                SelectionMark(selected = selected, compact = compact)
+        WandCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    val mode = if (session.isStructured) "聊天模式" else "终端模式"
+                    stateDescription = "$mode，${sessionStatusLabel(status)}"
+                },
+            onClick = onClick,
+            selected = selected,
+            shape = shape,
+            containerColor = if (selected) {
+                lerp(WandColors.surface, WandColors.brand, 0.12f)
             } else {
-                ProviderMark(provider = session.provider, compact = compact)
-            }
+                WandColors.surface.copy(alpha = 0.88f)
+            },
+            contentPadding = PaddingValues(
+                horizontal = if (compact) 11.dp else 14.dp,
+                vertical = if (compact) 10.dp else 12.dp,
+            ),
+        ) {
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
+                    SessionLeadingSlot(compact = compact) {
+                        if (selecting) {
+                            SelectionMark(selected = selected, compact = compact)
+                        } else {
+                            ProviderMark(
+                                provider = session.provider,
+                                compact = compact,
+                            )
+                        }
+                    }
                     Text(
                         sessionListTitle(session),
                         modifier = Modifier.weight(1f),
@@ -1045,23 +1066,26 @@ private fun SessionCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    val timeLabel = sessionListTimeLabel(session, status)
-                    if (timeLabel.isNotEmpty()) {
-                        ConversationTimeLabel(text = timeLabel, compact = compact)
-                    }
                 }
-                ConversationContextLine(
-                    status = status,
-                    label = buildString {
-                        append(session.providerLabel)
-                        append(" · ")
-                        append(if (session.isStructured) "聊天" else "终端")
-                        append(" · ")
-                        append(sessionStatusLabel(status))
-                    },
-                    path = session.cwd.orEmpty(),
-                    compact = compact,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val timeLabel = sessionListTimeLabel(session, status)
+                    SessionLeadingSlot(compact = compact) {
+                        if (timeLabel.isNotEmpty()) {
+                            ConversationTimeLabel(text = timeLabel, compact = compact)
+                        }
+                    }
+                    ConversationContextLine(
+                        status = status,
+                        label = "",
+                        path = session.cwd.orEmpty(),
+                        compact = compact,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
@@ -1075,12 +1099,21 @@ private fun sessionListTitle(session: SessionSnapshot): String {
     }
 }
 
-/**
- * 左侧助手标识：只展示 provider 的品牌 Logo。
- *
- * 会话状态与“可恢复”语义已经在正文元信息和 TalkBack stateDescription 中表达，
- * 因此这里不再套浅色圆角底，也不再叠加角标，让列表首列更轻、更容易扫读。
- */
+/** 固定列表左列宽度，让 Logo、时间以及右侧标题/状态在所有卡片中稳定对齐。 */
+@Composable
+private fun SessionLeadingSlot(
+    compact: Boolean,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier.width(if (compact) 46.dp else 50.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
+}
+
+/** 左侧助手标识只保留品牌 Logo；会话模式不再占用列表视觉空间。 */
 @Composable
 private fun ProviderMark(
     provider: String?,
@@ -1089,15 +1122,15 @@ private fun ProviderMark(
     val isCodex = provider == "codex"
     val tint = if (isCodex) WandColors.info else WandColors.brand
     Box(
-        modifier = Modifier.size(if (compact) 34.dp else 38.dp),
+        modifier = Modifier.size(if (compact) 30.dp else 34.dp),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             painter = BrandLogos.painterForProvider(provider),
-            // Provider 已在右侧元信息中朗读；Logo 仅作视觉识别，避免 TalkBack 重复标题。
+            // Logo 仅作视觉识别；会话标题与状态已覆盖列表项的主要可访问语义。
             contentDescription = null,
             tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.94f)),
-            modifier = Modifier.size(if (compact) 23.dp else 26.dp),
+            modifier = Modifier.size(if (compact) 21.dp else 23.dp),
         )
     }
 }
@@ -1106,19 +1139,19 @@ private fun ProviderMark(
 @Composable
 private fun SelectionMark(selected: Boolean, compact: Boolean) {
     Box(
-        modifier = Modifier.size(if (compact) 34.dp else 38.dp),
+        modifier = Modifier.size(if (compact) 30.dp else 34.dp),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             if (selected) WandIcons.statusDone else WandIcons.statusPending,
             contentDescription = if (selected) "已选中" else "未选中",
             tint = if (selected) WandColors.brand else WandColors.textSecondary,
-            modifier = Modifier.size(if (compact) 21.dp else 22.dp),
+            modifier = Modifier.size(if (compact) 20.dp else 21.dp),
         )
     }
 }
 
-/** 无底色、无重复时钟图标的 trailing 时间；恢复时原位切成进度反馈。 */
+/** 无底色、无重复时钟图标的时间；恢复时原位切成进度反馈。 */
 @Composable
 private fun ConversationTimeLabel(
     text: String,
@@ -1129,7 +1162,6 @@ private fun ConversationTimeLabel(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier.padding(top = 1.dp),
     ) {
         if (loading) {
             CircularProgressIndicator(
@@ -1140,8 +1172,8 @@ private fun ConversationTimeLabel(
         }
         Text(
             text,
-            fontSize = if (compact) 11.sp else 12.sp,
-            lineHeight = 16.sp,
+            fontSize = if (compact) 10.sp else 11.sp,
+            lineHeight = 15.sp,
             fontWeight = FontWeight.Medium,
             color = tint,
             maxLines = 1,
@@ -1161,11 +1193,12 @@ private fun ConversationContextLine(
     path: String,
     compact: Boolean,
     tint: Color = WandColors.textSecondary,
+    modifier: Modifier = Modifier,
 ) {
     val metadataColor = lerp(WandColors.textSecondary, WandColors.textMuted, 0.42f)
     val pathColor = lerp(WandColors.textSecondary, WandColors.textMuted, 0.70f)
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
@@ -1181,46 +1214,49 @@ private fun ConversationContextLine(
             )
         }
         if (status != null || icon != null) Spacer(modifier = Modifier.width(5.dp))
-        Text(
-            label,
-            fontSize = if (compact) 10.5.sp else 11.5.sp,
-            lineHeight = 16.sp,
-            fontWeight = FontWeight.Medium,
-            color = metadataColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (path.isNotBlank()) {
-            Spacer(modifier = Modifier.width(7.dp))
-            Box(
-                modifier = Modifier
-                    .size(3.dp)
-                    .clip(CircleShape)
-                    .background(pathColor.copy(alpha = 0.52f)),
-            )
-            Spacer(modifier = Modifier.width(7.dp))
+        if (label.isNotBlank()) {
             Text(
-                text = compactWorkingPath(path),
-                modifier = Modifier.weight(1f),
-                fontSize = if (compact) 9.8.sp else 10.8.sp,
+                label,
+                fontSize = if (compact) 10.5.sp else 11.5.sp,
                 lineHeight = 16.sp,
-                fontFamily = FontFamily.Monospace,
-                color = pathColor,
+                fontWeight = FontWeight.Medium,
+                color = metadataColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (path.isNotBlank()) {
+            if (label.isNotBlank()) {
+                Spacer(modifier = Modifier.width(7.dp))
+                Box(
+                    modifier = Modifier
+                        .size(3.dp)
+                        .clip(CircleShape)
+                        .background(pathColor.copy(alpha = 0.52f)),
+                )
+                Spacer(modifier = Modifier.width(7.dp))
+            } else if (status != null || icon != null) {
+                Spacer(modifier = Modifier.width(7.dp))
+            }
+            TailMarqueePathText(
+                path = normalizedWorkingPath(path),
+                modifier = Modifier.weight(1f),
+                fontSize = if (compact) 9.8.sp else 10.8.sp,
+                fontFamily = FontFamily.Monospace,
+                color = pathColor,
+                fallback = "",
+                initialDelayMillis = 1_800L,
+                staggerWindowMillis = 1_200L,
+                velocity = 28.dp,
+                revealOnce = true,
             )
         }
     }
 }
 
-/** 列表只保留目录末两级，完整路径留给详情页，减少每行重复噪声。 */
-private fun compactWorkingPath(path: String): String {
-    val normalized = path.trim().trimEnd('/', '\\').replace('\\', '/')
-    if (normalized.isEmpty()) return ""
-    val segments = normalized.split('/').filter { it.isNotEmpty() }
-    if (segments.size <= 2) return normalized
-    return "…/${segments.takeLast(2).joinToString("/")}"
-}
+/** 保留完整工作目录，仅统一分隔符并移除末尾斜杠。 */
+private fun normalizedWorkingPath(path: String): String =
+    path.trim().replace('\\', '/').trimEnd('/')
 
 /** 派生状态的可见文字，同时供 TalkBack stateDescription 使用。 */
 private fun sessionStatusLabel(status: String): String = when (status.trim().lowercase()) {
@@ -1262,13 +1298,13 @@ private fun sessionDurationLabel(session: SessionSnapshot): String {
 }
 
 /**
- * 列表尾部时间服务于“快速找到那条会话”：活跃会话显示已运行多久，
+ * 列表左下时间服务于“快速找到那条会话”：活跃会话显示已运行多久，
  * 已结束会话显示最近时间。详情页仍可展示精确起止时间。
  */
 private fun sessionListTimeLabel(session: SessionSnapshot, status: String): String {
     return when (status.trim().lowercase()) {
         "running", "thinking", "waiting-input", "waiting_input", "permission", "reconnecting" ->
-            sessionDurationLabel(session).takeIf { it.isNotEmpty() }?.let { "已运行 $it" }.orEmpty()
+            sessionDurationLabel(session)
         else -> relativeTimeLabel(session.endedAt ?: session.startedAt)
     }
 }

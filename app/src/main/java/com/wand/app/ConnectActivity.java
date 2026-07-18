@@ -2,6 +2,7 @@ package com.wand.app;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -18,6 +19,8 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -155,8 +158,12 @@ public class ConnectActivity extends AppCompatActivity {
     private void applyLightSystemBars() {
         getWindow().setStatusBarColor(getColor(R.color.background));
         getWindow().setNavigationBarColor(getColor(R.color.background));
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        boolean dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(
+                getWindow(), getWindow().getDecorView());
+        controller.setAppearanceLightStatusBars(!dark);
+        controller.setAppearanceLightNavigationBars(!dark);
     }
 
     private void requestQrScan() {
@@ -532,8 +539,14 @@ public class ConnectActivity extends AppCompatActivity {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dpToPx(8), 0, dpToPx(8));
-            row.setMinimumHeight(dpToPx(56));
+            row.setPadding(dpToPx(12), dpToPx(4), dpToPx(4), dpToPx(4));
+            row.setMinimumHeight(dpToPx(58));
+            row.setBackgroundResource(R.drawable.liquid_recent_row_background);
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            rowParams.bottomMargin = dpToPx(8);
+            row.setLayoutParams(rowParams);
 
             // Left column: primary URL + optional bound-code label.
             LinearLayout textColumn = new LinearLayout(this);
@@ -567,6 +580,7 @@ public class ConnectActivity extends AppCompatActivity {
             deleteBtn.setText("\u00d7");
             deleteBtn.setTextSize(18f);
             deleteBtn.setTextColor(getColor(R.color.text_hint));
+            deleteBtn.setContentDescription("移除最近连接");
             deleteBtn.setGravity(Gravity.CENTER);
             int hit = dpToPx(44);
             deleteBtn.setMinWidth(hit);
@@ -579,6 +593,7 @@ public class ConnectActivity extends AppCompatActivity {
                 urlInput.setText(entry);
                 attemptConnect();
             };
+            row.setOnClickListener(pickEntry);
             textColumn.setOnClickListener(pickEntry);
             urlText.setOnClickListener(pickEntry);
 

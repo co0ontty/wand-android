@@ -5,27 +5,29 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -38,8 +40,8 @@ import kotlin.math.roundToInt
  */
 
 /**
- * 路径专用单行文本：溢出时先停在末尾，优先让用户看到最底层目录；短暂停留后低速扫动完整路径。
- * 系统关闭动画时只保留末尾静态态，避免无障碍设置下持续运动。
+ * 路径专用单行文本。默认保留旧版往返模式；列表与详情可启用 [revealOnce]，让长路径
+ * 错峰执行一次从根目录到末级目录的揭示，并最终停在最有辨识度的末级目录。
  */
 @Composable
 fun TailMarqueePathText(
@@ -52,27 +54,35 @@ fun TailMarqueePathText(
     fontFamily: FontFamily = FontFamily.Monospace,
     initialDelayMillis: Long = 2_400L,
     pauseMillis: Long = 1_000L,
+    staggerWindowMillis: Long = 0L,
     velocity: Dp = 18.dp,
+    revealOnce: Boolean = false,
 ) {
     val text = path.ifBlank { fallback }
+    val emphasizedPathColor = lerp(color, WandColors.textPrimary, 0.46f)
+    val styledText = remember(text, color, emphasizedPathColor, revealOnce) {
+        if (!revealOnce) return@remember AnnotatedString(text)
+        val separator = maxOf(text.lastIndexOf('/'), text.lastIndexOf('\\'))
+        buildAnnotatedString {
+            if (separator in 0 until text.lastIndex) {
+                append(text.substring(0, separator + 1))
+                withStyle(
+                    SpanStyle(
+                        color = emphasizedPathColor,
+                        fontWeight = FontWeight.Medium,
+                    ),
+                ) {
+                    append(text.substring(separator + 1))
+                }
+            } else {
+                append(text)
+            }
+        }
+    }
     val density = LocalDensity.current
     val motionEnabled = rememberSystemMotionEnabled()
-    val textMeasurer = rememberTextMeasurer()
-    val textStyle = TextStyle(
-        fontSize = fontSize,
-        fontWeight = fontWeight,
-        fontFamily = fontFamily,
-        color = color,
-    )
-    val textWidthPx = remember(text, fontSize, fontWeight, fontFamily) {
-        textMeasurer.measure(
-            text = AnnotatedString(text),
-            style = textStyle,
-            maxLines = 1,
-            softWrap = false,
-        ).size.width
-    }
     var containerWidthPx by remember { mutableIntStateOf(0) }
+    var textWidthPx by remember { mutableIntStateOf(0) }
     val overflowPx = if (containerWidthPx > 0) {
         (textWidthPx - containerWidthPx).coerceAtLeast(0)
     } else {
@@ -87,24 +97,47 @@ fun TailMarqueePathText(
             return@LaunchedEffect
         }
         val tailOffset = -overflowPx.toFloat()
-        offset.snapTo(tailOffset)
-        if (!motionEnabled) return@LaunchedEffect
+        if (!motionEnabled || revealOnce) {
+            if (motionEnabled) {
+                offset.snapTo(0f)
+            } else {
+                offset.snapTo(tailOffset)
+                return@LaunchedEffect
+            }
+        } else {
+            offset.snapTo(tailOffset)
+        }
 
         val durationMillis = ((overflowPx / velocityPxPerSecond) * 1000f)
             .roundToInt()
             .coerceAtLeast(1_800)
-        kotlinx.coroutines.delay(initialDelayMillis)
-        while (true) {
-            offset.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = durationMillis, easing = LinearEasing),
-            )
-            kotlinx.coroutines.delay(pauseMillis)
+        val staggerMillis = if (staggerWindowMillis > 0) {
+            (text.hashCode().toLong() and 0x7fff_ffffL) % staggerWindowMillis
+        } else {
+            0L
+        }
+        kotlinx.coroutines.delay(initialDelayMillis + staggerMillis)
+        if (revealOnce) {
             offset.animateTo(
                 targetValue = tailOffset,
-                animationSpec = tween(durationMillis = durationMillis, easing = LinearEasing),
+                animationSpec = tween(
+                    durationMillis = durationMillis.coerceAtMost(8_000),
+                    easing = LinearEasing,
+                ),
             )
-            kotlinx.coroutines.delay(initialDelayMillis)
+        } else {
+            while (true) {
+                offset.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(durationMillis = durationMillis, easing = LinearEasing),
+                )
+                kotlinx.coroutines.delay(pauseMillis)
+                offset.animateTo(
+                    targetValue = tailOffset,
+                    animationSpec = tween(durationMillis = durationMillis, easing = LinearEasing),
+                )
+                kotlinx.coroutines.delay(initialDelayMillis)
+            }
         }
     }
 
@@ -114,7 +147,7 @@ fun TailMarqueePathText(
             .onSizeChanged { containerWidthPx = it.width },
     ) {
         Text(
-            text,
+            styledText,
             fontSize = fontSize,
             fontWeight = fontWeight,
             fontFamily = fontFamily,
@@ -122,9 +155,12 @@ fun TailMarqueePathText(
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Visible,
-            modifier = Modifier.graphicsLayer {
-                translationX = if (overflowPx > 0) offset.value else 0f
-            },
+            modifier = Modifier
+                .wrapContentWidth(unbounded = true)
+                .onSizeChanged { textWidthPx = it.width }
+                .graphicsLayer {
+                    translationX = if (overflowPx > 0) offset.value else 0f
+                },
         )
     }
 }

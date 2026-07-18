@@ -4,12 +4,17 @@
     <color name="primary">#D97A4F</color>
     <color name="primary_dark">#1A1410</color>
     <color name="accent">#D97A4F</color>
-    <color name="background">#1A1410</color>
-    <color name="surface">#241C15</color>
-    <color name="text_primary">#F0E6D8</color>
-    <color name="text_secondary">#B5A593</color>
-    <color name="text_hint">#7A6A5A</color>
-    <color name="divider">#3A2E22</color>
-    <color name="error">#EF5350</color>
-    <color name="card_bg">#2A2018</color>
+    <color name="background">#13110F</color>
+    <color name="surface">#211E1A</color>
+    <color name="text_primary">#F3EEE7</color>
+    <color name="text_secondary">#C7BEB4</color>
+    <color name="text_hint">#958B81</color>
+    <color name="divider">#3D3730</color>
+    <color name="error">#E07C72</color>
+    <color name="card_bg">#25211D</color>
+    <color name="ambient_start">#1AD47550</color>
+    <color name="ambient_soft">#0FD47550</color>
+    <color name="glass_panel">#E01D1A17</color>
+    <color name="glass_panel_stroke">#24FFFFFF</color>
+    <color name="glass_control">#B3211E1A</color>
 </resources>
