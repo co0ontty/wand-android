@@ -176,6 +176,31 @@ class ChatSessionEventReducerTest {
         assertFalse(next.permissionBlocked)
     }
 
+    @Test
+    fun topicOutputRefreshesSnapshotAndGeneratingState() {
+        val initial = ChatSessionEventReducer.applySnapshot(
+            ChatSessionEventState(),
+            snapshot("s1").copy(title = "旧标题", titleGenerating = true),
+        )
+
+        val next = ChatSessionEventReducer.reduce(
+            initial,
+            output(
+                MessageUpdate.None,
+                SessionChanges(
+                    title = "共同标题",
+                    description = "共同总结多轮要求",
+                    summary = "共同总结多轮要求",
+                    titleGenerating = false,
+                ),
+            ),
+        )
+
+        assertEquals("共同标题", next.snapshot?.displayTitle)
+        assertEquals("共同总结多轮要求", next.snapshot?.description)
+        assertFalse(next.snapshot?.titleGenerating ?: true)
+    }
+
     private fun output(
         messages: MessageUpdate,
         changes: SessionChanges = SessionChanges(),

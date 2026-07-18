@@ -187,6 +187,16 @@ object ChatSessionEventReducer {
             }
         }
         changes.currentTaskTitle?.let { next = next.copy(currentTaskTitle = it) }
+        if (changes.title != null || changes.description != null || changes.summary != null || changes.titleGenerating != null) {
+            next.snapshot?.let { snapshot ->
+                next = next.copy(snapshot = snapshot.copy(
+                    title = changes.title ?: snapshot.title,
+                    description = changes.description ?: snapshot.description,
+                    summary = changes.summary ?: snapshot.summary,
+                    titleGenerating = changes.titleGenerating ?: snapshot.titleGenerating,
+                ))
+            }
+        }
         changes.selectedModel?.let {
             next = next.copy(
                 confirmedModel = it,

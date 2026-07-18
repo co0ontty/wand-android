@@ -385,15 +385,19 @@ data class SessionSnapshot(
     val pendingEscalation: EscalationRequest?,
     val permissionBlocked: Boolean?,
     val autoApprovePermissions: Boolean?,
+    val title: String? = null,
+    val description: String? = null,
+    val titleGenerating: Boolean? = null,
 ) {
     val isStructured: Boolean get() = (sessionKind ?: "pty") == "structured"
 
     val providerLabel: String
         get() = providerDisplayName(provider)
 
-    /** 列表标题：摘要 > 当前任务 > cwd 末段。 */
+    /** 列表标题：模型标题 > 摘要 > 当前任务 > cwd 末段。 */
     val displayTitle: String
         get() {
+            title?.takeIf { it.isNotEmpty() }?.let { return it }
             summary?.takeIf { it.isNotEmpty() }?.let { return it }
             currentTaskTitle?.takeIf { it.isNotEmpty() }?.let { return it }
             cwd?.takeIf { it.isNotEmpty() }?.let { c ->
@@ -435,6 +439,9 @@ data class SessionSnapshot(
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
             permissionBlocked = o.bool("permissionBlocked"),
             autoApprovePermissions = o.bool("autoApprovePermissions"),
+            title = o.str("title"),
+            description = o.str("description"),
+            titleGenerating = o.bool("titleGenerating"),
         )
 
         fun parseList(arr: JSONArray): List<SessionSnapshot> =
@@ -667,6 +674,9 @@ internal data class WsData(
     val endedAt: String?,
     val archived: Boolean?,
     val summary: String?,
+    val title: String?,
+    val description: String?,
+    val titleGenerating: Boolean?,
     val currentTaskTitle: String?,
     val selectedModel: String?,
     val thinkingEffort: String?,
@@ -703,6 +713,7 @@ internal data class WsData(
             queuedMessages = queuedMessages,
             structuredState = structuredState, pendingEscalation = pendingEscalation,
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
+            title = title, description = description, titleGenerating = titleGenerating,
         )
     }
 
@@ -721,6 +732,9 @@ internal data class WsData(
             endedAt = o.str("endedAt"),
             archived = o.bool("archived"),
             summary = o.str("summary"),
+            title = o.str("title"),
+            description = o.str("description"),
+            titleGenerating = o.bool("titleGenerating"),
             currentTaskTitle = o.str("currentTaskTitle"),
             selectedModel = o.str("selectedModel"),
             thinkingEffort = o.str("thinkingEffort"),

@@ -2,6 +2,8 @@ package com.wand.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -369,13 +371,9 @@ fun ChatScreen(
                             horizontalAlignment = Alignment.Start,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text(
-                                store.snapshot?.displayTitle ?: "对话详情",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = WandColors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                            ChatTopicTitle(
+                                text = store.snapshot?.displayTitle ?: "对话详情",
+                                generating = store.snapshot?.titleGenerating == true,
                             )
                             Text(
                                 chatContextSubtitle(store),
@@ -681,6 +679,41 @@ fun ChatScreen(
         }
     }
     }
+}
+
+@Composable
+private fun ChatTopicTitle(text: String, generating: Boolean) {
+    if (!generating) {
+        Text(
+            text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        return
+    }
+    val transition = rememberInfiniteTransition(label = "topicTitleRhythm")
+    val rhythm by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = WandMotion.breath(),
+        label = "topicTitlePhase",
+    )
+    val liftPx = with(LocalDensity.current) { 1.dp.toPx() }
+    Text(
+        text,
+        modifier = Modifier.graphicsLayer {
+            alpha = 0.64f + rhythm * 0.36f
+            translationY = -liftPx * rhythm
+        },
+        fontSize = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = WandColors.textPrimary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 /** 顶栏左侧 provider 标识：与会话列表一致，仅展示透明背景的品牌 logo。 */
