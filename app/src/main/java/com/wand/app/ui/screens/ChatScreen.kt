@@ -230,6 +230,24 @@ fun ChatScreen(
     val lastUserTurnIndex = remember(store.messages) {
         store.messages.indexOfLast { it.role == "user" }
     }
+    val subagentActivities = remember(store.messages, store.isResponding) {
+        collectSubagentActivities(store.messages, store.isResponding)
+    }
+    val showActivityDock = store.isStructured && (store.isResponding || subagentActivities.isNotEmpty())
+    var activityDockExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
+    LaunchedEffect(showActivityDock) {
+        if (!showActivityDock) activityDockExpanded = false
+    }
+    val activityDockListPadding = when {
+        !showActivityDock -> 4.dp
+        subagentActivities.isEmpty() -> 28.dp
+        else -> 62.dp
+    }
+    val activityDockFabPadding = when {
+        !showActivityDock -> 12.dp
+        subagentActivities.isEmpty() -> 38.dp
+        else -> 70.dp
+    }
 
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
     // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
@@ -251,8 +269,7 @@ fun ChatScreen(
     val showLoadEarlierSentinel = store.canLoadEarlier
     val headerOffset = if (showLoadEarlierSentinel) 1 else 0
     // bottomIndex 是最后的 chat-bottom 哨兵下标（即它之前的项数）。
-    val bottomIndex = headerOffset + displayItems.size +
-        if (store.isResponding) 1 else 0
+    val bottomIndex = headerOffset + displayItems.size
 
     // 用户只要开始向上浏览旧内容就暂停贴底跟随；无需先拉到整个列表顶部。
     val followPauseConnection = remember(density, focusManager) {
@@ -475,7 +492,7 @@ fun ChatScreen(
                             start = 14.dp,
                             end = 14.dp,
                             top = 8.dp,
-                            bottom = 4.dp,
+                            bottom = activityDockListPadding,
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -562,18 +579,6 @@ fun ChatScreen(
                                 }
                             }
                         }
-                        if (store.isResponding) {
-                            item(key = "responding") {
-                                Box(modifier = Modifier.animateItem()) {
-                                    LiveTurnStatusRow(
-                                        usage = store.messages.lastOrNull()
-                                            ?.takeIf { it.role == "assistant" }
-                                            ?.usage,
-                                        taskTitle = store.currentTaskTitle,
-                                    )
-                                }
-                            }
-                        }
                         item(key = "chat-bottom") {
                             Spacer(modifier = Modifier.size(1.dp))
                         }
@@ -595,10 +600,32 @@ fun ChatScreen(
                 visible = !store.connected,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
+            AnimatedVisibility(
+                visible = showActivityDock,
+                enter = fadeIn(WandMotion.tweenFast()) +
+                    slideInVertically(WandMotion.settleSpringSpec()) { height -> height / 3 },
+                exit = fadeOut(WandMotion.tweenFast()) +
+                    slideOutVertically(WandMotion.settleSpringSpec()) { height -> height / 3 },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                key(sessionId) {
+                    SubagentActivityDock(
+                        backdrop = glassBackdrop,
+                        activities = subagentActivities,
+                        usage = store.messages.lastOrNull { it.role == "assistant" }?.usage,
+                        taskTitle = store.currentTaskTitle,
+                        sessionRunning = store.isResponding,
+                        onExpandedChange = { activityDockExpanded = it },
+                    )
+                }
+            }
             // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。用户上滚后点它，回到真正的列表底部。
             AnimatedVisibility(
                 visible = !store.loading &&
                     store.loadError == null &&
+                    !activityDockExpanded &&
                     scrollMode == ChatScrollMode.Manual &&
                     listState.canScrollForward,
                 enter = fadeIn(WandMotion.tweenFast()) +
@@ -607,7 +634,7 @@ fun ChatScreen(
                     scaleOut(targetScale = 0.8f, animationSpec = WandMotion.tweenFast()),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 12.dp),
+                    .padding(end = 16.dp, bottom = activityDockFabPadding),
             ) {
                 Box(
                     contentAlignment = Alignment.Center,

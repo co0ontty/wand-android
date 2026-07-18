@@ -95,7 +95,9 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.ambientBackground
+import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.rememberGlassBackdrop
 import com.wand.app.ui.theme.secondaryBarGlass
 import kotlinx.coroutines.launch
 
@@ -273,6 +275,7 @@ fun NewSessionScreen(
     } else {
         providerModels.firstOrNull { it.id == selectedModel }?.label ?: selectedModel
     }
+    val glassBackdrop = rememberGlassBackdrop()
     Scaffold(
         containerColor = Color.Transparent,
         modifier = Modifier
@@ -281,7 +284,7 @@ fun NewSessionScreen(
         topBar = {
             CenterAlignedTopAppBar(
                 modifier = Modifier.glassSurface(
-                    null,
+                    glassBackdrop,
                     RoundedCornerShape(0.dp),
                     secondaryBarGlass,
                     edgeToEdge = true,
@@ -305,7 +308,7 @@ fun NewSessionScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .glassSurface(
-                        null,
+                        glassBackdrop,
                         RoundedCornerShape(0.dp),
                         secondaryBarGlass,
                         edgeToEdge = true,
@@ -348,156 +351,162 @@ fun NewSessionScreen(
             }
         },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
-                .padding(padding)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
+                .glassBackdropSource(glassBackdrop),
         ) {
-            // —— Provider（分段控件）——
-            ProviderSectionHeader(providerDisplayName(provider))
-            ProviderPicker(
-                options = listOf(
-                    "claude" to "Claude",
-                    "codex" to "Codex",
-                    "opencode" to "OpenCode",
-                    "grok" to "Grok",
-                    "qoder" to "Qoder",
-                ),
-                selected = provider,
-                onSelect = { newProvider ->
-                    provider = newProvider
-                    persistDefaults(defaultProvider = newProvider)
-                    mode = workflow.clampMode(mode, newProvider)
-                    selectedModel = ""
-                    normalizeThinkingEffort(newProvider, "")
-                },
-            )
-
-            // —— 会话类型（分段控件）——
-            SectionHeader("会话类型")
-            WandSegmented(
-                options = listOf(true to "结构化", false to "PTY"),
-                selected = isStructured,
-                onSelect = {
-                    isStructured = it
-                    persistDefaults(defaultSessionKind = if (it) "structured" else "pty")
-                },
-            )
-            FieldHint(sessionKindHint(provider, isStructured))
-
-            // —— 工作目录 ——
-            SectionHeader("工作目录")
-            CwdCard(
-                cwd = cwd,
-                onCwdChange = { cwd = it },
-                recentPaths = recentPaths,
-                onBrowse = { showBrowser = true },
-                onPickRecent = { cwd = it },
-            )
-            FieldHint("创建前先确认目录，支持输入绝对路径，或点文件夹图标打开目录浏览器。")
-
-            // —— 模型与思考（两张菜单卡）——
-            SectionHeader("模型与思考")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OptionMenuCard(
-                    title = "模型",
-                    value = selectedModelLabel,
-                    icon = Icons.Outlined.Memory,
-                    options = buildList {
-                        add("" to "默认 · $defaultModelLabel")
-                        providerModels.filter { it.id != "default" }.forEach { add(it.id to it.label) }
+            Column(
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+            ) {
+                // —— Provider（分段控件）——
+                ProviderSectionHeader(providerDisplayName(provider))
+                ProviderPicker(
+                    options = listOf(
+                        "claude" to "Claude",
+                        "codex" to "Codex",
+                        "opencode" to "OpenCode",
+                        "grok" to "Grok",
+                        "qoder" to "Qoder",
+                    ),
+                    selected = provider,
+                    onSelect = { newProvider ->
+                        provider = newProvider
+                        persistDefaults(defaultProvider = newProvider)
+                        mode = workflow.clampMode(mode, newProvider)
+                        selectedModel = ""
+                        normalizeThinkingEffort(newProvider, "")
                     },
-                    selectedId = selectedModel,
+                )
+
+                // —— 会话类型（分段控件）——
+                SectionHeader("会话类型")
+                WandSegmented(
+                    options = listOf(true to "结构化", false to "PTY"),
+                    selected = isStructured,
                     onSelect = {
-                        val modelProvider = provider
-                        val newDefault = it
-                        val modelGeneration = (defaultModelGenerations[modelProvider] ?: 0) + 1
-                        defaultModelGenerations[modelProvider] = modelGeneration
-                        selectedModel = it
-                        serverDefaultModels = serverDefaultModels.withDefault(modelProvider, newDefault)
-                        persistDefaults(
-                            model = newDefault,
-                            modelProvider = modelProvider,
-                            onSuccess = {
-                                confirmedDefaultModels = confirmedDefaultModels.withDefault(
-                                    modelProvider,
-                                    newDefault,
-                                )
-                                if (defaultModelGenerations[modelProvider] == modelGeneration) {
-                                    serverDefaultModels = serverDefaultModels.withDefault(
+                        isStructured = it
+                        persistDefaults(defaultSessionKind = if (it) "structured" else "pty")
+                    },
+                )
+                FieldHint(sessionKindHint(provider, isStructured))
+
+                // —— 工作目录 ——
+                SectionHeader("工作目录")
+                CwdCard(
+                    cwd = cwd,
+                    onCwdChange = { cwd = it },
+                    recentPaths = recentPaths,
+                    onBrowse = { showBrowser = true },
+                    onPickRecent = { cwd = it },
+                )
+                FieldHint("创建前先确认目录，支持输入绝对路径，或点文件夹图标打开目录浏览器。")
+
+                // —— 模型与思考（两张菜单卡）——
+                SectionHeader("模型与思考")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OptionMenuCard(
+                        title = "模型",
+                        value = selectedModelLabel,
+                        icon = Icons.Outlined.Memory,
+                        options = buildList {
+                            add("" to "默认 · $defaultModelLabel")
+                            providerModels.filter { it.id != "default" }.forEach { add(it.id to it.label) }
+                        },
+                        selectedId = selectedModel,
+                        onSelect = {
+                            val modelProvider = provider
+                            val newDefault = it
+                            val modelGeneration = (defaultModelGenerations[modelProvider] ?: 0) + 1
+                            defaultModelGenerations[modelProvider] = modelGeneration
+                            selectedModel = it
+                            serverDefaultModels = serverDefaultModels.withDefault(modelProvider, newDefault)
+                            persistDefaults(
+                                model = newDefault,
+                                modelProvider = modelProvider,
+                                onSuccess = {
+                                    confirmedDefaultModels = confirmedDefaultModels.withDefault(
                                         modelProvider,
                                         newDefault,
                                     )
-                                }
-                            },
-                            onFailure = {
-                                // 只回退该 Provider 的最新请求；旧失败不能覆盖更新的选择。
-                                // explicit selectedModel 仍作为“本次会话选择”保留；失败的只是默认偏好保存。
-                                // 切走 Provider 时 explicit 会被清空，切回后即展示这里回退的已确认默认值。
-                                if (defaultModelGenerations[modelProvider] == modelGeneration) {
-                                    serverDefaultModels = serverDefaultModels.withDefault(
-                                        modelProvider,
-                                        confirmedDefaultModels.defaultFor(modelProvider),
-                                    )
-                                }
-                            },
-                        )
-                        normalizeThinkingEffort(modelProvider, newDefault)
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                OptionMenuCard(
-                    title = "思考深度",
-                    value = selectedThinkingLabel,
-                    icon = WandIcons.thinking,
-                    options = thinkingLevels.map { it.id to it.menuLabel },
-                    selectedId = thinkingEffort,
-                    onSelect = {
-                        thinkingEffort = it
-                        persistDefaults(thinkingEffort = it)
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            // —— 模式（两列网格，5 选 1；末张半宽，对齐 iOS LazyVGrid）——
-            SectionHeader("模式")
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SESSION_MODES.chunked(2).forEach { rowModes ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        rowModes.forEach { m ->
-                            ModeCard(
-                                label = m.label,
-                                description = m.desc,
-                                selected = mode == m.id,
-                                enabled = m.id in supportedModes,
-                                onClick = {
-                                    mode = m.id
-                                    persistDefaults(mode = m.id)
+                                    if (defaultModelGenerations[modelProvider] == modelGeneration) {
+                                        serverDefaultModels = serverDefaultModels.withDefault(
+                                            modelProvider,
+                                            newDefault,
+                                        )
+                                    }
                                 },
-                                modifier = Modifier.weight(1f),
+                                onFailure = {
+                                    // 只回退该 Provider 的最新请求；旧失败不能覆盖更新的选择。
+                                    // explicit selectedModel 仍作为“本次会话选择”保留；失败的只是默认偏好保存。
+                                    // 切走 Provider 时 explicit 会被清空，切回后即展示这里回退的已确认默认值。
+                                    if (defaultModelGenerations[modelProvider] == modelGeneration) {
+                                        serverDefaultModels = serverDefaultModels.withDefault(
+                                            modelProvider,
+                                            confirmedDefaultModels.defaultFor(modelProvider),
+                                        )
+                                    }
+                                },
                             )
-                        }
-                        if (rowModes.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
+                            normalizeThinkingEffort(modelProvider, newDefault)
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    OptionMenuCard(
+                        title = "思考深度",
+                        value = selectedThinkingLabel,
+                        icon = WandIcons.thinking,
+                        options = thinkingLevels.map { it.id to it.menuLabel },
+                        selectedId = thinkingEffort,
+                        onSelect = {
+                            thinkingEffort = it
+                            persistDefaults(thinkingEffort = it)
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                // —— 模式（两列网格，5 选 1；末张半宽，对齐 iOS LazyVGrid）——
+                SectionHeader("模式")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SESSION_MODES.chunked(2).forEach { rowModes ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowModes.forEach { m ->
+                                ModeCard(
+                                    label = m.label,
+                                    description = m.desc,
+                                    selected = mode == m.id,
+                                    enabled = m.id in supportedModes,
+                                    onClick = {
+                                        mode = m.id
+                                        persistDefaults(mode = m.id)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            if (rowModes.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
                         }
                     }
                 }
+                FieldHint(modeHint(provider, mode))
+
+                // —— 首条消息（可选）——
+                SectionHeader("首条消息（可选）")
+                FirstMessageCard(value = firstMessage, onValueChange = { firstMessage = it })
+
+                // —— 错误提示 ——
+                if (errorMessage != null) {
+                    ErrorBanner(errorMessage ?: "")
+                }
+
+                Spacer(modifier = Modifier.size(40.dp))
             }
-            FieldHint(modeHint(provider, mode))
-
-            // —— 首条消息（可选）——
-            SectionHeader("首条消息（可选）")
-            FirstMessageCard(value = firstMessage, onValueChange = { firstMessage = it })
-
-            // —— 错误提示 ——
-            if (errorMessage != null) {
-                ErrorBanner(errorMessage ?: "")
-            }
-
-            Spacer(modifier = Modifier.size(40.dp))
         }
     }
 }

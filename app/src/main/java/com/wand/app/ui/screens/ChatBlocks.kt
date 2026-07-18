@@ -5,16 +5,24 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,11 +36,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
@@ -63,14 +74,21 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.AnnotatedString
@@ -89,6 +107,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.LaunchedEffect
@@ -124,6 +143,7 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.tinted
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -198,11 +218,12 @@ fun TurnView(
         mutableStateOf(initiallyCollapsed)
     }
     val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
-    val segments = remember(turn.content, collapsed) {
-        if (collapsed) emptyList() else splitBySubagent(turn.content)
+    val nonSubagentContent = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
+    val parentBlocks = remember(turn.content, collapsed) {
+        if (collapsed) emptyList() else nonSubagentContent
     }
-    val preview = remember(turn.content, collapsed) {
-        if (collapsed) replyPreview(turn.content) else ""
+    val preview = remember(nonSubagentContent, collapsed) {
+        if (collapsed) replyPreview(nonSubagentContent) else ""
     }
     val setCollapsed: (Boolean) -> Unit = { next ->
         if (currentReplyExpandedOverride == null) {
@@ -230,40 +251,19 @@ fun TurnView(
             )
         }
         if (showContent && (!showHeader || !collapsed)) {
-            segments.forEachIndexed { segmentIndex, segment ->
-                if (segment.subagent == null) {
-                    SegmentBlocks(
-                        blocks = segment.blocks,
-                        isLastTurn = isLastTurn,
-                        isResponding = isResponding,
-                        askSelections = askSelections,
-                        onAskToggle = onAskToggle,
-                        onAskSubmit = onAskSubmit,
-                    )
-                } else {
-                    SubagentPanel(
-                        meta = segment.subagent,
-                        running = isLastTurn && isResponding && segmentIndex == segments.lastIndex,
-                        itemCount = remember(segment.blocks) { pairToolBlocks(segment.blocks).size },
-                        refreshToken = remember(segment.blocks) { subagentTailRefreshToken(segment.blocks) },
-                    ) {
-                        SegmentBlocks(
-                            blocks = segment.blocks,
-                            isLastTurn = isLastTurn,
-                            isResponding = isResponding,
-                            askSelections = askSelections,
-                            onAskToggle = onAskToggle,
-                            onAskSubmit = onAskSubmit,
-                            showSubagentTags = false,
-                            collapseActivities = false,
-                        )
-                    }
-                }
+            if (parentBlocks.isNotEmpty()) {
+                SegmentBlocks(
+                    blocks = parentBlocks,
+                    isLastTurn = isLastTurn,
+                    isResponding = isResponding,
+                    askSelections = askSelections,
+                    onAskToggle = onAskToggle,
+                    onAskSubmit = onAskSubmit,
+                )
             }
         }
         val usageIsLive = isLastTurn && isResponding
-        // 流式用量与「正在思考」合并到列表底部的 LiveTurnStatusRow，避免两个
-        // 左对齐状态行同时更新时在视觉上重叠。响应结束后仍在回复尾部展示完整用量。
+        // 流式用量由输入栏上方的常驻状态坞承接；响应结束后仍在回复尾部保留完整用量。
         if (!usageIsLive && (!showHeader || !collapsed) && turn.usage?.hasVisibleValue == true) {
             UsageSummaryRow(turn.usage, isLive = false)
         }
@@ -409,76 +409,639 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
     }
 }
 
-/**
- * 运行中的单行状态：用量固定在左，当前思考/任务固定在右。
- * 两侧各自单行省略，窄屏不会换行互相挤压；响应结束后由 UsageSummaryRow 展示完整用量。
- */
+/** 输入栏上方的紧凑状态坞：Agent 气泡独占上层，用量与回复状态保持纯文字。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun LiveTurnStatusRow(usage: TurnUsage?, taskTitle: String?) {
-    val usageText = remember(usage) {
-        buildList {
-            usage?.inputTokens?.takeIf { it > 0 }?.let { add("输入 ${formatTokenCount(it)}") }
-            usage?.cacheReadInputTokens?.takeIf { it > 0 }?.let { add("缓存 ${formatTokenCount(it)}") }
-            usage?.outputTokens?.takeIf { it > 0 }?.let {
-                add("输出 ${if (usage.estimated == true) "≈" else ""}${formatTokenCount(it)}")
-            }
-            usage?.reasoningOutputTokens?.takeIf { it > 0 }?.let {
-                add("推理 ${if (usage.estimated == true) "≈" else ""}${formatTokenCount(it)}")
-            }
-            usage?.totalCostUsd?.takeIf { it > 0 }?.let { add("\$${formatUsd(it)}") }
-        }.joinToString(" · ").ifEmpty { "正在统计用量…" }
-    }
-    val activityText = taskTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: "正在思考…"
+internal fun SubagentActivityDock(
+    backdrop: GlassBackdrop?,
+    activities: List<SubagentActivity>,
+    usage: TurnUsage?,
+    taskTitle: String?,
+    sessionRunning: Boolean,
+    modifier: Modifier = Modifier,
+    onExpandedChange: (Boolean) -> Unit = {},
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var selectedAgentId by rememberSaveable { mutableStateOf<String?>(null) }
+    val pagerState = rememberPagerState(pageCount = { activities.size.coerceAtLeast(1) })
+    val selectedIndex = activities.indexOfFirst { it.id == selectedAgentId }
+        .takeIf { it >= 0 } ?: 0
+    val activityIds = activities.map { it.id }
 
+    LaunchedEffect(activityIds) {
+        if (activities.isEmpty()) {
+            expanded = false
+            selectedAgentId = null
+        } else {
+            val currentIndex = activities.indexOfFirst { it.id == selectedAgentId }
+            val fallbackIndex = activities.indexOfFirst { it.running }.takeIf { it >= 0 } ?: 0
+            val targetIndex = currentIndex.takeIf { it >= 0 } ?: fallbackIndex
+            selectedAgentId = activities[targetIndex].id
+            if (pagerState.currentPage != targetIndex) pagerState.scrollToPage(targetIndex)
+        }
+    }
+    LaunchedEffect(expanded, selectedAgentId, activityIds) {
+        if (expanded && activities.isNotEmpty()) {
+            withFrameNanos { }
+            val target = activities.indexOfFirst { it.id == selectedAgentId }.takeIf { it >= 0 } ?: 0
+            if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+        }
+    }
+    LaunchedEffect(pagerState, activityIds) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            activities.getOrNull(page)?.let { selectedAgentId = it.id }
+        }
+    }
+    LaunchedEffect(expanded) { onExpandedChange(expanded) }
+    BackHandler(enabled = expanded) { expanded = false }
+
+    val selectAgent: (Int) -> Unit = { rawIndex ->
+        activities.getOrNull(rawIndex)?.let { activity ->
+            if (expanded && selectedAgentId == activity.id) {
+                expanded = false
+            } else {
+                selectedAgentId = activity.id
+                expanded = true
+            }
+        }
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        AnimatedVisibility(
+            visible = expanded && activities.isNotEmpty(),
+            enter = fadeIn(WandMotion.tweenFast()) +
+                expandVertically(animationSpec = WandMotion.settleSpringSpec(), expandFrom = Alignment.Bottom),
+            exit = fadeOut(WandMotion.tweenFast()) +
+                shrinkVertically(animationSpec = WandMotion.settleSpringSpec(), shrinkTowards = Alignment.Bottom),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassSurface(
+                        backdrop,
+                        WandShapes.lg,
+                        WandGlass.regular.tinted(WandColors.info, 0.12f),
+                    )
+                    .padding(top = 4.dp, bottom = 7.dp),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxWidth().height(30.dp),
+                ) {
+                    Text(
+                        "${pagerState.currentPage + 1} / ${activities.size}",
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textMuted,
+                    )
+                    IconButton(
+                        onClick = { expanded = false },
+                        modifier = Modifier.align(Alignment.CenterEnd).size(30.dp),
+                    ) {
+                        Icon(
+                            WandIcons.close,
+                            contentDescription = "收起 Agent 卡片",
+                            tint = WandColors.textSecondary,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+                HorizontalPager(
+                    state = pagerState,
+                    key = { page -> activities.getOrNull(page)?.id ?: "agent-$page" },
+                    beyondViewportPageCount = 1,
+                    pageSpacing = 10.dp,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.fillMaxWidth().height(276.dp),
+                ) { page ->
+                    activities.getOrNull(page)?.let { activity ->
+                        SubagentActivityPage(activity)
+                    }
+                }
+            }
+        }
+
+        if (activities.isNotEmpty()) {
+            AgentBubbleRail(
+                backdrop = backdrop,
+                activities = activities,
+                selectedIndex = selectedIndex,
+                expanded = expanded,
+                onAgentClick = selectAgent,
+                onStackClick = {
+                    val target = if (expanded) {
+                        selectedIndex
+                    } else {
+                        activities.indexOfFirst { it.running }.takeIf { it >= 0 } ?: selectedIndex
+                    }
+                    selectAgent(target)
+                },
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp).padding(horizontal = 3.dp),
+        ) {
+            UsageStatusCompact(usage, Modifier.weight(1f))
+            ReplyStatusCompact(taskTitle, sessionRunning, Modifier.weight(1f))
+        }
+    }
+}
+
+internal data class AgentLogoVariant(val paletteIndex: Int, val facetIndex: Int)
+
+/** task id 派生稳定伪随机外观，避免流式重组或重开卡片时 Logo 跳变。 */
+internal fun agentLogoVariant(id: String): AgentLogoVariant {
+    val seed = id.hashCode()
+    return AgentLogoVariant(
+        paletteIndex = Math.floorMod(seed, 5),
+        facetIndex = Math.floorMod(seed * 31 + 17, 3),
+    )
+}
+
+private fun agentBubbleTitle(activity: SubagentActivity): String =
+    activity.meta.agentType?.trim().takeUnless { it.isNullOrEmpty() } ?: "Agent"
+
+@Composable
+private fun AgentBubbleRail(
+    backdrop: GlassBackdrop?,
+    activities: List<SubagentActivity>,
+    selectedIndex: Int,
+    expanded: Boolean,
+    onAgentClick: (Int) -> Unit,
+    onStackClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics(mergeDescendants = true) {
-                liveRegion = LiveRegionMode.Polite
-                stateDescription = "$usageText，$activityText"
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 3.dp),
+    ) {
+        Text(
+            "Agent:",
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = WandColors.textPrimary,
+            maxLines = 1,
+        )
+        SubcomposeLayout(modifier = Modifier.weight(1f)) { constraints ->
+            val looseConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+            val probes = subcompose("agent-bubble-probes") {
+                activities.forEach { activity ->
+                    AgentBubbleBody(
+                        backdrop = null,
+                        activity = activity,
+                        selected = false,
+                        animateLogo = false,
+                    )
+                }
+            }.map { it.measure(looseConstraints) }
+            val gap = 6.dp.roundToPx()
+            val normalWidth = probes.sumOf { it.width } + gap * (probes.size - 1).coerceAtLeast(0)
+
+            if (normalWidth <= constraints.maxWidth) {
+                val bubbles = subcompose("agent-bubbles") {
+                    activities.forEachIndexed { index, activity ->
+                        AgentBubble(
+                            backdrop = backdrop,
+                            activity = activity,
+                            selected = expanded && index == selectedIndex,
+                            expanded = expanded && index == selectedIndex,
+                            onClick = { onAgentClick(index) },
+                        )
+                    }
+                }.map { it.measure(looseConstraints) }
+                val height = bubbles.maxOfOrNull { it.height } ?: 0
+                layout(constraints.maxWidth, height) {
+                    var x = 0
+                    bubbles.forEach { placeable ->
+                        placeable.placeRelative(x, (height - placeable.height) / 2)
+                        x += placeable.width + gap
+                    }
+                }
+            } else {
+                val stack = subcompose("agent-stack") {
+                    StackedAgentCluster(
+                        backdrop = backdrop,
+                        activities = activities,
+                        selectedAgentId = activities.getOrNull(selectedIndex)?.id,
+                        expanded = expanded,
+                        onClick = onStackClick,
+                    )
+                }.single().measure(looseConstraints)
+                layout(constraints.maxWidth, stack.height) {
+                    stack.placeRelative(0, 0)
+                }
             }
-            .padding(top = 1.dp, start = 2.dp, end = 2.dp, bottom = 4.dp),
+        }
+    }
+}
+
+@Composable
+private fun AgentBubble(
+    backdrop: GlassBackdrop?,
+    activity: SubagentActivity,
+    selected: Boolean,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val title = agentBubbleTitle(activity)
+    val state = when {
+        activity.running -> "正在运行"
+        activity.failed -> "执行失败"
+        else -> "已完成"
+    }
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable(onClickLabel = if (expanded) "收起 $title" else "查看 $title") { onClick() }
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                stateDescription = "$title，$state，${if (expanded) "详情已展开" else "详情已收起"}"
+            }
+            .padding(vertical = 3.dp),
+    ) {
+        AgentBubbleBody(
+            backdrop = backdrop,
+            activity = activity,
+            selected = selected,
+            animateLogo = true,
+        )
+    }
+}
+
+@Composable
+private fun AgentBubbleBody(
+    backdrop: GlassBackdrop?,
+    activity: SubagentActivity,
+    selected: Boolean,
+    animateLogo: Boolean,
+) {
+    val accent = agentIdentityColor(activity)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .height(34.dp)
+            .glassSurface(
+                backdrop,
+                CircleShape,
+                WandGlass.clear.tinted(accent, if (activity.running) 0.20f else 0.08f),
+            )
+            .border(
+                0.8.dp,
+                if (selected) accent.copy(alpha = 0.72f) else Color.Transparent,
+                CircleShape,
+            )
+            .padding(horizontal = if (activity.running) 6.dp else 5.dp),
+    ) {
+        GeneratedAgentLogo(activity, size = 24.dp, animate = animateLogo)
+        if (activity.running) {
+            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                Text(
+                    agentBubbleTitle(activity),
+                    fontSize = 10.sp,
+                    lineHeight = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 104.dp),
+                )
+                Text(
+                    "正在运行",
+                    fontSize = 9.sp,
+                    lineHeight = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = accent,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StackedAgentCluster(
+    backdrop: GlassBackdrop?,
+    activities: List<SubagentActivity>,
+    selectedAgentId: String?,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val visible = remember(activities) {
+        val prioritized = activities.filter { it.running } + activities.filterNot { it.running }
+        prioritized.take(4).let { chosen ->
+            chosen.filterNot { it.running } + chosen.filter { it.running }
+        }
+    }
+    val overlap = 18.dp
+    val stackWidth = 28.dp + overlap * (visible.size - 1).coerceAtLeast(0) + 12.dp
+    val runningCount = activities.count { it.running }
+    val badgeText = if (activities.size > 99) "99+" else activities.size.toString()
+    val runningActivity = activities.firstOrNull { it.running }
+    val accent = if (runningActivity != null) agentIdentityColor(runningActivity) else WandColors.textMuted
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable(onClickLabel = if (expanded) "收起 Agent 卡片" else "查看 Agent 卡片") { onClick() }
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                stateDescription = "${activities.size} 个子 Agent，$runningCount 个正在运行，${if (expanded) "详情已展开" else "详情已收起"}"
+            }
+            .padding(vertical = 3.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .height(34.dp)
+                .glassSurface(backdrop, CircleShape, WandGlass.clear.tinted(accent, 0.18f))
+                .border(
+                    0.8.dp,
+                    if (expanded) accent.copy(alpha = 0.68f) else Color.Transparent,
+                    CircleShape,
+                )
+                .padding(start = 4.dp, end = if (runningCount > 0) 8.dp else 4.dp),
         ) {
-            Icon(
-                WandIcons.usage,
-                contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(13.dp),
-            )
-            Text(
-                usageText,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+            Box(Modifier.width(stackWidth).height(30.dp)) {
+                visible.forEachIndexed { index, activity ->
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .offset(x = overlap * index)
+                            .zIndex(index.toFloat())
+                            .size(28.dp)
+                            .glassSurface(
+                                backdrop,
+                                CircleShape,
+                                WandGlass.clear.tinted(agentIdentityColor(activity), 0.12f),
+                            )
+                            .border(
+                                0.8.dp,
+                                if (expanded && activity.id == selectedAgentId) {
+                                    agentIdentityColor(activity).copy(alpha = 0.72f)
+                                } else {
+                                    WandColors.border.copy(alpha = 0.58f)
+                                },
+                                CircleShape,
+                            ),
+                    ) {
+                        GeneratedAgentLogo(activity, size = 22.dp, animate = true)
+                    }
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .zIndex(8f)
+                        .heightIn(min = 17.dp)
+                        .widthIn(min = 17.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF267EDB), Color(0xFF0B9B78)),
+                            ),
+                        )
+                        .border(0.7.dp, Color.White.copy(alpha = 0.48f), CircleShape)
+                        .padding(horizontal = 4.dp),
+                ) {
+                    Text(
+                        badgeText,
+                        fontSize = 8.sp,
+                        lineHeight = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                    )
+                }
+            }
+            if (runningCount > 0) {
+                Text(
+                    "$runningCount 正在运行",
+                    fontSize = 9.sp,
+                    lineHeight = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = accent,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GeneratedAgentLogo(
+    activity: SubagentActivity,
+    size: Dp,
+    animate: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val variant = remember(activity.id) { agentLogoVariant(activity.id) }
+    val palette = agentGemPalette(activity, variant)
+    val tint = agentIdentityColor(activity)
+    val motionEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    val haloAlpha: Float
+    val haloScale: Float
+    if (activity.running && animate && motionEnabled) {
+        val transition = rememberInfiniteTransition(label = "agentLogoBreath-${activity.id}")
+        val phase by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = WandMotion.breath(),
+            label = "agentLogoHalo-${activity.id}",
+        )
+        haloAlpha = 0.14f + phase * 0.18f
+        haloScale = 0.96f + phase * 0.16f
+    } else {
+        haloAlpha = if (activity.running) 0.24f else 0f
+        haloScale = 1f
+    }
+    Box(contentAlignment = Alignment.Center, modifier = modifier.size(size)) {
+        if (activity.running) {
+            Box(
+                Modifier
+                    .size(size)
+                    .graphicsLayer {
+                        alpha = haloAlpha
+                        scaleX = haloScale
+                        scaleY = haloScale
+                    }
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(tint.copy(alpha = 0.70f), tint.copy(alpha = 0.16f), Color.Transparent),
+                        ),
+                    ),
             )
         }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
-            modifier = Modifier.weight(1f),
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(size - 2.dp),
         ) {
-            StatusDot("running")
-            Text(
-                activityText,
-                fontSize = 13.sp,
-                color = WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+            Canvas(modifier = Modifier.size(size - 2.dp)) {
+                val canvasSize = this.size
+                val width = canvasSize.width
+                val height = canvasSize.height
+                val center = Offset(width * 0.50f, height * 0.50f)
+                val gem = Path().apply {
+                    moveTo(width * 0.50f, height * 0.02f)
+                    lineTo(width * 0.86f, height * 0.20f)
+                    lineTo(width * 0.98f, height * 0.62f)
+                    lineTo(width * 0.50f, height * 0.98f)
+                    lineTo(width * 0.02f, height * 0.62f)
+                    lineTo(width * 0.14f, height * 0.20f)
+                    close()
+                }
+                val gradientStart = when (variant.facetIndex) {
+                    0 -> Offset(0f, 0f)
+                    1 -> Offset(width, 0f)
+                    else -> Offset(width * 0.20f, 0f)
+                }
+                val gradientEnd = when (variant.facetIndex) {
+                    0 -> Offset(width, height)
+                    1 -> Offset(0f, height)
+                    else -> Offset(width * 0.80f, height)
+                }
+                drawPath(
+                    path = gem,
+                    brush = Brush.linearGradient(palette, gradientStart, gradientEnd),
+                )
+                val lightFacet = Path().apply {
+                    moveTo(width * 0.50f, height * 0.02f)
+                    lineTo(center.x, center.y)
+                    lineTo(width * 0.02f, height * 0.62f)
+                    lineTo(width * 0.14f, height * 0.20f)
+                    close()
+                }
+                drawPath(lightFacet, Color.White.copy(alpha = 0.19f))
+                val depthFacet = Path().apply {
+                    moveTo(center.x, center.y)
+                    lineTo(width * 0.98f, height * 0.62f)
+                    lineTo(width * 0.50f, height * 0.98f)
+                    close()
+                }
+                drawPath(depthFacet, Color.Black.copy(alpha = 0.10f))
+                when (variant.facetIndex) {
+                    0 -> drawCircle(
+                        color = Color.White.copy(alpha = 0.54f),
+                        radius = width * 0.065f,
+                        center = Offset(width * 0.31f, height * 0.27f),
+                    )
+                    1 -> drawLine(
+                        color = Color.White.copy(alpha = 0.32f),
+                        start = Offset(width * 0.25f, height * 0.22f),
+                        end = Offset(width * 0.72f, height * 0.18f),
+                        strokeWidth = 0.7.dp.toPx(),
+                    )
+                    else -> drawCircle(
+                        color = Color.White.copy(alpha = 0.42f),
+                        radius = width * 0.05f,
+                        center = Offset(width * 0.67f, height * 0.24f),
+                    )
+                }
+                drawPath(
+                    path = gem,
+                    color = Color.White.copy(alpha = if (activity.running) 0.46f else 0.30f),
+                    style = Stroke(width = 0.7.dp.toPx()),
+                )
+            }
+            Icon(
+                WandIcons.agent,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = if (activity.running || activity.failed) 0.96f else 0.82f),
+                modifier = Modifier.size(size * 0.52f),
             )
         }
     }
+}
+
+private fun agentGemPalette(
+    activity: SubagentActivity,
+    variant: AgentLogoVariant,
+): List<Color> = when {
+    activity.failed -> listOf(Color(0xFFFF7891), Color(0xFFB82A56), Color(0xFF621C3C))
+    !activity.running -> listOf(
+        Color(0xFFC2CED8).copy(alpha = 0.86f),
+        Color(0xFF7F8D9B).copy(alpha = 0.84f),
+        Color(0xFF4F5B68).copy(alpha = 0.88f),
+    )
+    else -> when (variant.paletteIndex) {
+        0 -> listOf(Color(0xFF75D8FF), Color(0xFF2878F0), Color(0xFF153D98))
+        1 -> listOf(Color(0xFF72E7BB), Color(0xFF12A879), Color(0xFF075A46))
+        2 -> listOf(Color(0xFF6AE3E8), Color(0xFF159BB5), Color(0xFF16577C))
+        3 -> listOf(Color(0xFF6DBBFF), Color(0xFF2B67D1), Color(0xFF159A82))
+        else -> listOf(Color(0xFF59E4C4), Color(0xFF16879C), Color(0xFF1D50B6))
+    }
+}
+
+@Composable
+private fun agentIdentityColor(activity: SubagentActivity): Color {
+    if (activity.failed) return WandColors.danger
+    if (!activity.running) return WandColors.textMuted
+    val base = when (agentLogoVariant(activity.id).paletteIndex) {
+        0 -> Color(0xFF246CCB)
+        1 -> Color(0xFF087C5C)
+        2 -> Color(0xFF0B7688)
+        3 -> Color(0xFF2862B8)
+        else -> Color(0xFF0C776C)
+    }
+    return if (isWandDarkTheme()) lerp(base, Color.White, 0.30f) else base
+}
+
+@Composable
+private fun UsageStatusCompact(usage: TurnUsage?, modifier: Modifier = Modifier) {
+    val text = remember(usage) {
+        buildList {
+            usage?.inputTokens?.takeIf { it > 0 }?.let { add("输入 ${formatTokenCount(it)}") }
+            usage?.outputTokens?.takeIf { it > 0 }?.let { add("输出 ${formatTokenCount(it)}") }
+            usage?.reasoningOutputTokens?.takeIf { it > 0 }?.let { add("推理 ${formatTokenCount(it)}") }
+            usage?.totalCostUsd?.takeIf { it > 0 }?.let { add("\$${formatUsd(it)}") }
+        }.joinToString(" · ").ifEmpty { "正在统计用量…" }
+    }
+    Text(
+        text,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        fontFamily = FontFamily.Monospace,
+        color = WandColors.textMuted,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ReplyStatusCompact(
+    taskTitle: String?,
+    sessionRunning: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val text = if (sessionRunning) {
+        taskTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: "正在思考…"
+    } else {
+        "回复完成"
+    }
+    Text(
+        text,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        color = WandColors.textMuted,
+        textAlign = TextAlign.End,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.semantics {
+            liveRegion = LiveRegionMode.Polite
+            stateDescription = text
+        },
+    )
 }
 
 private fun formatTokenCount(value: Int): String = when {
@@ -495,68 +1058,70 @@ private fun formatUsd(value: Double): String = when {
 // 历史用户消息只承担“话题提示”，约三行手机正文就进入两行摘要态。
 private const val COMPACT_USER_MIN_CHARS = 72
 
-/** user turn 也可能携带 Task tool_result；保留普通用户气泡，并把子代理回包独立成面板。 */
+/** user turn 只保留父对话内容；subagent 输出统一交给底部常驻 Agent 状态坞。 */
 @Composable
 private fun UserTurnView(turn: ConversationTurn, compact: Boolean) {
     val parentBlocks = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
-    val subagentSegments = remember(turn.content) {
-        splitBySubagent(turn.content).filter { it.subagent != null }
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-        if (parentBlocks.any { it is ContentBlock.Text && it.text.isNotBlank() }) {
-            UserBubble(turn.copy(content = parentBlocks), compact = compact)
-        }
-        subagentSegments.forEach { segment ->
-            SubagentPanel(
-                meta = segment.subagent ?: return@forEach,
-                running = false,
-                itemCount = remember(segment.blocks) { pairToolBlocks(segment.blocks).size },
-                refreshToken = remember(segment.blocks) { subagentTailRefreshToken(segment.blocks) },
-            ) {
-                SegmentBlocks(
-                    blocks = segment.blocks,
-                    isLastTurn = false,
-                    isResponding = false,
-                    askSelections = emptyMap(),
-                    onAskToggle = { _, _, _, _ -> },
-                    onAskSubmit = { _, _ -> },
-                    showSubagentTags = false,
-                    collapseActivities = false,
-                )
-            }
-        }
+    if (parentBlocks.any { it is ContentBlock.Text && it.text.isNotBlank() }) {
+        UserBubble(turn.copy(content = parentBlocks), compact = compact)
     }
 }
 
-private data class AssistantSegment(
-    val subagent: SubagentMeta?,
+internal data class SubagentActivity(
+    val id: String,
+    val meta: SubagentMeta,
     val blocks: List<ContentBlock>,
+    val running: Boolean,
+    val failed: Boolean,
 )
 
-/** 对齐 Web splitTurnBySubagent：按连续 taskId 分段，再把每段渲染进独立面板。 */
-private fun splitBySubagent(blocks: List<ContentBlock>): List<AssistantSegment> {
-    val segments = mutableListOf<AssistantSegment>()
-    var activeMeta: SubagentMeta? = null
-    var activeKey: String? = null
-    var activeBlocks = mutableListOf<ContentBlock>()
+/**
+ * 整个会话里的 subagent 聚合为稳定卡片模型，保证移出消息正文后仍可回看。
+ * 父 Task 的最终 tool_result 以 toolUseId == taskId 标记完成；内层工具结果
+ * 不会误结束整个 agent。只有最后一条用户消息之后的未完成任务会显示运行态。
+ */
+internal fun collectSubagentActivities(
+    messages: List<ConversationTurn>,
+    sessionRunning: Boolean,
+): List<SubagentActivity> {
+    val lastHumanTurn = messages.indexOfLast { turn ->
+        turn.role == "user" && turn.content.any { block ->
+            block is ContentBlock.Text && block.subagent == null
+        }
+    }
+    data class MutableActivity(
+        var meta: SubagentMeta,
+        val blocks: MutableList<ContentBlock> = mutableListOf(),
+        var completed: Boolean = false,
+        var failed: Boolean = false,
+        var lastSeenTurn: Int = -1,
+    )
 
-    fun flush() {
-        if (activeBlocks.isNotEmpty()) {
-            segments += AssistantSegment(activeMeta, activeBlocks.toList())
-            activeBlocks = mutableListOf()
+    val byId = linkedMapOf<String, MutableActivity>()
+    messages.forEachIndexed { turnIndex, turn ->
+        turn.content.forEach { block ->
+            val meta = block.subagentMeta() ?: return@forEach
+            val id = meta.taskId?.takeIf { it.isNotBlank() } ?: return@forEach
+            val activity = byId.getOrPut(id) { MutableActivity(meta) }
+            activity.meta = meta
+            activity.blocks += block
+            activity.lastSeenTurn = turnIndex
+            if (block is ContentBlock.ToolResult && block.toolUseId == id) {
+                activity.completed = true
+                activity.failed = block.isError
+            }
         }
     }
 
-    blocks.forEach { block ->
-        val meta = block.subagentMeta()
-        val key = meta?.taskId
-        if (activeBlocks.isNotEmpty() && key != activeKey) flush()
-        activeMeta = meta
-        activeKey = key
-        activeBlocks += block
+    return byId.map { (id, activity) ->
+        SubagentActivity(
+            id = id,
+            meta = activity.meta,
+            blocks = activity.blocks.toList(),
+            running = sessionRunning && activity.lastSeenTurn > lastHumanTurn && !activity.completed,
+            failed = activity.failed,
+        )
     }
-    flush()
-    return segments
 }
 
 private fun ContentBlock.subagentMeta(): SubagentMeta? = when (this) {
@@ -773,17 +1338,18 @@ private fun RenderDisplayItem(
 }
 
 @Composable
-private fun SubagentPanel(
-    meta: SubagentMeta,
-    running: Boolean,
-    itemCount: Int,
-    refreshToken: Int,
-    content: @Composable () -> Unit,
-) {
-    val rawTitle = meta.agentType?.takeIf { it.isNotBlank() } ?: "子 Agent"
+private fun SubagentActivityPage(activity: SubagentActivity) {
+    val rawTitle = activity.meta.agentType?.takeIf { it.isNotBlank() } ?: "子 Agent"
     val title = if (rawTitle.startsWith("猫猫")) rawTitle else "猫猫 $rawTitle"
-    val description = meta.taskDescription?.takeIf { it.isNotBlank() }
+    val description = activity.meta.taskDescription?.takeIf { it.isNotBlank() }
     val scrollState = rememberScrollState()
+    val itemCount = remember(activity.blocks) { pairToolBlocks(activity.blocks).size }
+    val refreshToken = remember(activity.blocks) { subagentTailRefreshToken(activity.blocks) }
+    val statusColor = when {
+        activity.failed -> WandColors.danger
+        activity.running -> agentIdentityColor(activity)
+        else -> WandColors.textMuted
+    }
 
     // 内容高度变化意味着流式文本或新的工具结果已经到达。只在这种刷新发生时
     // 重回尾部；两次刷新之间，用户仍可自由向上滚动查看窗口内历史。
@@ -800,7 +1366,10 @@ private fun SubagentPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassCard(WandShapes.lg, tint = WandColors.infoSoft, rimTint = WandColors.info),
+            .fillMaxHeight()
+            .clip(WandShapes.md)
+            .background(WandColors.bgPrimary.copy(alpha = 0.58f))
+            .border(0.7.dp, statusColor.copy(alpha = 0.30f), WandShapes.md),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -809,6 +1378,7 @@ private fun SubagentPanel(
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 11.dp),
         ) {
+            GeneratedAgentLogo(activity, size = 28.dp, animate = true)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     title,
@@ -819,7 +1389,7 @@ private fun SubagentPanel(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    description ?: if (running) "正在处理子任务" else "子任务输出",
+                    description ?: if (activity.running) "正在处理子任务" else "子任务输出",
                     fontSize = 11.sp,
                     color = WandColors.textSecondary,
                     maxLines = 1,
@@ -827,13 +1397,22 @@ private fun SubagentPanel(
                 )
             }
             Text(
-                if (running) "处理中" else "${itemCount.coerceAtLeast(1)} 条内容",
+                when {
+                    activity.running -> "正在运行"
+                    activity.failed -> "执行失败"
+                    else -> "${itemCount.coerceAtLeast(1)} 条内容"
+                },
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = WandColors.info,
+                color = statusColor,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(WandColors.info.copy(alpha = 0.10f))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(statusColor.copy(alpha = 0.18f), statusColor.copy(alpha = 0.05f)),
+                        ),
+                    )
+                    .border(0.6.dp, statusColor.copy(alpha = 0.26f), CircleShape)
                     .padding(horizontal = 7.dp, vertical = 4.dp),
             )
         }
@@ -841,7 +1420,7 @@ private fun SubagentPanel(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(280.dp)
+                .weight(1f)
                 .background(WandColors.bgPrimary.copy(alpha = 0.45f))
                 .verticalScroll(scrollState),
         ) {
@@ -850,7 +1429,16 @@ private fun SubagentPanel(
                     .fillMaxWidth()
                     .padding(10.dp),
             ) {
-                content()
+                SegmentBlocks(
+                    blocks = activity.blocks,
+                    isLastTurn = true,
+                    isResponding = activity.running,
+                    askSelections = emptyMap(),
+                    onAskToggle = { _, _, _, _ -> },
+                    onAskSubmit = { _, _ -> },
+                    showSubagentTags = false,
+                    collapseActivities = false,
+                )
             }
         }
     }

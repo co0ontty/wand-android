@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.SubagentMeta
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -116,6 +117,61 @@ class HistoryPresentationTest {
 
         val splitSurrogate = "a".repeat(239) + "😀" + "tail"
         assertFalse(compactPreviewText(splitSurrogate).last().isHighSurrogate())
+    }
+
+    @Test
+    fun latestSubagentsMoveIntoThePersistentActivityModel() {
+        val first = SubagentMeta("task-1", "Explore", "检查界面")
+        val second = SubagentMeta("task-2", "Review", "复核交互")
+        val messages = listOf(
+            textTurn("user", "优化 Agent 展示"),
+            ConversationTurn(
+                role = "assistant",
+                content = listOf(
+                    ContentBlock.ToolUse("task-1", "Task", null, JSONObject(), first),
+                    ContentBlock.Text("正在检查", first),
+                    ContentBlock.ToolResult("task-1", "已完成", false, false, first),
+                    ContentBlock.ToolUse("task-2", "Task", null, JSONObject(), second),
+                    ContentBlock.Thinking("继续复核", second),
+                ),
+            ),
+        )
+
+        val activities = collectSubagentActivities(messages, sessionRunning = true)
+
+        assertEquals(listOf("task-1", "task-2"), activities.map { it.id })
+        assertFalse(activities[0].running)
+        assertTrue(activities[1].running)
+        assertEquals(3, activities[0].blocks.size)
+    }
+
+    @Test
+    fun aNewHumanTurnKeepsPreviousAgentsAvailableButCompleted() {
+        val meta = SubagentMeta("task-old", "Explore", null)
+        val messages = listOf(
+            textTurn("user", "上一轮"),
+            ConversationTurn("assistant", listOf(ContentBlock.Text("旧输出", meta))),
+            textTurn("user", "下一轮"),
+        )
+
+        val activities = collectSubagentActivities(messages, sessionRunning = true)
+
+        assertEquals(1, activities.size)
+        assertEquals("task-old", activities.single().id)
+        assertFalse(activities.single().running)
+    }
+
+    @Test
+    fun agentLogoIsStableAndAlwaysUsesAValidVariant() {
+        val first = agentLogoVariant("task-alpha")
+        val same = agentLogoVariant("task-alpha")
+        val second = agentLogoVariant("task-beta")
+
+        assertEquals(first, same)
+        assertTrue(first.paletteIndex in 0..4)
+        assertTrue(first.facetIndex in 0..2)
+        assertTrue(second.paletteIndex in 0..4)
+        assertTrue(second.facetIndex in 0..2)
     }
 
     private fun textTurn(role: String, text: String) = ConversationTurn(
