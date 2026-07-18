@@ -10,6 +10,8 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,6 +34,96 @@ class SessionListStateTest {
     }
 
     @Test
+    fun initialLoadUsesTwentyEntriesAndKeepsUnchangedCache() = runBlocking {
+        val first = managed("first")
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(listOf(first), total = 1, revision = "revision-a")
+        }
+        val state = SessionListState(port)
+
+        assertTrue(state.load())
+        val cachedEntries = state.entries
+
+        assertTrue(state.load(silent = true))
+
+        assertEquals(Triple(0, 20, null), port.pageRequests[0])
+        assertEquals(Triple(0, 20, null), port.pageRequests[1])
+        assertSame(cachedEntries, state.entries)
+    }
+
+    @Test
+    fun refreshingCachedPagesRequestsAndReplacesTheFullWindow() = runBlocking {
+        val firstPage = (1..20).map { managed("first-$it") }
+        val secondPage = (1..20).map { managed("second-$it") }
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(firstPage, total = 40, revision = "revision-a")
+            pages[20] = page(secondPage, offset = 20, total = 40, revision = "revision-a")
+        }
+        val state = SessionListState(port)
+
+        assertTrue(state.load())
+        assertTrue(state.loadMore())
+        val cachedEntries = state.entries
+
+        port.pages[0] = page(firstPage + secondPage, total = 40, revision = "revision-a")
+        assertTrue(state.load(silent = true))
+
+        assertEquals(Triple(0, 40, null), port.pageRequests.last())
+        assertSame(cachedEntries, state.entries)
+    }
+
+    @Test
+    fun refreshingCachedPagesUpdatesChangedEntries() = runBlocking {
+        val first = managed("first")
+        val updated = SessionListEntry.Managed(
+            key = "session-first",
+            sortTimestamp = 0,
+            session = session("first").copy(summary = "Updated"),
+        )
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(listOf(first), total = 1, revision = "revision-a")
+        }
+        val state = SessionListState(port)
+        assertTrue(state.load())
+        val cachedEntries = state.entries
+
+        port.pages[0] = page(listOf(updated), total = 1, revision = "revision-a")
+        assertTrue(state.load(silent = true))
+
+        assertNotSame(cachedEntries, state.entries)
+        assertEquals("Updated", (state.entries.single() as SessionListEntry.Managed).session.summary)
+    }
+
+    @Test
+    fun changedRevisionDropsCachedTailInsteadOfMixingPages() = runBlocking {
+        val first = managed("first")
+        val second = managed("second")
+        val third = managed("third")
+        val fourth = managed("fourth")
+        val refreshedFirst = managed("refreshed-first")
+        val refreshedSecond = managed("refreshed-second")
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(listOf(first, second), total = 4, revision = "revision-a")
+            pages[2] = page(listOf(third, fourth), offset = 2, total = 4, revision = "revision-a")
+        }
+        val state = SessionListState(port)
+        assertTrue(state.load())
+        assertTrue(state.loadMore())
+
+        port.pages[0] = page(
+            listOf(refreshedFirst, refreshedSecond),
+            total = 2,
+            revision = "revision-b",
+        )
+        assertTrue(state.load(silent = true))
+
+        assertEquals(
+            listOf("session-refreshed-first", "session-refreshed-second"),
+            state.entries.map { it.key },
+        )
+    }
+
+    @Test
     fun stalePageReloadsTheFirstPageInsteadOfAppending() = runBlocking {
         val first = managed("first")
         val refreshed = managed("refreshed")
@@ -47,7 +139,7 @@ class SessionListStateTest {
 
         assertTrue(state.loadMore())
         assertEquals(listOf("session-refreshed"), state.entries.map { it.key })
-        assertEquals(Triple(1, 6, "revision-a"), port.pageRequests[1])
+        assertEquals(Triple(1, 20, "revision-a"), port.pageRequests[1])
         assertNull(state.loadError)
     }
 
@@ -102,7 +194,7 @@ class SessionListStateTest {
         state.addCreated(first.session)
         assertTrue(state.loadMore())
 
-        assertEquals(Triple(1, 6, null), port.pageRequests.last())
+        assertEquals(Triple(1, 20, null), port.pageRequests.last())
         assertEquals(listOf("session-first", "recoverable-claude-history-2"), state.entries.map { it.key })
     }
 

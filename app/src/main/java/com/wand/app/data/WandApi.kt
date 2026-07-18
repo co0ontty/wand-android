@@ -10,6 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import com.wand.app.ui.parseIsoMillis
 
@@ -146,10 +147,14 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         )
     } catch (e: WandApiException) {
         if (e.status != 404) throw e
-        fetchLegacySessionList(offset, limit)
+        fetchLegacySessionList(offset, limit, revision)
     }
 
-    private suspend fun fetchLegacySessionList(offset: Int, limit: Int): SessionListPage {
+    private suspend fun fetchLegacySessionList(
+        offset: Int,
+        limit: Int,
+        requestedRevision: String?,
+    ): SessionListPage {
         val sessions = SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
         val claudeHistory = HistorySession.parseList(
             requestArray("GET", "/api/claude-history"),
@@ -184,12 +189,23 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
                     ))
                 }
         }.sortedWith(compareByDescending<SessionListEntry> { it.sortTimestamp }.thenBy { it.key })
+        val revision = legacySessionListRevision(entries)
+        if (offset > 0 && requestedRevision != revision) {
+            throw WandApiException(409, "会话列表已更新，请重新加载")
+        }
         val boundedOffset = offset.coerceIn(0, entries.size)
         return SessionListPage(
             entries = entries.drop(boundedOffset).take(limit),
             offset = boundedOffset,
             total = entries.size,
+            revision = revision,
         )
+    }
+
+    private fun legacySessionListRevision(entries: List<SessionListEntry>): String {
+        val content = entries.joinToString("\\n") { it.toString() }
+        val digest = MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     private fun historyProvider(provider: String?): String = if (provider == "codex") "codex" else "claude"

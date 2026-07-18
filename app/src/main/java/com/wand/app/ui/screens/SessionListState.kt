@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListEntry
+import com.wand.app.data.SessionListPage
 import com.wand.app.data.SessionListPort
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApiException
@@ -66,13 +67,10 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
 
     private suspend fun loadUnlocked(silent: Boolean): Boolean {
         if (!silent) loading = true
+        val refreshLimit = entries.size.coerceIn(PAGE_SIZE, MAX_REFRESH_LIMIT)
         return try {
-            val page = port.fetchSessionList(offset = 0, limit = PAGE_SIZE)
-            entries = page.entries
-            total = page.total
-            nextOffset = page.offset + page.entries.size
-            revision = page.revision
-            loadError = null
+            val page = port.fetchSessionList(offset = 0, limit = refreshLimit)
+            publishRefreshedPage(page, refreshLimit)
             true
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -96,11 +94,8 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
             )
             if (nextOffset != requestOffset || revision != requestRevision) return@withLock false
             val existingKeys = entries.mapTo(mutableSetOf()) { it.key }
-            entries += page.entries.filter { existingKeys.add(it.key) }
-            total = page.total
-            nextOffset = page.offset + page.entries.size
-            revision = page.revision
-            loadError = null
+            val updatedEntries = entries + page.entries.filter { existingKeys.add(it.key) }
+            publish(updatedEntries, page.total, page.offset + page.entries.size, page.revision)
             true
         } catch (e: WandApiException) {
             if (e.status == 409) loadUnlocked(silent = true) else {
@@ -114,6 +109,28 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
         } finally {
             loadingMore = false
         }
+    }
+
+    private fun publishRefreshedPage(page: SessionListPage, refreshLimit: Int) {
+        val retainTail = entries.size > refreshLimit &&
+            page.entries.size == refreshLimit &&
+            page.revision != null &&
+            page.revision == revision
+        val updatedEntries = if (retainTail) page.entries + entries.drop(refreshLimit) else page.entries
+        publish(updatedEntries, page.total, updatedEntries.size, page.revision)
+    }
+
+    private fun publish(
+        updatedEntries: List<SessionListEntry>,
+        updatedTotal: Int,
+        updatedNextOffset: Int,
+        updatedRevision: String?,
+    ) {
+        if (entries != updatedEntries) entries = updatedEntries
+        if (total != updatedTotal) total = updatedTotal
+        if (nextOffset != updatedNextOffset) nextOffset = updatedNextOffset
+        if (revision != updatedRevision) revision = updatedRevision
+        if (loadError != null) loadError = null
     }
 
     fun addCreated(snapshot: SessionSnapshot) {
@@ -211,7 +228,8 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
     }
 
     private companion object {
-        const val PAGE_SIZE = 6
+        const val PAGE_SIZE = 20
+        const val MAX_REFRESH_LIMIT = 200
         val HistorySession.key: String get() = "$apiProvider:$id"
     }
 }
