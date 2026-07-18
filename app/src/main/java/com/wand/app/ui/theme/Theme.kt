@@ -308,6 +308,10 @@ object WandMotion {
     fun <T> springSpec(): SpringSpec<T> =
         spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
 
+    /** 直接操作反馈：临界阻尼、无过冲，适合按压和非动量状态切换。 */
+    fun <T> settleSpringSpec(): SpringSpec<T> =
+        spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+
     /** 状态呼吸灯规格：tween(1200) 往返。配合 breathAlphaMin / breathScaleMax 使用。 */
     fun <T> breath(): InfiniteRepeatableSpec<T> =
         infiniteRepeatable(tween(breathDuration), RepeatMode.Reverse)

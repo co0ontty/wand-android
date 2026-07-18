@@ -11,6 +11,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import com.wand.app.ui.parseIsoMillis
 
 /** REST 错误：status 为 null 表示网络层失败。message 面向用户（中文）。 */
 class WandApiException(val status: Int?, message: String) : Exception(message)
@@ -134,7 +135,67 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     // MARK: - 会话
 
-    override suspend fun listSessions(): List<SessionSnapshot> =
+    override suspend fun fetchSessionList(
+        offset: Int,
+        limit: Int,
+        revision: String?,
+    ): SessionListPage = try {
+        val revisionQuery = revision?.let { "&revision=${encode(it)}" }.orEmpty()
+        SessionListPage.parse(
+            requestObject("GET", "/api/session-list?offset=$offset&limit=$limit$revisionQuery"),
+        )
+    } catch (e: WandApiException) {
+        if (e.status != 404) throw e
+        fetchLegacySessionList(offset, limit)
+    }
+
+    private suspend fun fetchLegacySessionList(offset: Int, limit: Int): SessionListPage {
+        val sessions = SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
+        val claudeHistory = HistorySession.parseList(
+            requestArray("GET", "/api/claude-history"),
+            provider = "claude",
+        )
+        val codexHistory = HistorySession.parseList(
+            requestArray("GET", "/api/codex-history"),
+            provider = "codex",
+        )
+        val managedHistory = sessions.mapNotNull { session ->
+            session.claudeSessionId?.let { id -> historyProvider(session.provider) to id }
+        }.toSet()
+        val entries = buildList {
+            sessions.forEach { session ->
+                add(SessionListEntry.Managed(
+                    key = "session-${session.id}",
+                    sortTimestamp = parseIsoMillis(session.startedAt) ?: 0L,
+                    session = session,
+                ))
+            }
+            (claudeHistory + codexHistory)
+                .filter { history ->
+                    (history.hasConversation ?: true) &&
+                        !(history.managedByWand ?: false) &&
+                        (history.apiProvider to history.claudeSessionId) !in managedHistory
+                }
+                .forEach { history ->
+                    add(SessionListEntry.Recoverable(
+                        key = "recoverable-${history.apiProvider}-${history.id}",
+                        sortTimestamp = history.mtimeMs?.toLong() ?: parseIsoMillis(history.timestamp) ?: 0L,
+                        history = history,
+                    ))
+                }
+        }.sortedWith(compareByDescending<SessionListEntry> { it.sortTimestamp }.thenBy { it.key })
+        val boundedOffset = offset.coerceIn(0, entries.size)
+        return SessionListPage(
+            entries = entries.drop(boundedOffset).take(limit),
+            offset = boundedOffset,
+            total = entries.size,
+        )
+    }
+
+    private fun historyProvider(provider: String?): String = if (provider == "codex") "codex" else "claude"
+
+    /** Returns all managed sessions for notification state, without session-list pagination. */
+    suspend fun listSessions(): List<SessionSnapshot> =
         SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
 
     suspend fun getSession(id: String): SessionSnapshot =
@@ -269,12 +330,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     }
 
     // MARK: - 历史会话
-
-    override suspend fun listClaudeHistory(): List<HistorySession> =
-        HistorySession.parseList(requestArray("GET", "/api/claude-history"), provider = "claude")
-
-    override suspend fun listCodexHistory(): List<HistorySession> =
-        HistorySession.parseList(requestArray("GET", "/api/codex-history"), provider = "codex")
 
     override suspend fun resumeHistory(history: HistorySession): SessionSnapshot {
         val provider = history.apiProvider

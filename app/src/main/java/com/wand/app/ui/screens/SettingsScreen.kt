@@ -186,7 +186,8 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             SettingsSection(
-                title = "偏好",
+                title = "外观与反馈",
+                description = "调整这台设备上的主题、声音和触感。",
             ) {
                 SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     AppearanceModePicker(
@@ -221,12 +222,14 @@ fun SettingsScreen(
 
             SettingsSection(
                 title = "语音输入",
+                description = "选择离线识别模型；缺少的模型会在选中后下载。",
             ) {
                 SttModelSection()
             }
 
             SettingsSection(
-                title = "服务器",
+                title = "连接",
+                description = "查看当前服务器，或切换到其他 Wand 服务。",
             ) {
                 SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     ServerConnectionRow(
@@ -250,7 +253,8 @@ fun SettingsScreen(
             }
 
             SettingsSection(
-                title = "运行与更新",
+                title = "应用与更新",
+                description = "控制后台运行方式和更新通道。",
             ) {
                 SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     SwitchRow(
@@ -286,7 +290,8 @@ fun SettingsScreen(
             }
 
             SettingsSection(
-                title = "其他",
+                title = "应用图标",
+                description = "选择显示在桌面上的 Wand 图标。",
             ) {
                 SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     AppIconPickerContent(
@@ -297,7 +302,14 @@ fun SettingsScreen(
                             settings.setAppIcon(icon)
                         },
                     )
-                    RowDivider()
+                }
+            }
+
+            SettingsSection(
+                title = "关于",
+                description = "版本与运行环境信息。",
+            ) {
+                SettingsCard(modifier = Modifier.fillMaxWidth()) {
                     SettingsAboutContent(
                         appVersion = settings.appVersion,
                         serverVersion = serverVersion,
@@ -417,6 +429,7 @@ private fun rememberSettingsMotionEnabled(): Boolean {
 @Composable
 private fun SettingsSection(
     title: String,
+    description: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
@@ -424,7 +437,7 @@ private fun SettingsSection(
             .fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SettingsChapterHeader(title = title)
+        SettingsChapterHeader(title = title, description = description)
         content()
     }
 }
@@ -432,19 +445,34 @@ private fun SettingsSection(
 @Composable
 private fun SettingsChapterHeader(
     title: String,
+    description: String? = null,
 ) {
-    Text(
-        title,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = WandColors.textSecondary,
-        letterSpacing = 0.2.sp,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 14.dp, bottom = 5.dp, start = 2.dp),
-    )
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(
+            title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textPrimary,
+            letterSpacing = 0.1.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (description != null) {
+            Text(
+                description,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = WandColors.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 @Composable

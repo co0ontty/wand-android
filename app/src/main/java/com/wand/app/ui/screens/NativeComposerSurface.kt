@@ -1,7 +1,6 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -41,32 +40,23 @@ fun NativeComposerSurface(
     collapsedTrailing: @Composable RowScope.() -> Unit = {},
     expandedControls: @Composable RowScope.(controlsCompact: Boolean) -> Unit = {},
 ) {
-    val cornerRadius by animateDpAsState(
-        targetValue = if (expanded) 18.dp else 24.dp,
+    // 聚焦是高频操作：移动端仍会展开控制行，但容器不再同时改变圆角、阴影
+    // 和材质厚度。这样键盘升起时只有一次清晰的结构变化，没有“整块缩放”错觉。
+    val composerShape = RoundedCornerShape(20.dp)
+    val outlineColor by animateColorAsState(
+        targetValue = if (focused) WandColors.focusRing else WandColors.border.copy(alpha = 0.42f),
         animationSpec = WandMotion.tweenFast(),
-        label = "composerCornerRadius",
+        label = "composerOutlineColor",
     )
-    val composerShape = RoundedCornerShape(cornerRadius)
     val darkGlass = isWandDarkTheme()
-    val composerGlass = if (expanded) {
-        WandGlass.regular.copy(
-            tintAlpha = if (darkGlass) 0.70f else 0.82f,
-            fallbackAlpha = if (darkGlass) 0.94f else 0.96f,
-            blurRadius = 12.dp,
-            refractionHeight = 0.dp,
-            refractionAmount = 0.dp,
-            shadowElevation = 0.dp,
-        )
-    } else {
-        WandGlass.regular.copy(
-            tintAlpha = if (darkGlass) 0.62f else 0.76f,
-            fallbackAlpha = if (darkGlass) 0.90f else 0.92f,
-            blurRadius = 10.dp,
-            refractionHeight = 0.dp,
-            refractionAmount = 0.dp,
-            shadowElevation = 0.dp,
-        )
-    }
+    val composerGlass = WandGlass.regular.copy(
+        tintAlpha = if (darkGlass) 0.68f else 0.80f,
+        fallbackAlpha = if (darkGlass) 0.93f else 0.95f,
+        blurRadius = 11.dp,
+        refractionHeight = 0.dp,
+        refractionAmount = 0.dp,
+        shadowElevation = 2.dp,
+    )
 
     BoxWithConstraints(
         modifier = modifier
@@ -84,17 +74,12 @@ fun NativeComposerSurface(
                     drawRim = false,
                 )
                 .border(
-                    width = if (focused) 1.dp else 0.5.dp,
-                    color = if (focused) {
-                        WandColors.brand.copy(alpha = 0.42f)
-                    } else {
-                        WandColors.border.copy(alpha = 0.32f)
-                    },
+                    width = if (focused) 1.25.dp else 0.75.dp,
+                    color = outlineColor,
                     shape = composerShape,
                 )
-                .animateContentSize(animationSpec = WandMotion.tweenNormal())
-                .padding(horizontal = if (expanded) 8.dp else 9.dp, vertical = if (expanded) 6.dp else 4.dp),
-            verticalArrangement = Arrangement.spacedBy(if (expanded) 8.dp else 0.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(if (expanded) 6.dp else 0.dp),
         ) {
             Row(
                 verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,

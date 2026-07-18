@@ -1,8 +1,11 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.HistorySession
+import com.wand.app.data.SessionListEntry
+import com.wand.app.data.SessionListPage
 import com.wand.app.data.SessionListPort
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.WandApiException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,186 +15,210 @@ import org.junit.Test
 
 class SessionListStateTest {
     @Test
-    fun managedHistoryFilteringKeepsProvidersIndependent() = runBlocking {
+    fun loadMoreAppendsTheNextPageWithoutDuplicates() = runBlocking {
+        val first = managed("first")
+        val second = recoverable("history-2")
         val port = FakeSessionListPort().apply {
-            sessions = mutableListOf(session(provider = "codex", providerSessionId = "shared-id"))
-            claudeHistory = mutableListOf(history(provider = "claude", id = "shared-id"))
-            codexHistory = mutableListOf(history(provider = "codex", id = "shared-id"))
+            pages[0] = page(listOf(first), total = 2)
+            pages[1] = page(listOf(first, second), offset = 1, total = 2)
         }
         val state = SessionListState(port)
 
         assertTrue(state.load())
+        assertTrue(state.loadMore())
 
-        assertEquals(listOf("claude"), state.visibleHistorySessions.map { it.apiProvider })
+        assertEquals(listOf("session-first", "recoverable-claude-history-2"), state.entries.map { it.key })
+        assertFalse(state.canLoadMore)
     }
 
     @Test
-    fun providerHistoryFailurePreservesTheLastSuccessfulProviderSnapshot() = runBlocking {
+    fun stalePageReloadsTheFirstPageInsteadOfAppending() = runBlocking {
+        val first = managed("first")
+        val refreshed = managed("refreshed")
         val port = FakeSessionListPort().apply {
-            claudeHistory = mutableListOf(history("claude", "claude-old"))
-            codexHistory = mutableListOf(history("codex", "codex-old"))
+            pages[0] = page(listOf(first), total = 2, revision = "revision-a")
+            pages[1] = page(listOf(recoverable("history")), offset = 1, total = 2, revision = "revision-a")
         }
         val state = SessionListState(port)
         assertTrue(state.load())
 
-        port.claudeHistory = mutableListOf(history("claude", "claude-new"))
-        port.failCodexHistory = true
-        assertTrue(state.load(silent = true))
+        port.pages[0] = page(listOf(refreshed), total = 3, revision = "revision-b")
+        port.pageFailures[1] = WandApiException(409, "会话列表已更新，请重新加载")
 
-        assertEquals(
-            setOf("claude-new", "codex-old"),
-            state.visibleHistorySessions.map { it.id }.toSet(),
-        )
-    }
-
-    @Test
-    fun restoringHistoryRemovesItAndPrependsTheManagedSession() = runBlocking {
-        val recoverable = history("claude", "history-1")
-        val resumed = session("claude", "history-1", id = "wand-resumed")
-        val port = FakeSessionListPort().apply {
-            claudeHistory = mutableListOf(recoverable)
-            resumeResults[recoverable.key] = resumed
-        }
-        val state = SessionListState(port)
-        state.load()
-
-        assertEquals(resumed, state.restore(recoverable))
-
-        assertEquals(listOf("wand-resumed"), state.sessions.map { it.id })
-        assertTrue(state.visibleHistorySessions.isEmpty())
-        assertFalse(state.isRestoring(recoverable))
+        assertTrue(state.loadMore())
+        assertEquals(listOf("session-refreshed"), state.entries.map { it.key })
+        assertEquals(Triple(1, 6, "revision-a"), port.pageRequests[1])
         assertNull(state.loadError)
     }
 
     @Test
-    fun restoreFailureKeepsHistoryAndExposesOneError() = runBlocking {
-        val recoverable = history("codex", "history-1")
+    fun refreshingFirstPageReplacesLoadedEntries() = runBlocking {
+        val older = managed("older")
+        val newest = managed("newest")
         val port = FakeSessionListPort().apply {
-            codexHistory = mutableListOf(recoverable)
-            failingResumes += recoverable.key
+            pages[0] = page(listOf(older), total = 2)
+            pages[1] = page(listOf(recoverable("history")), offset = 1, total = 2)
         }
         val state = SessionListState(port)
         state.load()
+        assertTrue(state.loadMore())
 
-        assertNull(state.restore(recoverable))
+        port.pages[0] = page(listOf(newest), total = 3)
+        assertTrue(state.load(silent = true))
 
-        assertEquals(listOf("history-1"), state.visibleHistorySessions.map { it.id })
-        assertEquals("restore failed", state.loadError)
-        assertFalse(state.isRestoring(recoverable))
-    }
-
-    @Test
-    fun batchDeleteGroupsHistoryByProvider() = runBlocking {
-        val managed = session("claude", "managed-history", id = "wand-1")
-        val claude = history("claude", "claude-1")
-        val codex = history("codex", "codex-1")
-        val port = FakeSessionListPort().apply {
-            sessions = mutableListOf(managed)
-            claudeHistory = mutableListOf(claude)
-            codexHistory = mutableListOf(codex)
-        }
-        val state = SessionListState(port)
-        state.load()
-
-        val entries = listOf(
-            SessionListEntry.Managed(managed),
-            SessionListEntry.Recoverable(claude),
-            SessionListEntry.Recoverable(codex),
-        )
-        assertTrue(state.delete(entries))
-
-        assertTrue(state.sessions.isEmpty())
-        assertTrue(state.visibleHistorySessions.isEmpty())
         assertEquals(
-            setOf("claude" to listOf("claude-1"), "codex" to listOf("codex-1")),
-            port.historyDeleteCalls.toSet(),
+            listOf("session-newest"),
+            state.entries.map { it.key },
         )
     }
 
     @Test
-    fun partialDeleteFailureReloadsServerTruth() = runBlocking {
-        val managed = session("claude", "managed-history", id = "wand-1")
-        val recoverable = history("codex", "codex-1")
+    fun failedRefreshPreservesLoadedEntries() = runBlocking {
+        val first = managed("first")
         val port = FakeSessionListPort().apply {
-            sessions = mutableListOf(managed)
-            codexHistory = mutableListOf(recoverable)
-            failingHistoryDeletes += "codex"
+            pages[0] = page(listOf(first), total = 1, revision = "revision-a")
         }
         val state = SessionListState(port)
-        state.load()
+        assertTrue(state.load())
 
-        assertFalse(
-            state.delete(
-                listOf(
-                    SessionListEntry.Managed(managed),
-                    SessionListEntry.Recoverable(recoverable),
-                ),
-            ),
-        )
+        port.pageFailures[0] = WandApiException(null, "响应解析失败")
 
-        // Managed delete succeeded remotely; Codex delete failed and is restored by reload.
-        assertTrue(state.sessions.isEmpty())
-        assertEquals(listOf("codex-1"), state.visibleHistorySessions.map { it.id })
+        assertFalse(state.load(silent = true))
+        assertEquals(listOf("session-first"), state.entries.map { it.key })
+        assertNull(state.loadError)
     }
 
-    private class FakeSessionListPort : SessionListPort {
-        var sessions = mutableListOf<SessionSnapshot>()
-        var claudeHistory = mutableListOf<HistorySession>()
-        var codexHistory = mutableListOf<HistorySession>()
-        var failCodexHistory = false
-        val resumeResults = mutableMapOf<String, SessionSnapshot>()
-        val failingResumes = mutableSetOf<String>()
-        val failingHistoryDeletes = mutableSetOf<String>()
-        val historyDeleteCalls = mutableListOf<Pair<String, List<String>>>()
-
-        override suspend fun listSessions(): List<SessionSnapshot> = sessions.toList()
-
-        override suspend fun listClaudeHistory(): List<HistorySession> = claudeHistory.toList()
-
-        override suspend fun listCodexHistory(): List<HistorySession> {
-            if (failCodexHistory) error("codex history failed")
-            return codexHistory.toList()
+    @Test
+    fun replacingLoadedSessionDoesNotAdvancePageCursor() = runBlocking {
+        val first = managed("first")
+        val second = recoverable("history-2")
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(listOf(first), total = 2)
+            pages[1] = page(listOf(second), offset = 1, total = 2)
         }
+        val state = SessionListState(port)
+        assertTrue(state.load())
 
-        override suspend fun resumeHistory(history: HistorySession): SessionSnapshot {
-            if (history.key in failingResumes) error("restore failed")
-            return resumeResults[history.key] ?: error("missing resume result")
-        }
+        state.addCreated(first.session)
+        assertTrue(state.loadMore())
 
-        override suspend fun deleteSession(id: String) {
-            sessions.removeAll { it.id == id }
-        }
-
-        override suspend fun deleteHistoryBatch(provider: String, ids: List<String>) {
-            historyDeleteCalls += provider to ids
-            if (provider in failingHistoryDeletes) error("history delete failed")
-            val target = if (provider == "codex") codexHistory else claudeHistory
-            target.removeAll { it.claudeSessionId in ids }
-        }
+        assertEquals(Triple(1, 6, null), port.pageRequests.last())
+        assertEquals(listOf("session-first", "recoverable-claude-history-2"), state.entries.map { it.key })
     }
 
-    private companion object {
-        val HistorySession.key: String get() = "$apiProvider:$id"
-
-        fun history(provider: String, id: String) = HistorySession(
-            claudeSessionId = id,
+    @Test
+    fun restoringHistoryReplacesItWithManagedSession() = runBlocking {
+        val recoverable = HistorySession(
+            claudeSessionId = "history-1",
             cwd = "/tmp/project",
             firstUserMessage = "Question",
             timestamp = null,
             mtimeMs = null,
             hasConversation = true,
             managedByWand = false,
-            provider = provider,
+            provider = "claude",
+        )
+        val resumed = session("wand-resumed", "history-1")
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(listOf(SessionListEntry.Recoverable(
+                key = "recoverable-claude-history-1",
+                sortTimestamp = 0,
+                history = recoverable,
+            )), total = 1)
+            resumeResults["claude:history-1"] = resumed
+        }
+        val state = SessionListState(port)
+        state.load()
+        port.pages[0] = page(listOf(SessionListEntry.Managed(
+            key = "session-wand-resumed",
+            sortTimestamp = 0,
+            session = resumed,
+        )), total = 1)
+
+        assertEquals("wand-resumed", state.restore(recoverable)?.id)
+        assertEquals(listOf("session-wand-resumed"), state.entries.map { it.key })
+        assertFalse(state.isRestoring(recoverable))
+        assertNull(state.loadError)
+    }
+
+    @Test
+    fun batchDeleteGroupsHistoryByProvider() = runBlocking {
+        val managed = managed("wand-1")
+        val claude = recoverable("claude-1")
+        val codex = recoverable("codex-1", provider = "codex")
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(listOf(managed, claude, codex), total = 3)
+        }
+        val state = SessionListState(port)
+        state.load()
+
+        assertTrue(state.delete(state.entries))
+        assertEquals(
+            setOf("claude" to listOf("claude-1"), "codex" to listOf("codex-1")),
+            port.historyDeleteCalls.toSet(),
+        )
+    }
+
+    private class FakeSessionListPort : SessionListPort {
+        val pages = mutableMapOf<Int, SessionListPage>()
+        val pageFailures = mutableMapOf<Int, Exception>()
+        val pageRequests = mutableListOf<Triple<Int, Int, String?>>()
+        val resumeResults = mutableMapOf<String, SessionSnapshot>()
+        val historyDeleteCalls = mutableListOf<Pair<String, List<String>>>()
+
+        override suspend fun fetchSessionList(
+            offset: Int,
+            limit: Int,
+            revision: String?,
+        ): SessionListPage {
+            pageRequests += Triple(offset, limit, revision)
+            pageFailures.remove(offset)?.let { throw it }
+            return pages[offset] ?: page(emptyList(), offset, total = 0)
+        }
+
+        override suspend fun resumeHistory(history: HistorySession): SessionSnapshot =
+            resumeResults["${history.apiProvider}:${history.id}"] ?: error("missing resume result")
+
+        override suspend fun deleteSession(id: String) = Unit
+
+        override suspend fun deleteHistoryBatch(provider: String, ids: List<String>) {
+            historyDeleteCalls += provider to ids
+        }
+    }
+
+    private companion object {
+        fun page(
+            entries: List<SessionListEntry>,
+            offset: Int = 0,
+            total: Int,
+            revision: String? = null,
+        ) = SessionListPage(entries, offset, total, revision)
+
+        fun managed(id: String) = SessionListEntry.Managed(
+            key = "session-$id",
+            sortTimestamp = 0,
+            session = session(id),
         )
 
-        fun session(
-            provider: String,
-            providerSessionId: String,
-            id: String = "wand-$provider",
-        ) = SessionSnapshot(
+        fun recoverable(id: String, provider: String = "claude") = SessionListEntry.Recoverable(
+            key = "recoverable-$provider-$id",
+            sortTimestamp = 0,
+            history = HistorySession(
+                claudeSessionId = id,
+                cwd = "/tmp/project",
+                firstUserMessage = "Question",
+                timestamp = null,
+                mtimeMs = null,
+                hasConversation = true,
+                managedByWand = false,
+                provider = provider,
+            ),
+        )
+
+        fun session(id: String, providerSessionId: String? = null) = SessionSnapshot(
             id = id,
             sessionKind = "structured",
-            provider = provider,
+            provider = "claude",
             runner = null,
             command = null,
             cwd = "/tmp/project",

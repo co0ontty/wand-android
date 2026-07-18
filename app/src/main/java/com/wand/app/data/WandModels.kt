@@ -449,7 +449,74 @@ data class SessionSnapshot(
     }
 }
 
-// MARK: - 历史会话
+// MARK: - 会话列表
+
+/** 服务端按时间混排的托管/可恢复会话分页。 */
+data class SessionListPage(
+    val entries: List<SessionListEntry>,
+    val offset: Int,
+    val total: Int,
+    val revision: String? = null,
+) {
+    companion object {
+        fun parse(o: JSONObject): SessionListPage {
+            val rawEntries = o.arr("entries") ?: throw IllegalArgumentException("响应缺少 entries")
+            val entries = SessionListEntry.parseList(rawEntries)
+            if (entries.size != rawEntries.length() || entries.map { it.key }.toSet().size != entries.size) {
+                throw IllegalArgumentException("响应包含无效会话条目")
+            }
+            val offset = o.int("offset") ?: throw IllegalArgumentException("响应缺少 offset")
+            val total = o.int("total") ?: throw IllegalArgumentException("响应缺少 total")
+            val revision = o.str("revision")?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("响应缺少 revision")
+            require(offset >= 0 && total >= offset && entries.size <= total - offset) {
+                "响应分页范围无效"
+            }
+            return SessionListPage(entries, offset, total, revision)
+        }
+    }
+}
+
+sealed interface SessionListEntry {
+    val key: String
+    val sortTimestamp: Long
+
+    data class Managed(
+        override val key: String,
+        override val sortTimestamp: Long,
+        val session: SessionSnapshot,
+    ) : SessionListEntry
+
+    data class Recoverable(
+        override val key: String,
+        override val sortTimestamp: Long,
+        val history: HistorySession,
+    ) : SessionListEntry
+
+    companion object {
+        fun parseList(arr: JSONArray): List<SessionListEntry> = arr.parseEach(::parse)
+
+        private fun parse(o: JSONObject): SessionListEntry? {
+            val key = o.str("key")?.takeIf { it.isNotBlank() } ?: return null
+            val sortTimestamp = o.dbl("sortTimestamp")?.toLong() ?: return null
+            return when (o.str("type")) {
+                "managed" -> {
+                    val session = o.obj("session")?.let(SessionSnapshot::parse)
+                        ?.takeIf { it.id.isNotBlank() }
+                        ?: return null
+                    Managed(key, sortTimestamp, session)
+                }
+                "recoverable" -> {
+                    val history = o.obj("history")?.let(HistorySession::parse)
+                        ?.takeIf { it.id.isNotBlank() }
+                        ?: return null
+                    Recoverable(key, sortTimestamp, history)
+                }
+                else -> null
+            }
+        }
+    }
+}
 
 /** 从 Claude/Codex 本地历史文件扫描出的会话。两个 provider 的接口形状一致（对称 iOS HistorySession）。 */
 data class HistorySession(
@@ -468,22 +535,22 @@ data class HistorySession(
     val apiProvider: String get() = if (provider == "codex") "codex" else "claude"
 
     companion object {
-        fun parseList(arr: JSONArray, provider: String): List<HistorySession> {
-            val p = provider
-            return arr.parseEach { o ->
-                val sid = o.str("claudeSessionId") ?: return@parseEach null
-                HistorySession(
-                    claudeSessionId = sid,
-                    cwd = o.str("cwd") ?: "",
-                    firstUserMessage = o.str("firstUserMessage") ?: "",
-                    timestamp = o.str("timestamp"),
-                    mtimeMs = o.dbl("mtimeMs"),
-                    hasConversation = o.bool("hasConversation"),
-                    managedByWand = o.bool("managedByWand"),
-                    provider = o.str("provider") ?: p,
-                )
-            }
+        fun parse(o: JSONObject): HistorySession? {
+            val sid = o.str("claudeSessionId") ?: return null
+            return HistorySession(
+                claudeSessionId = sid,
+                cwd = o.str("cwd") ?: "",
+                firstUserMessage = o.str("firstUserMessage") ?: "",
+                timestamp = o.str("timestamp"),
+                mtimeMs = o.dbl("mtimeMs"),
+                hasConversation = o.bool("hasConversation"),
+                managedByWand = o.bool("managedByWand"),
+                provider = o.str("provider"),
+            )
         }
+
+        fun parseList(arr: JSONArray, provider: String): List<HistorySession> =
+            arr.parseEach { o -> parse(o)?.copy(provider = o.str("provider") ?: provider) }
     }
 }
 

@@ -59,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
@@ -88,6 +89,7 @@ import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.wandInputSurface
 import com.wand.app.ui.thinkingEffortOptions
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -783,7 +785,8 @@ private fun CwdCard(
     onBrowse: () -> Unit,
     onPickRecent: (String) -> Unit,
 ) {
-    Column(modifier = Modifier.selectCard(selected = false)) {
+    var focused by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.wandInputSurface(focused = focused)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicTextField(
                 value = cwd,
@@ -811,6 +814,7 @@ private fun CwdCard(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp)
+                    .onFocusChanged { focused = it.isFocused }
                     .padding(start = 12.dp, top = 11.dp, bottom = 11.dp),
             )
             IconButton(onClick = onBrowse, modifier = Modifier.size(48.dp)) {
@@ -874,6 +878,7 @@ private fun CwdCard(
 /** 首条消息输入卡（对齐 iOS firstMessageCard）：纯色平面卡内的无边框输入。 */
 @Composable
 private fun FirstMessageCard(value: String, onValueChange: (String) -> Unit) {
+    var focused by remember { mutableStateOf(false) }
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -886,7 +891,7 @@ private fun FirstMessageCard(value: String, onValueChange: (String) -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 96.dp)
-                    .selectCard(selected = false)
+                    .wandInputSurface(focused = focused)
                     .padding(horizontal = 12.dp, vertical = 12.dp),
             ) {
                 if (value.isEmpty()) {
@@ -895,7 +900,9 @@ private fun FirstMessageCard(value: String, onValueChange: (String) -> Unit) {
                 inner()
             }
         },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused },
     )
 }
 

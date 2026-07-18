@@ -88,6 +88,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -586,9 +587,12 @@ private fun FormPanel(
             minLines = 2,
             maxLines = 4,
             enabled = !qc.submitting,
-            shape = RoundedCornerShape(12.dp),
+            textStyle = TextStyle(fontSize = 15.sp, color = WandColors.textPrimary),
+            shape = RoundedCornerShape(14.dp),
             colors = quickCommitFieldColors(),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .sizeIn(minHeight = 56.dp),
         )
     }
 
@@ -604,9 +608,16 @@ private fun FormPanel(
             placeholder = { Text("可选 tag", fontSize = 14.sp) },
             singleLine = true,
             enabled = !qc.submitting,
-            shape = RoundedCornerShape(12.dp),
+            textStyle = TextStyle(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 14.sp,
+                color = WandColors.textPrimary,
+            ),
+            shape = RoundedCornerShape(14.dp),
             colors = quickCommitFieldColors(),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .sizeIn(minHeight = 48.dp),
         )
     }
 
@@ -701,10 +712,16 @@ private fun PairOldLine(label: String, old: String) {
 
 @Composable
 private fun quickCommitFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = MaterialTheme.colorScheme.primary,
-    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-    focusedContainerColor = MaterialTheme.colorScheme.surface,
-    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+    focusedTextColor = WandColors.textPrimary,
+    unfocusedTextColor = WandColors.textPrimary,
+    focusedBorderColor = WandColors.focusRing,
+    unfocusedBorderColor = WandColors.borderStrong.copy(alpha = 0.72f),
+    focusedContainerColor = WandColors.surface,
+    unfocusedContainerColor = WandColors.surface.copy(alpha = 0.90f),
+    cursorColor = WandColors.brand,
+    focusedPlaceholderColor = WandColors.textMuted,
+    unfocusedPlaceholderColor = WandColors.textMuted,
+    disabledContainerColor = WandColors.surface.copy(alpha = 0.56f),
 )
 
 // MARK: - 结果面板

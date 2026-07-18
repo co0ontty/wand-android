@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.HistorySession
+import com.wand.app.data.SessionListEntry
 import com.wand.app.data.WandApi
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
@@ -106,7 +107,7 @@ fun WandApp(
                 WandAuth.loginWithToken(api.baseUrl, api.token)
             } else {
                 // 裸地址连接（无 token）：直接试列表，401 时引导重新连接。
-                api.listSessions()
+                api.fetchSessionList(offset = 0, limit = 1, revision = null)
             }
             onAuthenticated()
             AuthPhase.Ready
@@ -514,9 +515,7 @@ private fun CollapsedSessionRail(
     onNewSession: () -> Unit,
     onExpandSidebar: () -> Unit,
 ) {
-    val entries = remember(listState.sessions, listState.historySessions) {
-        collapsedRailEntries(listState)
-    }
+    val entries = listState.entries
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -559,22 +558,22 @@ private fun CollapsedSessionRail(
             ) {
                 itemsIndexed(
                     items = entries,
-                    key = { _, entry ->
+                    key = { _, entry -> entry.key },
+                    contentType = { _, entry ->
                         when (entry) {
-                            is CollapsedRailEntry.Managed -> "managed-${entry.session.id}"
-                            is CollapsedRailEntry.Recoverable ->
-                                "recoverable-${entry.history.apiProvider}-${entry.history.id}"
+                            is SessionListEntry.Managed -> "managed"
+                            is SessionListEntry.Recoverable -> "recoverable"
                         }
                     },
                 ) { index, entry ->
                     when (entry) {
-                        is CollapsedRailEntry.Managed -> CollapsedSessionTile(
+                        is SessionListEntry.Managed -> CollapsedSessionTile(
                             session = entry.session,
                             index = index + 1,
                             selected = entry.session.id == selectedSessionId,
                             onClick = { onOpenSession(entry.session) },
                         )
-                        is CollapsedRailEntry.Recoverable -> CollapsedRecoverableSessionTile(
+                        is SessionListEntry.Recoverable -> CollapsedRecoverableSessionTile(
                             history = entry.history,
                             index = index + 1,
                             loading = listState.isRestoring(entry.history),
@@ -587,32 +586,6 @@ private fun CollapsedSessionRail(
         Spacer(modifier = Modifier.height(10.dp))
         CollapsedNewSessionTile(onClick = onNewSession)
     }
-}
-
-private sealed class CollapsedRailEntry {
-    abstract val sortKey: Long
-
-    data class Managed(
-        val session: SessionSnapshot,
-        override val sortKey: Long,
-    ) : CollapsedRailEntry()
-
-    data class Recoverable(
-        val history: HistorySession,
-        override val sortKey: Long,
-    ) : CollapsedRailEntry()
-}
-
-private fun collapsedRailEntries(listState: SessionListState): List<CollapsedRailEntry> {
-    return buildList {
-        listState.visibleSessions.forEach { session ->
-            add(CollapsedRailEntry.Managed(session, parseIsoMillis(session.startedAt) ?: 0L))
-        }
-        listState.visibleHistorySessions.forEach { history ->
-            val sortKey = history.mtimeMs?.toLong() ?: parseIsoMillis(history.timestamp) ?: 0L
-            add(CollapsedRailEntry.Recoverable(history, sortKey))
-        }
-    }.sortedByDescending { it.sortKey }
 }
 
 @Composable

@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -80,12 +81,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -140,7 +143,6 @@ import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.ToolbarIconButton
-import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
@@ -818,50 +820,65 @@ internal fun shouldCollapseReply(turnIndex: Int, lastUserTurnIndex: Int): Boolea
 /** 空结构化会话的居中启动卡：首条消息前显示模型/思考深度，发送后自然消失。 */
 @Composable
 private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
+    // apple-design §7/§16 Familiarity & Spatial consistency:
+    // 头部品牌标随 provider 切换（Claude/Codex/Grok/OpenCode/Qoder 各自的 logo + 列表同款 accent 色），
+    // 让用户从会话列表进入聊天页时视觉连续——之前的 WandBrandMark 对所有 provider 都显示同一星芒标，
+    // 与标题文字（如 "Codex"）对不上，是 logo 对应关系的根因。
+    val provider = store.snapshot?.provider
+    val accent = if (provider == "codex") WandColors.info else WandColors.brand
+    val accentSoft = if (provider == "codex") WandColors.infoSoft else WandColors.brandSoft
     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            // 光学中心略高于几何中心；避免空页在大屏上读起来“下坠”。
+            verticalArrangement = Arrangement.spacedBy(24.dp),
             modifier = Modifier
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 360.dp)
-                .glassCard(RoundedCornerShape(24.dp))
-                .padding(horizontal = 20.dp, vertical = 24.dp),
+                .offset(y = (-28).dp),
         ) {
-            // 标记 + 标题 + 副标题收成一个更紧凑的头部单元（彼此间距小），
-            // 与下方设置组之间留出更大的呼吸位，强化「品牌头 → 操作区」的层次。
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(11.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
             ) {
-                WandBrandMark(size = 56)
+                ProviderBrandMark(
+                    provider = provider,
+                    accent = accent,
+                    accentSoft = accentSoft,
+                    size = 52,
+                )
+                // apple-design §15 Typography：大字号配负 tracking、SemiBold 而非 Bold，
+                // 让 provider 名既有存在感又不喧宾夺主。
                 Text(
                     store.snapshot?.providerLabel ?: "结构化会话",
-                    fontSize = 19.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = (-0.35).sp,
                     color = WandColors.textPrimary,
                     textAlign = TextAlign.Center,
                 )
                 Text(
                     "输入消息，让它帮你完成任务",
-                    fontSize = 12.5.sp,
+                    fontSize = 13.5.sp,
                     lineHeight = 19.sp,
                     color = WandColors.textSecondary,
                     textAlign = TextAlign.Center,
                 )
             }
             if (showSettings) {
+                // apple-design §12 Materials：欢迎区直接落在背景上，只让可操作的设置组成为唯一浮层。
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
-                        .border(0.55.dp, WandColors.border.copy(alpha = 0.48f), RoundedCornerShape(16.dp)),
+                        .glassCard(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(20.dp)),
                 ) {
                     LaunchSettingPicker(
                         icon = WandIcons.tune,
                         label = "模型",
-                        value = modelDisplayLabel(store, store.selectedModel),
+                        value = launchModelDisplayLabel(store, store.selectedModel),
+                        accent = accent,
+                        accentSoft = accentSoft,
                         options = buildList {
                             add(null to "默认 · ${modelDisplayLabel(store, null)}")
                             store.availableModels
@@ -872,14 +889,16 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         onSelect = store::setModel,
                     )
                     HorizontalDivider(
-                        thickness = 1.dp,
-                        color = WandColors.border,
-                        modifier = Modifier.padding(start = 60.dp),
+                        thickness = 0.5.dp,
+                        color = WandColors.border.copy(alpha = 0.62f),
+                        modifier = Modifier.padding(start = 68.dp),
                     )
                     LaunchSettingPicker(
                         icon = WandIcons.thinking,
                         label = "思考深度",
                         value = thinkingLabel(store, store.thinkingEffort),
+                        accent = accent,
+                        accentSoft = accentSoft,
                         options = thinkingLevels(store).map { it.id to it.menuLabel },
                         selected = store.thinkingEffort,
                         onSelect = { it?.let(store::chooseThinkingEffort) },
@@ -890,55 +909,109 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
     }
 }
 
+/**
+ * Provider 品牌标：弱色悬浮圆角方块 + provider 自家 logo。
+ * - 单色 provider（claude/codex/grok）用列表同款 accent 色着色，保证跨页面一致；
+ * - 多色 provider（opencode/qoder）走 [BrandLogos.tintForProvider] 的 Unspecified 通道，保留官方配色。
+ * 与 [com.wand.app.ui.components.WandBrandMark] 同尺寸/同圆角比例，但内容随 provider 变化。
+ * apple-design §12：弱色表面 + 轻阴影让标记与背景分层，material weight 编码层级。
+ */
+@Composable
+private fun ProviderBrandMark(
+    provider: String?,
+    accent: Color,
+    accentSoft: Color,
+    size: Int = 52,
+) {
+    val corner = RoundedCornerShape((size * 0.26f).dp)
+    // 部分 Android GPU 会把半透明容器中 Icon 的离屏缓冲区以白色显露，
+    // 正好形成一个 logo 尺寸的方块。预先与页面底色合成不透明弱色底可消除该分层瑕疵。
+    val stableBackground = accentSoft.compositeOver(WandColors.bgPrimary)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(size.dp)
+            .shadow(elevation = (size * 0.06f).dp, shape = corner)
+            .clip(corner)
+            .background(stableBackground)
+            .border(0.5.dp, accent.copy(alpha = 0.14f), corner),
+    ) {
+        Icon(
+            painter = BrandLogos.painterForProvider(provider),
+            contentDescription = null,
+            tint = BrandLogos.tintForProvider(provider, accent),
+            modifier = Modifier.size((size * 0.5f).dp),
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LaunchSettingPicker(
     icon: ImageVector,
     label: String,
     value: String,
+    accent: Color,
+    accentSoft: Color,
     options: List<Pair<String?, String>>,
     selected: String?,
     onSelect: (String?) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.985f else 1f,
+        animationSpec = WandMotion.settleSpringSpec(),
+        label = "launch-setting-press",
+    )
     Box {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 48.dp)
+                .heightIn(min = 66.dp)
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                }
+                .background(if (pressed) accentSoft else Color.Transparent)
                 .semantics(mergeDescendants = true) {
                     stateDescription = "当前为$value"
                 }
-                .clickable(role = Role.DropdownList) { expanded = true }
-                .padding(horizontal = 14.dp, vertical = 13.dp),
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current,
+                    role = Role.DropdownList,
+                ) { expanded = true }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
             // 左侧品牌色图标片，让两行各有清晰的身份（模型 / 思考深度）。
             Box(
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(WandColors.brandSoft),
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accentSoft),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     icon,
                     contentDescription = null,
-                    tint = WandColors.brand,
+                    tint = accent,
                     modifier = Modifier.size(18.dp),
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     label,
-                    fontSize = 11.sp,
+                    fontSize = 11.5.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textMuted,
                 )
                 Text(
                     value,
-                    fontSize = 14.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
                     color = WandColors.textPrimary,
                     maxLines = 1,
@@ -948,8 +1021,8 @@ private fun LaunchSettingPicker(
             Icon(
                 WandIcons.chevronRight,
                 contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(18.dp),
+                tint = WandColors.textMuted.copy(alpha = 0.8f),
+                modifier = Modifier.size(16.dp),
             )
         }
         if (expanded) {
@@ -968,7 +1041,7 @@ private fun LaunchSettingPicker(
                         Text(
                             "选择$label",
                             fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = WandColors.textPrimary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
                         )
@@ -982,7 +1055,7 @@ private fun LaunchSettingPicker(
                                     .heightIn(min = 48.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(
-                                        if (isSelected) WandColors.brandSoft else Color.Transparent,
+                                        if (isSelected) accentSoft else Color.Transparent,
                                     )
                                     .selectable(
                                         selected = isSelected,
@@ -997,14 +1070,14 @@ private fun LaunchSettingPicker(
                                     optionLabel,
                                     fontSize = 14.sp,
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (isSelected) WandColors.brand else WandColors.textPrimary,
+                                    color = if (isSelected) accent else WandColors.textPrimary,
                                     modifier = Modifier.weight(1f),
                                 )
                                 if (isSelected) {
                                     Icon(
                                         WandIcons.check,
                                         contentDescription = null,
-                                        tint = WandColors.brand,
+                                        tint = accent,
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }
@@ -1041,6 +1114,20 @@ private fun modelDisplayLabel(store: ChatStore, id: String?): String {
         return store.availableModels.firstOrNull { it.id == "default" }?.label ?: "跟随服务端默认"
     }
     return store.availableModels.firstOrNull { it.id == effectiveId }?.label ?: effectiveId
+}
+
+/** 启动卡空间宝贵；当服务端 label 已是“人读名 · id”时去掉重复 id。 */
+private fun launchModelDisplayLabel(store: ChatStore, id: String?): String {
+    val effectiveId = id?.takeIf { it != "default" } ?: store.defaultModel
+    return compactModelDisplayLabel(modelDisplayLabel(store, id), effectiveId)
+}
+
+internal fun compactModelDisplayLabel(label: String, modelId: String?): String {
+    val id = modelId?.trim()?.takeIf { it.isNotEmpty() } ?: return label
+    val separator = label.lastIndexOf(" · ")
+    if (separator <= 0) return label
+    val suffix = label.substring(separator + 3).trim()
+    return if (suffix.equals(id, ignoreCase = true)) label.substring(0, separator).trimEnd() else label
 }
 
 /** 执行模式档位（对齐 iOS sessionModes / NewSessionView）。codex 锁 full-access。 */

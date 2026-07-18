@@ -47,18 +47,17 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -68,8 +67,6 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -84,6 +81,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.HistorySession
+import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.ui.parseIsoMillis
 import com.wand.app.ui.components.BrandLogos
@@ -136,8 +134,6 @@ fun SessionListScreen(
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     // 同一时间只保留一条侧滑操作，避免多个红色操作区悬在列表里造成状态混乱。
     var revealedEntryKey by remember { mutableStateOf<String?>(null) }
-    // 多选拖拽：行 id → 窗口坐标 bounds；拖动经过的行连续加入选择（对齐 iOS 范围选择）。
-    val rowBounds = remember { mutableMapOf<String, Rect>() }
     var dragAnchorId by remember { mutableStateOf<String?>(null) }
     var dragBaseIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
@@ -147,14 +143,29 @@ fun SessionListScreen(
         state.scrollState.scrollToItem(0)
     }
 
-    fun endSelection() {
-        isSelecting = false
-        selectedIds = emptySet()
+    fun clearDragSelection() {
         dragAnchorId = null
         dragBaseIds = emptySet()
     }
 
-    val visibleEntries = state.visibleEntries
+    fun endSelection() {
+        isSelecting = false
+        selectedIds = emptySet()
+        clearDragSelection()
+    }
+
+    val visibleEntries = state.entries
+    fun nearestVisibleEntryIndex(pointerY: Float): Int? {
+        return state.scrollState.layoutInfo.visibleItemsInfo
+            .filter { it.index in visibleEntries.indices }
+            .minByOrNull { item ->
+                kotlin.math.abs(item.offset + item.size / 2f - pointerY)
+            }
+            ?.index
+    }
+    val entryIndexByKey = remember(visibleEntries) {
+        visibleEntries.mapIndexed { index, entry -> entry.key to index }.toMap()
+    }
     val selectableKeys = visibleEntries.map { it.key }.toSet()
     LaunchedEffect(selectableKeys, isSelecting) {
         if (isSelecting) selectedIds = selectedIds.intersect(selectableKeys)
@@ -163,6 +174,17 @@ fun SessionListScreen(
     LaunchedEffect(state.scrollState.isScrollInProgress) {
         // 开始纵向浏览时收起操作区，避免删除按钮跟着列表长距离滚动。
         if (state.scrollState.isScrollInProgress) revealedEntryKey = null
+    }
+    LaunchedEffect(state.scrollState, visibleEntries.size, state.canLoadMore) {
+        snapshotFlow {
+            val lastVisibleIndex = state.scrollState.layoutInfo.visibleItemsInfo
+                .maxOfOrNull { it.index } ?: -1
+            state.scrollState.isScrollInProgress &&
+                state.canLoadMore &&
+                lastVisibleIndex >= visibleEntries.lastIndex - AUTO_LOAD_REMAINING_ITEMS
+        }.collect { shouldLoadMore ->
+            if (shouldLoadMore) state.loadMore()
+        }
     }
     LaunchedEffect(state.loadError, visibleEntries.isNotEmpty()) {
         val message = state.loadError ?: return@LaunchedEffect
@@ -238,21 +260,20 @@ fun SessionListScreen(
         ) {
             AmbientBackground(Modifier.fillMaxSize())
             when {
-                state.loading && state.sessions.isEmpty() && state.historySessions.isEmpty() -> {
+                state.loading && visibleEntries.isEmpty() -> {
                     LoadingState(
                         modifier = Modifier.padding(padding),
                         text = "正在加载会话…",
                     )
                 }
-                state.loadError != null && state.sessions.isEmpty() &&
-                    state.historySessions.isEmpty() -> {
+                state.loadError != null && visibleEntries.isEmpty() -> {
                     ErrorState(
                         message = state.loadError ?: "加载失败",
                         onRetry = { scope.launch { state.load() } },
                         modifier = Modifier.padding(padding),
                     )
                 }
-                state.visibleEntries.isEmpty() -> {
+                visibleEntries.isEmpty() -> {
                     EmptyState(
                         icon = WandIcons.sparkle,
                         title = "还没有会话",
@@ -297,49 +318,50 @@ fun SessionListScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(if (compactLayout) 6.dp else 8.dp),
                         ) {
-                            items(visibleEntries, key = { it.key }) { entry ->
-                                DisposableEffect(entry.key) {
-                                    onDispose { rowBounds.remove(entry.key) }
-                                }
-                                val rowModifier = Modifier
-                                    .animateItem()
-                                    .onGloballyPositioned { coords ->
-                                        rowBounds[entry.key] = coords.boundsInWindow()
+                            items(
+                                items = visibleEntries,
+                                key = { it.key },
+                                contentType = { entry ->
+                                    when (entry) {
+                                        is SessionListEntry.Managed -> "managed"
+                                        is SessionListEntry.Recoverable -> "recoverable"
                                     }
-                                    // 所有可见条目（Wand 会话、Claude/Codex 历史）都支持长按进入多选，
-                                    // 并可在混排列表中连续拖选。
-                                    .pointerInput(entry.key) {
+                                },
+                            ) { entry ->
+                                val rowModifier = Modifier
+                                    .pointerInput(entry.key, entryIndexByKey) {
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = {
                                                 if (dragAnchorId == null) {
-                                                    if (!isSelecting) isSelecting = true
+                                                    isSelecting = true
                                                     dragAnchorId = entry.key
                                                     dragBaseIds = selectedIds
                                                     selectedIds = selectedIds + entry.key
                                                 }
                                             },
                                             onDrag = { change, _ ->
-                                                val anchor = dragAnchorId ?: return@detectDragGesturesAfterLongPress
-                                                val originY = rowBounds[entry.key]?.top
+                                                val anchor = dragAnchorId
                                                     ?: return@detectDragGesturesAfterLongPress
-                                                val pointerY = originY + change.position.y
-                                                val anchorIndex = visibleEntries.indexOfFirst { it.key == anchor }
-                                                val targetKey = nearestRowId(rowBounds, pointerY)
-                                                val targetIndex = visibleEntries.indexOfFirst { it.key == targetKey }
-                                                if (anchorIndex >= 0 && targetIndex >= 0) {
-                                                    val range = (minOf(anchorIndex, targetIndex)..maxOf(anchorIndex, targetIndex))
-                                                        .map { visibleEntries[it].key }
-                                                    selectedIds = dragBaseIds + range
+                                                val anchorIndex = entryIndexByKey[anchor]
+                                                val sourceIndex = entryIndexByKey[entry.key]
+                                                val sourceOffset = sourceIndex?.let { index ->
+                                                    state.scrollState.layoutInfo.visibleItemsInfo
+                                                        .firstOrNull { it.index == index }
+                                                        ?.offset
+                                                }
+                                                val targetIndex = sourceOffset?.let { offset ->
+                                                    nearestVisibleEntryIndex(offset + change.position.y)
+                                                }
+                                                if (anchorIndex != null && targetIndex != null) {
+                                                    selectedIds = dragBaseIds +
+                                                        visibleEntries.subList(
+                                                            minOf(anchorIndex, targetIndex),
+                                                            maxOf(anchorIndex, targetIndex) + 1,
+                                                        ).map { it.key }
                                                 }
                                             },
-                                            onDragEnd = {
-                                                dragAnchorId = null
-                                                dragBaseIds = emptySet()
-                                            },
-                                            onDragCancel = {
-                                                dragAnchorId = null
-                                                dragBaseIds = emptySet()
-                                            },
+                                            onDragEnd = ::clearDragSelection,
+                                            onDragCancel = ::clearDragSelection,
                                         )
                                     }
                                 when (entry) {
@@ -397,7 +419,7 @@ fun SessionListScreen(
                                         }
                                     }
                                     is SessionListEntry.Recoverable -> {
-                                        val session = entry.session
+                                        val session = entry.history
                                         if (isSelecting) {
                                             Box(modifier = rowModifier) {
                                                 HistorySessionCard(
@@ -454,6 +476,29 @@ fun SessionListScreen(
                                                 )
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            if (state.loadingMore) {
+                                item(key = "session-list-loading-more", contentType = "loading-more") {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = WandColors.brand,
+                                        )
+                                        Spacer(Modifier.size(8.dp))
+                                        Text(
+                                            "正在加载更多会话…",
+                                            fontSize = 12.sp,
+                                            color = WandColors.textSecondary,
+                                        )
                                     }
                                 }
                             }
@@ -605,12 +650,6 @@ private fun TopBarPrimaryAction(onClick: () -> Unit) {
             )
         }
     }
-}
-
-/** 拖拽范围选择：取指针垂直方向最近的行（落在卡片间隙也不漏选，对齐 iOS sessionId(nearestTo:)）。 */
-private fun nearestRowId(rowBounds: Map<String, Rect>, pointerY: Float): String? {
-    rowBounds.entries.firstOrNull { pointerY in it.value.top..it.value.bottom }?.let { return it.key }
-    return rowBounds.minByOrNull { kotlin.math.abs((it.value.top + it.value.bottom) / 2 - pointerY) }?.key
 }
 
 /** 多选底部工具栏：[全选] [删除 N] [完成]（对齐 iOS selectionBar）。 */
@@ -1006,9 +1045,9 @@ private fun SessionCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    val duration = sessionDurationLabel(session)
-                    if (duration.isNotEmpty()) {
-                        ConversationTimeLabel(text = duration, compact = compact)
+                    val timeLabel = sessionListTimeLabel(session, status)
+                    if (timeLabel.isNotEmpty()) {
+                        ConversationTimeLabel(text = timeLabel, compact = compact)
                     }
                 }
                 ConversationContextLine(
@@ -1027,6 +1066,8 @@ private fun SessionCard(
         }
     }
 }
+
+private const val AUTO_LOAD_REMAINING_ITEMS = 2
 
 private fun sessionListTitle(session: SessionSnapshot): String {
     return session.displayTitle.ifBlank {
@@ -1218,4 +1259,16 @@ private fun sessionDurationLabel(session: SessionSnapshot): String {
     val days = hours / 24
     if (days < 1) return "${hours}小时"
     return "${days}天"
+}
+
+/**
+ * 列表尾部时间服务于“快速找到那条会话”：活跃会话显示已运行多久，
+ * 已结束会话显示最近时间。详情页仍可展示精确起止时间。
+ */
+private fun sessionListTimeLabel(session: SessionSnapshot, status: String): String {
+    return when (status.trim().lowercase()) {
+        "running", "thinking", "waiting-input", "waiting_input", "permission", "reconnecting" ->
+            sessionDurationLabel(session).takeIf { it.isNotEmpty() }?.let { "已运行 $it" }.orEmpty()
+        else -> relativeTimeLabel(session.endedAt ?: session.startedAt)
+    }
 }

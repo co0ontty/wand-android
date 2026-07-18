@@ -96,18 +96,23 @@
 
             <!-- URL input -->
             <com.google.android.material.textfield.TextInputLayout
+                style="@style/Wand.TextInputLayout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="@string/server_url_hint"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+                android:hint="@string/server_url_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/urlInput"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:minHeight="56dp"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
                     android:inputType="textNoSuggestions"
                     android:imeOptions="actionDone"
                     android:singleLine="true"
+                    android:textColor="@color/text_primary"
+                    android:textCursorDrawable="@null"
                     android:textSize="15sp" />
 
             </com.google.android.material.textfield.TextInputLayout>
