@@ -306,6 +306,8 @@ final class NotificationHelper {
 
             NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID_PROGRESS)
                     .setSmallIcon(R.drawable.ic_notification)
+                    .setColor(Color.parseColor("#D97757"))
+                    .setColorized(false)
                     .setContentTitle(displayTitle)
                     .setContentText(contentText)
                     .setContentIntent(contentIntent)
@@ -355,8 +357,8 @@ final class NotificationHelper {
             progressStyle.setProgress(currentProgress);
 
             int completedColor = Color.parseColor("#4CAF50");
-            int activeColor = Color.parseColor("#2196F3");
-            int pendingColor = Color.parseColor("#9E9E9E");
+            int activeColor = Color.parseColor("#D97757");
+            int pendingColor = Color.parseColor("#6F7378");
 
             for (int i = 0; i < todosArray.length(); i++) {
                 JSONObject todo = todosArray.getJSONObject(i);

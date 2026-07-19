@@ -600,6 +600,16 @@ fun ChatScreen(
                 visible = !store.connected,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
+            SessionStatusIsland(
+                visible = store.isResponding || store.permissionBlocked,
+                permissionRequired = store.permissionBlocked,
+                title = store.currentTaskTitle
+                    ?: if (store.permissionBlocked) "需要你的确认" else "正在生成回复",
+                queuedCount = store.queuedMessages.size,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = if (store.connected) 8.dp else 44.dp),
+            )
             AnimatedVisibility(
                 visible = showActivityDock,
                 enter = fadeIn(WandMotion.tweenFast()) +
@@ -707,6 +717,81 @@ fun ChatScreen(
             }
         }
     }
+    }
+}
+
+@Composable
+private fun SessionStatusIsland(
+    visible: Boolean,
+    permissionRequired: Boolean,
+    title: String,
+    queuedCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    val tint = if (permissionRequired) Color(0xFFE9A23B) else WandColors.brand
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(WandMotion.tweenFast()) +
+            scaleIn(initialScale = 0.92f, animationSpec = WandMotion.settleSpringSpec()),
+        exit = fadeOut(WandMotion.tweenFast()) +
+            scaleOut(targetScale = 0.96f, animationSpec = WandMotion.tweenFast()),
+        modifier = modifier,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            modifier = Modifier
+                .widthIn(max = 360.dp)
+                .shadow(14.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.22f))
+                .clip(CircleShape)
+                .background(Color(0xED111214))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                .semantics {
+                    liveRegion = LiveRegionMode.Polite
+                    stateDescription = if (permissionRequired) "等待授权" else "回复中"
+                }
+                .padding(start = 10.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(22.dp)
+                    .background(tint.copy(alpha = 0.18f), CircleShape),
+            ) {
+                if (permissionRequired) {
+                    Icon(
+                        WandIcons.permission,
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(12.dp),
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.8.dp,
+                        color = tint,
+                        trackColor = tint.copy(alpha = 0.2f),
+                    )
+                }
+            }
+            Text(
+                text = title,
+                color = Color.White.copy(alpha = 0.92f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (queuedCount > 0) {
+                Text(
+                    text = "+$queuedCount",
+                    color = tint,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
     }
 }
 
