@@ -1740,12 +1740,19 @@ private fun isHiddenDispatchTool(use: ContentBlock.ToolUse): Boolean =
  */
 internal fun isTodoUpdateToolName(name: String): Boolean {
     val operation = name.lowercase().substringAfterLast("__")
-    return operation == "update_plan" ||
+    return operation in setOf("update_plan", "taskcreate", "task_create", "taskupdate", "task_update", "tasklist", "task_list") ||
         (operation.contains("todo") &&
             !operation.contains("read") &&
             !operation.contains("get") &&
             !operation.contains("list"))
 }
+
+/**
+ * 待办更新是一次性会话事件而不是可等待的外部调用；provider 通常不回传 tool_result。
+ * 之后的回复仍在流式生成时，代办卡片也应立即稳定为完成态。
+ */
+internal fun isToolCardRunning(name: String, sessionReportsRunning: Boolean): Boolean =
+    sessionReportsRunning && !isTodoUpdateToolName(name)
 
 internal fun shouldCollapseToolInActivity(name: String): Boolean =
     name != "AskUserQuestion" && !isTodoUpdateToolName(name)
@@ -2326,9 +2333,12 @@ fun ToolCard(
     initiallyExpanded: Boolean = false,
 ) {
     val compactTodoUpdate = isTodoUpdateToolName(use.name)
+    // TodoWrite / TaskUpdate 只是把新的待办快照写入会话流，不会产生 tool_result。
+    // 不能把后续模型仍在生成，误显示成这一次待办更新仍在执行。
+    val toolRunning = isToolCardRunning(use.name, running)
     val isError = result?.isError == true
     val declaredStatus = use.input.str("status")?.lowercase()
-    val completedWithoutResult = result == null && !running && (
+    val completedWithoutResult = result == null && !toolRunning && (
         declaredStatus in setOf("completed", "success", "succeeded", "done") ||
             compactTodoUpdate
         )
@@ -2339,13 +2349,13 @@ fun ToolCard(
     var expanded by remember(use.id, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     val statusColor = when {
         isError -> WandColors.danger
-        running -> WandColors.brand
+        toolRunning -> WandColors.brand
         isSuccess -> WandColors.success
         else -> WandColors.textSecondary
     }
     val statusText = when {
         isError -> "失败"
-        running -> "处理中"
+        toolRunning -> "处理中"
         isSuccess -> "完成"
         else -> "无结果"
     }
@@ -2370,7 +2380,7 @@ fun ToolCard(
         ) {
             ToolStatusIconBox(
                 statusColor = statusColor,
-                running = running,
+                running = toolRunning,
                 boxSize = if (compactTodoUpdate) 28.dp else 34.dp,
             ) {
                 Icon(

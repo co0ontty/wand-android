@@ -600,16 +600,6 @@ fun ChatScreen(
                 visible = !store.connected,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
-            SessionStatusIsland(
-                visible = store.isResponding || store.permissionBlocked,
-                permissionRequired = store.permissionBlocked,
-                title = store.currentTaskTitle
-                    ?: if (store.permissionBlocked) "需要你的确认" else "正在生成回复",
-                queuedCount = store.queuedMessages.size,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = if (store.connected) 8.dp else 44.dp),
-            )
             AnimatedVisibility(
                 visible = showActivityDock,
                 enter = fadeIn(WandMotion.tweenFast()) +

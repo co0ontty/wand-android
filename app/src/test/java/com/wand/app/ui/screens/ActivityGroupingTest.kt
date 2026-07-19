@@ -25,4 +25,11 @@ class ActivityGroupingTest {
         assertEquals("2 项", todoUpdateSummary(2))
         assertEquals("", todoUpdateSummary(null))
     }
+
+    @Test
+    fun todoUpdatesAreCompletedEvenWhileTheReplyStreamContinues() {
+        assertFalse(isToolCardRunning("TodoWrite", sessionReportsRunning = true))
+        assertFalse(isToolCardRunning("TaskUpdate", sessionReportsRunning = true))
+        assertTrue(isToolCardRunning("Bash", sessionReportsRunning = true))
+    }
 }
