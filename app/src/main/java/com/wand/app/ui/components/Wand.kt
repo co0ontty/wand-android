@@ -29,6 +29,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
@@ -61,6 +62,7 @@ import com.wand.app.ui.theme.bevelRimBrush
 import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.layeredShadow
 import com.wand.app.ui.theme.surfaceSheenBrush
+import com.wand.app.ui.theme.glassCard
 
 /**
  * 公共基础组件（重设计规范 v1 第 2.1 节）：
@@ -92,36 +94,13 @@ fun Modifier.clickableWithoutRipple(
         )
 }
 
-/** 状态 → 语义色。 */
 @Composable
-private fun statusColor(status: String): Color = when (status.trim().lowercase()) {
-    "running", "thinking" -> WandColors.success
-    "waiting-input", "waiting_input", "permission" -> WandColors.permission
-    "failed" -> WandColors.danger
-    "stopped", "reconnecting" -> WandColors.warning
-    else -> WandColors.textMuted // idle / exited / archived / 未知
-}
-
-/** 该状态是否需要呼吸动画。 */
-private fun statusBreathing(status: String): Boolean = when (status.trim().lowercase()) {
-    "running", "thinking", "waiting-input", "waiting_input", "permission",
-    "reconnecting" -> true
-    else -> false
-}
-
-/** 状态 → 中文标签，未知值原样返回。 */
-private fun statusLabel(status: String): String = when (status.trim().lowercase()) {
-    "running" -> "运行中"
-    "thinking" -> "思考中"
-    "waiting-input", "waiting_input" -> "等待输入"
-    "permission" -> "等待授权"
-    "reconnecting" -> "重连中"
-    "idle" -> "空闲"
-    "stopped" -> "已停止"
-    "failed" -> "已失败"
-    "exited" -> "已退出"
-    "archived" -> "已归档"
-    else -> status.ifBlank { "未知" }
+private fun statusColor(status: String): Color = when (wandStatusPresentation(status).tone) {
+    WandStatusTone.Success -> WandColors.success
+    WandStatusTone.Permission -> WandColors.permission
+    WandStatusTone.Danger -> WandColors.danger
+    WandStatusTone.Warning -> WandColors.warning
+    WandStatusTone.Neutral -> WandColors.textMuted
 }
 
 /**
@@ -133,7 +112,7 @@ private fun statusLabel(status: String): String = when (status.trim().lowercase(
 @Composable
 fun StatusDot(status: String, modifier: Modifier = Modifier) {
     val color = statusColor(status)
-    if (statusBreathing(status)) {
+    if (wandStatusPresentation(status).breathing) {
         val transition = rememberInfiniteTransition(label = "statusDot")
         val alpha by transition.animateFloat(
             initialValue = 1f,
@@ -183,9 +162,8 @@ fun StatusBadge(status: String, modifier: Modifier = Modifier) {
     ) {
         StatusDot(status, modifier = Modifier.size(6.dp))
         Text(
-            statusLabel(status),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
+            wandStatusPresentation(status).label,
+            style = MaterialTheme.typography.labelSmall,
             color = color,
         )
     }
@@ -204,7 +182,7 @@ fun LoadingState(modifier: Modifier = Modifier, text: String = "加载中…") {
                 color = WandColors.brand,
                 strokeWidth = 3.dp,
             )
-            Text(text, fontSize = 13.sp, color = WandColors.textMuted)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
         }
     }
 }
@@ -226,14 +204,12 @@ fun ErrorState(message: String, modifier: Modifier = Modifier, onRetry: (() -> U
             )
             Text(
                 message,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
                 textAlign = TextAlign.Center,
             )
             if (onRetry != null) {
-                Button(onClick = onRetry) {
-                    Text("重试", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                }
+                WandButton(label = "重试", onClick = onRetry)
             }
         }
     }
@@ -265,23 +241,24 @@ fun EmptyState(
             )
             Text(
                 title,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.titleMedium,
                 color = WandColors.textSecondary,
                 textAlign = TextAlign.Center,
             )
             if (subtitle != null) {
                 Text(
                     subtitle,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     color = WandColors.textMuted,
                     textAlign = TextAlign.Center,
                 )
             }
             if (actionText != null && onAction != null) {
-                Button(onClick = onAction, modifier = Modifier.padding(top = 8.dp)) {
-                    Text(actionText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                }
+                WandButton(
+                    label = actionText,
+                    onClick = onAction,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
     }
@@ -377,8 +354,7 @@ fun <T> WandChoiceStrip(
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.SemiBold,
+        style = MaterialTheme.typography.labelMedium,
         color = WandColors.textMuted,
         letterSpacing = 0.sp,
         modifier = modifier.padding(top = 18.dp, bottom = 7.dp),
@@ -468,6 +444,16 @@ fun WandCard(
     )
 }
 
+/**
+ * 非 Column 布局使用的标准卡片表面。页面不再直接依赖玻璃引擎，未来更换实现只改此处。
+ */
+@Composable
+fun Modifier.wandCardSurface(
+    shape: Shape = WandShapes.md,
+    tint: Color? = null,
+    rimTint: Color? = null,
+): Modifier = glassCard(shape = shape, tint = tint, rimTint = rimTint)
+
 /** 顶栏 / 悬浮 chrome 里的统一圆形图标按钮。 */
 @Composable
 fun WandChromeIconButton(
@@ -478,29 +464,15 @@ fun WandChromeIconButton(
     tint: Color = WandColors.textSecondary,
     enabled: Boolean = true,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        modifier = modifier
-            .size(44.dp)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
-            .clip(CircleShape)
-            .background(WandColors.surface.copy(alpha = 0.62f))
-            .border(0.55.dp, WandColors.border.copy(alpha = 0.54f), CircleShape)
-            .clickable(
-                enabled = enabled,
-                interactionSource = interaction,
-                indication = ripple(bounded = true),
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(19.dp),
-        )
-    }
+    WandIconButton(
+        icon = icon,
+        contentDescription = contentDescription,
+        onClick = onClick,
+        modifier = modifier,
+        variant = WandIconButtonVariant.Chrome,
+        tint = tint,
+        enabled = enabled,
+    )
 }
 
 /**
@@ -518,18 +490,16 @@ fun ToolbarIconButton(
     enabled: Boolean = true,
     iconSize: Dp = 21.dp,
 ) {
-    IconButton(
+    WandIconButton(
+        icon = icon,
+        contentDescription = contentDescription,
         onClick = onClick,
+        modifier = modifier,
+        variant = WandIconButtonVariant.Toolbar,
+        tint = tint,
         enabled = enabled,
-        modifier = modifier.size(48.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (enabled) tint else WandColors.textMuted.copy(alpha = 0.48f),
-            modifier = Modifier.size(iconSize),
-        )
-    }
+        iconSize = iconSize,
+    )
 }
 
 /** Wand 品牌标记：克制的品牌色圆角方块 + 白色星芒图标。 */

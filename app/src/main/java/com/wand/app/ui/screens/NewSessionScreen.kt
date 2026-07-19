@@ -90,7 +90,11 @@ import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandIconButton
+import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.wandInputSurface
 import com.wand.app.ui.thinkingEffortOptions
 import com.wand.app.ui.theme.WandColors
@@ -559,47 +563,16 @@ private fun PrimaryCreateButton(
     creating: Boolean,
     label: String,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) 0.98f else 1f,
-        animationSpec = WandMotion.settleSpringSpec(),
-        label = "createButtonPress",
-    )
-    Button(
+    WandButton(
+        label = if (creating) "创建中…" else label,
         onClick = onClick,
         enabled = enabled,
-        interactionSource = interaction,
-        shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = WandColors.brand,
-            disabledContainerColor = WandColors.brand.copy(alpha = 0.34f),
-            contentColor = Color.White,
-            disabledContentColor = Color.White.copy(alpha = 0.82f),
-        ),
+        loading = creating,
+        trailingIcon = if (creating) null else WandIcons.arrowUp,
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale },
-    ) {
-        if (creating) {
-            CircularProgressIndicator(
-                color = Color.White,
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.size(8.dp))
-            Text("创建中…", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        } else {
-            Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.size(7.dp))
-            Icon(
-                WandIcons.arrowUp,
-                contentDescription = null,
-                modifier = Modifier.size(17.dp),
-            )
-        }
-    }
+            .height(50.dp),
+    )
 }
 
 @Composable
@@ -853,10 +826,8 @@ private fun OptionMenuCard(
             }
         }
         if (expanded) {
-            ModalBottomSheet(
+            WandBottomSheet(
                 onDismissRequest = { expanded = false },
-                containerColor = WandColors.bgElevated,
-                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
             ) {
                 NoOverscroll {
                     Column(
@@ -1090,20 +1061,14 @@ private fun CwdCard(
                         .onFocusChanged { focused = it.isFocused },
                 )
             }
-            IconButton(
+            WandIconButton(
+                icon = WandIcons.chevronRight,
+                contentDescription = "浏览目录",
                 onClick = onBrowse,
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(WandColors.surfaceSoft.copy(alpha = 0.72f)),
-            ) {
-                Icon(
-                    WandIcons.chevronRight,
-                    contentDescription = "浏览目录",
-                    tint = WandColors.brand,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
+                variant = WandIconButtonVariant.Chrome,
+                tint = WandColors.brand,
+                iconSize = 18.dp,
+            )
         }
         if (recentPaths.isNotEmpty()) {
             HorizontalDivider(color = WandColors.border, thickness = 0.5.dp)

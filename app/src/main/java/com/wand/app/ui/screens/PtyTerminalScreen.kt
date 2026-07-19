@@ -35,7 +35,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -75,6 +74,10 @@ import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandIconButton
+import com.wand.app.ui.components.WandIconButtonVariant
+import com.wand.app.ui.components.WandProviderMark
+import com.wand.app.ui.components.WandProviderMarkVariant
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
@@ -323,17 +326,13 @@ private fun QuietPtyTopIconButton(
     contentDescription: String,
     onClick: () -> Unit,
 ) {
-    IconButton(
+    WandIconButton(
+        icon = icon,
+        contentDescription = contentDescription,
         onClick = onClick,
-        modifier = Modifier.size(48.dp),
-    ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            tint = WandColors.textSecondary,
-            modifier = Modifier.size(22.dp),
-        )
-    }
+        variant = WandIconButtonVariant.Toolbar,
+        iconSize = 22.dp,
+    )
 }
 
 @Composable
@@ -644,22 +643,5 @@ private fun buildEmbedTerminalUrl(serverUrl: String, sessionId: String): String 
 
 @Composable
 private fun PtyProviderBadge(provider: String?) {
-    val isCodex = provider == "codex"
-    val tint = if (isCodex) WandColors.info else WandColors.brand
-    val background = if (isCodex) WandColors.infoSoft else WandColors.brandSoft
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(background.copy(alpha = 0.72f))
-            .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(8.dp)),
-    ) {
-        Icon(
-            painter = BrandLogos.painterForProvider(provider),
-            contentDescription = providerDisplayName(provider),
-            tint = BrandLogos.tintForProvider(provider, tint),
-            modifier = Modifier.size(15.dp),
-        )
-    }
+    WandProviderMark(provider = provider, variant = WandProviderMarkVariant.Tinted)
 }

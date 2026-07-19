@@ -36,11 +36,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
@@ -78,8 +78,13 @@ import com.wand.app.ui.HomeConnectionInfo
 import com.wand.app.ui.HomeNavigationActions
 import com.wand.app.ui.HomeSettingsActions
 import com.wand.app.ui.components.WandBrandMark
+import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandDialogAction
+import com.wand.app.ui.components.WandIconButton
+import com.wand.app.ui.components.WandIconButtonVariant
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.AmbientBackground
@@ -88,7 +93,6 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.glassBackdropSource
-import com.wand.app.ui.theme.glassCard
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.rememberGlassBackdrop
@@ -135,47 +139,26 @@ fun SettingsScreen(
     val glassBackdrop = rememberGlassBackdrop()
 
     if (showDisconnectConfirm) {
-        AlertDialog(
+        WandDialog(
+            title = "断开连接",
             onDismissRequest = { showDisconnectConfirm = false },
-            containerColor = WandColors.bgElevated,
-            shape = RoundedCornerShape(20.dp),
-            icon = {
-                SettingsIconBadge(icon = WandIcons.logout, tint = WandColors.danger)
-            },
-            title = {
-                Text(
-                    "断开连接",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary,
-                )
-            },
-            text = {
-                Text(
-                    "清除本机保存的服务器地址和连接码，并返回连接页。",
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = WandColors.textSecondary,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
+            icon = WandIcons.logout,
+            confirm = WandDialogAction(
+                label = "断开连接",
+                destructive = true,
+                onClick = {
                     showDisconnectConfirm = false
                     navigation.disconnect()
-                }) {
-                    Text(
-                        "断开连接",
-                        color = WandColors.danger,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDisconnectConfirm = false }) {
-                    Text("取消", color = WandColors.textSecondary)
-                }
-            },
-        )
+                },
+            ),
+            dismiss = WandDialogAction("取消", { showDisconnectConfirm = false }),
+        ) {
+            Text(
+                "清除本机保存的服务器地址和连接码，并返回连接页。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+        }
     }
 
     Box(
@@ -471,18 +454,15 @@ private fun SettingsChapterHeader(
     ) {
         Text(
             title,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.labelLarge,
             color = WandColors.textPrimary,
-            letterSpacing = 0.1.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         if (description != null) {
             Text(
                 description,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
+                style = MaterialTheme.typography.bodySmall,
                 color = WandColors.textSecondary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -608,8 +588,7 @@ private fun SettingsSheetHeader(
             )
             Text(
                 "设置",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium,
                 color = WandColors.textPrimary,
                 maxLines = 1,
                 textAlign = TextAlign.Center,
@@ -628,20 +607,13 @@ private fun SettingsHeaderButton(
     onClick: () -> Unit,
     tint: Color = WandColors.textSecondary,
 ) {
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(20.dp),
-        )
-    }
+    WandIconButton(
+        icon = icon,
+        contentDescription = contentDescription,
+        onClick = onClick,
+        variant = WandIconButtonVariant.Quiet,
+        tint = tint,
+    )
 }
 
 @Composable
@@ -664,8 +636,7 @@ private fun SettingsAboutContent(
         ) {
             Text(
                 "Wand",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium,
                 color = WandColors.textPrimary,
             )
             Text(
@@ -673,7 +644,7 @@ private fun SettingsAboutContent(
                     append("v$appVersion · Android ${Build.VERSION.RELEASE}")
                     serverVersion?.let { append(" · Server v$it") }
                 },
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 color = WandColors.textSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -703,14 +674,13 @@ private fun ServerConnectionRow(
         ) {
             Text(
                 "服务器",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.titleSmall,
                 color = WandColors.textPrimary,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     serverUrl,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     color = WandColors.textSecondary,
                     maxLines = 1,
@@ -793,8 +763,7 @@ private fun CompactConnectionAction(
         )
         Text(
             label,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.bodySmall,
             color = WandColors.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -918,12 +887,7 @@ private fun SettingsCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val shape = RoundedCornerShape(14.dp)
-    Column(
-        modifier = modifier
-            .glassCard(shape = shape),
-        content = content,
-    )
+    WandCard(modifier = modifier, content = content)
 }
 
 /** 卡片内行间分割线：0.5dp border 色，左右与行内边距对齐。 */
@@ -993,8 +957,7 @@ private fun ActionRow(
         SettingsRowIcon(icon = icon, tint = tint)
         Text(
             label,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.titleSmall,
             color = if (danger) WandColors.danger else WandColors.textPrimary,
             modifier = Modifier
                 .weight(1f)
@@ -1003,8 +966,7 @@ private fun ActionRow(
         if (trailingText != null) {
             Text(
                 trailingText,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.labelMedium,
                 fontFamily = FontFamily.Monospace,
                 color = WandColors.textSecondary,
                 modifier = Modifier.padding(end = 5.dp),
@@ -1043,8 +1005,7 @@ private fun SwitchRow(
         SettingsRowIcon(icon = icon, tint = iconTint)
         Text(
             label,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.titleSmall,
             color = WandColors.textPrimary,
             modifier = Modifier
                 .weight(1f)

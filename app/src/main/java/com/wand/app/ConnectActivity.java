@@ -4,16 +4,10 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.content.pm.PackageManager;
-import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
-import android.view.Gravity;
-import android.view.View;
-import android.view.inputmethod.EditorInfo;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -22,9 +16,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
-import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-import com.google.android.material.textfield.TextInputEditText;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
 import com.wand.app.data.WandAuth;
@@ -46,17 +38,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     private static final int REQUEST_CAMERA_PERMISSION = 4242;
 
-    private TextInputEditText urlInput;
-    private MaterialButton connectButton;
-    private MaterialButton scanQrButton;
-    private MaterialButton cancelAutoConnectButton;
-    private MaterialButton switchServerButton;
-    private TextView statusText;
-    private TextView autoConnectStatus;
-    private LinearLayout recentList;
-    private TextView recentLabel;
-    private LinearLayout autoConnectGroup;
-    private LinearLayout formGroup;
+    private ConnectComposeView connectView;
     private ServerStore serverStore;
     // 跟踪当前是否处于自动连接阶段。后台连接探测线程跑完之后会
     // runOnUiThread 决定下一步 (跳 WebView / 报错回表单), 我们在那里
@@ -96,23 +78,30 @@ public class ConnectActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_connect);
+        connectView = new ConnectComposeView(this);
+        connectView.setListener(new ConnectUiListener() {
+            @Override public void onConnect() { attemptConnect(); }
+            @Override public void onScanQr() { requestQrScan(); }
+            @Override public void onCancelAutoConnect() { abortAutoConnect(false); }
+            @Override public void onSwitchServer() { abortAutoConnect(true); }
+            @Override public void onPickRecent(String entry) {
+                connectView.setInputValue(entry);
+                attemptConnect();
+            }
+            @Override public void onRemoveRecent(String entry) {
+                serverStore.removeRecentUrl(entry);
+                refreshRecentList();
+            }
+            @Override public void onClearRecent() {
+                serverStore.clearRecent();
+                refreshRecentList();
+            }
+        });
+        setContentView(connectView);
         applyLightSystemBars();
 
         serverStore = new ServerStore(this);
         networkExecutor = Executors.newSingleThreadExecutor();
-        urlInput = findViewById(R.id.urlInput);
-        connectButton = findViewById(R.id.connectButton);
-        scanQrButton = findViewById(R.id.scanQrButton);
-        cancelAutoConnectButton = findViewById(R.id.cancelAutoConnectButton);
-        switchServerButton = findViewById(R.id.switchServerButton);
-        statusText = findViewById(R.id.statusText);
-        autoConnectStatus = findViewById(R.id.autoConnectStatus);
-        recentList = findViewById(R.id.recentList);
-        recentLabel = findViewById(R.id.recentLabel);
-        autoConnectGroup = findViewById(R.id.autoConnectGroup);
-        formGroup = findViewById(R.id.formGroup);
-
         if (handleDeepLink(getIntent())) {
             return;
         }
@@ -120,7 +109,7 @@ public class ConnectActivity extends AppCompatActivity {
         boolean skipAutoConnect = getIntent().getBooleanExtra("skip_auto_connect", false);
         String lastUrl = serverStore.getLastUrl();
         if (!TextUtils.isEmpty(lastUrl)) {
-            urlInput.setText(lastUrl);
+            connectView.setInputValue(lastUrl);
             if (!skipAutoConnect) {
                 tryAutoConnect(lastUrl);
             } else {
@@ -130,29 +119,6 @@ public class ConnectActivity extends AppCompatActivity {
             showForm();
         }
 
-        connectButton.setOnClickListener(v -> attemptConnect());
-
-        if (scanQrButton != null) {
-            scanQrButton.setOnClickListener(v -> requestQrScan());
-        }
-
-        if (cancelAutoConnectButton != null) {
-            cancelAutoConnectButton.setOnClickListener(v -> abortAutoConnect(false));
-        }
-        if (switchServerButton != null) {
-            // "切换服务器" 比 "取消" 更明确地表达"我现在就想换一个", 所以
-            // 中断后顺手聚焦输入框 + 全选当前文本, 用户直接打字就能覆盖,
-            // 不用先去手动光标点一下。
-            switchServerButton.setOnClickListener(v -> abortAutoConnect(true));
-        }
-
-        urlInput.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_DONE) {
-                attemptConnect();
-                return true;
-            }
-            return false;
-        });
     }
 
     private void applyLightSystemBars() {
@@ -188,7 +154,7 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private void showCameraPermissionSettingsDialog() {
-        new MaterialAlertDialogBuilder(this)
+        new MaterialAlertDialogBuilder(this, R.style.Theme_Wand_Dialog)
             .setTitle("需要相机权限")
             .setMessage("扫码连接需要相机权限。你也可以直接粘贴连接码连接。\n\n如需扫码，请在系统设置中开启相机权限。")
             .setPositiveButton("去设置", (d, w) -> {
@@ -245,7 +211,7 @@ public class ConnectActivity extends AppCompatActivity {
                 Toast.makeText(this, R.string.scan_qr_invalid, Toast.LENGTH_LONG).show();
                 return;
             }
-            urlInput.setText(candidate);
+            connectView.setInputValue(candidate);
             attemptConnect();
             return;
         }
@@ -264,7 +230,7 @@ public class ConnectActivity extends AppCompatActivity {
         if ("wand".equals(uri.getScheme()) && "connect".equals(uri.getHost())) {
             String serverUrl = uri.getQueryParameter("url");
             if (!TextUtils.isEmpty(serverUrl)) {
-                urlInput.setText(serverUrl);
+                connectView.setInputValue(serverUrl);
                 attemptConnect();
                 return true;
             }
@@ -274,8 +240,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     private void tryAutoConnect(String savedInput) {
         autoConnecting = true;
-        autoConnectGroup.setVisibility(View.VISIBLE);
-        formGroup.setVisibility(View.GONE);
+        connectView.showAutoConnecting(getString(R.string.auto_connecting));
 
         cancelCurrentTask();
         currentTask = networkExecutor.submit(() -> {
@@ -308,21 +273,19 @@ public class ConnectActivity extends AppCompatActivity {
      *                   文本; false 表示纯取消, 不打扰用户。
      */
     private void abortAutoConnect(boolean focusInput) {
-        if (!autoConnecting && autoConnectGroup.getVisibility() != View.VISIBLE) {
+        if (!autoConnecting && !connectView.isAutoConnectVisible()) {
             return;
         }
         autoConnecting = false;
         cancelCurrentTask();
         showForm();
-        if (focusInput && urlInput != null) {
-            urlInput.requestFocus();
-            urlInput.selectAll();
+        if (focusInput) {
+            connectView.focusInput();
         }
     }
 
     private void showForm() {
-        autoConnectGroup.setVisibility(View.GONE);
-        formGroup.setVisibility(View.VISIBLE);
+        connectView.showForm();
         refreshRecentList();
     }
 
@@ -334,15 +297,13 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private void attemptConnect() {
-        String rawInput = urlInput.getText() != null ? urlInput.getText().toString().trim() : "";
+        String rawInput = connectView.getInputValue().trim();
         if (TextUtils.isEmpty(rawInput)) {
             showStatus("请输入连接码或服务器地址", false);
             return;
         }
 
-        connectButton.setEnabled(false);
-        connectButton.setText(R.string.connecting);
-        statusText.setVisibility(View.GONE);
+        connectView.setConnecting(true);
 
         cancelCurrentTask();
         currentTask = networkExecutor.submit(() -> {
@@ -383,8 +344,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     private void handleManualConnectResult(String rawInput, ConnectionResult result) {
         if (isDestroyed()) return;
-        connectButton.setEnabled(true);
-        connectButton.setText(R.string.connect_button);
+        connectView.setConnecting(false);
         if (!result.isSuccess()) {
             showStatus(result.error);
             return;
@@ -500,14 +460,12 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private void showStatus(String message, boolean isError) {
-        statusText.setText(message);
-        statusText.setTextColor(getColor(isError ? R.color.error : R.color.text_secondary));
-        statusText.setVisibility(View.VISIBLE);
+        connectView.showStatus(message, isError);
     }
 
     private void setAutoStatus(String text) {
         runOnUiThread(() -> {
-            if (autoConnecting && autoConnectStatus != null) autoConnectStatus.setText(text);
+            if (autoConnecting) connectView.setAutoStatus(text);
         });
     }
 
@@ -520,118 +478,7 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private void refreshRecentList() {
-        recentList.removeAllViews();
         List<String> urls = serverStore.getRecentUrls();
-
-        recentLabel.setVisibility(View.VISIBLE);
-
-        if (urls.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText(R.string.no_recent_servers);
-            empty.setTextSize(13f);
-            empty.setTextColor(getColor(R.color.text_hint));
-            empty.setPadding(0, dpToPx(4), 0, 0);
-            recentList.addView(empty);
-            return;
-        }
-
-        for (String entry : urls) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dpToPx(12), dpToPx(4), dpToPx(4), dpToPx(4));
-            row.setMinimumHeight(dpToPx(58));
-            row.setBackgroundResource(R.drawable.liquid_recent_row_background);
-            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT);
-            rowParams.bottomMargin = dpToPx(8);
-            row.setLayoutParams(rowParams);
-
-            // Left column: primary URL + optional bound-code label.
-            LinearLayout textColumn = new LinearLayout(this);
-            textColumn.setOrientation(LinearLayout.VERTICAL);
-            LinearLayout.LayoutParams columnParams = new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            textColumn.setLayoutParams(columnParams);
-
-            Pair<String, String> decoded = WandAuth.decodeConnectCode(entry);
-            String primaryText = decoded != null ? decoded.getFirst() : entry;
-
-            TextView urlText = new TextView(this);
-            urlText.setText(primaryText);
-            urlText.setTextSize(14f);
-            urlText.setTextColor(getColor(R.color.primary));
-            urlText.setTypeface(Typeface.MONOSPACE);
-            urlText.setSingleLine(true);
-            urlText.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-            textColumn.addView(urlText);
-
-            if (decoded != null) {
-                TextView tag = new TextView(this);
-                tag.setText("\u5df2\u7ed1\u5b9a\u8fde\u63a5\u7801");
-                tag.setTextSize(11f);
-                tag.setTextColor(getColor(R.color.text_secondary));
-                tag.setPadding(0, dpToPx(2), 0, 0);
-                textColumn.addView(tag);
-            }
-
-            TextView deleteBtn = new TextView(this);
-            deleteBtn.setText("\u00d7");
-            deleteBtn.setTextSize(18f);
-            deleteBtn.setTextColor(getColor(R.color.text_hint));
-            deleteBtn.setContentDescription("移除最近连接");
-            deleteBtn.setGravity(Gravity.CENTER);
-            int hit = dpToPx(44);
-            deleteBtn.setMinWidth(hit);
-            deleteBtn.setMinHeight(hit);
-
-            row.addView(textColumn);
-            row.addView(deleteBtn);
-
-            View.OnClickListener pickEntry = v -> {
-                urlInput.setText(entry);
-                attemptConnect();
-            };
-            row.setOnClickListener(pickEntry);
-            textColumn.setOnClickListener(pickEntry);
-            urlText.setOnClickListener(pickEntry);
-
-            deleteBtn.setOnClickListener(v -> {
-                new MaterialAlertDialogBuilder(this)
-                    .setMessage("从最近连接中移除该服务器？")
-                    .setPositiveButton("移除", (d, w) -> {
-                        serverStore.removeRecentUrl(entry);
-                        refreshRecentList();
-                    })
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show();
-            });
-
-            recentList.addView(row);
-        }
-
-        // 清空全部入口
-        TextView clearAll = new TextView(this);
-        clearAll.setText(R.string.clear_history);
-        clearAll.setTextSize(13f);
-        clearAll.setTextColor(getColor(R.color.text_hint));
-        clearAll.setPadding(0, dpToPx(12), 0, dpToPx(4));
-        clearAll.setOnClickListener(v -> {
-            new MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.clear_history)
-                .setMessage("确定清除所有最近连接记录吗？")
-                .setPositiveButton("清除", (d, w) -> {
-                    serverStore.clearRecent();
-                    refreshRecentList();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-        });
-        recentList.addView(clearAll);
-    }
-
-    private int dpToPx(int dp) {
-        return NetUtils.dpToPx(this, dp);
+        connectView.setRecentEntries(urls);
     }
 }

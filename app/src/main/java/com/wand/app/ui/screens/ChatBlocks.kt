@@ -141,7 +141,10 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.components.wandCardSurface
+import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.tinted
@@ -1885,17 +1888,14 @@ private fun ActivityDetailSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val statusLabel = activityStatusLabel(group)
     val statusColor = activityStatusColor(group)
-    ModalBottomSheet(
+    WandBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         // 详情里同时存在纵向长内容、横向表格和可展开卡片。禁用整张 sheet 的
         // 拖拽后，纵向手势只由内容滚动消费，横向手势只由表格消费，轻触标题
         // 才会展开卡片，避免三层手势在触摸阈值附近互相抢占。
-        sheetGesturesEnabled = false,
-        containerColor = WandColors.bgElevated.copy(alpha = 0.98f),
-        scrimColor = Color.Black.copy(alpha = 0.46f),
-        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-        dragHandle = null,
+        gesturesEnabled = false,
+        showDragHandle = false,
     ) {
         NoOverscroll {
             Column(
@@ -2353,7 +2353,7 @@ fun ToolCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassCard(WandShapes.md, rimTint = if (isError) statusColor else null)
+            .wandCardSurface(WandShapes.md, rimTint = if (isError) statusColor else null)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -3157,43 +3157,24 @@ fun PermissionCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(
+            WandButton(
+                label = "拒绝",
                 onClick = { onResolve("deny") },
-                contentPadding = ButtonDefaults.TextButtonContentPadding,
-            ) {
-                Text(
-                    "拒绝",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.danger,
-                    maxLines = 1,
-                )
-            }
+                variant = WandButtonVariant.DangerText,
+            )
             Spacer(modifier = Modifier.weight(1f))
             if (escalation != null) {
-                OutlinedButton(
+                WandButton(
+                    label = "本轮放行",
                     onClick = { onResolve("approve_turn") },
-                    contentPadding = ButtonDefaults.TextButtonContentPadding,
-                ) {
-                    Text(
-                        "本轮放行",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
-                        maxLines = 1,
-                    )
-                }
+                    variant = WandButtonVariant.Secondary,
+                )
             }
-            Button(
+            WandButton(
+                label = "允许",
                 onClick = { onResolve(if (escalation != null) "approve_once" else "approve") },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = WandColors.success,
-                    contentColor = Color.White,
-                ),
-                contentPadding = ButtonDefaults.TextButtonContentPadding,
-            ) {
-                Text("允许", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            }
+                variant = WandButtonVariant.Success,
+            )
         }
     }
 }

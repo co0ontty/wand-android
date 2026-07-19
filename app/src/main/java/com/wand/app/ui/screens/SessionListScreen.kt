@@ -37,7 +37,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -88,11 +88,16 @@ import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
+import com.wand.app.ui.components.StatusBadge
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
+import com.wand.app.ui.components.wandStatusPresentation
+import com.wand.app.ui.components.WandStatusTone
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandIconButton
+import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.GlassStyle
@@ -554,9 +559,7 @@ private fun SessionListTopBar(
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 4.dp),
-                    fontSize = 18.sp,
-                    lineHeight = 24.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleLarge,
                     color = WandColors.textPrimary,
                 )
             } else {
@@ -568,16 +571,16 @@ private fun SessionListTopBar(
                 ) {
                     Text(
                         "会话",
-                        fontSize = if (compact) 20.sp else 22.sp,
-                        lineHeight = 26.sp,
-                        fontWeight = FontWeight.Bold,
+                        style = if (compact) {
+                            MaterialTheme.typography.titleLarge
+                        } else {
+                            MaterialTheme.typography.headlineSmall
+                        },
                         color = WandColors.textPrimary,
                     )
                     Text(
                         "$entryCount 个会话",
-                        fontSize = 11.5.sp,
-                        lineHeight = 16.sp,
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.labelSmall,
                         color = WandColors.textMuted,
                     )
                 }
@@ -632,25 +635,12 @@ private fun SessionListTopBar(
 /** 顶栏主动作：48dp 触控区内放 36dp 品牌弱底，突出新增又不抢标题层级。 */
 @Composable
 private fun TopBarPrimaryAction(onClick: () -> Unit) {
-    IconButton(
+    WandIconButton(
+        icon = WandIcons.add,
+        contentDescription = "新建会话",
         onClick = onClick,
-        modifier = Modifier.size(48.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(WandColors.brandSoft),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                WandIcons.add,
-                contentDescription = "新建会话",
-                tint = WandColors.brand,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-    }
+        variant = WandIconButtonVariant.Accent,
+    )
 }
 
 /** 多选底部工具栏：[全选] [删除 N] [完成]（对齐 iOS selectionBar）。 */
@@ -684,8 +674,7 @@ private fun SelectionBar(
             TextButton(onClick = onToggleAll) {
                 Text(
                     if (selectedCount == totalCount) "取消全选" else "全选",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelLarge,
                     color = WandColors.brand,
                 )
             }
@@ -703,8 +692,7 @@ private fun SelectionBar(
                     )
                     Text(
                         "删除 $selectedCount",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.labelLarge,
                         color = if (selectedCount > 0) WandColors.danger else WandColors.textMuted,
                     )
                 }
@@ -713,8 +701,7 @@ private fun SelectionBar(
             TextButton(onClick = onDone) {
                 Text(
                     "完成",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelLarge,
                     color = WandColors.brand,
                 )
             }
@@ -1013,6 +1000,9 @@ private fun SessionCard(
     onClick: () -> Unit,
 ) {
     val status = derivedStatus(session)
+    val statusPresentation = wandStatusPresentation(status)
+    val prominentStatus = statusPresentation.breathing
+    val statusTint = sessionStatusTint(statusPresentation.tone)
     val shape = RoundedCornerShape(if (compact) 14.dp else 16.dp)
     Box(
         modifier = Modifier.fillMaxWidth(),
@@ -1029,6 +1019,8 @@ private fun SessionCard(
             shape = shape,
             containerColor = if (selected) {
                 lerp(WandColors.surface, WandColors.brand, 0.12f)
+            } else if (prominentStatus) {
+                lerp(WandColors.surface, statusTint, 0.065f)
             } else {
                 WandColors.surface.copy(alpha = 0.88f)
             },
@@ -1083,9 +1075,27 @@ private fun SessionCard(
                         label = "",
                         path = session.cwd.orEmpty(),
                         compact = compact,
+                        prominentStatus = prominentStatus,
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
+        }
+        if (prominentStatus && !selecting) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(shape),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .fillMaxHeight()
+                        .width(if (compact) 3.dp else 4.dp)
+                        .padding(vertical = if (compact) 9.dp else 10.dp)
+                        .clip(WandShapes.full)
+                        .background(statusTint.copy(alpha = 0.90f)),
+                )
             }
         }
     }
@@ -1192,6 +1202,7 @@ private fun ConversationContextLine(
     label: String,
     path: String,
     compact: Boolean,
+    prominentStatus: Boolean = false,
     tint: Color = WandColors.textSecondary,
     modifier: Modifier = Modifier,
 ) {
@@ -1202,6 +1213,7 @@ private fun ConversationContextLine(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
+            status != null && prominentStatus -> StatusBadge(status = status)
             status != null -> StatusDot(
                 status = status,
                 modifier = Modifier.size(if (compact) 5.dp else 6.dp),
@@ -1245,10 +1257,11 @@ private fun ConversationContextLine(
                 fontFamily = FontFamily.Monospace,
                 color = pathColor,
                 fallback = "",
-                initialDelayMillis = 1_800L,
+                initialDelayMillis = 2_500L,
+                pauseMillis = 3_500L,
                 staggerWindowMillis = 1_200L,
                 velocity = 28.dp,
-                revealOnce = true,
+                repeatTailReveal = true,
             )
         }
     }
@@ -1259,18 +1272,15 @@ private fun normalizedWorkingPath(path: String): String =
     path.trim().replace('\\', '/').trimEnd('/')
 
 /** 派生状态的可见文字，同时供 TalkBack stateDescription 使用。 */
-private fun sessionStatusLabel(status: String): String = when (status.trim().lowercase()) {
-    "running" -> "运行中"
-    "thinking" -> "思考中"
-    "waiting-input", "waiting_input" -> "等待输入"
-    "permission" -> "等待授权"
-    "reconnecting" -> "重连中"
-    "idle" -> "空闲"
-    "stopped" -> "已停止"
-    "failed" -> "已失败"
-    "exited" -> "已退出"
-    "archived" -> "已归档"
-    else -> status.ifBlank { "未知状态" }
+private fun sessionStatusLabel(status: String): String = wandStatusPresentation(status).label
+
+@Composable
+private fun sessionStatusTint(tone: WandStatusTone): Color = when (tone) {
+    WandStatusTone.Success -> WandColors.success
+    WandStatusTone.Permission -> WandColors.permission
+    WandStatusTone.Warning -> WandColors.warning
+    WandStatusTone.Danger -> WandColors.danger
+    WandStatusTone.Neutral -> WandColors.textMuted
 }
 
 /**

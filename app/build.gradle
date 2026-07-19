@@ -149,3 +149,39 @@ dependencies {
     // 来源：https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-static-link-onnxruntime-1.13.2.aar
     implementation files('libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar')
 }
+
+// UI 页面只能跨 Wand 设计系统 seam 使用 Material 3。底层 Material/玻璃实现集中在
+// ui/components 与 ui/theme，防止后续页面再次复制弹窗、输入框、底部弹层和卡片样式。
+tasks.register('verifyWandDesignSystem') {
+    def uiRoot = file('src/main/java/com/wand/app/ui')
+    def connectActivity = file('src/main/java/com/wand/app/ConnectActivity.java')
+    inputs.files(fileTree(uiRoot) { include '**/*.kt' }, connectActivity)
+    doLast {
+        def forbidden = [
+            [pattern: ~/\bAlertDialog\s*\(/, replacement: 'WandDialog'],
+            [pattern: ~/\bModalBottomSheet\s*\(/, replacement: 'WandBottomSheet'],
+            [pattern: ~/\bOutlinedTextField\s*\(/, replacement: 'WandTextField'],
+            [pattern: ~/\.glassCard\s*\(/, replacement: 'WandCard/wandCardSurface'],
+        ]
+        def violations = []
+        fileTree(uiRoot) {
+            include 'screens/**/*.kt', 'WandApp.kt'
+        }.files.sort().each { source ->
+            source.eachLine { line, number ->
+                forbidden.each { rule ->
+                    if (line =~ rule.pattern) {
+                        violations << "${source.name}:${number}: use ${rule.replacement}"
+                    }
+                }
+            }
+        }
+        if (connectActivity.text.contains('R.layout.activity_connect')) {
+            violations << 'ConnectActivity.java: connection UI must stay on WandTheme/Compose'
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException('Wand design-system violations:\n' + violations.join('\n'))
+        }
+    }
+}
+
+tasks.named('preBuild').configure { dependsOn('verifyWandDesignSystem') }

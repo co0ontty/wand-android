@@ -76,6 +76,9 @@ import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.WandColors
@@ -230,15 +233,13 @@ private fun AuthFailed(message: String, onRetry: () -> Unit, onSwitchServer: () 
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
-                Button(
-                    onClick = onRetry,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("重试") }
-                OutlinedButton(
+                WandButton(label = "重试", onClick = onRetry, modifier = Modifier.fillMaxWidth())
+                WandButton(
+                    label = "重新连接",
                     onClick = onSwitchServer,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("重新连接") }
+                    variant = WandButtonVariant.Secondary,
+                )
             }
         }
     }
@@ -354,17 +355,14 @@ private fun ReadyContent(
     }
 
     if (showSettings) {
-        ModalBottomSheet(
+        WandBottomSheet(
             onDismissRequest = { showSettings = false },
             sheetState = settingsSheetState,
             // 设置页本身是长列表。关闭 sheet 拖拽后，纵向手势只交给内部 verticalScroll，
             // 避免列表到达边界时与 ModalBottomSheet 的嵌套滚动反复争抢位移而抖动。
-            sheetGesturesEnabled = false,
-            containerColor = Color.Transparent,
-            tonalElevation = 0.dp,
-            scrimColor = Color.Black.copy(alpha = 0.42f),
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-            dragHandle = null,
+            gesturesEnabled = false,
+            transparent = true,
+            showDragHandle = false,
         ) {
             NoOverscroll {
                 Box(
@@ -818,13 +816,11 @@ private fun DetailPlaceholder(onNewSession: () -> Unit) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
         )
-        Button(
+        WandButton(
+            label = "新建会话",
             onClick = onNewSession,
-            colors = ButtonDefaults.buttonColors(containerColor = WandColors.brand),
             modifier = Modifier.padding(top = 18.dp),
-        ) {
-            Text("新建会话")
-        }
+        )
     }
 }
 

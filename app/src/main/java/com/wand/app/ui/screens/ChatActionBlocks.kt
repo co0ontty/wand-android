@@ -120,7 +120,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.tinted
 import kotlinx.coroutines.launch
@@ -204,7 +204,7 @@ fun AskUserQuestionCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassCard(WandShapes.md, rimTint = if (isAnswered) WandColors.success else WandColors.brand)
+            .wandCardSurface(WandShapes.md, rimTint = if (isAnswered) WandColors.success else WandColors.brand)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         // 头部
@@ -455,7 +455,7 @@ fun DiffCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassCard(WandShapes.md)
+            .wandCardSurface(WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(

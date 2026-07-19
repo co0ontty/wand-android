@@ -12,8 +12,11 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -22,8 +25,12 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * 设计 Token 层（重设计规范 v1 第 1 节）：
@@ -320,25 +327,119 @@ object WandMotion {
 /** 统一圆角（规范 1.2）。 */
 object WandShapes {
     /** 6dp —— 小标签 / 徽章。 */
-    val xs: Shape = RoundedCornerShape(6.dp)
+    val xs: CornerBasedShape = RoundedCornerShape(6.dp)
 
     /** 10dp —— 输入框内嵌代码块。 */
-    val sm: Shape = RoundedCornerShape(10.dp)
+    val sm: CornerBasedShape = RoundedCornerShape(10.dp)
 
     /** 14dp —— 卡片 / 工具卡 / 权限卡。 */
-    val md: Shape = RoundedCornerShape(14.dp)
+    val md: CornerBasedShape = RoundedCornerShape(14.dp)
 
     /** 20dp —— 输入栏 / 气泡 / 底部弹层。 */
-    val lg: Shape = RoundedCornerShape(20.dp)
+    val lg: CornerBasedShape = RoundedCornerShape(20.dp)
 
     /** 圆形胶囊。 */
-    val full: Shape = RoundedCornerShape(999.dp)
+    val full: CornerBasedShape = RoundedCornerShape(999.dp)
 
     // 自定义每角圆角时用的原始半径（如聊天气泡"尾巴"）。
     val radiusXs: Dp = 6.dp
     val radiusSm: Dp = 10.dp
     val radiusMd: Dp = 14.dp
     val radiusLg: Dp = 20.dp
+}
+
+/**
+ * Material 3 字体比例。页面通过 MaterialTheme.typography 取用，避免继续散落字号、行高和字重。
+ * 只保留产品实际使用的视觉层级；未覆盖的槽位继承 Material 3 默认值。
+ */
+val WandTypography = Typography(
+    headlineSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+    ),
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 18.sp,
+        lineHeight = 24.sp,
+    ),
+    titleMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+    ),
+    titleSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 15.sp,
+        lineHeight = 22.sp,
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+    ),
+    labelLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+    ),
+    labelSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+    ),
+)
+
+/** Material 3 官方组件读取的形状比例，与 WandShapes 保持一一对应。 */
+val WandMaterialShapes = Shapes(
+    WandShapes.xs,
+    WandShapes.sm,
+    WandShapes.md,
+    WandShapes.lg,
+    RoundedCornerShape(22.dp),
+)
+
+/** 非 Material 主题槽位统一从这里取值。 */
+object WandSpacing {
+    val xxs = 4.dp
+    val xs = 8.dp
+    val sm = 12.dp
+    val md = 16.dp
+    val lg = 20.dp
+    val xl = 24.dp
+    val xxl = 32.dp
+}
+
+object WandSizes {
+    val minTouchTarget = 48.dp
+    val toolbarIcon = 21.dp
+    val controlHeight = 50.dp
+    val divider = 0.5.dp
 }
 
 @Composable
@@ -355,6 +456,8 @@ fun WandTheme(
     CompositionLocalProvider(LocalWandDark provides dark) {
         MaterialTheme(
             colorScheme = if (dark) DarkScheme else LightScheme,
+            typography = WandTypography,
+            shapes = WandMaterialShapes,
             content = content,
         )
     }

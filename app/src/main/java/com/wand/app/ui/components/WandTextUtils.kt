@@ -40,8 +40,8 @@ import kotlin.math.roundToInt
  */
 
 /**
- * 路径专用单行文本。默认保留旧版往返模式；列表与详情可启用 [revealOnce]，让长路径
- * 错峰执行一次从根目录到末级目录的揭示，并最终停在最有辨识度的末级目录。
+ * 路径专用单行文本。默认保留旧版往返模式；[revealOnce] 会从根目录向末级目录揭示一次，
+ * [repeatTailReveal] 则在末级目录贴右停留后回到开头，按固定间隔重复揭示。
  */
 @Composable
 fun TailMarqueePathText(
@@ -57,11 +57,12 @@ fun TailMarqueePathText(
     staggerWindowMillis: Long = 0L,
     velocity: Dp = 18.dp,
     revealOnce: Boolean = false,
+    repeatTailReveal: Boolean = false,
 ) {
     val text = path.ifBlank { fallback }
     val emphasizedPathColor = lerp(color, WandColors.textPrimary, 0.46f)
-    val styledText = remember(text, color, emphasizedPathColor, revealOnce) {
-        if (!revealOnce) return@remember AnnotatedString(text)
+    val styledText = remember(text, color, emphasizedPathColor, revealOnce, repeatTailReveal) {
+        if (!revealOnce && !repeatTailReveal) return@remember AnnotatedString(text)
         val separator = maxOf(text.lastIndexOf('/'), text.lastIndexOf('\\'))
         buildAnnotatedString {
             if (separator in 0 until text.lastIndex) {
@@ -97,7 +98,7 @@ fun TailMarqueePathText(
             return@LaunchedEffect
         }
         val tailOffset = -overflowPx.toFloat()
-        if (!motionEnabled || revealOnce) {
+        if (!motionEnabled || revealOnce || repeatTailReveal) {
             if (motionEnabled) {
                 offset.snapTo(0f)
             } else {
@@ -125,6 +126,19 @@ fun TailMarqueePathText(
                     easing = LinearEasing,
                 ),
             )
+        } else if (repeatTailReveal) {
+            while (true) {
+                offset.animateTo(
+                    targetValue = tailOffset,
+                    animationSpec = tween(
+                        durationMillis = durationMillis.coerceAtMost(8_000),
+                        easing = LinearEasing,
+                    ),
+                )
+                kotlinx.coroutines.delay(pauseMillis)
+                offset.snapTo(0f)
+                kotlinx.coroutines.delay(initialDelayMillis + staggerMillis)
+            }
         } else {
             while (true) {
                 offset.animateTo(

@@ -47,7 +47,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -57,6 +56,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -144,6 +144,10 @@ import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandDialogAction
+import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
@@ -152,7 +156,7 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassBackdropSource
-import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.delay
@@ -711,8 +715,7 @@ private fun ChatTopicTitle(text: String, generating: Boolean) {
     if (!generating) {
         Text(
             text,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.titleMedium,
             color = WandColors.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -733,8 +736,7 @@ private fun ChatTopicTitle(text: String, generating: Boolean) {
             alpha = 0.64f + rhythm * 0.36f
             translationY = -liftPx * rhythm
         },
-        fontSize = 15.sp,
-        fontWeight = FontWeight.SemiBold,
+        style = MaterialTheme.typography.titleMedium,
         color = WandColors.textPrimary,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -744,19 +746,7 @@ private fun ChatTopicTitle(text: String, generating: Boolean) {
 /** 顶栏左侧 provider 标识：与会话列表一致，仅展示透明背景的品牌 logo。 */
 @Composable
 private fun ChatProviderBadge(provider: String?) {
-    val isCodex = provider == "codex"
-    val tint = if (isCodex) WandColors.info else WandColors.brand
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier.size(28.dp),
-    ) {
-        Icon(
-            painter = BrandLogos.painterForProvider(provider),
-            contentDescription = providerDisplayName(provider),
-            tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.94f)),
-            modifier = Modifier.size(20.dp),
-        )
-    }
+    WandProviderMark(provider)
 }
 
 /** 顶栏副标题只展示完整工作目录；空间不足时由路径文本负责延迟滚动。 */
@@ -875,7 +865,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .glassCard(RoundedCornerShape(20.dp))
+                        .wandCardSurface(WandShapes.lg)
                         .clip(RoundedCornerShape(20.dp)),
                 ) {
                     LaunchSettingPicker(
@@ -1031,9 +1021,8 @@ private fun LaunchSettingPicker(
             )
         }
         if (expanded) {
-            ModalBottomSheet(
+            WandBottomSheet(
                 onDismissRequest = { expanded = false },
-                containerColor = WandColors.bgElevated,
             ) {
                 NoOverscroll {
                     Column(
@@ -1648,29 +1637,26 @@ private fun InputBar(
         },
     )
     if (showStopConfirm) {
-        AlertDialog(
+        WandDialog(
+            title = "停止任务",
             onDismissRequest = { showStopConfirm = false },
-            containerColor = WandColors.surface,
-            title = {
-                Text("停止任务", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            },
-            text = {
-                Text("确定要停止当前正在运行的任务吗？", fontSize = 13.sp)
-            },
-            confirmButton = {
-                TextButton(onClick = {
+            icon = WandIcons.stop,
+            confirm = WandDialogAction(
+                label = "停止",
+                destructive = true,
+                onClick = {
                     showStopConfirm = false
                     store.stopResponding()
-                }) {
-                    Text("停止", color = WandColors.danger, fontSize = 13.sp)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showStopConfirm = false }) {
-                    Text("取消", color = WandColors.textMuted, fontSize = 13.sp)
-                }
-            },
-        )
+                },
+            ),
+            dismiss = WandDialogAction("取消", { showStopConfirm = false }),
+        ) {
+            Text(
+                "确定要停止当前正在运行的任务吗？",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+        }
     }
 }
 
@@ -2266,18 +2252,26 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
     LaunchedEffect(state) {
         if (state is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
     }
-    AlertDialog(
+    WandDialog(
+        title = "下载本地语音模型",
         onDismissRequest = { if (state !is SttModelManager.State.Downloading) onDismiss() },
-        containerColor = WandColors.surface,
-        title = {
-            Text(
-                "下载本地语音模型",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
+        icon = WandIcons.update,
+        confirm = when (state) {
+            is SttModelManager.State.Downloading -> WandDialogAction(
+                label = "取消下载",
+                destructive = true,
+                onClick = { SttModelManager.cancelDownload() },
+            )
+            is SttModelManager.State.Ready -> WandDialogAction("知道了", onDismiss)
+            else -> WandDialogAction(
+                if (state is SttModelManager.State.Failed) "重试" else "下载",
+                { SttModelManager.startDownload(context) },
             )
         },
-        text = {
+        dismiss = if (state is SttModelManager.State.Idle || state is SttModelManager.State.Failed) {
+            WandDialogAction("暂不", onDismiss)
+        } else null,
+    ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (state) {
                     is SttModelManager.State.Downloading -> {
@@ -2318,33 +2312,7 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
                     )
                 }
             }
-        },
-        confirmButton = {
-            when (state) {
-                is SttModelManager.State.Downloading -> TextButton(onClick = { SttModelManager.cancelDownload() }) {
-                    Text("取消下载", color = WandColors.danger, fontSize = 13.sp)
-                }
-                is SttModelManager.State.Ready -> TextButton(onClick = onDismiss) {
-                    Text("知道了", color = WandColors.brand, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                }
-                else -> TextButton(onClick = { SttModelManager.startDownload(context) }) {
-                    Text(
-                        if (state is SttModelManager.State.Failed) "重试" else "下载",
-                        color = WandColors.brand,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-        },
-        dismissButton = {
-            if (state is SttModelManager.State.Idle || state is SttModelManager.State.Failed) {
-                TextButton(onClick = onDismiss) {
-                    Text("暂不", color = WandColors.textMuted, fontSize = 13.sp)
-                }
-            }
-        },
-    )
+    }
 }
 
 private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)

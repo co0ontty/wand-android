@@ -98,10 +98,14 @@ import androidx.compose.ui.zIndex
 import com.wand.app.ui.QuickCommitEntryPhase
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandButtonVariant
+import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
-import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.components.wandCardSurface
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -448,15 +452,11 @@ fun QuickCommitSheet(
         // 提交 / 推送进行中禁止下滑收起，防止误关后丢失结果面板。
         confirmValueChange = { value -> value != SheetValue.Hidden || !qc.inFlight },
     )
-    ModalBottomSheet(
+    WandBottomSheet(
         onDismissRequest = { if (!qc.inFlight) onDismiss() },
         sheetState = sheetState,
         // ModalBottomSheet 是独立 window，采样不到 app 的 backdrop 层。
         // 用近实底 bgElevated 保证输入区与按钮对比度。
-        containerColor = WandColors.bgElevated.copy(alpha = 0.98f),
-        scrimColor = Color.Black.copy(alpha = 0.46f),
-        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-        dragHandle = { BottomSheetDefaults.DragHandle() },
     ) {
         NoOverscroll {
             Column(
@@ -580,16 +580,13 @@ private fun FormPanel(
                 s?.lastCommitSubject?.takeIf { it.isNotEmpty() },
             ).joinToString(" ").ifEmpty { "无 commit" },
         )
-        OutlinedTextField(
+        WandTextField(
             value = qc.messageDraft,
             onValueChange = { qc.messageDraft = it },
-            placeholder = { Text("留空自动生成", fontSize = 14.sp) },
+            placeholder = "留空自动生成",
             minLines = 2,
             maxLines = 4,
             enabled = !qc.submitting,
-            textStyle = TextStyle(fontSize = 15.sp, color = WandColors.textPrimary),
-            shape = RoundedCornerShape(14.dp),
-            colors = quickCommitFieldColors(),
             modifier = Modifier
                 .fillMaxWidth()
                 .sizeIn(minHeight = 56.dp),
@@ -599,22 +596,19 @@ private fun FormPanel(
     // Tag：最新 tag → 新 tag
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         PairOldLine(label = "Tag", old = s?.latestTag ?: "无 tag")
-        OutlinedTextField(
+        WandTextField(
             value = qc.tagDraft,
             onValueChange = {
                 qc.tagDraft = it
                 qc.tagEdited = true
             },
-            placeholder = { Text("可选 tag", fontSize = 14.sp) },
+            placeholder = "可选 tag",
             singleLine = true,
             enabled = !qc.submitting,
             textStyle = TextStyle(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 14.sp,
-                color = WandColors.textPrimary,
             ),
-            shape = RoundedCornerShape(14.dp),
-            colors = quickCommitFieldColors(),
             modifier = Modifier
                 .fillMaxWidth()
                 .sizeIn(minHeight = 48.dp),
@@ -654,36 +648,30 @@ private fun FormPanel(
     // 工作区干净但本地领先远端：dock 无事可做，给一个「仅推送」直达按钮。
     val ahead = s?.ahead ?: 0
     if (!hasChanges && ahead > 0 && !qc.submitting) {
-        OutlinedButton(
+        WandButton(
+            label = if (qc.pushing) {
+                "推送中…"
+            } else {
+                "推送 ↑$ahead 个待推 commit" + if (hasSubmodule) "（含子模块）" else ""
+            },
             onClick = { qc.pushCommitsOnly() },
             enabled = !qc.pushing,
+            loading = qc.pushing,
+            variant = WandButtonVariant.Secondary,
             modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (qc.pushing) {
-                CircularProgressIndicator(
-                    strokeWidth = 1.6.dp,
-                    modifier = Modifier.size(13.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(
-                if (qc.pushing) {
-                    "推送中…"
-                } else {
-                    "推送 ↑$ahead 个待推 commit" + if (hasSubmodule) "（含子模块）" else ""
-                },
-                fontSize = 13.sp,
-            )
-        }
+        )
         qc.pushError?.let {
             Text(it, fontSize = 12.sp, color = WandColors.danger)
         }
     }
 
     Row(modifier = Modifier.fillMaxWidth()) {
-        TextButton(onClick = { if (!qc.inFlight) onDismiss() }, enabled = !qc.inFlight) {
-            Text("取消", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        WandButton(
+            label = "取消",
+            onClick = { if (!qc.inFlight) onDismiss() },
+            enabled = !qc.inFlight,
+            variant = WandButtonVariant.Text,
+        )
     }
 }
 
@@ -709,20 +697,6 @@ private fun PairOldLine(label: String, old: String) {
         )
     }
 }
-
-@Composable
-private fun quickCommitFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = WandColors.textPrimary,
-    unfocusedTextColor = WandColors.textPrimary,
-    focusedBorderColor = WandColors.focusRing,
-    unfocusedBorderColor = WandColors.borderStrong.copy(alpha = 0.72f),
-    focusedContainerColor = WandColors.surface,
-    unfocusedContainerColor = WandColors.surface.copy(alpha = 0.90f),
-    cursorColor = WandColors.brand,
-    focusedPlaceholderColor = WandColors.textMuted,
-    unfocusedPlaceholderColor = WandColors.textMuted,
-    disabledContainerColor = WandColors.surface.copy(alpha = 0.56f),
-)
 
 // MARK: - 结果面板
 
@@ -757,30 +731,22 @@ private fun ResultPanel(qc: QuickCommitStore, onDismiss: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            TextButton(onClick = { if (!qc.pushing) onDismiss() }, enabled = !qc.pushing) {
-                Text("关闭", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            WandButton(
+                label = "关闭",
+                onClick = { if (!qc.pushing) onDismiss() },
+                enabled = !qc.pushing,
+                variant = WandButtonVariant.Text,
+            )
             Spacer(Modifier.weight(1f))
             if (r.pushed) {
                 Text("已推送", fontSize = 13.sp, color = WandColors.running)
             } else {
-                Button(
+                WandButton(
+                    label = if (qc.pushing) "推送中…" else "Push & Close",
                     onClick = { qc.pushOnly() },
                     enabled = !qc.pushing,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                    ),
-                ) {
-                    if (qc.pushing) {
-                        CircularProgressIndicator(
-                            strokeWidth = 1.6.dp,
-                            color = Color.White,
-                            modifier = Modifier.size(13.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text(if (qc.pushing) "推送中…" else "Push & Close", fontSize = 13.sp)
-                }
+                    loading = qc.pushing,
+                )
             }
         }
     }
@@ -862,7 +828,7 @@ private fun MagneticDock(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp)
-                .glassCard(RoundedCornerShape(14.dp))
+                .wandCardSurface()
                 .padding(horizontal = 16.dp),
         ) {
             CircularProgressIndicator(
@@ -965,7 +931,7 @@ private fun MagneticDock(
                 .weight(1f)
                 .fillMaxHeight()
                 .zIndex(1f)
-                .glassCard(RoundedCornerShape(14.dp))
+                .wandCardSurface()
                 .onSizeChanged { fieldSize = it }
                 .pointerInputDock(
                     enabled = enabled,
@@ -1086,7 +1052,7 @@ private fun MagneticDock(
             modifier = Modifier
                 .width(76.dp)
                 .fillMaxHeight()
-                .glassCard(launchShape, rimTint = launchTone)
+                .wandCardSurface(launchShape, rimTint = launchTone)
                 .then(
                     if (hot) {
                         Modifier

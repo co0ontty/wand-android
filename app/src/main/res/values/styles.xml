@@ -1,50 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
 
-    <style name="Wand.TextInputLayout" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
-        <item name="boxBackgroundColor">@color/glass_control</item>
-        <item name="boxStrokeColor">@color/wand_input_stroke</item>
-        <item name="boxStrokeWidth">1dp</item>
-        <item name="boxStrokeWidthFocused">2dp</item>
-        <item name="boxCornerRadiusTopStart">14dp</item>
-        <item name="boxCornerRadiusTopEnd">14dp</item>
-        <item name="boxCornerRadiusBottomStart">14dp</item>
-        <item name="boxCornerRadiusBottomEnd">14dp</item>
-        <item name="hintTextColor">@color/text_secondary</item>
-        <item name="android:textColorHint">@color/text_secondary</item>
-    </style>
-
-    <style name="Wand.Connect.PrimaryButton" parent="Widget.MaterialComponents.Button">
-        <item name="backgroundTint">@color/primary</item>
-        <item name="android:textColor">#FFFFFFFF</item>
-        <item name="android:textStyle">bold</item>
-        <item name="cornerRadius">14dp</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
-        <item name="elevation">0dp</item>
-        <item name="android:stateListAnimator">@null</item>
-        <item name="rippleColor">#28FFFFFF</item>
-    </style>
-
-    <style name="Wand.Connect.SecondaryButton" parent="Widget.MaterialComponents.Button.OutlinedButton">
-        <item name="backgroundTint">@color/glass_control</item>
-        <item name="android:textColor">@color/text_primary</item>
-        <item name="iconTint">@color/primary</item>
-        <item name="strokeColor">@color/divider</item>
-        <item name="strokeWidth">1dp</item>
-        <item name="cornerRadius">14dp</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
-        <item name="elevation">0dp</item>
-        <item name="android:stateListAnimator">@null</item>
-    </style>
-
-    <style name="Wand.Connect.TextButton" parent="Widget.MaterialComponents.Button.TextButton">
-        <item name="android:textColor">@color/primary</item>
-        <item name="cornerRadius">12dp</item>
-        <item name="rippleColor">#20C5653D</item>
-    </style>
-
     <!-- Custom MaterialAlertDialog theme: rounded, warm card, brand-coloured buttons -->
     <style name="Theme.Wand.Dialog" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
         <item name="colorPrimary">@color/primary</item>
