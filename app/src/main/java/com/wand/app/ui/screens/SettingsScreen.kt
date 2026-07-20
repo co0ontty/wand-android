@@ -80,6 +80,8 @@ import com.wand.app.ui.HomeSettingsActions
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
+import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
@@ -92,6 +94,7 @@ import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
@@ -179,6 +182,12 @@ fun SettingsScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(top = 56.dp),
             ) {
+                SettingsOverview(
+                    appVersion = settings.appVersion,
+                    connection = connection,
+                    betaChannel = betaChannel,
+                    appearanceMode = appearanceMode,
+                )
                 SettingsSection(
                     title = "外观与反馈",
                     description = "调整这台设备上的主题、声音和触感。",
@@ -248,39 +257,25 @@ fun SettingsScreen(
 
                 SettingsSection(
                     title = "应用与更新",
-                    description = "控制后台运行方式和更新通道。",
+                    description = "检查新版本，并控制后台运行方式和更新通道。",
                 ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        SwitchRow(
-                            label = "后台保活",
-                            checked = keepAlive,
-                            icon = WandIcons.keepAlive,
-                            iconTint = WandColors.success,
-                        ) { enabled ->
+                    UpdateControlDeck(
+                        appVersion = settings.appVersion,
+                        betaChannel = betaChannel,
+                        keepAlive = keepAlive,
+                        onCheckUpdate = settings.manualCheckUpdate,
+                        onKeepAliveChange = { enabled ->
                             keepAlive = enabled
                             if (enabled) {
                                 notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                             }
                             settings.setKeepAlive(enabled)
-                        }
-                        RowDivider()
-                        ActionRow(
-                            label = "检查更新",
-                            icon = WandIcons.update,
-                            trailingText = "v${settings.appVersion}",
-                            iconTint = WandColors.success,
-                        ) { settings.manualCheckUpdate() }
-                        RowDivider()
-                        SwitchRow(
-                            label = "Beta 通道",
-                            checked = betaChannel,
-                            icon = WandIcons.beta,
-                            iconTint = WandColors.warning,
-                        ) {
+                        },
+                        onBetaChannelChange = {
                             betaChannel = it
                             settings.setBetaChannel(it)
-                        }
-                    }
+                        },
+                    )
                 }
 
                 SettingsSection(
@@ -343,6 +338,97 @@ private fun SettingsContentLayout(
             content()
         }
     }
+}
+
+/** 顶部概览把“系统设置”从普通列表提升为可快速判断当前设备状态的入口。 */
+@Composable
+private fun SettingsOverview(
+    appVersion: String,
+    connection: HomeConnectionInfo,
+    betaChannel: Boolean,
+    appearanceMode: WandAppearanceMode,
+) {
+    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                WandBrandMark(size = 48)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        "系统设置",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = WandColors.textPrimary,
+                    )
+                    Text(
+                        "连接、设备和工作流偏好都在这里调整。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WandColors.textSecondary,
+                    )
+                }
+                Text(
+                    "v$appVersion",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textMuted,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(WandColors.surfaceSoft.copy(alpha = 0.70f))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                SettingsStatePill(
+                    label = if (connection.hasToken) "已安全连接" else "已连接",
+                    tint = WandColors.success,
+                    modifier = Modifier.weight(1f),
+                )
+                SettingsStatePill(
+                    label = if (betaChannel) "Beta 通道" else "Stable 通道",
+                    tint = if (betaChannel) WandColors.warning else WandColors.info,
+                    modifier = Modifier.weight(1f),
+                )
+                SettingsStatePill(
+                    label = appearanceMode.settingsLabel(),
+                    tint = WandColors.brand,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsStatePill(label: String, tint: Color, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(tint.copy(alpha = 0.08f))
+            .border(0.55.dp, tint.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 9.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(tint))
+        Text(
+            label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = WandColors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun WandAppearanceMode.settingsLabel(): String = when (this) {
+    WandAppearanceMode.Light -> "浅色外观"
+    WandAppearanceMode.Dark -> "深色外观"
+    WandAppearanceMode.System -> "跟随系统"
 }
 
 @Composable
@@ -558,6 +644,74 @@ private fun NotificationFeedbackContent(
     )
 }
 
+/**
+ * 更新区把最常用的“检查更新”提升为主操作；开关仍保留在同一张液态卡片里，
+ * 但不再与所有设置行竞争同一视觉权重。
+ */
+@Composable
+private fun UpdateControlDeck(
+    appVersion: String,
+    betaChannel: Boolean,
+    keepAlive: Boolean,
+    onCheckUpdate: () -> Unit,
+    onKeepAliveChange: (Boolean) -> Unit,
+    onBetaChannelChange: (Boolean) -> Unit,
+) {
+    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(11.dp),
+            ) {
+                SettingsIconBadge(icon = WandIcons.update, tint = WandColors.success)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        "保持在最新版本",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = WandColors.textPrimary,
+                    )
+                    Text(
+                        "当前 v$appVersion · ${if (betaChannel) "Beta 通道" else "Stable 通道"}",
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textSecondary,
+                    )
+                }
+            }
+            WandButton(
+                label = "检查更新",
+                onClick = onCheckUpdate,
+                icon = WandIcons.update,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+            )
+            RowDivider()
+            SwitchRow(
+                label = "后台保活",
+                checked = keepAlive,
+                icon = WandIcons.keepAlive,
+                iconTint = WandColors.success,
+                onChange = onKeepAliveChange,
+            )
+            RowDivider()
+            SwitchRow(
+                label = "Beta 通道",
+                checked = betaChannel,
+                icon = WandIcons.beta,
+                iconTint = WandColors.warning,
+                onChange = onBetaChannelChange,
+            )
+        }
+    }
+}
+
 @Composable
 private fun SettingsSheetHeader(
     backdrop: GlassBackdrop,
@@ -587,7 +741,7 @@ private fun SettingsSheetHeader(
                 onClick = onBack,
             )
             Text(
-                "设置",
+                "系统设置",
                 style = MaterialTheme.typography.titleMedium,
                 color = WandColors.textPrimary,
                 maxLines = 1,
@@ -887,7 +1041,11 @@ private fun SettingsCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    WandCard(modifier = modifier, content = content)
+    WandCard(
+        modifier = modifier,
+        shape = WandShapes.lg,
+        content = content,
+    )
 }
 
 /** 卡片内行间分割线：0.5dp border 色，左右与行内边距对齐。 */

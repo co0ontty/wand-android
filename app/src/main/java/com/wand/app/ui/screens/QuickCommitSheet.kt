@@ -54,7 +54,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -104,7 +103,11 @@ import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.components.wandCardSurface
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -449,31 +452,47 @@ fun QuickCommitSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = false,
-        // 提交 / 推送进行中禁止下滑收起，防止误关后丢失结果面板。
-        confirmValueChange = { value -> value != SheetValue.Hidden || !qc.inFlight },
     )
     WandBottomSheet(
-        onDismissRequest = { if (!qc.inFlight) onDismiss() },
+        // 关闭只隐藏面板，不会取消已经发出的 Git 请求。这样网络等待或服务端耗时
+        // 较长时，用户仍能返回会话；完成/失败结果通过 toast 与入口状态反馈。
+        onDismissRequest = onDismiss,
         sheetState = sheetState,
         // ModalBottomSheet 是独立 window，采样不到 app 的 backdrop 层。
-        // 用近实底 bgElevated 保证输入区与按钮对比度。
+        // 由内部 Liquid 容器走高对比降级样式，保证输入和主操作仍有清晰层次。
+        transparent = true,
+        showDragHandle = false,
     ) {
-        NoOverscroll {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-                    .navigationBarsPadding()
-                    .imePadding()
-                    .padding(bottom = 18.dp),
-            ) {
-                SheetHeader(qc)
-                if (qc.result != null) {
-                    ResultPanel(qc, onDismiss)
-                } else {
-                    FormPanel(qc, isHapticEnabled, onDismiss)
+        val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(sheetShape)
+                .glassSurface(
+                    backdrop = null,
+                    shape = sheetShape,
+                    style = WandGlass.regular.copy(fallbackAlpha = 0.965f, shadowElevation = 4.dp),
+                ),
+        ) {
+            AmbientBackground(Modifier.matchParentSize())
+            NoOverscroll {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 18.dp, vertical = 10.dp)
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .padding(bottom = 20.dp),
+                ) {
+                    QuickCommitSheetHandle()
+                    SheetHeader(qc, onDismiss)
+                    if (qc.result != null) {
+                        ResultPanel(qc, onDismiss)
+                    } else {
+                        FormPanel(qc, isHapticEnabled, onDismiss)
+                    }
                 }
             }
         }
@@ -481,7 +500,7 @@ fun QuickCommitSheet(
 }
 
 @Composable
-private fun SheetHeader(qc: QuickCommitStore) {
+private fun SheetHeader(qc: QuickCommitStore, onDismiss: () -> Unit) {
     val s = qc.status
     val parts = mutableListOf<String>()
     if (s != null && s.isGit) {
@@ -496,34 +515,59 @@ private fun SheetHeader(qc: QuickCommitStore) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(
-            "快捷提交",
-            fontSize = 17.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = WandColors.textPrimary,
-            modifier = Modifier.weight(1f),
-        )
         val summary = when {
             qc.statusLoading && s == null -> "读取中"
             s != null && !s.isGit -> "非 Git 仓库"
             parts.isNotEmpty() -> parts.joinToString(" · ")
             else -> null
         }
-        summary?.let {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                it,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
-                    .padding(horizontal = 9.dp, vertical = 5.dp)
-                    .widthIn(max = 190.dp),
+                "快捷提交",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+            )
+            summary?.let {
+                Text(
+                    it,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
+                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                        .widthIn(max = 240.dp),
+                )
+            }
+        }
+        IconButton(
+            onClick = onDismiss,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                WandIcons.close,
+                contentDescription = "关闭快捷提交",
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(18.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun QuickCommitSheetHandle() {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .width(36.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(WandColors.textMuted.copy(alpha = 0.30f)),
+        )
     }
 }
 
@@ -538,6 +582,13 @@ private fun FormPanel(
     val s = qc.status
     val hasChanges = (s?.modifiedCount ?: 0) > 0
     val hasSubmodule = s?.hasSubmodule == true
+
+    CommitWorkspaceLens(
+        branch = s?.branch,
+        changeCount = s?.modifiedCount ?: 0,
+        ahead = s?.ahead ?: 0,
+        hasChanges = hasChanges,
+    )
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -583,6 +634,7 @@ private fun FormPanel(
         WandTextField(
             value = qc.messageDraft,
             onValueChange = { qc.messageDraft = it },
+            label = "新的 Commit 信息",
             placeholder = "留空自动生成",
             minLines = 2,
             maxLines = 4,
@@ -602,6 +654,7 @@ private fun FormPanel(
                 qc.tagDraft = it
                 qc.tagEdited = true
             },
+            label = "Tag（可选）",
             placeholder = "可选 tag",
             singleLine = true,
             enabled = !qc.submitting,
@@ -668,10 +721,78 @@ private fun FormPanel(
     Row(modifier = Modifier.fillMaxWidth()) {
         WandButton(
             label = "取消",
-            onClick = { if (!qc.inFlight) onDismiss() },
-            enabled = !qc.inFlight,
+            onClick = onDismiss,
             variant = WandButtonVariant.Text,
         )
+    }
+}
+
+/** 提交前的上下文透镜：先回答“我要在哪个分支处理多少改动”，再进入表单。 */
+@Composable
+private fun CommitWorkspaceLens(
+    branch: String?,
+    changeCount: Int,
+    ahead: Int,
+    hasChanges: Boolean,
+) {
+    val tone = when {
+        hasChanges -> WandColors.brand
+        ahead > 0 -> PushGreen
+        else -> WandColors.success
+    }
+    val status = when {
+        hasChanges -> "$changeCount 个改动待处理"
+        ahead > 0 -> "$ahead 个 commit 待推送"
+        else -> "工作区干净"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .wandCardSurface(WandShapes.lg, rimTint = tone)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(tone.copy(alpha = 0.13f))
+                .border(0.6.dp, tone.copy(alpha = 0.25f), RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                WandIcons.commit,
+                contentDescription = null,
+                tint = tone,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                branch ?: "未识别分支",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(status, fontSize = 12.sp, color = WandColors.textSecondary)
+        }
+        if (ahead > 0 && hasChanges) {
+            Text(
+                "↑$ahead",
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+                color = PushGreen,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(PushGreen.copy(alpha = 0.12f))
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+            )
+        }
     }
 }
 
@@ -733,8 +854,7 @@ private fun ResultPanel(qc: QuickCommitStore, onDismiss: () -> Unit) {
         ) {
             WandButton(
                 label = "关闭",
-                onClick = { if (!qc.pushing) onDismiss() },
-                enabled = !qc.pushing,
+                onClick = onDismiss,
                 variant = WandButtonVariant.Text,
             )
             Spacer(Modifier.weight(1f))

@@ -27,6 +27,7 @@ import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class UpdateManager {
 
@@ -54,6 +55,30 @@ final class UpdateManager {
 
     interface NoUpdateCallback {
         void onNoUpdate(String message);
+    }
+
+    /**
+     * Compose 更新面板使用的下载句柄。下载可以在面板仍然打开时被取消，但取消不会
+     * 影响已经落盘的已完成安装包。
+     */
+    static final class DownloadRequest {
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        void cancel() {
+            cancelled.set(true);
+        }
+
+        boolean isCancelled() {
+            return cancelled.get();
+        }
+    }
+
+    /** 让原生 Compose 界面接管下载的进度、完成和失败状态。 */
+    interface DownloadListener {
+        void onProgress(long downloadedBytes, long totalBytes, long bytesPerSecond);
+        void onCompleted(File apkFile);
+        void onCancelled();
+        void onFailed(String message);
     }
 
     void checkForUpdate(UpdateFoundCallback callback) {
@@ -197,54 +222,107 @@ final class UpdateManager {
         final TextView progressPercent = progressView.findViewById(R.id.progressPercent);
         final TextView progressBytes = progressView.findViewById(R.id.progressBytes);
 
-        final boolean[] cancelled = {false};
+        final DownloadRequest[] request = {null};
         final AlertDialog progress = new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
                 .setView(progressView)
-                .setNegativeButton(R.string.cancel_download, (d, w) -> cancelled[0] = true)
+                .setNegativeButton(R.string.cancel_download, (d, w) -> {
+                    if (request[0] != null) request[0].cancel();
+                })
                 .setCancelable(false)
                 .create();
         progress.show();
 
-        if (executor == null || executor.isShutdown()) {
-            progress.dismiss();
-            Toast.makeText(activity, R.string.download_failed, Toast.LENGTH_SHORT).show();
-            return;
+        request[0] = download(
+                downloadUrl,
+                safeFileName,
+                latestVersion,
+                channel,
+                new DownloadListener() {
+                    @Override public void onProgress(long downloaded, long total, long bytesPerSecond) {
+                        String speedText = "  " + formatSize(bytesPerSecond) + "/s";
+                        if (total > 0) {
+                            int percent = (int) (downloaded * 100 / total);
+                            progressBar.setIndeterminate(false);
+                            progressBar.setProgress(percent);
+                            progressPercent.setText(percent + "%");
+                            progressBytes.setText(formatSize(downloaded) + " / "
+                                    + formatSize(total) + speedText);
+                        } else {
+                            progressBar.setIndeterminate(true);
+                            progressPercent.setText("大小未知");
+                            progressBytes.setText(formatSize(downloaded) + speedText);
+                        }
+                    }
+
+                    @Override public void onCompleted(File apkFile) {
+                        progress.dismiss();
+                        installApk(apkFile);
+                    }
+
+                    @Override public void onCancelled() {
+                        progress.dismiss();
+                    }
+
+                    @Override public void onFailed(String message) {
+                        progress.dismiss();
+                        new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
+                            .setTitle("下载失败")
+                            .setMessage(message)
+                            .setPositiveButton("重试", (d, w) ->
+                                    downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel))
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show();
+                    }
+                }
+        );
+    }
+
+    /**
+     * 只下载，不直接弹窗或安装。HomeActivity 的 Compose 更新面板以此驱动进度状态；
+     * MainActivity 仍通过上面的兼容入口使用相同的网络和落盘逻辑。
+     */
+    DownloadRequest download(String downloadUrl, String fileName,
+                             String latestVersion, String channel,
+                             DownloadListener listener) {
+        final DownloadRequest request = new DownloadRequest();
+        if (downloadUrl == null || downloadUrl.isEmpty()) {
+            postDownloadFailure(listener, "下载地址为空");
+            return request;
         }
+        if (executor == null || executor.isShutdown()) {
+            postDownloadFailure(listener, "下载服务暂不可用，请稍后重试。");
+            return request;
+        }
+        final String safeFileName = (fileName == null || fileName.isEmpty())
+                ? "wand-update.apk" : fileName;
         executor.execute(() -> {
             HttpURLConnection conn = null;
+            File outputFile = null;
             try {
                 String fullUrl = downloadUrl.startsWith("http")
                         ? downloadUrl : serverUrl + downloadUrl;
-
                 conn = NetUtils.openConnection(fullUrl,
                         NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS);
-
                 if (!downloadUrl.startsWith("http")) {
                     String cookie = CookieManager.getInstance().getCookie(serverUrl);
                     if (cookie != null) conn.setRequestProperty("Cookie", cookie);
                 }
-
                 conn.setInstanceFollowRedirects(true);
-
                 int responseCode = conn.getResponseCode();
                 if (responseCode == 302 || responseCode == 301) {
                     String redirectUrl = conn.getHeaderField("Location");
                     conn.disconnect();
                     if (redirectUrl != null) {
                         conn = NetUtils.openConnection(redirectUrl,
-                            NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS);
+                                NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS);
                         conn.setInstanceFollowRedirects(true);
                         responseCode = conn.getResponseCode();
                     }
                 }
-
-                if (responseCode != 200) {
-                    throw new Exception("服务器返回 " + responseCode);
-                }
+                if (responseCode != 200) throw new Exception("服务器返回 " + responseCode);
 
                 int fileLength = conn.getContentLength();
-                File outputFile = new File(activity.getExternalFilesDir(null), safeFileName);
-
+                outputFile = new File(activity.getExternalFilesDir(null), safeFileName);
                 if (fileLength > 0) {
                     File dir = outputFile.getParentFile();
                     long usable = dir != null ? dir.getUsableSpace() : Long.MAX_VALUE;
@@ -261,78 +339,74 @@ final class UpdateManager {
                     long lastUiUpdate = 0;
                     final long startTime = System.currentTimeMillis();
                     while ((count = in.read(buffer)) != -1) {
-                        if (cancelled[0]) break;
+                        if (request.isCancelled()) break;
                         total += count;
                         out.write(buffer, 0, count);
                         long now = System.currentTimeMillis();
                         if (now - lastUiUpdate > 50 || total == fileLength) {
                             lastUiUpdate = now;
-                            final long totalSnap = total;
-                            final int totalLen = fileLength;
-                            final long elapsed = Math.max(1, now - startTime);
-                            final long bytesPerSec = totalSnap * 1000 / elapsed;
-                            activity.runOnUiThread(() -> {
-                                if (activity.isDestroyed()) return;
-                                String speedText = "  " + formatSize(bytesPerSec) + "/s";
-                                if (totalLen > 0) {
-                                    int percent = (int) (totalSnap * 100 / totalLen);
-                                    progressBar.setIndeterminate(false);
-                                    progressBar.setProgress(percent);
-                                    progressPercent.setText(percent + "%");
-                                    progressBytes.setText(formatSize(totalSnap) + " / "
-                                            + formatSize(totalLen) + speedText);
-                                } else {
-                                    progressBar.setIndeterminate(true);
-                                    progressPercent.setText("大小未知");
-                                    progressBytes.setText(formatSize(totalSnap) + speedText);
-                                }
-                            });
+                            long elapsed = Math.max(1, now - startTime);
+                            postDownloadProgress(listener, total, fileLength, total * 1000 / elapsed);
                         }
                     }
                 }
 
-                if (cancelled[0]) {
+                if (request.isCancelled()) {
                     if (outputFile.exists()) {
                         try { outputFile.delete(); } catch (Exception ignored) {}
                     }
+                    postDownloadCancelled(listener);
                     return;
                 }
-
                 if (!outputFile.exists() || outputFile.length() == 0) {
                     throw new Exception("下载文件为空");
                 }
-
                 String versionToRecord = latestVersion != null
                         ? latestVersion : extractVersionFromFileName(safeFileName);
                 if (versionToRecord != null) {
                     serverStore.setDownloadedApkVersion(versionToRecord, channel);
                 }
-
-                activity.runOnUiThread(() -> {
-                    if (activity.isDestroyed()) return;
-                    progress.dismiss();
-                    installApk(outputFile);
-                });
-
+                postDownloadCompleted(listener, outputFile);
             } catch (Exception e) {
-                if (cancelled[0]) return;
-                final String errMsg = NetworkErrorHelper.describeError(e, "download");
-                activity.runOnUiThread(() -> {
-                    if (activity.isDestroyed()) return;
-                    progress.dismiss();
-                    new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
-                        .setTitle("下载失败")
-                        .setMessage(errMsg)
-                        .setPositiveButton("重试", (d, w) ->
-                                downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel))
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .show();
-                });
+                if (request.isCancelled()) {
+                    if (outputFile != null && outputFile.exists()) {
+                        try { outputFile.delete(); } catch (Exception ignored) {}
+                    }
+                    postDownloadCancelled(listener);
+                } else {
+                    postDownloadFailure(listener, NetworkErrorHelper.describeError(e, "download"));
+                }
             } finally {
                 if (conn != null) {
                     try { conn.disconnect(); } catch (Exception ignored) {}
                 }
             }
+        });
+        return request;
+    }
+
+    private void postDownloadProgress(DownloadListener listener, long downloaded,
+                                      long total, long bytesPerSecond) {
+        activity.runOnUiThread(() -> {
+            if (!activity.isDestroyed()) listener.onProgress(downloaded, total, bytesPerSecond);
+        });
+    }
+
+    private void postDownloadCompleted(DownloadListener listener, File apkFile) {
+        activity.runOnUiThread(() -> {
+            if (!activity.isDestroyed()) listener.onCompleted(apkFile);
+        });
+    }
+
+    private void postDownloadCancelled(DownloadListener listener) {
+        activity.runOnUiThread(() -> {
+            if (!activity.isDestroyed()) listener.onCancelled();
+        });
+    }
+
+    private void postDownloadFailure(DownloadListener listener, String message) {
+        activity.runOnUiThread(() -> {
+            if (!activity.isDestroyed()) listener.onFailed(message);
         });
     }
 

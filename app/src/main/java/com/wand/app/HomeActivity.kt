@@ -8,11 +8,14 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import com.wand.app.data.WandApi
 import com.wand.app.ui.HomeActions
 import com.wand.app.ui.HomeConnectionInfo
@@ -20,6 +23,9 @@ import com.wand.app.ui.HomeNavigationActions
 import com.wand.app.ui.HomeSettingsActions
 import com.wand.app.ui.QuickAction
 import com.wand.app.ui.WandApp
+import com.wand.app.ui.screens.AppUpdateInfo
+import com.wand.app.ui.screens.UpdatePresentation
+import com.wand.app.ui.screens.UpdateSheet
 import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.WandTheme
 import java.util.concurrent.ExecutorService
@@ -66,6 +72,80 @@ class HomeActivity : AppCompatActivity() {
         updateExecutor = Executors.newSingleThreadExecutor()
         val manager = UpdateManager(this, serverStore, updateExecutor, serverUrl)
         updateManager = manager
+        var updatePresentation by mutableStateOf<UpdatePresentation>(UpdatePresentation.Hidden)
+        var activeDownload: UpdateManager.DownloadRequest? = null
+
+        fun asUpdateInfo(
+            currentVersion: String,
+            latestVersion: String,
+            downloadUrl: String,
+            fileName: String,
+            size: Long,
+            source: String,
+            releaseNotes: String,
+            channel: String,
+        ) = AppUpdateInfo(
+            currentVersion = currentVersion,
+            latestVersion = latestVersion,
+            downloadUrl = downloadUrl,
+            fileName = fileName,
+            size = size,
+            source = source,
+            releaseNotes = releaseNotes,
+            channel = channel,
+        )
+
+        fun startDownload(update: AppUpdateInfo) {
+            updatePresentation = UpdatePresentation.Downloading(update)
+            activeDownload = manager.download(
+                update.downloadUrl,
+                update.fileName,
+                update.latestVersion,
+                update.channel,
+                object : UpdateManager.DownloadListener {
+                    override fun onProgress(downloadedBytes: Long, totalBytes: Long, bytesPerSecond: Long) {
+                        updatePresentation = UpdatePresentation.Downloading(
+                            update = update,
+                            downloadedBytes = downloadedBytes,
+                            totalBytes = totalBytes,
+                            bytesPerSecond = bytesPerSecond,
+                        )
+                    }
+
+                    override fun onCompleted(apkFile: java.io.File) {
+                        activeDownload = null
+                        updatePresentation = UpdatePresentation.Ready(update, apkFile)
+                    }
+
+                    override fun onCancelled() {
+                        activeDownload = null
+                        updatePresentation = UpdatePresentation.Hidden
+                    }
+
+                    override fun onFailed(message: String) {
+                        activeDownload = null
+                        updatePresentation = UpdatePresentation.Failed(update, message)
+                    }
+                },
+            )
+        }
+
+        fun checkUpdate(manual: Boolean) {
+            if (manual) updatePresentation = UpdatePresentation.Checking
+            val found = UpdateManager.UpdateFoundCallback { current, latest, url, file, size,
+                                                            source, notes, channel ->
+                updatePresentation = UpdatePresentation.Available(
+                    asUpdateInfo(current, latest, url, file, size, source, notes, channel),
+                )
+            }
+            if (manual) {
+                manager.checkForUpdate(found) { message ->
+                    updatePresentation = UpdatePresentation.UpToDate(message)
+                }
+            } else {
+                manager.checkForUpdate(found)
+            }
+        }
 
         val api = WandApi(serverUrl, appToken)
         val appVersion = try {
@@ -83,10 +163,7 @@ class HomeActivity : AppCompatActivity() {
             ),
             settings = HomeSettingsActions(
                 appVersion = appVersion,
-                manualCheckUpdate = {
-                    Toast.makeText(this, "正在检查更新…", Toast.LENGTH_SHORT).show()
-                    checkUpdate(manager)
-                },
+                manualCheckUpdate = { checkUpdate(manual = true) },
                 isBetaChannel = { serverStore.isBetaChannel },
                 setBetaChannel = { serverStore.setBetaChannel(it) },
                 getAppIcon = { serverStore.appIcon },
@@ -121,24 +198,38 @@ class HomeActivity : AppCompatActivity() {
                 applyEdgeToEdge(resolvedDark)
             }
             WandTheme(appearanceMode = appearanceMode) {
-                WandApp(
-                    api = api,
-                    actions = actions,
-                    initialQuickAction = initialQuickAction,
-                    onAuthenticated = {
-                        // 认证成功后启动会话通知中枢（全局 WS → 进度/完成/授权通知）。
-                        // start 幂等，Activity 重建时复用既有连接。
-                        SessionWatcher.start(this, api.baseUrl, appToken)
-                        // 自动检查必须等认证完成：更新接口会复用登录后的 Cookie。没有更新、
-                        // 已跳过或已下载的版本都静默处理；只有确有新包才弹出安装对话框。
-                        if (!autoUpdateCheckStarted) {
-                            autoUpdateCheckStarted = true
-                            manager.checkForUpdate { cur, latest, url, file, size, source, notes, channel ->
-                                manager.showUpdateDialog(cur, latest, url, file, size, source, notes, channel)
+                Box(Modifier.fillMaxSize()) {
+                    WandApp(
+                        api = api,
+                        actions = actions,
+                        initialQuickAction = initialQuickAction,
+                        onAuthenticated = {
+                            // 认证成功后启动会话通知中枢（全局 WS → 进度/完成/授权通知）。
+                            // start 幂等，Activity 重建时复用既有连接。
+                            SessionWatcher.start(this@HomeActivity, api.baseUrl, appToken)
+                            // 自动检查必须等认证完成：更新接口会复用登录后的 Cookie。没有更新、
+                            // 已跳过或已下载的版本都静默处理；只有确有新包才呈现 Compose 更新页。
+                            if (!autoUpdateCheckStarted) {
+                                autoUpdateCheckStarted = true
+                                checkUpdate(manual = false)
                             }
-                        }
-                    },
-                )
+                        },
+                    )
+                    UpdateSheet(
+                        presentation = updatePresentation,
+                        onDismiss = { updatePresentation = UpdatePresentation.Hidden },
+                        onDownload = ::startDownload,
+                        onCancelDownload = { activeDownload?.cancel() },
+                        onInstall = { apkFile ->
+                            updatePresentation = UpdatePresentation.Hidden
+                            manager.installApk(apkFile)
+                        },
+                        onSkipVersion = { update ->
+                            serverStore.setSkippedVersion(update.latestVersion, update.channel)
+                            updatePresentation = UpdatePresentation.Hidden
+                        },
+                    )
+                }
             }
         }
     }
@@ -162,17 +253,6 @@ class HomeActivity : AppCompatActivity() {
         super.onDestroy()
         updateExecutor?.shutdownNow()
         updateExecutor = null
-    }
-
-    private fun checkUpdate(manager: UpdateManager) {
-        manager.checkForUpdate(
-            { cur, latest, url, file, size, source, notes, channel ->
-                manager.showUpdateDialog(cur, latest, url, file, size, source, notes, channel)
-            },
-            { message ->
-                Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-            },
-        )
     }
 
     private fun openWebFallback(serverUrl: String, appToken: String?, sessionId: String? = null) {

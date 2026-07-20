@@ -15,7 +15,8 @@ import kotlinx.coroutines.launch
  *   - 带 tag 动作且 tag 留空 → autoTag（AI 推荐下一个语义化版本号）
  *   - 动作字符串与网页一致：commit / commit-tag / commit-push / commit-tag-push，
  *     submodule 是正交 scope flag（不进动作字符串）
- *   - push 成功 → 收面板 + toast；未 push → 留在结果面板，可补「Push & Close」
+ *   - 成功后收面板 + toast；工作区干净但仍领先远端时，可从入口重新打开并补推
+ *   - 请求可在面板关闭后继续执行，避免网络等待时把用户困在弹层内
  */
 class QuickCommitStore(
     val sessionId: String,
@@ -107,7 +108,6 @@ class QuickCommitStore(
     }
 
     fun closePanel() {
-        if (inFlight) return
         panelOpen = false
     }
 
@@ -179,23 +179,17 @@ class QuickCommitStore(
                     if (push && outcome.pushError == null) append("，已推送")
                     outcome.pushError?.let { append("，推送失败：").append(it) }
                 }
-                if (push && outcome.pushError == null) {
+                if (outcome.pushError == null) {
                     result = null
                     panelOpen = false
                     onToast(message)
                     finishEntrySuccess()
                 } else {
-                    // Commit/tag 已经落地但没有完成 push 时保留结果面板，允许用户直接
-                    // “Push & Close”补推；此前这里清空 result，工作区变 clean 后便失去入口。
+                    // Commit/tag 已落地但 push 失败时，若面板仍开着则保留结果供用户补推；
+                    // 用户已手动关闭时不重新弹出，失败信息会以 toast 呈现。
                     result = outcome
-                    panelOpen = true
-                    if (outcome.pushError == null) {
-                        onToast(message)
-                        finishEntrySuccess()
-                    } else {
-                        pushError = outcome.pushError
-                        failEntry(message)
-                    }
+                    pushError = outcome.pushError
+                    failEntry(message)
                 }
                 loadStatus(force = true)
             } catch (e: Exception) {
