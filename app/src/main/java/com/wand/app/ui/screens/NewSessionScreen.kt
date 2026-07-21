@@ -122,6 +122,7 @@ fun NewSessionScreen(
     val workflow = remember(api) { NewSessionWorkflow(api) }
     val defaultModelGenerations = remember { mutableMapOf<String, Int>() }
     var defaultsUpdateGeneration by remember { mutableIntStateOf(0) }
+    var modelsRefreshGeneration by remember { mutableIntStateOf(0) }
 
     var cwd by remember { mutableStateOf("") }
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
@@ -130,6 +131,7 @@ fun NewSessionScreen(
     // 默认托管模式（Claude / OpenCode 全自动完成）；Codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
     var modelsResponse by remember { mutableStateOf<ModelsResponse?>(null) }
+    var refreshingModels by remember { mutableStateOf(false) }
     var serverDefaultModels by remember {
         mutableStateOf(NewSessionWorkflow.EMPTY_DEFAULT_MODELS)
     }
@@ -157,6 +159,7 @@ fun NewSessionScreen(
     val supportedModes = workflow.supportedModes(provider)
 
     LaunchedEffect(Unit) {
+        val modelGenerationAtStart = modelsRefreshGeneration
         val initial = workflow.bootstrap()
         provider = initial.provider
         isStructured = initial.structured
@@ -165,7 +168,8 @@ fun NewSessionScreen(
         confirmedDefaultModels = initial.defaultModels
         selectedModel = ""
         thinkingEffort = initial.thinkingEffort
-        modelsResponse = initial.models
+        // Do not let an older bootstrap GET replace a user-triggered refreshed catalog.
+        if (modelsRefreshGeneration == modelGenerationAtStart) modelsResponse = initial.models
         recentPaths = initial.recentPaths
         if (cwd.isEmpty()) cwd = initial.cwd
     }
@@ -230,6 +234,24 @@ fun NewSessionScreen(
         if (normalized != thinkingEffort) {
             thinkingEffort = normalized
             persistDefaults(thinkingEffort = "off")
+        }
+    }
+
+    fun refreshModels() {
+        if (refreshingModels) return
+        val requestGeneration = ++modelsRefreshGeneration
+        refreshingModels = true
+        scope.launch {
+            try {
+                modelsResponse = workflow.refreshModels()
+                normalizeThinkingEffort(provider, selectedModel)
+            } catch (e: Exception) {
+                if (requestGeneration == modelsRefreshGeneration) {
+                    errorMessage = e.message ?: "刷新模型失败"
+                }
+            } finally {
+                if (requestGeneration == modelsRefreshGeneration) refreshingModels = false
+            }
         }
     }
 
@@ -418,6 +440,8 @@ fun NewSessionScreen(
                             providerModels.filter { it.id != "default" }.forEach { add(it.id to it.label) }
                         },
                         selectedId = selectedModel,
+                        onRefresh = ::refreshModels,
+                        refreshing = refreshingModels,
                         onSelect = {
                             val modelProvider = provider
                             val newDefault = it
@@ -769,6 +793,8 @@ private fun OptionMenuCard(
     icon: ImageVector,
     options: List<Pair<String, String>>,
     selectedId: String,
+    onRefresh: (() -> Unit)? = null,
+    refreshing: Boolean = false,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -839,13 +865,41 @@ private fun OptionMenuCard(
                             .navigationBarsPadding()
                             .padding(bottom = 18.dp),
                     ) {
-                        Text(
-                            "选择$title",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "选择$title",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WandColors.textPrimary,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                            )
+                            if (onRefresh != null) {
+                                IconButton(
+                                    onClick = onRefresh,
+                                    enabled = !refreshing,
+                                ) {
+                                    if (refreshing) {
+                                        CircularProgressIndicator(
+                                            color = WandColors.brand,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    } else {
+                                        Icon(
+                                            WandIcons.refresh,
+                                            contentDescription = "刷新模型列表",
+                                            tint = WandColors.brand,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         options.forEach { (id, label) ->
                             val isSel = selectedId == id || (selectedId == "default" && id == "")
                             Row(

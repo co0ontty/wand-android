@@ -59,6 +59,9 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         )
     }
 
+    /** Explicit user action: invalidate the server's model cache and return the fresh catalog. */
+    suspend fun refreshModels(): ModelsResponse = port.refreshModels()
+
     suspend fun persistDefaults(
         mode: String? = null,
         model: String? = null,
@@ -177,7 +180,17 @@ internal fun ProviderDefaultModels.withDefault(provider: String, value: String?)
     }
 
 private fun ModelsResponse.resolvedDefaults(): ProviderDefaultModels =
-    defaultModels ?: ProviderDefaultModels(defaultModel, defaultCodexModel, defaultOpenCodeModel)
+    defaultModels ?: ProviderDefaultModels(
+        defaultModel,
+        defaultCodexModel,
+        defaultOpenCodeModel,
+        defaultQoderModel,
+    )
 
 private fun ServerConfigInfo.resolvedDefaults(): ProviderDefaultModels =
-    defaultModels ?: ProviderDefaultModels(defaultModel, defaultCodexModel, defaultOpenCodeModel)
+    defaultModels ?: ProviderDefaultModels(
+        defaultModel,
+        defaultCodexModel,
+        defaultOpenCodeModel,
+        defaultQoderModel,
+    )

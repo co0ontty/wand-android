@@ -594,9 +594,11 @@ private fun legacyDefaultModelFor(
     claude: String?,
     codex: String?,
     opencode: String?,
+    qoder: String? = null,
 ): String = when (provider) {
     "codex" -> codex.orEmpty()
     "opencode" -> opencode.orEmpty()
+    "qoder" -> qoder.orEmpty()
     else -> claude.orEmpty()
 }
 
@@ -613,7 +615,13 @@ data class ModelsResponse(
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
-            ?: legacyDefaultModelFor(provider, defaultModel, defaultCodexModel, defaultOpenCodeModel)
+            ?: legacyDefaultModelFor(
+                provider,
+                defaultModel,
+                defaultCodexModel,
+                defaultOpenCodeModel,
+                defaultQoderModel,
+            )
 
     companion object {
         fun parse(o: JSONObject): ModelsResponse = ModelsResponse(
@@ -908,10 +916,17 @@ data class ServerConfigInfo(
     val defaultThinkingEffort: String?,
     val cardDefaults: CardExpandDefaults,
     val currentVersion: String?,
+    val defaultQoderModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
-            ?: legacyDefaultModelFor(provider, defaultModel, defaultCodexModel, defaultOpenCodeModel)
+            ?: legacyDefaultModelFor(
+                provider,
+                defaultModel,
+                defaultCodexModel,
+                defaultOpenCodeModel,
+                defaultQoderModel,
+            )
 
     companion object {
         fun parse(o: JSONObject): ServerConfigInfo = ServerConfigInfo(
@@ -926,6 +941,7 @@ data class ServerConfigInfo(
             defaultThinkingEffort = o.str("defaultThinkingEffort"),
             cardDefaults = CardExpandDefaults.parse(o.obj("cardDefaults")),
             currentVersion = o.str("currentVersion"),
+            defaultQoderModel = o.str("defaultQoderModel"),
         )
     }
 }

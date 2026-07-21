@@ -4,6 +4,8 @@ package com.wand.app.data
 interface NewSessionPort {
     suspend fun serverConfig(): ServerConfigInfo
     suspend fun models(): ModelsResponse
+    /** Force the server to re-run each installed CLI's model discovery. */
+    suspend fun refreshModels(): ModelsResponse
     suspend fun recentPaths(): List<RecentPath>
     suspend fun updateNewSessionDefaults(
         mode: String? = null,

@@ -27,4 +27,33 @@ class ProviderRulesTest {
         assertEquals("full-access", clampSessionMode("managed", "codex"))
         assertEquals("managed", clampSessionMode("native", "opencode"))
     }
+
+    @Test
+    fun qoderModelsAndLegacyDefaultAreAvailableToTheProviderPicker() {
+        val response = ModelsResponse(
+            models = emptyList(),
+            codexModels = emptyList(),
+            opencodeModels = emptyList(),
+            defaultModel = null,
+            defaultCodexModel = null,
+            defaultOpenCodeModel = null,
+            defaultModels = null,
+            qoderModels = listOf(
+                ModelInfo("zhipu/glm5.2-cp", "GLM-5.2 (Z.ai)", false, emptyList(), null),
+            ),
+            defaultQoderModel = "performance",
+        )
+
+        assertEquals("performance", response.defaultModelFor("qoder"))
+        assertEquals(
+            listOf("zhipu/glm5.2-cp"),
+            modelsForProvider(
+                provider = "qoder",
+                claude = response.models,
+                codex = response.codexModels,
+                opencode = response.opencodeModels,
+                qoder = response.qoderModels,
+            ).map { it.id },
+        )
+    }
 }

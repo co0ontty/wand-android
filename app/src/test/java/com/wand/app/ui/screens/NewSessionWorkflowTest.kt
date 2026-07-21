@@ -48,6 +48,20 @@ class NewSessionWorkflowTest {
     }
 
     @Test
+    fun refreshModelsDelegatesToThePort() = runBlocking {
+        val port = FakeNewSessionPort().apply {
+            modelResponse = modelFixture().copy(
+                qoderModels = listOf(ModelInfo("zhipu/glm5.2-cp", "GLM-5.2", false, emptyList(), null)),
+            )
+        }
+
+        val refreshed = NewSessionWorkflow(port).refreshModels()
+
+        assertEquals(listOf("zhipu/glm5.2-cp"), refreshed.qoderModels.map { it.id })
+        assertEquals(listOf("refreshModels"), port.calls)
+    }
+
+    @Test
     fun structuredCreatePersistsFinalNormalizedDraftBeforeCreation() = runBlocking {
         val port = FakeNewSessionPort()
         val workflow = NewSessionWorkflow(port)
@@ -154,6 +168,10 @@ class NewSessionWorkflowTest {
         override suspend fun serverConfig(): ServerConfigInfo = config
         override suspend fun models(): ModelsResponse {
             if (failModels) error("models failed")
+            return modelResponse
+        }
+        override suspend fun refreshModels(): ModelsResponse {
+            calls += "refreshModels"
             return modelResponse
         }
         override suspend fun recentPaths(): List<RecentPath> = paths

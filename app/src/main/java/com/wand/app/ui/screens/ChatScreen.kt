@@ -956,6 +956,8 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                                 .forEach { add(it.id to it.label) }
                         },
                         selected = store.selectedModel?.takeUnless { it == "default" },
+                        onRefresh = store::refreshModels,
+                        refreshing = store.refreshingModels,
                         onSelect = store::setModel,
                     )
                     HorizontalDivider(
@@ -1025,6 +1027,8 @@ private fun LaunchSettingPicker(
     accentSoft: Color,
     options: List<Pair<String?, String>>,
     selected: String?,
+    onRefresh: (() -> Unit)? = null,
+    refreshing: Boolean = false,
     onSelect: (String?) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -1107,13 +1111,41 @@ private fun LaunchSettingPicker(
                             .verticalScroll(rememberScrollState())
                             .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
                     ) {
-                        Text(
-                            "选择$label",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "选择$label",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WandColors.textPrimary,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                            )
+                            if (onRefresh != null) {
+                                IconButton(
+                                    onClick = onRefresh,
+                                    enabled = !refreshing,
+                                ) {
+                                    if (refreshing) {
+                                        CircularProgressIndicator(
+                                            color = accent,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    } else {
+                                        Icon(
+                                            WandIcons.refresh,
+                                            contentDescription = "刷新模型列表",
+                                            tint = accent,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         options.forEach { (id, optionLabel) ->
                             val isSelected = selected == id
                             Row(
@@ -1939,6 +1971,33 @@ private fun ModelThinkingChip(
             containerColor = WandColors.surface,
         ) {
             MenuSectionHeader("模型")
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (store.refreshingModels) "正在刷新模型…" else "刷新模型列表",
+                        fontSize = 13.sp,
+                        color = WandColors.textPrimary,
+                    )
+                },
+                leadingIcon = {
+                    if (store.refreshingModels) {
+                        CircularProgressIndicator(
+                            color = WandColors.brand,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    } else {
+                        Icon(
+                            WandIcons.refresh,
+                            contentDescription = null,
+                            tint = WandColors.brand,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                },
+                enabled = !store.refreshingModels,
+                onClick = store::refreshModels,
+            )
             SettingsMenuOption(
                 "默认 · ${modelDisplayLabel(store, null)}",
                 selected = store.selectedModel == null || store.selectedModel == "default",

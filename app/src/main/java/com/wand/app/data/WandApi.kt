@@ -287,6 +287,11 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     override suspend fun models(): ModelsResponse =
         ModelsResponse.parse(requestObject("GET", "/api/models"))
 
+    override suspend fun refreshModels(): ModelsResponse =
+        // Refresh verifies Claude candidates as well as probing multiple CLIs. It can outlive
+        // the normal 30-second request window, so use the same long timeout as other long jobs.
+        ModelsResponse.parse(requestObject("POST", "/api/models/refresh", timeoutSec = 180))
+
     /** model 传 null 表示恢复默认（服务端收 JSON null）。 */
     suspend fun setModel(id: String, model: String?): SessionSnapshot {
         val body = JSONObject().put("model", model ?: JSONObject.NULL)
