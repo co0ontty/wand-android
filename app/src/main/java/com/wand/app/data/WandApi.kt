@@ -164,6 +164,14 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
             requestArray("GET", "/api/codex-history"),
             provider = "codex",
         )
+        val openCodeHistory = HistorySession.parseList(
+            requestArray("GET", "/api/opencode-history"),
+            provider = "opencode",
+        )
+        val qoderHistory = HistorySession.parseList(
+            requestArray("GET", "/api/qoder-history"),
+            provider = "qoder",
+        )
         val managedHistory = sessions.mapNotNull { session ->
             session.claudeSessionId?.let { id -> historyProvider(session.provider) to id }
         }.toSet()
@@ -175,7 +183,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
                     session = session,
                 ))
             }
-            (claudeHistory + codexHistory)
+            (claudeHistory + codexHistory + openCodeHistory + qoderHistory)
                 .filter { history ->
                     (history.hasConversation ?: true) &&
                         !(history.managedByWand ?: false) &&
@@ -208,7 +216,10 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         return digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
-    private fun historyProvider(provider: String?): String = if (provider == "codex") "codex" else "claude"
+    private fun historyProvider(provider: String?): String = when (provider) {
+        "codex", "opencode", "qoder" -> provider
+        else -> "claude"
+    }
 
     /** Returns all managed sessions for notification state, without session-list pagination. */
     suspend fun listSessions(): List<SessionSnapshot> =

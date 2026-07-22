@@ -72,6 +72,7 @@ import com.wand.app.data.SessionListEntry
 import com.wand.app.data.WandApi
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
+import com.wand.app.data.providerDisplayName
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandBrandMark
@@ -651,9 +652,9 @@ private fun CollapsedRecoverableSessionTile(
     loading: Boolean,
     onClick: () -> Unit,
 ) {
-    val isCodex = history.provider == "codex"
-    val tint = if (isCodex) WandColors.info else WandColors.brand
-    val icon = rememberVectorPainter(if (isCodex) BrandLogos.codex else BrandLogos.claude)
+    val provider = history.apiProvider
+    val tint = if (provider == "codex") WandColors.info else WandColors.brand
+    val icon = BrandLogos.painterForProvider(provider)
     CollapsedRailTile(
         icon = icon,
         iconTint = tint,
@@ -662,7 +663,7 @@ private fun CollapsedRecoverableSessionTile(
         contentDescription = buildString {
             append(index)
             append(". 可恢复的 ")
-            append(if (isCodex) "Codex" else "Claude")
+            append(providerDisplayName(provider))
             append(' ')
             append(history.firstUserMessage.ifEmpty { "会话" })
         },

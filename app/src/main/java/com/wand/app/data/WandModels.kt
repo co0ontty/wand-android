@@ -518,7 +518,7 @@ sealed interface SessionListEntry {
     }
 }
 
-/** 从 Claude/Codex 本地历史文件扫描出的会话。两个 provider 的接口形状一致（对称 iOS HistorySession）。 */
+/** 从各 provider 本地历史存储扫描出的会话；统一使用原生 session ID 承载兼容字段。 */
 data class HistorySession(
     val claudeSessionId: String,
     val cwd: String,
@@ -531,8 +531,11 @@ data class HistorySession(
 ) {
     val id: String get() = claudeSessionId
 
-    /** API 路径归一化：服务端接口只认 "claude" 或 "codex"。 */
-    val apiProvider: String get() = if (provider == "codex") "codex" else "claude"
+    /** API 路径归一化：仅允许服务端支持的原生历史 provider。 */
+    val apiProvider: String get() = when (provider) {
+        "codex", "opencode", "qoder" -> provider
+        else -> "claude"
+    }
 
     companion object {
         fun parse(o: JSONObject): HistorySession? {
