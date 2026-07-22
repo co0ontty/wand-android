@@ -59,9 +59,6 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         )
     }
 
-    /** Explicit user action: invalidate the server's model cache and return the fresh catalog. */
-    suspend fun refreshModels(): ModelsResponse = port.refreshModels()
-
     suspend fun persistDefaults(
         mode: String? = null,
         model: String? = null,
@@ -143,8 +140,16 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         codexModels: List<ModelInfo>,
         opencodeModels: List<ModelInfo>,
         qoderModels: List<ModelInfo> = emptyList(),
+        grokModels: List<ModelInfo> = emptyList(),
     ): String {
-        val models = modelsForProvider(provider, claudeModels, codexModels, opencodeModels, qoderModels)
+        val models = modelsForProvider(
+            provider = provider,
+            claude = claudeModels,
+            codex = codexModels,
+            opencode = opencodeModels,
+            qoder = qoderModels,
+            grok = grokModels,
+        )
         if (provider == "codex" && models.isEmpty()) return currentEffort
         return if (thinkingEffortOptions(provider, selectedModel, defaultModels.defaultFor(provider), models)
                 .any { it.id == currentEffort }
@@ -159,7 +164,13 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
     fun clampMode(mode: String, provider: String): String = clampSessionMode(mode, provider)
 
     companion object {
-        val EMPTY_DEFAULT_MODELS = ProviderDefaultModels(null, null, null, null)
+        val EMPTY_DEFAULT_MODELS = ProviderDefaultModels(
+            claude = null,
+            codex = null,
+            opencode = null,
+            grok = null,
+            qoder = null,
+        )
 
         fun normalizeProvider(provider: String?): String = when (provider) {
             "codex" -> "codex"
@@ -175,22 +186,25 @@ internal fun ProviderDefaultModels.withDefault(provider: String, value: String?)
     when (provider) {
         "codex" -> copy(codex = value)
         "opencode" -> copy(opencode = value)
+        "grok" -> copy(grok = value)
         "qoder" -> copy(qoder = value)
         else -> copy(claude = value)
     }
 
 private fun ModelsResponse.resolvedDefaults(): ProviderDefaultModels =
     defaultModels ?: ProviderDefaultModels(
-        defaultModel,
-        defaultCodexModel,
-        defaultOpenCodeModel,
-        defaultQoderModel,
+        claude = defaultModel,
+        codex = defaultCodexModel,
+        opencode = defaultOpenCodeModel,
+        grok = defaultGrokModel,
+        qoder = defaultQoderModel,
     )
 
 private fun ServerConfigInfo.resolvedDefaults(): ProviderDefaultModels =
     defaultModels ?: ProviderDefaultModels(
-        defaultModel,
-        defaultCodexModel,
-        defaultOpenCodeModel,
-        defaultQoderModel,
+        claude = defaultModel,
+        codex = defaultCodexModel,
+        opencode = defaultOpenCodeModel,
+        grok = defaultGrokModel,
+        qoder = defaultQoderModel,
     )

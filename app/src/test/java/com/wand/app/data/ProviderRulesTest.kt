@@ -1,7 +1,6 @@
 package com.wand.app.data
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ProviderRulesTest {
@@ -19,17 +18,23 @@ class ProviderRulesTest {
 
     @Test
     fun defaultsAndModesUseProviderRules() {
-        val defaults = ProviderDefaultModels("claude-model", "codex-model", "opencode-model")
+        val defaults = ProviderDefaultModels(
+            claude = "claude-model",
+            codex = "codex-model",
+            opencode = "opencode-model",
+            grok = "grok-model",
+            qoder = "qoder-model",
+        )
 
         assertEquals("codex-model", defaults.defaultFor("codex"))
-        assertNull(defaults.defaultFor("grok"))
-        assertNull(defaults.defaultFor("qoder"))
+        assertEquals("grok-model", defaults.defaultFor("grok"))
+        assertEquals("qoder-model", defaults.defaultFor("qoder"))
         assertEquals("full-access", clampSessionMode("managed", "codex"))
         assertEquals("managed", clampSessionMode("native", "opencode"))
     }
 
     @Test
-    fun qoderModelsAndLegacyDefaultAreAvailableToTheProviderPicker() {
+    fun grokAndQoderModelsAndLegacyDefaultsAreAvailableToTheProviderPicker() {
         val response = ModelsResponse(
             models = emptyList(),
             codexModels = emptyList(),
@@ -42,9 +47,14 @@ class ProviderRulesTest {
                 ModelInfo("zhipu/glm5.2-cp", "GLM-5.2 (Z.ai)", false, emptyList(), null),
             ),
             defaultQoderModel = "performance",
+            grokModels = listOf(
+                ModelInfo("grok-3", "Grok 3", false, emptyList(), null),
+            ),
+            defaultGrokModel = "grok-3",
         )
 
         assertEquals("performance", response.defaultModelFor("qoder"))
+        assertEquals("grok-3", response.defaultModelFor("grok"))
         assertEquals(
             listOf("zhipu/glm5.2-cp"),
             modelsForProvider(
@@ -55,5 +65,17 @@ class ProviderRulesTest {
                 qoder = response.qoderModels,
             ).map { it.id },
         )
+        assertEquals(
+            listOf("grok-3"),
+            modelsForProvider(
+                provider = "grok",
+                claude = response.models,
+                codex = response.codexModels,
+                opencode = response.opencodeModels,
+                qoder = response.qoderModels,
+                grok = response.grokModels,
+            ).map { it.id },
+        )
     }
+
 }

@@ -595,9 +595,11 @@ private fun legacyDefaultModelFor(
     codex: String?,
     opencode: String?,
     qoder: String? = null,
+    grok: String? = null,
 ): String = when (provider) {
     "codex" -> codex.orEmpty()
     "opencode" -> opencode.orEmpty()
+    "grok" -> grok.orEmpty()
     "qoder" -> qoder.orEmpty()
     else -> claude.orEmpty()
 }
@@ -612,6 +614,8 @@ data class ModelsResponse(
     val defaultModels: ProviderDefaultModels?,
     val qoderModels: List<ModelInfo> = emptyList(),
     val defaultQoderModel: String? = null,
+    val grokModels: List<ModelInfo> = emptyList(),
+    val defaultGrokModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -621,6 +625,7 @@ data class ModelsResponse(
                 defaultCodexModel,
                 defaultOpenCodeModel,
                 defaultQoderModel,
+                defaultGrokModel,
             )
 
     companion object {
@@ -634,6 +639,8 @@ data class ModelsResponse(
             defaultModels = ProviderDefaultModels.parse(o.obj("defaultModels")),
             qoderModels = ModelInfo.parseList(o.arr("qoderModels")),
             defaultQoderModel = o.str("defaultQoderModel"),
+            grokModels = ModelInfo.parseList(o.arr("grokModels")),
+            defaultGrokModel = o.str("defaultGrokModel"),
         )
     }
 }
@@ -643,6 +650,7 @@ data class ProviderDefaultModels(
     val codex: String?,
     val opencode: String?,
     val qoder: String? = null,
+    val grok: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): ProviderDefaultModels? =
@@ -652,6 +660,7 @@ data class ProviderDefaultModels(
                     codex = it.str("codex"),
                     opencode = it.str("opencode"),
                     qoder = it.str("qoder"),
+                    grok = it.str("grok"),
                 )
             }
     }
@@ -917,6 +926,7 @@ data class ServerConfigInfo(
     val cardDefaults: CardExpandDefaults,
     val currentVersion: String?,
     val defaultQoderModel: String? = null,
+    val defaultGrokModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -926,6 +936,7 @@ data class ServerConfigInfo(
                 defaultCodexModel,
                 defaultOpenCodeModel,
                 defaultQoderModel,
+                defaultGrokModel,
             )
 
     companion object {
@@ -942,6 +953,7 @@ data class ServerConfigInfo(
             cardDefaults = CardExpandDefaults.parse(o.obj("cardDefaults")),
             currentVersion = o.str("currentVersion"),
             defaultQoderModel = o.str("defaultQoderModel"),
+            defaultGrokModel = o.str("defaultGrokModel"),
         )
     }
 }

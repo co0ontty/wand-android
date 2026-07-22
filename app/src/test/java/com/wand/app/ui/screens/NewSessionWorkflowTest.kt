@@ -48,17 +48,25 @@ class NewSessionWorkflowTest {
     }
 
     @Test
-    fun refreshModelsDelegatesToThePort() = runBlocking {
+    fun bootstrapKeepsTheServerGrokCatalogAndDefault() = runBlocking {
         val port = FakeNewSessionPort().apply {
-            modelResponse = modelFixture().copy(
+            modelResponse = modelFixture(
+                defaults = ProviderDefaultModels(
+                    claude = null,
+                    codex = null,
+                    opencode = null,
+                    grok = "grok-4.5",
+                ),
+            ).copy(
+                grokModels = listOf(ModelInfo("grok-4.5", "Grok 4.5", false, emptyList(), null)),
                 qoderModels = listOf(ModelInfo("zhipu/glm5.2-cp", "GLM-5.2", false, emptyList(), null)),
             )
         }
 
-        val refreshed = NewSessionWorkflow(port).refreshModels()
+        val bootstrap = NewSessionWorkflow(port).bootstrap()
 
-        assertEquals(listOf("zhipu/glm5.2-cp"), refreshed.qoderModels.map { it.id })
-        assertEquals(listOf("refreshModels"), port.calls)
+        assertEquals("grok-4.5", bootstrap.defaultModels.grok)
+        assertEquals(listOf("grok-4.5"), bootstrap.models?.grokModels?.map { it.id })
     }
 
     @Test
@@ -107,9 +115,10 @@ class NewSessionWorkflowTest {
         assertEquals("grok", NewSessionWorkflow.normalizeProvider("grok"))
         assertEquals(setOf("default", "full-access", "managed"), workflow.supportedModes("grok"))
 
-        workflow.create(NewSessionDraft("/project", "grok", true, "native", "", "deep", "hello"))
+        workflow.create(NewSessionDraft("/project", "grok", true, "native", "grok-4.5", "deep", "hello"))
         assertEquals("managed", port.lastMode)
         assertEquals("grok", port.lastProvider)
+        assertEquals("grok-4.5", port.lastModel)
         assertEquals(listOf("persist", "structured"), port.calls)
     }
 
@@ -168,10 +177,6 @@ class NewSessionWorkflowTest {
         override suspend fun serverConfig(): ServerConfigInfo = config
         override suspend fun models(): ModelsResponse {
             if (failModels) error("models failed")
-            return modelResponse
-        }
-        override suspend fun refreshModels(): ModelsResponse {
-            calls += "refreshModels"
             return modelResponse
         }
         override suspend fun recentPaths(): List<RecentPath> = paths

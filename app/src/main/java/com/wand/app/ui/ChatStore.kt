@@ -71,9 +71,6 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     var availableModels by mutableStateOf<List<ModelInfo>>(emptyList())
         private set
-    /** True while a user-initiated model catalog refresh is in flight. */
-    var refreshingModels by mutableStateOf(false)
-        private set
     var defaultModel by mutableStateOf<String?>(null)
         private set
     var selectedModel by mutableStateOf<String?>(null)
@@ -115,7 +112,6 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private var pendingModelMutations = 0
     private var pendingThinkingMutations = 0
     private var pendingModeMutations = 0
-    private var modelsRequestGeneration = 0L
     private var confirmedModel: String? = null
     private var confirmedThinkingEffort = "off"
     private var confirmedMode = "default"
@@ -319,20 +315,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
     }
 
-    private suspend fun loadModels(
-        refresh: Boolean = false,
-        requestGeneration: Long = ++modelsRequestGeneration,
-    ) {
+    /** Read the catalog last persisted by the server; native clients never probe CLIs directly. */
+    private suspend fun loadModels() {
         val response = try {
-            if (refresh) api.refreshModels() else api.models()
+            api.models()
         } catch (e: Exception) {
-            if (refresh && requestGeneration == modelsRequestGeneration) {
-                toast = e.message ?: "刷新模型失败"
-            }
             return
         }
-        // A late initial GET must not overwrite a catalog returned by a newer explicit refresh.
-        if (requestGeneration != modelsRequestGeneration) return
         val provider = snapshot?.provider ?: "claude"
         availableModels = modelsForProvider(
             provider = provider,
@@ -340,23 +329,10 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             codex = response.codexModels,
             opencode = response.opencodeModels,
             qoder = response.qoderModels,
+            grok = response.grokModels,
         )
         defaultModel = response.defaultModelFor(provider)
         normalizeThinkingEffortFor(selectedModel)
-    }
-
-    /** Re-run CLI discovery on the server and atomically replace this session's provider catalog. */
-    fun refreshModels() {
-        if (refreshingModels) return
-        val requestGeneration = ++modelsRequestGeneration
-        refreshingModels = true
-        scope.launch {
-            try {
-                loadModels(refresh = true, requestGeneration = requestGeneration)
-            } finally {
-                if (requestGeneration == modelsRequestGeneration) refreshingModels = false
-            }
-        }
     }
 
     private suspend fun loadCardDefaults() {

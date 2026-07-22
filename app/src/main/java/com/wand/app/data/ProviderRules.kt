@@ -22,10 +22,11 @@ fun modelsForProvider(
     codex: List<ModelInfo>,
     opencode: List<ModelInfo>,
     qoder: List<ModelInfo> = emptyList(),
+    grok: List<ModelInfo> = emptyList(),
 ): List<ModelInfo> = when (provider) {
     "codex" -> codex
     "opencode" -> opencode
-    "grok" -> emptyList()
+    "grok" -> grok
     "qoder" -> qoder
     else -> claude
 }
@@ -33,7 +34,7 @@ fun modelsForProvider(
 fun ProviderDefaultModels.defaultFor(provider: String?): String? = when (provider) {
     "codex" -> codex
     "opencode" -> opencode
-    "grok" -> null
+    "grok" -> grok
     "qoder" -> qoder
     else -> claude
 }
