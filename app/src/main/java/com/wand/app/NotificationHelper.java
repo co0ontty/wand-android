@@ -123,6 +123,7 @@ final class NotificationHelper {
     }
 
     void playNotificationSound(ServerStore serverStore) {
+        if (!serverStore.isNotificationSoundEnabled()) return;
         if (isSystemMuted()) return;
         playPresetSound(serverStore.getNotificationSound(), serverStore.getNotificationVolume() / 100f);
     }
