@@ -105,6 +105,7 @@ fun PtyTerminalScreen(
     onBack: () -> Unit,
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
+    var snapshotResolved by remember(sessionId) { mutableStateOf(false) }
     var draft by remember(sessionId) { mutableStateOf("") }
     var sending by remember(sessionId) { mutableStateOf(false) }
     var toast by remember(sessionId) { mutableStateOf<String?>(null) }
@@ -145,8 +146,13 @@ fun PtyTerminalScreen(
         } catch (_: Exception) {
             null
         }
-        quickCommit.loadStatus(force = true)
+        snapshotResolved = true
     }
+    QuickCommitStatusRefreshEffect(
+        quickCommit = quickCommit,
+        sessionId = sessionId,
+        enabled = snapshotResolved,
+    )
 
     LaunchedEffect(toast) {
         if (toast != null) {

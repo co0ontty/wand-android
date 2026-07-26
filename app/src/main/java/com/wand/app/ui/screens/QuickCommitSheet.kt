@@ -94,6 +94,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.wand.app.ui.QuickCommitEntryPhase
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.WandIcons
@@ -125,6 +126,18 @@ private val PushGreen = Color(0xFF4F7A58)
 private val SubTeal = Color(0xFF3A8A8F)
 
 // MARK: - TopBar 入口徽标
+
+@Composable
+fun QuickCommitStatusRefreshEffect(
+    quickCommit: QuickCommitStore,
+    sessionId: String,
+    enabled: Boolean,
+) {
+    LifecycleResumeEffect(sessionId, enabled) {
+        if (enabled) quickCommit.loadStatus(force = true)
+        onPauseOrDispose { }
+    }
+}
 
 /** 会话顶栏的 git 徽标：分支名 + 待提交数（对齐网页 topbar-git-badge）。 */
 @Composable

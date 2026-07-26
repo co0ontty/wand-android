@@ -171,6 +171,10 @@ private enum class ChatScrollMode {
 /** LazyColumn 中正向手指位移表示内容被拉向更早的消息。 */
 internal fun shouldPauseBottomFollow(userScrollDeltaY: Float): Boolean = userScrollDeltaY > 0f
 
+internal fun shouldRefreshQuickCommitStatus(isLoading: Boolean, isResponding: Boolean): Boolean {
+    return !isLoading && !isResponding
+}
+
 /**
  * 原生聊天视图 —— 对称 iOS ChatView.swift：
  * 结构化消息渲染 + 原生输入栏 + 权限审批卡片。
@@ -206,10 +210,11 @@ fun ChatScreen(
             }
         }
     }
-    // 进屏加载一次 git 状态（决定顶栏徽标显隐）；每回合结束后刷新（agent 可能改了文件）。
-    LaunchedEffect(store.isResponding) {
-        if (!store.isResponding) quickCommit.loadStatus(force = true)
-    }
+    QuickCommitStatusRefreshEffect(
+        quickCommit = quickCommit,
+        sessionId = sessionId,
+        enabled = shouldRefreshQuickCommitStatus(store.loading, store.isResponding),
+    )
 
     var draft by rememberSaveable(sessionId) { mutableStateOf("") }
     // 发送后跟随列表底部；用户手动浏览时暂停跟随。

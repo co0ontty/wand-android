@@ -12,6 +12,13 @@ class ChatPresentationTest {
     }
 
     @Test
+    fun quickCommitStatusRefreshWaitsForIdleLoadedSession() {
+        assertEquals(false, shouldRefreshQuickCommitStatus(isLoading = true, isResponding = false))
+        assertEquals(false, shouldRefreshQuickCommitStatus(isLoading = false, isResponding = true))
+        assertEquals(true, shouldRefreshQuickCommitStatus(isLoading = false, isResponding = false))
+    }
+
+    @Test
     fun launchModelLabelRemovesDuplicatedCaseInsensitiveId() {
         assertEquals(
             "GPT-5.6-Sol",
