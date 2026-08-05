@@ -85,6 +85,7 @@ import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.NewSessionScreen
+import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.PtyTerminalScreen
 import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
@@ -315,6 +316,7 @@ private fun ReadyContent(
             }
         }
         val openNewSession = { openDetail(Screen.NewSession) }
+        val openMissions = { openDetail(Screen.Missions) }
         val onCreated: (SessionSnapshot) -> Unit = { snapshot ->
             listState.addCreated(snapshot)
             if (wideLayout) {
@@ -337,6 +339,7 @@ private fun ReadyContent(
                 onOpenSession = openSession,
                 onOpenHistory = openHistory,
                 onNewSession = openNewSession,
+                onOpenMissions = openMissions,
                 onOpenSettings = { showSettings = true },
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                 onCreated = onCreated,
@@ -349,6 +352,7 @@ private fun ReadyContent(
                 listState = listState,
                 onOpenSession = openSession,
                 onNewSession = openNewSession,
+                onOpenMissions = openMissions,
                 onOpenSettings = { showSettings = true },
                 onCreated = onCreated,
             )
@@ -392,6 +396,7 @@ private fun SinglePaneContent(
     listState: SessionListState,
     onOpenSession: (SessionSnapshot) -> Unit,
     onNewSession: () -> Unit,
+    onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
 ) {
@@ -400,6 +405,7 @@ private fun SinglePaneContent(
             state = listState,
             onOpenSession = onOpenSession,
             onNewSession = onNewSession,
+            onOpenMissions = onOpenMissions,
             onOpenSettings = onOpenSettings,
             onOpenWeb = actions.navigation.openWeb,
             onSwitchServer = actions.navigation.switchServer,
@@ -421,6 +427,11 @@ private fun SinglePaneContent(
             onBack = { nav.pop() },
             onCreated = onCreated,
         )
+        is Screen.Missions -> MissionsScreen(
+            api = api,
+            onBack = { nav.pop() },
+            onOpenSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
+        )
     }
 }
 
@@ -436,6 +447,7 @@ private fun WideReadyContent(
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: () -> Unit,
+    onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
@@ -464,6 +476,7 @@ private fun WideReadyContent(
                         onOpenSession = onOpenSession,
                         onOpenHistory = onOpenHistory,
                         onNewSession = onNewSession,
+                        onOpenMissions = onOpenMissions,
                         onExpandSidebar = onToggleSidebarCollapsed,
                     )
                 } else {
@@ -475,6 +488,7 @@ private fun WideReadyContent(
                         compactLayout = true,
                         onOpenSession = onOpenSession,
                         onNewSession = onNewSession,
+                        onOpenMissions = onOpenMissions,
                         onOpenSettings = onOpenSettings,
                         onOpenWeb = actions.navigation.openWeb,
                         onSwitchServer = actions.navigation.switchServer,
@@ -506,6 +520,11 @@ private fun WideReadyContent(
                     api = api,
                     onBack = { nav.pop() },
                     onCreated = onCreated,
+                )
+                is Screen.Missions -> MissionsScreen(
+                    api = api,
+                    onBack = { nav.pop() },
+                    onOpenSession = { sessionId -> nav.setDetail(Screen.Chat(sessionId)) },
                 )
             }
         }
@@ -545,6 +564,7 @@ private fun CollapsedSessionRail(
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: () -> Unit,
+    onOpenMissions: () -> Unit,
     onExpandSidebar: () -> Unit,
 ) {
     val entries = listState.entries
@@ -616,6 +636,8 @@ private fun CollapsedSessionRail(
         }
         Spacer(modifier = Modifier.height(10.dp))
         CollapsedNewSessionTile(onClick = onNewSession)
+        Spacer(modifier = Modifier.height(8.dp))
+        CollapsedMissionsTile(onClick = onOpenMissions)
     }
 }
 
@@ -680,6 +702,19 @@ private fun CollapsedNewSessionTile(onClick: () -> Unit) {
         selected = false,
         badge = null,
         contentDescription = "新建会话",
+        outlined = true,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun CollapsedMissionsTile(onClick: () -> Unit) {
+    CollapsedRailTile(
+        icon = rememberVectorPainter(WandIcons.agent),
+        iconTint = WandColors.info,
+        selected = false,
+        badge = null,
+        contentDescription = "Agent Inbox",
         outlined = true,
         onClick = onClick,
     )
@@ -832,5 +867,6 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Chat -> sessionId
     is Screen.PtyTerminal -> sessionId
     Screen.SessionList,
-    Screen.NewSession -> null
+    Screen.NewSession,
+    Screen.Missions -> null
 }

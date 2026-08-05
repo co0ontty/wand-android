@@ -330,6 +330,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             opencode = response.opencodeModels,
             qoder = response.qoderModels,
             grok = response.grokModels,
+            pi = response.piModels,
         )
         defaultModel = response.defaultModelFor(provider)
         normalizeThinkingEffortFor(selectedModel)

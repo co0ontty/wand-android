@@ -141,6 +141,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         opencodeModels: List<ModelInfo>,
         qoderModels: List<ModelInfo> = emptyList(),
         grokModels: List<ModelInfo> = emptyList(),
+        piModels: List<ModelInfo> = emptyList(),
     ): String {
         val models = modelsForProvider(
             provider = provider,
@@ -149,6 +150,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
             opencode = opencodeModels,
             qoder = qoderModels,
             grok = grokModels,
+            pi = piModels,
         )
         if (provider == "codex" && models.isEmpty()) return currentEffort
         return if (thinkingEffortOptions(provider, selectedModel, defaultModels.defaultFor(provider), models)
@@ -170,6 +172,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
             opencode = null,
             grok = null,
             qoder = null,
+            pi = null,
         )
 
         fun normalizeProvider(provider: String?): String = when (provider) {
@@ -177,6 +180,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
             "opencode" -> "opencode"
             "grok" -> "grok"
             "qoder" -> "qoder"
+            "pi" -> "pi"
             else -> "claude"
         }
     }
@@ -188,6 +192,7 @@ internal fun ProviderDefaultModels.withDefault(provider: String, value: String?)
         "opencode" -> copy(opencode = value)
         "grok" -> copy(grok = value)
         "qoder" -> copy(qoder = value)
+        "pi" -> copy(pi = value)
         else -> copy(claude = value)
     }
 
@@ -198,6 +203,7 @@ private fun ModelsResponse.resolvedDefaults(): ProviderDefaultModels =
         opencode = defaultOpenCodeModel,
         grok = defaultGrokModel,
         qoder = defaultQoderModel,
+        pi = defaultPiModel,
     )
 
 private fun ServerConfigInfo.resolvedDefaults(): ProviderDefaultModels =
@@ -207,4 +213,5 @@ private fun ServerConfigInfo.resolvedDefaults(): ProviderDefaultModels =
         opencode = defaultOpenCodeModel,
         grok = defaultGrokModel,
         qoder = defaultQoderModel,
+        pi = defaultPiModel,
     )

@@ -148,6 +148,7 @@ fun NewSessionScreen(
             opencode = response.opencodeModels,
             qoder = response.qoderModels,
             grok = response.grokModels,
+            pi = response.piModels,
         )
     }.orEmpty()
     val serverDefaultModel = serverDefaultModels.defaultFor(provider)
@@ -232,6 +233,7 @@ fun NewSessionScreen(
             opencodeModels = modelsResponse?.opencodeModels.orEmpty(),
             qoderModels = modelsResponse?.qoderModels.orEmpty(),
             grokModels = modelsResponse?.grokModels.orEmpty(),
+            piModels = modelsResponse?.piModels.orEmpty(),
         )
         if (normalized != thinkingEffort) {
             thinkingEffort = normalized
@@ -1191,6 +1193,7 @@ private val PROVIDER_OPTIONS = listOf(
     "opencode" to "OpenCode",
     "grok" to "Grok",
     "qoder" to "Qoder",
+    "pi" to "Pi",
 )
 
 private val SESSION_MODES = listOf(
@@ -1212,6 +1215,7 @@ private fun sessionKindHint(provider: String, structured: Boolean): String =
             "opencode" -> "OpenCode JSON 结构化聊天界面，支持多轮对话和工具调用展示。"
             "grok" -> "Grok streaming-json 结构化聊天界面，支持多轮续聊与思考过程展示。"
             "qoder" -> "Qoder stream-json 结构化聊天界面，支持续聊、思考过程和工具调用展示。"
+            "pi" -> "Pi JSON 结构化聊天界面，支持续聊、思考过程和工具调用展示。"
             else -> "结构化聊天界面，支持多轮对话、流式输出和工具调用展示。"
         }
     } else {
@@ -1220,6 +1224,7 @@ private fun sessionKindHint(provider: String, structured: Boolean): String =
             "opencode" -> "OpenCode TUI 终端会话，支持持续交互和终端视图。"
             "grok" -> "Grok Build TUI 的原始 PTY 终端会话。"
             "qoder" -> "Qoder CLI TUI 的原始 PTY 终端会话。"
+            "pi" -> "Pi TUI 的原始 PTY 终端会话。"
             else -> "原始 PTY 终端会话，支持持续交互、终端视图和权限流。"
         }
     }
@@ -1250,6 +1255,7 @@ private fun modeHint(provider: String, mode: String): String {
             else -> "Qoder 使用自身权限确认；结构化模式下未批准的操作会被拒绝。"
         }
     }
+    if (provider == "pi") return "Pi 支持标准与托管模式；模型和 thinking 会传给 Pi CLI。"
     return when (mode) {
         "full-access" -> "自动确认权限请求与高权限操作，适合你确认环境安全后的连续修改。"
         "auto-edit" -> "保留交互式会话，同时更偏向直接编辑代码。"

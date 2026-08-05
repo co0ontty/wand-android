@@ -13,6 +13,7 @@ fun providerDisplayName(provider: String?): String = when (provider) {
     "opencode" -> "OpenCode"
     "grok" -> "Grok"
     "qoder" -> "Qoder"
+    "pi" -> "Pi"
     else -> "Claude"
 }
 
@@ -23,11 +24,13 @@ fun modelsForProvider(
     opencode: List<ModelInfo>,
     qoder: List<ModelInfo> = emptyList(),
     grok: List<ModelInfo> = emptyList(),
+    pi: List<ModelInfo> = emptyList(),
 ): List<ModelInfo> = when (provider) {
     "codex" -> codex
     "opencode" -> opencode
     "grok" -> grok
     "qoder" -> qoder
+    "pi" -> pi
     else -> claude
 }
 
@@ -36,12 +39,13 @@ fun ProviderDefaultModels.defaultFor(provider: String?): String? = when (provide
     "opencode" -> opencode
     "grok" -> grok
     "qoder" -> qoder
+    "pi" -> pi
     else -> claude
 }
 
 fun supportedSessionModeIds(provider: String?): Set<String> = when (provider) {
     "codex" -> setOf("full-access")
-    "opencode", "grok" -> setOf("default", "full-access", "managed")
+    "opencode", "grok", "pi" -> setOf("default", "full-access", "managed")
     "qoder" -> setOf("default", "full-access", "auto-edit", "managed")
     else -> allSessionModeIds
 }

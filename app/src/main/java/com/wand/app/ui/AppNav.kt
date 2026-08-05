@@ -11,6 +11,7 @@ sealed class Screen {
     data class Chat(val sessionId: String) : Screen()
     data class PtyTerminal(val sessionId: String) : Screen()
     data object NewSession : Screen()
+    data object Missions : Screen()
 }
 
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
@@ -61,12 +62,14 @@ class NavState {
         private const val CHAT_PREFIX = "chat:"
         private const val PTY_TERMINAL_PREFIX = "pty-terminal:"
         private const val NEW_SESSION_KEY = "new-session"
+        private const val MISSIONS_KEY = "missions"
 
         private fun Screen.saveKey(): String = when (this) {
             Screen.SessionList -> SESSION_LIST_KEY
             is Screen.Chat -> "$CHAT_PREFIX$sessionId"
             is Screen.PtyTerminal -> "$PTY_TERMINAL_PREFIX$sessionId"
             Screen.NewSession -> NEW_SESSION_KEY
+            Screen.Missions -> MISSIONS_KEY
         }
 
         private fun String.restoreScreen(): Screen? = when {
@@ -78,6 +81,7 @@ class NavState {
                 .takeIf(String::isNotBlank)
                 ?.let(Screen::PtyTerminal)
             this == NEW_SESSION_KEY -> Screen.NewSession
+            this == MISSIONS_KEY -> Screen.Missions
             else -> null
         }
     }

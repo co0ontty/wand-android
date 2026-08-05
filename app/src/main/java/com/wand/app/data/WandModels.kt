@@ -533,7 +533,7 @@ data class HistorySession(
 
     /** API 路径归一化：仅允许服务端支持的原生历史 provider。 */
     val apiProvider: String get() = when (provider) {
-        "codex", "opencode", "qoder" -> provider
+        "codex", "opencode", "qoder", "pi" -> provider
         else -> "claude"
     }
 
@@ -599,11 +599,13 @@ private fun legacyDefaultModelFor(
     opencode: String?,
     qoder: String? = null,
     grok: String? = null,
+    pi: String? = null,
 ): String = when (provider) {
     "codex" -> codex.orEmpty()
     "opencode" -> opencode.orEmpty()
     "grok" -> grok.orEmpty()
     "qoder" -> qoder.orEmpty()
+    "pi" -> pi.orEmpty()
     else -> claude.orEmpty()
 }
 
@@ -619,6 +621,8 @@ data class ModelsResponse(
     val defaultQoderModel: String? = null,
     val grokModels: List<ModelInfo> = emptyList(),
     val defaultGrokModel: String? = null,
+    val piModels: List<ModelInfo> = emptyList(),
+    val defaultPiModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -629,6 +633,7 @@ data class ModelsResponse(
                 defaultOpenCodeModel,
                 defaultQoderModel,
                 defaultGrokModel,
+                defaultPiModel,
             )
 
     companion object {
@@ -644,6 +649,8 @@ data class ModelsResponse(
             defaultQoderModel = o.str("defaultQoderModel"),
             grokModels = ModelInfo.parseList(o.arr("grokModels")),
             defaultGrokModel = o.str("defaultGrokModel"),
+            piModels = ModelInfo.parseList(o.arr("piModels")),
+            defaultPiModel = o.str("defaultPiModel"),
         )
     }
 }
@@ -654,6 +661,7 @@ data class ProviderDefaultModels(
     val opencode: String?,
     val qoder: String? = null,
     val grok: String? = null,
+    val pi: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): ProviderDefaultModels? =
@@ -664,6 +672,7 @@ data class ProviderDefaultModels(
                     opencode = it.str("opencode"),
                     qoder = it.str("qoder"),
                     grok = it.str("grok"),
+                    pi = it.str("pi"),
                 )
             }
     }
@@ -930,6 +939,7 @@ data class ServerConfigInfo(
     val currentVersion: String?,
     val defaultQoderModel: String? = null,
     val defaultGrokModel: String? = null,
+    val defaultPiModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -940,6 +950,7 @@ data class ServerConfigInfo(
                 defaultOpenCodeModel,
                 defaultQoderModel,
                 defaultGrokModel,
+                defaultPiModel,
             )
 
     companion object {
@@ -957,6 +968,7 @@ data class ServerConfigInfo(
             currentVersion = o.str("currentVersion"),
             defaultQoderModel = o.str("defaultQoderModel"),
             defaultGrokModel = o.str("defaultGrokModel"),
+            defaultPiModel = o.str("defaultPiModel"),
         )
     }
 }

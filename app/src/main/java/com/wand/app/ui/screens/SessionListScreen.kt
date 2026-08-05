@@ -128,6 +128,7 @@ fun SessionListScreen(
     compactLayout: Boolean = false,
     onOpenSession: (SessionSnapshot) -> Unit,
     onNewSession: () -> Unit,
+    onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
@@ -221,6 +222,7 @@ fun SessionListScreen(
                 contentHeight = topBarContentHeight,
                 compact = compactLayout,
                 onNewSession = onNewSession,
+                onOpenMissions = onOpenMissions,
                 onExitSelection = { endSelection() },
                 onOpenSettings = {
                     menuOpen = false
@@ -534,6 +536,7 @@ private fun SessionListTopBar(
     contentHeight: Dp,
     compact: Boolean,
     onNewSession: () -> Unit,
+    onOpenMissions: () -> Unit,
     onExitSelection: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
@@ -610,6 +613,13 @@ private fun SessionListTopBar(
                         expanded = menuOpen,
                         onDismissRequest = { onMenuOpenChange(false) },
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("Agent Inbox", color = WandColors.textPrimary) },
+                            leadingIcon = {
+                                Icon(WandIcons.agent, contentDescription = null, tint = WandColors.info)
+                            },
+                            onClick = { onMenuOpenChange(false); onOpenMissions() },
+                        )
                         DropdownMenuItem(
                             text = { Text("设置", color = WandColors.textPrimary) },
                             leadingIcon = {

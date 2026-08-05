@@ -32,11 +32,13 @@ object BrandLogos {
 
     /** Grok（xAI 官方 SVG 的 mark 路径）。 */
     val grok: ImageVector by lazy { brandIcon("BrandGrok", GROK_PATH, 34f, 33f) }
+    val pi: ImageVector by lazy { brandIcon("BrandPi", "M4 5h16v4h-3v11h-4V9h-2v11H7V9H4Z") }
 
     private fun vectorForProvider(provider: String?): ImageVector = when (provider) {
         "codex" -> codex
         "opencode" -> opencode
         "grok" -> grok
+        "pi" -> pi
         else -> claude
     }
 

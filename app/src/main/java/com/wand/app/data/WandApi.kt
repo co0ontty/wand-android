@@ -22,7 +22,7 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
  * 复用 WandHttp（自签证书放行 + 共享 CookieJar），登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
-class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSessionPort {
+class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSessionPort, MissionsPort {
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
 
@@ -217,7 +217,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     }
 
     private fun historyProvider(provider: String?): String = when (provider) {
-        "codex", "opencode", "qoder" -> provider
+        "codex", "opencode", "qoder", "pi" -> provider
         else -> "claude"
     }
 
@@ -470,6 +470,10 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
                     body.put("defaultGrokModel", model)
                     body.put("defaultModels", JSONObject().put("grok", model))
                 }
+                "pi" -> {
+                    body.put("defaultPiModel", model)
+                    body.put("defaultModels", JSONObject().put("pi", model))
+                }
                 else -> {
                     body.put("defaultModel", model)
                     body.put("defaultModels", JSONObject().put("claude", model))
@@ -480,6 +484,76 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         if (defaultProvider != null) body.put("defaultProvider", defaultProvider)
         if (defaultSessionKind != null) body.put("defaultSessionKind", defaultSessionKind)
         requestData("POST", "/api/settings/config", body)
+    }
+
+    // MARK: - Missions / Agent Inbox
+
+    override suspend fun defaultMissionCwd(): String =
+        requestObject("GET", "/api/config").str("defaultCwd").orEmpty()
+
+    override suspend fun fetchInbox(): List<AgentActivityItem> =
+        AgentActivityItem.parseList(requestObject("GET", "/api/inbox").arr("items"))
+
+    override suspend fun fetchMissions(): List<MissionInfo> =
+        MissionInfo.parseList(requestObject("GET", "/api/missions").arr("missions"))
+
+    override suspend fun createMission(
+        title: String?,
+        prompt: String,
+        cwd: String,
+        providers: List<String>,
+        baseRef: String?,
+        sharedDirectories: List<String>,
+        copyPaths: List<String>,
+    ): MissionInfo {
+        val body = JSONObject()
+            .put("prompt", prompt)
+            .put("cwd", cwd)
+            .put("providers", JSONArray(providers))
+            .put("sharedDirectories", JSONArray(sharedDirectories))
+            .put("copyPaths", JSONArray(copyPaths))
+        if (!title.isNullOrBlank()) body.put("title", title)
+        if (!baseRef.isNullOrBlank()) body.put("baseRef", baseRef)
+        return MissionInfo.parse(requestObject("POST", "/api/missions", body, timeoutSec = 180))
+    }
+
+    override suspend fun fetchMissionDiff(missionId: String, attemptId: String): MissionDiff =
+        MissionDiff.parse(requestObject(
+            "GET",
+            "/api/missions/${encode(missionId)}/attempts/${encode(attemptId)}/diff",
+        ))
+
+    override suspend fun addMissionReviewComment(
+        missionId: String,
+        attemptId: String,
+        filePath: String,
+        line: Int?,
+        side: String,
+        body: String,
+    ): MissionReviewComment {
+        val payload = JSONObject()
+            .put("filePath", filePath)
+            .put("side", side)
+            .put("body", body)
+        if (line != null) payload.put("line", line)
+        return MissionReviewComment.parseList(JSONArray().put(requestObject(
+            "POST",
+            "/api/missions/${encode(missionId)}/attempts/${encode(attemptId)}/comments",
+            payload,
+        ))).first()
+    }
+
+    override suspend fun sendMissionReview(missionId: String, attemptId: String): List<MissionReviewComment> =
+        MissionReviewComment.parseList(requestObject(
+            "POST",
+            "/api/missions/${encode(missionId)}/attempts/${encode(attemptId)}/review/send",
+            JSONObject(),
+        ).arr("comments"))
+
+    override suspend fun markInboxRead(sessionId: String?) {
+        val body = JSONObject()
+        if (sessionId != null) body.put("sessionId", sessionId)
+        requestData("POST", "/api/inbox/read", body)
     }
 
     // MARK: - Git 快速提交
