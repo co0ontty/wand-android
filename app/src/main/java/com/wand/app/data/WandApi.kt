@@ -150,6 +150,9 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         fetchLegacySessionList(offset, limit, revision)
     }
 
+    override suspend fun fetchSessionDirectories(): SessionDirectoryTreeResponse =
+        SessionDirectoryTreeResponse.parse(requestObject("GET", "/api/session-directories"))
+
     private suspend fun fetchLegacySessionList(
         offset: Int,
         limit: Int,

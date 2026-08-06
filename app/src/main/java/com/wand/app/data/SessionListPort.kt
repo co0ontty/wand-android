@@ -7,6 +7,9 @@ interface SessionListPort {
         limit: Int,
         revision: String? = null,
     ): SessionListPage
+    suspend fun fetchSessionDirectories(): SessionDirectoryTreeResponse {
+        throw UnsupportedOperationException("会话目录接口不可用")
+    }
     suspend fun resumeHistory(history: HistorySession): SessionSnapshot
     suspend fun deleteSession(id: String)
     suspend fun deleteHistoryBatch(provider: String, ids: List<String>)

@@ -113,6 +113,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun NewSessionScreen(
     api: WandApi,
+    initialCwd: String? = null,
     onBack: () -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
 ) {
@@ -121,7 +122,7 @@ fun NewSessionScreen(
     val defaultModelGenerations = remember { mutableMapOf<String, Int>() }
     var defaultsUpdateGeneration by remember { mutableIntStateOf(0) }
 
-    var cwd by remember { mutableStateOf("") }
+    var cwd by remember(initialCwd) { mutableStateOf(initialCwd?.trim().orEmpty()) }
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
     var provider by remember { mutableStateOf("claude") }
     var sessionKind by remember { mutableStateOf(NewSessionKind.Structured) }
@@ -162,7 +163,7 @@ fun NewSessionScreen(
         ?: "自动"
     val supportedModes = workflow.supportedModes(provider)
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(initialCwd) {
         val initial = workflow.bootstrap()
         provider = initial.provider
         sessionKind = initial.kind
@@ -173,7 +174,7 @@ fun NewSessionScreen(
         thinkingEffort = initial.thinkingEffort
         modelsResponse = initial.models
         recentPaths = initial.recentPaths
-        if (cwd.isEmpty()) cwd = initial.cwd
+        if (cwd.isEmpty()) cwd = initialCwd?.trim().takeUnless { it.isNullOrEmpty() } ?: initial.cwd
     }
 
     if (showBrowser) {

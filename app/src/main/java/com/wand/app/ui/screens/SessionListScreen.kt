@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -49,6 +50,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -74,6 +76,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.customActions
@@ -86,6 +90,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListEntry
+import com.wand.app.data.SessionDirectoryNode
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.ui.parseIsoMillis
 import com.wand.app.ui.components.BrandLogos
@@ -114,6 +119,11 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+enum class SessionListViewMode {
+    Sessions,
+    Directories,
+}
+
 /**
  * 统一会话列表：普通、已归档和本机可恢复会话按时间混排。
  * 支持下拉刷新、10s 轮询、滑动删除；全部条目可长按多选并拖动连续选择。
@@ -126,8 +136,10 @@ fun SessionListScreen(
     selectedSessionId: String? = null,
     topBarContentHeight: Dp = 64.dp,
     compactLayout: Boolean = false,
+    viewMode: SessionListViewMode = SessionListViewMode.Sessions,
     onOpenSession: (SessionSnapshot) -> Unit,
-    onNewSession: () -> Unit,
+    onNewSession: (String?) -> Unit,
+    onViewModeChange: (SessionListViewMode) -> Unit = {},
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
@@ -160,6 +172,13 @@ fun SessionListScreen(
         isSelecting = false
         selectedIds = emptySet()
         clearDragSelection()
+    }
+
+    LaunchedEffect(viewMode, state.entries) {
+        if (viewMode == SessionListViewMode.Directories) {
+            endSelection()
+            state.loadDirectories(silent = state.directoryTree != null)
+        }
     }
 
     val visibleEntries = state.entries
@@ -218,10 +237,16 @@ fun SessionListScreen(
                 onMenuOpenChange = { menuOpen = it },
                 isSelecting = isSelecting,
                 selectedCount = selectedIds.size,
-                entryCount = visibleEntries.size,
+                entryCount = if (viewMode == SessionListViewMode.Directories) {
+                    state.directoryTree?.directoryCount ?: 0
+                } else {
+                    state.total
+                },
+                viewMode = viewMode,
                 contentHeight = topBarContentHeight,
                 compact = compactLayout,
-                onNewSession = onNewSession,
+                onNewSession = { onNewSession(null) },
+                onViewModeChange = onViewModeChange,
                 onOpenMissions = onOpenMissions,
                 onExitSelection = { endSelection() },
                 onOpenSettings = {
@@ -269,6 +294,16 @@ fun SessionListScreen(
         ) {
             AmbientBackground(Modifier.fillMaxSize())
             when {
+                viewMode == SessionListViewMode.Directories -> {
+                    SessionDirectoryTreeContent(
+                        state = state,
+                        selectedSessionId = selectedSessionId,
+                        compact = compactLayout,
+                        contentPadding = padding,
+                        onOpenSession = onOpenSession,
+                        onNewSession = onNewSession,
+                    )
+                }
                 state.loading && visibleEntries.isEmpty() -> {
                     LoadingState(
                         modifier = Modifier.padding(padding),
@@ -288,7 +323,7 @@ fun SessionListScreen(
                         title = "还没有会话",
                         subtitle = "新建一个会话，开始与 AI 协作",
                         actionText = "创建第一个会话",
-                        onAction = onNewSession,
+                        onAction = { onNewSession(null) },
                         modifier = Modifier.padding(padding),
                     )
                 }
@@ -533,9 +568,11 @@ private fun SessionListTopBar(
     isSelecting: Boolean,
     selectedCount: Int,
     entryCount: Int,
+    viewMode: SessionListViewMode,
     contentHeight: Dp,
     compact: Boolean,
     onNewSession: () -> Unit,
+    onViewModeChange: (SessionListViewMode) -> Unit,
     onOpenMissions: () -> Unit,
     onExitSelection: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -578,17 +615,13 @@ private fun SessionListTopBar(
                         .padding(start = 12.dp, end = 8.dp),
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text(
-                        "会话",
-                        style = if (compact) {
-                            MaterialTheme.typography.titleLarge
-                        } else {
-                            MaterialTheme.typography.headlineSmall
-                        },
-                        color = WandColors.textPrimary,
+                    SessionListViewSwitch(
+                        mode = viewMode,
+                        compact = compact,
+                        onChange = onViewModeChange,
                     )
                     Text(
-                        "$entryCount 个会话",
+                        if (viewMode == SessionListViewMode.Directories) "$entryCount 个目录" else "$entryCount 个会话",
                         style = MaterialTheme.typography.labelSmall,
                         color = WandColors.textMuted,
                     )
@@ -643,6 +676,278 @@ private fun SessionListTopBar(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionListViewSwitch(
+    mode: SessionListViewMode,
+    compact: Boolean,
+    onChange: (SessionListViewMode) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .widthIn(max = if (compact) 126.dp else 146.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
+            .border(0.5.dp, WandColors.border.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+            .padding(2.dp),
+    ) {
+        SessionListViewMode.entries.forEach { value ->
+            val selected = mode == value
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = if (compact) 28.dp else 30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (selected) WandColors.bgElevated else Color.Transparent)
+                    .clickable(role = Role.Tab) { onChange(value) }
+                    .semantics { this.selected = selected },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (value == SessionListViewMode.Sessions) "会话" else "目录",
+                    fontSize = if (compact) 11.sp else 12.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selected) WandColors.textPrimary else WandColors.textMuted,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+private sealed interface SessionDirectoryDisplayRow {
+    val key: String
+    val depth: Int
+
+    data class Folder(
+        val node: SessionDirectoryNode,
+        override val depth: Int,
+    ) : SessionDirectoryDisplayRow {
+        override val key: String = "folder-${node.path.ifEmpty { "unknown-${node.name}" }}"
+    }
+
+    data class Entry(
+        val entry: SessionListEntry,
+        override val depth: Int,
+    ) : SessionDirectoryDisplayRow {
+        override val key: String = "directory-${entry.key}"
+    }
+}
+
+private fun directoryNodeKey(node: SessionDirectoryNode): String =
+    node.path.ifEmpty { "unknown-${node.name}" }
+
+private fun flattenDirectoryRows(
+    roots: List<SessionDirectoryNode>,
+    expanded: Map<String, Boolean>,
+): List<SessionDirectoryDisplayRow> = buildList {
+    fun appendNode(node: SessionDirectoryNode, depth: Int) {
+        add(SessionDirectoryDisplayRow.Folder(node, depth))
+        if (expanded[directoryNodeKey(node)] != true) return
+        node.entries.forEach { add(SessionDirectoryDisplayRow.Entry(it, depth + 1)) }
+        node.children.forEach { appendNode(it, depth + 1) }
+    }
+    roots.forEach { appendNode(it, 0) }
+}
+
+@Composable
+private fun SessionDirectoryTreeContent(
+    state: SessionListState,
+    selectedSessionId: String?,
+    compact: Boolean,
+    contentPadding: PaddingValues,
+    onOpenSession: (SessionSnapshot) -> Unit,
+    onNewSession: (String?) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val tree = state.directoryTree
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+
+    LaunchedEffect(tree?.revision, selectedSessionId) {
+        tree?.roots?.forEach { root ->
+            expanded.putIfAbsent(directoryNodeKey(root), true)
+            fun openActivePath(node: SessionDirectoryNode) {
+                if (!node.containsSession(selectedSessionId)) return
+                expanded[directoryNodeKey(node)] = true
+                node.children.forEach(::openActivePath)
+            }
+            openActivePath(root)
+        }
+    }
+
+    when {
+        state.directoryLoading && tree == null -> LoadingState(
+            modifier = Modifier.padding(contentPadding),
+            text = "正在整理目录…",
+        )
+        state.directoryError != null && tree == null -> ErrorState(
+            message = state.directoryError ?: "目录加载失败",
+            onRetry = { scope.launch { state.loadDirectories() } },
+            modifier = Modifier.padding(contentPadding),
+        )
+        tree == null || tree.roots.isEmpty() -> EmptyState(
+            icon = WandIcons.folder,
+            title = "还没有会话目录",
+            subtitle = "创建会话后会按工作目录显示在这里",
+            actionText = "新建会话",
+            onAction = { onNewSession(null) },
+            modifier = Modifier.padding(contentPadding),
+        )
+        else -> {
+            val direction = LocalLayoutDirection.current
+            val rows = flattenDirectoryRows(tree.roots, expanded)
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 8.dp + contentPadding.calculateStartPadding(direction),
+                    end = 8.dp + contentPadding.calculateEndPadding(direction),
+                    top = 6.dp + contentPadding.calculateTopPadding(),
+                    bottom = 16.dp + contentPadding.calculateBottomPadding(),
+                ),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                itemsIndexed(
+                    items = rows,
+                    key = { _, row -> row.key },
+                    contentType = { _, row -> if (row is SessionDirectoryDisplayRow.Folder) "folder" else "entry" },
+                ) { _, row ->
+                    when (row) {
+                        is SessionDirectoryDisplayRow.Folder -> {
+                            val node = row.node
+                            val key = directoryNodeKey(node)
+                            val isExpanded = expanded[key] == true
+                            SessionDirectoryFolderRow(
+                                node = node,
+                                depth = row.depth,
+                                expanded = isExpanded,
+                                active = node.containsSession(selectedSessionId),
+                                compact = compact,
+                                onToggle = { expanded[key] = !isExpanded },
+                                onNewSession = { onNewSession(node.path) },
+                            )
+                        }
+                        is SessionDirectoryDisplayRow.Entry -> {
+                            Box(
+                                modifier = Modifier.padding(
+                                    start = (row.depth.coerceAtMost(6) * if (compact) 7 else 10).dp,
+                                ),
+                            ) {
+                                when (val entry = row.entry) {
+                                    is SessionListEntry.Managed -> SessionCard(
+                                        session = entry.session,
+                                        selecting = false,
+                                        selected = entry.session.id == selectedSessionId,
+                                        compact = compact,
+                                        onClick = { onOpenSession(entry.session) },
+                                    )
+                                    is SessionListEntry.Recoverable -> HistorySessionCard(
+                                        history = entry.history,
+                                        enabled = !state.isRestoringHistory,
+                                        selecting = false,
+                                        selected = false,
+                                        compact = compact,
+                                        restoring = state.isRestoring(entry.history),
+                                        onClick = {
+                                            if (!state.isRestoringHistory) {
+                                                scope.launch {
+                                                    state.restore(entry.history)?.let(onOpenSession)
+                                                }
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionDirectoryFolderRow(
+    node: SessionDirectoryNode,
+    depth: Int,
+    expanded: Boolean,
+    active: Boolean,
+    compact: Boolean,
+    onToggle: () -> Unit,
+    onNewSession: () -> Unit,
+) {
+    val indent = (depth.coerceAtMost(6) * if (compact) 8 else 11).dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indent)
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (active) WandColors.brand.copy(alpha = 0.08f) else Color.Transparent)
+            .heightIn(min = 44.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clickable(role = Role.Button, onClick = onToggle)
+                .padding(start = 7.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                WandIcons.chevronRight,
+                contentDescription = null,
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(15.dp)
+                    .graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+            )
+            Icon(
+                WandIcons.folder,
+                contentDescription = null,
+                tint = if (active) WandColors.brand else WandColors.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                node.name,
+                modifier = Modifier.weight(1f),
+                fontSize = if (compact) 12.sp else 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                node.totalCount.toString(),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(WandColors.bgElevated.copy(alpha = 0.84f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = WandColors.textMuted,
+            )
+        }
+        if (!node.synthetic && node.path.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(role = Role.Button, onClick = onNewSession)
+                    .semantics { contentDescription = "在 ${node.path} 新建会话" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    WandIcons.add,
+                    contentDescription = null,
+                    tint = WandColors.brand,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
     }

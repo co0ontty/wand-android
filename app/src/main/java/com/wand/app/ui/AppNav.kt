@@ -10,7 +10,7 @@ sealed class Screen {
     data object SessionList : Screen()
     data class Chat(val sessionId: String) : Screen()
     data class PtyTerminal(val sessionId: String) : Screen()
-    data object NewSession : Screen()
+    data class NewSession(val initialCwd: String? = null) : Screen()
     data object Missions : Screen()
 }
 
@@ -62,13 +62,14 @@ class NavState {
         private const val CHAT_PREFIX = "chat:"
         private const val PTY_TERMINAL_PREFIX = "pty-terminal:"
         private const val NEW_SESSION_KEY = "new-session"
+        private const val NEW_SESSION_PREFIX = "new-session:"
         private const val MISSIONS_KEY = "missions"
 
         private fun Screen.saveKey(): String = when (this) {
             Screen.SessionList -> SESSION_LIST_KEY
             is Screen.Chat -> "$CHAT_PREFIX$sessionId"
             is Screen.PtyTerminal -> "$PTY_TERMINAL_PREFIX$sessionId"
-            Screen.NewSession -> NEW_SESSION_KEY
+            is Screen.NewSession -> initialCwd?.let { "$NEW_SESSION_PREFIX$it" } ?: NEW_SESSION_KEY
             Screen.Missions -> MISSIONS_KEY
         }
 
@@ -80,7 +81,8 @@ class NavState {
             startsWith(PTY_TERMINAL_PREFIX) -> removePrefix(PTY_TERMINAL_PREFIX)
                 .takeIf(String::isNotBlank)
                 ?.let(Screen::PtyTerminal)
-            this == NEW_SESSION_KEY -> Screen.NewSession
+            this == NEW_SESSION_KEY -> Screen.NewSession()
+            startsWith(NEW_SESSION_PREFIX) -> Screen.NewSession(removePrefix(NEW_SESSION_PREFIX))
             this == MISSIONS_KEY -> Screen.Missions
             else -> null
         }

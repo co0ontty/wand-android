@@ -1,6 +1,8 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.HistorySession
+import com.wand.app.data.SessionDirectoryNode
+import com.wand.app.data.SessionDirectoryTreeResponse
 import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionListPage
 import com.wand.app.data.SessionListPort
@@ -16,6 +18,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionListStateTest {
+    @Test
+    fun directoryLoadPublishesServerTreeAndCounts() = runBlocking {
+        val root = SessionDirectoryNode(
+            path = "/tmp/project",
+            name = "project",
+            synthetic = false,
+            directCount = 1,
+            totalCount = 1,
+            latestTimestamp = 1,
+            entries = listOf(managed("first")),
+            children = emptyList(),
+        )
+        val response = SessionDirectoryTreeResponse(
+            roots = listOf(root),
+            totalSessions = 1,
+            directoryCount = 1,
+            revision = "directory-revision",
+        )
+        val state = SessionListState(FakeSessionListPort().apply { directoryResponse = response })
+
+        assertTrue(state.loadDirectories())
+
+        assertSame(response, state.directoryTree)
+        assertEquals(1, state.directoryTree?.directoryCount)
+        assertTrue(state.directoryTree?.roots?.single()?.containsSession("first") == true)
+        assertNull(state.directoryError)
+        assertFalse(state.directoryLoading)
+    }
+
     @Test
     fun loadMoreAppendsTheNextPageWithoutDuplicates() = runBlocking {
         val first = managed("first")
@@ -257,6 +288,7 @@ class SessionListStateTest {
         val pageRequests = mutableListOf<Triple<Int, Int, String?>>()
         val resumeResults = mutableMapOf<String, SessionSnapshot>()
         val historyDeleteCalls = mutableListOf<Pair<String, List<String>>>()
+        var directoryResponse = SessionDirectoryTreeResponse(emptyList(), 0, 0, "empty")
 
         override suspend fun fetchSessionList(
             offset: Int,
@@ -267,6 +299,8 @@ class SessionListStateTest {
             pageFailures.remove(offset)?.let { throw it }
             return pages[offset] ?: page(emptyList(), offset, total = 0)
         }
+
+        override suspend fun fetchSessionDirectories(): SessionDirectoryTreeResponse = directoryResponse
 
         override suspend fun resumeHistory(history: HistorySession): SessionSnapshot =
             resumeResults["${history.apiProvider}:${history.id}"] ?: error("missing resume result")

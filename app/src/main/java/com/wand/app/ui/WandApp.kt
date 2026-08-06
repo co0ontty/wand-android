@@ -89,6 +89,7 @@ import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.PtyTerminalScreen
 import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
+import com.wand.app.ui.screens.SessionListViewMode
 import com.wand.app.ui.screens.SettingsScreen
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -159,6 +160,8 @@ private val MediumSidebarMaxWidth = 280.dp
 private val ExpandedSidebarMinWidth = 280.dp
 private val ExpandedSidebarMaxWidth = 360.dp
 private val ExpandedDetailMinWidth = 560.dp
+private const val SessionListViewPreferences = "wand-session-list-view"
+private const val SessionListViewPreferenceKey = "mode"
 
 /**
  * 展开折叠屏与平板会在运行时反复跨越这个边界；只依据当前窗口尺寸，
@@ -261,6 +264,18 @@ private fun ReadyContent(
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
+    val viewPreferences = remember(context) {
+        context.getSharedPreferences(SessionListViewPreferences, android.content.Context.MODE_PRIVATE)
+    }
+    var sessionListViewMode by rememberSaveable {
+        mutableStateOf(
+            if (viewPreferences.getString(SessionListViewPreferenceKey, null) == "directories") {
+                SessionListViewMode.Directories
+            } else {
+                SessionListViewMode.Sessions
+            },
+        )
+    }
     val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
@@ -286,7 +301,7 @@ private fun ReadyContent(
         if (!initialQuickActionConsumed) {
             initialQuickActionConsumed = true
             when (val action = initialQuickAction) {
-                is QuickAction.NewSession -> nav.push(Screen.NewSession)
+                is QuickAction.NewSession -> nav.push(Screen.NewSession())
                 is QuickAction.OpenWeb -> actions.navigation.openWeb()
                 is QuickAction.OpenSession -> nav.push(Screen.Chat(action.sessionId))
                 null -> {}
@@ -315,7 +330,13 @@ private fun ReadyContent(
                 }
             }
         }
-        val openNewSession = { openDetail(Screen.NewSession) }
+        val openNewSession: (String?) -> Unit = { cwd -> openDetail(Screen.NewSession(cwd)) }
+        val changeSessionListView: (SessionListViewMode) -> Unit = { mode ->
+            sessionListViewMode = mode
+            viewPreferences.edit()
+                .putString(SessionListViewPreferenceKey, if (mode == SessionListViewMode.Directories) "directories" else "sessions")
+                .apply()
+        }
         val openMissions = { openDetail(Screen.Missions) }
         val onCreated: (SessionSnapshot) -> Unit = { snapshot ->
             listState.addCreated(snapshot)
@@ -336,12 +357,14 @@ private fun ReadyContent(
                 listPaneWidth = listPaneWidth,
                 sidebarCollapsed = sidebarCollapsed,
                 selectedSessionId = nav.current.sessionIdOrNull(),
+                viewMode = sessionListViewMode,
                 onOpenSession = openSession,
                 onOpenHistory = openHistory,
                 onNewSession = openNewSession,
                 onOpenMissions = openMissions,
                 onOpenSettings = { showSettings = true },
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
+                onViewModeChange = changeSessionListView,
                 onCreated = onCreated,
             )
         } else {
@@ -350,10 +373,12 @@ private fun ReadyContent(
                 api = api,
                 actions = actions,
                 listState = listState,
+                viewMode = sessionListViewMode,
                 onOpenSession = openSession,
                 onNewSession = openNewSession,
                 onOpenMissions = openMissions,
                 onOpenSettings = { showSettings = true },
+                onViewModeChange = changeSessionListView,
                 onCreated = onCreated,
             )
         }
@@ -394,17 +419,21 @@ private fun SinglePaneContent(
     api: WandApi,
     actions: HomeActions,
     listState: SessionListState,
+    viewMode: SessionListViewMode,
     onOpenSession: (SessionSnapshot) -> Unit,
-    onNewSession: () -> Unit,
+    onNewSession: (String?) -> Unit,
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
+    onViewModeChange: (SessionListViewMode) -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
 ) {
     when (val screen = nav.current) {
         is Screen.SessionList -> SessionListScreen(
             state = listState,
+            viewMode = viewMode,
             onOpenSession = onOpenSession,
             onNewSession = onNewSession,
+            onViewModeChange = onViewModeChange,
             onOpenMissions = onOpenMissions,
             onOpenSettings = onOpenSettings,
             onOpenWeb = actions.navigation.openWeb,
@@ -425,6 +454,7 @@ private fun SinglePaneContent(
         )
         is Screen.NewSession -> NewSessionScreen(
             api = api,
+            initialCwd = screen.initialCwd,
             onBack = { nav.pop() },
             onCreated = onCreated,
         )
@@ -445,12 +475,14 @@ private fun WideReadyContent(
     listPaneWidth: Dp,
     sidebarCollapsed: Boolean,
     selectedSessionId: String?,
+    viewMode: SessionListViewMode,
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
-    onNewSession: () -> Unit,
+    onNewSession: (String?) -> Unit,
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
+    onViewModeChange: (SessionListViewMode) -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
 ) {
     val sidebarContentWidth = if (sidebarCollapsed) 56.dp else listPaneWidth
@@ -487,8 +519,10 @@ private fun WideReadyContent(
                         selectedSessionId = selectedSessionId,
                         topBarContentHeight = 64.dp,
                         compactLayout = true,
+                        viewMode = viewMode,
                         onOpenSession = onOpenSession,
                         onNewSession = onNewSession,
+                        onViewModeChange = onViewModeChange,
                         onOpenMissions = onOpenMissions,
                         onOpenSettings = onOpenSettings,
                         onOpenWeb = actions.navigation.openWeb,
@@ -504,7 +538,7 @@ private fun WideReadyContent(
                 .fillMaxHeight(),
         ) {
             when (val screen = nav.current) {
-                is Screen.SessionList -> DetailPlaceholder(onNewSession)
+                is Screen.SessionList -> DetailPlaceholder { onNewSession(null) }
                 is Screen.Chat -> ChatScreen(
                     api = api,
                     sessionId = screen.sessionId,
@@ -520,6 +554,7 @@ private fun WideReadyContent(
                 )
                 is Screen.NewSession -> NewSessionScreen(
                     api = api,
+                    initialCwd = screen.initialCwd,
                     onBack = { nav.pop() },
                     onCreated = onCreated,
                 )
@@ -565,7 +600,7 @@ private fun CollapsedSessionRail(
     selectedSessionId: String?,
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
-    onNewSession: () -> Unit,
+    onNewSession: (String?) -> Unit,
     onOpenMissions: () -> Unit,
     onExpandSidebar: () -> Unit,
 ) {
@@ -637,7 +672,7 @@ private fun CollapsedSessionRail(
             }
         }
         Spacer(modifier = Modifier.height(10.dp))
-        CollapsedNewSessionTile(onClick = onNewSession)
+        CollapsedNewSessionTile(onClick = { onNewSession(null) })
         Spacer(modifier = Modifier.height(8.dp))
         CollapsedMissionsTile(onClick = onOpenMissions)
     }
@@ -869,6 +904,6 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Chat -> sessionId
     is Screen.PtyTerminal -> sessionId
     Screen.SessionList,
-    Screen.NewSession,
     Screen.Missions -> null
+    is Screen.NewSession -> null
 }

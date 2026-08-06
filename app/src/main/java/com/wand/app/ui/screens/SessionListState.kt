@@ -9,6 +9,7 @@ import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionListPage
 import com.wand.app.data.SessionListPort
+import com.wand.app.data.SessionDirectoryTreeResponse
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApiException
 import com.wand.app.ui.ScopedStore
@@ -31,6 +32,12 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
     var loadingMore by mutableStateOf(false)
         private set
     var loadError by mutableStateOf<String?>(null)
+        private set
+    var directoryTree by mutableStateOf<SessionDirectoryTreeResponse?>(null)
+        private set
+    var directoryLoading by mutableStateOf(false)
+        private set
+    var directoryError by mutableStateOf<String?>(null)
         private set
     val scrollState = LazyListState()
     var scrollToLatestRequest by mutableLongStateOf(0L)
@@ -108,6 +115,22 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
             false
         } finally {
             loadingMore = false
+        }
+    }
+
+    suspend fun loadDirectories(silent: Boolean = false): Boolean {
+        if (!silent) directoryLoading = true
+        return try {
+            val next = port.fetchSessionDirectories()
+            if (directoryTree != next) directoryTree = next
+            directoryError = null
+            true
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            if (!silent || directoryTree == null) directoryError = e.message ?: "目录加载失败"
+            false
+        } finally {
+            directoryLoading = false
         }
     }
 

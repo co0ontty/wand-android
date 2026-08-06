@@ -518,6 +518,62 @@ sealed interface SessionListEntry {
     }
 }
 
+/** 服务端统一构建的 cwd 目录树；entries 只属于当前精确目录，totalCount 包含后代。 */
+data class SessionDirectoryNode(
+    val path: String,
+    val name: String,
+    val synthetic: Boolean,
+    val directCount: Int,
+    val totalCount: Int,
+    val latestTimestamp: Long,
+    val entries: List<SessionListEntry>,
+    val children: List<SessionDirectoryNode>,
+) {
+    fun containsSession(sessionId: String?): Boolean {
+        if (sessionId == null) return false
+        return entries.any { it is SessionListEntry.Managed && it.session.id == sessionId } ||
+            children.any { it.containsSession(sessionId) }
+    }
+
+    companion object {
+        fun parse(o: JSONObject): SessionDirectoryNode? {
+            val path = o.str("path") ?: return null
+            val name = o.str("name")?.takeIf { it.isNotBlank() } ?: return null
+            val entries = o.arr("entries")?.let(SessionListEntry::parseList) ?: emptyList()
+            val children = o.arr("children")?.parseEach { parse(it) } ?: emptyList()
+            return SessionDirectoryNode(
+                path = path,
+                name = name,
+                synthetic = o.bool("synthetic") ?: false,
+                directCount = o.int("directCount") ?: entries.size,
+                totalCount = o.int("totalCount") ?: entries.size,
+                latestTimestamp = o.dbl("latestTimestamp")?.toLong() ?: 0L,
+                entries = entries,
+                children = children,
+            )
+        }
+    }
+}
+
+data class SessionDirectoryTreeResponse(
+    val roots: List<SessionDirectoryNode>,
+    val totalSessions: Int,
+    val directoryCount: Int,
+    val revision: String,
+) {
+    companion object {
+        fun parse(o: JSONObject): SessionDirectoryTreeResponse {
+            val roots = o.arr("roots")?.parseEach(SessionDirectoryNode::parse) ?: emptyList()
+            return SessionDirectoryTreeResponse(
+                roots = roots,
+                totalSessions = o.int("totalSessions") ?: roots.sumOf { it.totalCount },
+                directoryCount = o.int("directoryCount") ?: 0,
+                revision = o.str("revision").orEmpty(),
+            )
+        }
+    }
+}
+
 /** 从各 provider 本地历史存储扫描出的会话；统一使用原生 session ID 承载兼容字段。 */
 data class HistorySession(
     val claudeSessionId: String,
