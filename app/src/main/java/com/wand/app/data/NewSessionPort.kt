@@ -29,4 +29,5 @@ interface NewSessionPort {
         model: String? = null,
         thinkingEffort: String? = null,
     ): SessionSnapshot
+    suspend fun createShellSession(cwd: String): SessionSnapshot
 }

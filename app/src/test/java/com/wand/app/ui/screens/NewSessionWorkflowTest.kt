@@ -78,7 +78,7 @@ class NewSessionWorkflowTest {
             NewSessionDraft(
                 cwd = "  /project  ",
                 provider = "codex",
-                structured = true,
+                kind = NewSessionKind.Structured,
                 mode = "managed",
                 model = "",
                 thinkingEffort = "deep",
@@ -100,7 +100,7 @@ class NewSessionWorkflowTest {
         val port = FakeNewSessionPort()
 
         NewSessionWorkflow(port).create(
-            NewSessionDraft("/project", "opencode", false, "native", "model-x", "off", "run"),
+            NewSessionDraft("/project", "opencode", NewSessionKind.Pty, "native", "model-x", "off", "run"),
         )
 
         assertEquals(listOf("persist", "pty"), port.calls)
@@ -115,7 +115,7 @@ class NewSessionWorkflowTest {
         assertEquals("grok", NewSessionWorkflow.normalizeProvider("grok"))
         assertEquals(setOf("default", "full-access", "managed"), workflow.supportedModes("grok"))
 
-        workflow.create(NewSessionDraft("/project", "grok", true, "native", "grok-4.5", "deep", "hello"))
+        workflow.create(NewSessionDraft("/project", "grok", NewSessionKind.Structured, "native", "grok-4.5", "deep", "hello"))
         assertEquals("managed", port.lastMode)
         assertEquals("grok", port.lastProvider)
         assertEquals("grok-4.5", port.lastModel)
@@ -132,7 +132,7 @@ class NewSessionWorkflowTest {
             workflow.supportedModes("qoder"),
         )
 
-        workflow.create(NewSessionDraft("/project", "qoder", true, "native", "performance", "off", "hello"))
+        workflow.create(NewSessionDraft("/project", "qoder", NewSessionKind.Structured, "native", "performance", "off", "hello"))
         assertEquals("qoder", port.lastProvider)
         assertEquals("managed", port.lastMode)
         assertEquals("performance", port.lastModel)
@@ -160,6 +160,26 @@ class NewSessionWorkflowTest {
         )
 
         assertEquals("off", normalized)
+    }
+
+    @Test
+    fun shellCreateSkipsProviderDefaultsAndStartsBareShell() = runBlocking {
+        val port = FakeNewSessionPort()
+
+        NewSessionWorkflow(port).create(
+            NewSessionDraft(
+                "/project",
+                "codex",
+                NewSessionKind.Shell,
+                "full-access",
+                "gpt-5",
+                "deep",
+                "ignored",
+            ),
+        )
+
+        assertEquals(listOf("shell"), port.calls)
+        assertEquals("/project", port.lastCwd)
     }
 
     private class FakeNewSessionPort : NewSessionPort {
@@ -207,6 +227,12 @@ class NewSessionWorkflowTest {
             calls += "pty"
             capture(cwd, mode, initialInput, provider, model)
             return snapshot()
+        }
+
+        override suspend fun createShellSession(cwd: String): SessionSnapshot {
+            calls += "shell"
+            lastCwd = cwd
+            return snapshot().copy(sessionKind = "pty", provider = null)
         }
 
         private fun capture(cwd: String, mode: String?, prompt: String?, provider: String, model: String?) {

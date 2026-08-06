@@ -9,6 +9,7 @@ private val allSessionModeIds = linkedSetOf(
 )
 
 fun providerDisplayName(provider: String?): String = when (provider) {
+    null, "terminal" -> "终端"
     "codex" -> "Codex"
     "opencode" -> "OpenCode"
     "grok" -> "Grok"

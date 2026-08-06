@@ -124,7 +124,7 @@ fun NewSessionScreen(
     var cwd by remember { mutableStateOf("") }
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
     var provider by remember { mutableStateOf("claude") }
-    var isStructured by remember { mutableStateOf(true) }
+    var sessionKind by remember { mutableStateOf(NewSessionKind.Structured) }
     // 默认托管模式（Claude / OpenCode 全自动完成）；Codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
     var modelsResponse by remember { mutableStateOf<ModelsResponse?>(null) }
@@ -165,7 +165,7 @@ fun NewSessionScreen(
     LaunchedEffect(Unit) {
         val initial = workflow.bootstrap()
         provider = initial.provider
-        isStructured = initial.structured
+        sessionKind = initial.kind
         mode = initial.mode
         serverDefaultModels = initial.defaultModels
         confirmedDefaultModels = initial.defaultModels
@@ -259,7 +259,7 @@ fun NewSessionScreen(
                     NewSessionDraft(
                         cwd = cwd,
                         provider = provider,
-                        structured = isStructured,
+                        kind = sessionKind,
                         mode = mode,
                         model = selectedModel,
                         thinkingEffort = thinkingEffort,
@@ -332,7 +332,11 @@ fun NewSessionScreen(
                 ) {
                     Text(
                         text = if (canCreate) {
-                            "${providerDisplayName(provider)} · ${if (isStructured) "聊天" else "终端"} · ${modeLabel(mode)}"
+                            when (sessionKind) {
+                                NewSessionKind.Structured -> "${providerDisplayName(provider)} · 聊天 · ${modeLabel(mode)}"
+                                NewSessionKind.Pty -> "${providerDisplayName(provider)} · CLI 终端 · ${modeLabel(mode)}"
+                                NewSessionKind.Shell -> "空白终端 · Shell"
+                            }
                         } else {
                             "选择工作目录后即可创建"
                         },
@@ -347,7 +351,11 @@ fun NewSessionScreen(
                         onClick = ::create,
                         enabled = canCreate,
                         creating = creating,
-                        label = "创建 ${providerDisplayName(provider)} 会话",
+                        label = if (sessionKind == NewSessionKind.Shell) {
+                            "创建空白终端"
+                        } else {
+                            "创建 ${providerDisplayName(provider)} 会话"
+                        },
                     )
                 }
             }
@@ -403,20 +411,25 @@ fun NewSessionScreen(
                     description = "聊天适合阅读与协作，终端保留 CLI 的原始交互。",
                 )
                 SessionKindPicker(
-                    selected = isStructured,
-                    onSelect = {
-                        isStructured = it
-                        persistDefaults(defaultSessionKind = if (it) "structured" else "pty")
+                    selected = sessionKind,
+                    onSelect = { kind ->
+                        sessionKind = kind
+                        kind.preferenceValue?.let { persistDefaults(defaultSessionKind = it) }
                     },
                 )
-                InlineHint(sessionKindHint(provider, isStructured))
+                InlineHint(sessionKindHint(provider, sessionKind))
 
                 SetupSectionHeader(
                     number = "04",
-                    title = "配置运行方式",
-                    description = "默认设置已经适合多数任务，需要时再调整。",
+                    title = if (sessionKind == NewSessionKind.Shell) "确认终端环境" else "配置运行方式",
+                    description = if (sessionKind == NewSessionKind.Shell) {
+                        "将使用服务端配置的登录 Shell，不加载任何 AI CLI。"
+                    } else {
+                        "默认设置已经适合多数任务，需要时再调整。"
+                    },
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (sessionKind != NewSessionKind.Shell) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OptionMenuCard(
                         title = "模型",
                         value = selectedModelLabel,
@@ -474,26 +487,29 @@ fun NewSessionScreen(
                             persistDefaults(thinkingEffort = it)
                         },
                     )
-                }
+                    }
 
-                Text(
-                    "权限模式",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textSecondary,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 7.dp),
-                )
-                ModePicker(
-                    modes = SESSION_MODES,
-                    supportedModes = supportedModes,
-                    providerName = providerDisplayName(provider),
-                    selected = mode,
-                    onSelect = { selectedMode ->
-                        mode = selectedMode
-                        persistDefaults(mode = selectedMode)
-                    },
-                )
-                InlineHint(modeHint(provider, mode))
+                    Text(
+                        "权限模式",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textSecondary,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 7.dp),
+                    )
+                    ModePicker(
+                        modes = SESSION_MODES,
+                        supportedModes = supportedModes,
+                        providerName = providerDisplayName(provider),
+                        selected = mode,
+                        onSelect = { selectedMode ->
+                            mode = selectedMode
+                            persistDefaults(mode = selectedMode)
+                        },
+                    )
+                    InlineHint(modeHint(provider, mode))
+                } else {
+                    InlineHint("创建后会直接进入可输入命令的空白终端，工作目录保持为上方所选项目。")
+                }
 
                 if (errorMessage != null) {
                     ErrorBanner(errorMessage ?: "")
@@ -678,32 +694,43 @@ private fun Modifier.selectCard(selected: Boolean): Modifier {
 }
 
 @Composable
-private fun SessionKindPicker(selected: Boolean, onSelect: (Boolean) -> Unit) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.height(IntrinsicSize.Max),
-    ) {
+private fun SessionKindPicker(selected: NewSessionKind, onSelect: (NewSessionKind) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.height(IntrinsicSize.Max),
+        ) {
+            SessionKindCard(
+                title = "聊天",
+                technicalLabel = "结构化",
+                description = "清晰呈现消息与工具调用",
+                icon = WandIcons.chat,
+                selected = selected == NewSessionKind.Structured,
+                onClick = { onSelect(NewSessionKind.Structured) },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+            )
+            SessionKindCard(
+                title = "CLI 终端",
+                technicalLabel = "PTY",
+                description = "保留 AI CLI 的原始交互",
+                icon = WandIcons.terminal,
+                selected = selected == NewSessionKind.Pty,
+                onClick = { onSelect(NewSessionKind.Pty) },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+            )
+        }
         SessionKindCard(
-            title = "聊天",
-            technicalLabel = "结构化",
-            description = "清晰呈现消息与工具调用",
-            icon = WandIcons.chat,
-            selected = selected,
-            onClick = { onSelect(true) },
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight(),
-        )
-        SessionKindCard(
-            title = "终端",
-            technicalLabel = "PTY",
-            description = "保留 CLI 的原始输出与操作",
+            title = "空白终端",
+            technicalLabel = "SHELL",
+            description = "只启动系统 Shell，不自动运行 CLI 工具",
             icon = WandIcons.terminal,
-            selected = !selected,
-            onClick = { onSelect(false) },
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight(),
+            selected = selected == NewSessionKind.Shell,
+            onClick = { onSelect(NewSessionKind.Shell) },
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -1208,8 +1235,10 @@ private fun modeLabel(mode: String): String =
     SESSION_MODES.firstOrNull { it.id == mode }?.label ?: "标准"
 
 /** 会话类型动态说明，文案对齐 Web getSessionKindHint。 */
-private fun sessionKindHint(provider: String, structured: Boolean): String =
-    if (structured) {
+private fun sessionKindHint(provider: String, kind: NewSessionKind): String =
+    if (kind == NewSessionKind.Shell) {
+        "启动当前工作目录下的交互式登录 Shell，不自动运行任何 CLI 工具。"
+    } else if (kind == NewSessionKind.Structured) {
         when (provider) {
             "codex" -> "Codex JSONL 结构化聊天界面，支持多轮对话和工具调用展示。"
             "opencode" -> "OpenCode JSON 结构化聊天界面，支持多轮对话和工具调用展示。"

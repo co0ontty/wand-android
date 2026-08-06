@@ -441,6 +441,12 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
     }
 
+    /** 空白终端：仅启动服务端配置的登录 Shell，不运行任何 Provider CLI。 */
+    override suspend fun createShellSession(cwd: String): SessionSnapshot {
+        val body = JSONObject().put("shell", true).put("cwd", cwd)
+        return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
+    }
+
     /** 将「新建会话」默认项持久化到服务端配置。 */
     override suspend fun updateNewSessionDefaults(
         mode: String?,

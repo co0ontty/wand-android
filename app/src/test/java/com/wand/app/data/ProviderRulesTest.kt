@@ -11,6 +11,7 @@ class ProviderRulesTest {
         assertEquals("OpenCode", providerDisplayName("opencode"))
         assertEquals("Grok", providerDisplayName("grok"))
         assertEquals("Qoder", providerDisplayName("qoder"))
+        assertEquals("终端", providerDisplayName(null))
         assertEquals(setOf("full-access"), supportedSessionModeIds("codex"))
         assertEquals(setOf("default", "full-access", "managed"), supportedSessionModeIds("grok"))
         assertEquals(setOf("default", "full-access", "auto-edit", "managed"), supportedSessionModeIds("qoder"))

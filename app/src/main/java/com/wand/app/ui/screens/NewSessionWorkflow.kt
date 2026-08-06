@@ -15,9 +15,15 @@ import com.wand.app.ui.thinkingEffortOptions
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+enum class NewSessionKind(val preferenceValue: String?) {
+    Structured("structured"),
+    Pty("pty"),
+    Shell(null),
+}
+
 data class NewSessionBootstrap(
     val provider: String,
-    val structured: Boolean,
+    val kind: NewSessionKind,
     val mode: String,
     val thinkingEffort: String,
     val cwd: String,
@@ -29,7 +35,7 @@ data class NewSessionBootstrap(
 data class NewSessionDraft(
     val cwd: String,
     val provider: String,
-    val structured: Boolean,
+    val kind: NewSessionKind,
     val mode: String,
     val model: String,
     val thinkingEffort: String,
@@ -49,7 +55,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
             ?: EMPTY_DEFAULT_MODELS
         return NewSessionBootstrap(
             provider = provider,
-            structured = config?.defaultSessionKind != "pty",
+            kind = if (config?.defaultSessionKind == "pty") NewSessionKind.Pty else NewSessionKind.Structured,
             mode = clampSessionMode(config?.defaultMode ?: "managed", provider),
             thinkingEffort = config?.defaultThinkingEffort ?: "off",
             cwd = recentPaths.firstOrNull()?.path ?: config?.defaultCwd.orEmpty(),
@@ -101,6 +107,10 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         val model = draft.model.ifBlank { null }
         val prompt = draft.firstMessage.trim().ifEmpty { null }
 
+        if (draft.kind == NewSessionKind.Shell) {
+            return@withLock port.createShellSession(cwd)
+        }
+
         // 创建前持久化完整最终选择；页面即时保存即使被取消，也不会留下半套默认值。
         persistDefaultsUnlocked(
             mode = mode,
@@ -108,9 +118,9 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
             modelProvider = provider,
             thinkingEffort = draft.thinkingEffort,
             defaultProvider = provider,
-            defaultSessionKind = if (draft.structured) "structured" else "pty",
+            defaultSessionKind = draft.kind.preferenceValue,
         )
-        if (draft.structured) {
+        if (draft.kind == NewSessionKind.Structured) {
             port.createStructuredSession(
                 cwd = cwd,
                 mode = mode,
