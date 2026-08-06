@@ -420,6 +420,7 @@ private fun SinglePaneContent(
             api = api,
             sessionId = screen.sessionId,
             isHapticEnabled = actions.settings.isHapticEnabled,
+            onOpenSettings = onOpenSettings,
             onBack = { nav.pop() },
         )
         is Screen.NewSession -> NewSessionScreen(
@@ -514,6 +515,7 @@ private fun WideReadyContent(
                     api = api,
                     sessionId = screen.sessionId,
                     isHapticEnabled = actions.settings.isHapticEnabled,
+                    onOpenSettings = onOpenSettings,
                     onBack = { nav.pop() },
                 )
                 is Screen.NewSession -> NewSessionScreen(

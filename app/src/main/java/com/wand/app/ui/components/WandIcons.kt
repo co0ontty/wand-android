@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.KeyboardHide
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
@@ -135,6 +136,9 @@ object WandIcons {
 
     /** 语音模式下切回键盘输入。 */
     val keyboard: ImageVector = Icons.Outlined.Keyboard
+
+    /** 收起系统软键盘。 */
+    val keyboardHide: ImageVector = Icons.Outlined.KeyboardHide
 
     /** 停止。 */
     val stop: ImageVector = Icons.Outlined.Stop

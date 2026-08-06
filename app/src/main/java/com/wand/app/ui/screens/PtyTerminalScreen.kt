@@ -3,6 +3,7 @@ package com.wand.app.ui.screens
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
 import android.net.Uri
+import android.view.KeyEvent as AndroidKeyEvent
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -12,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +28,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -44,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +63,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -85,7 +98,16 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
+import com.wand.app.ui.terminal.TerminalKeyBinding
+import com.wand.app.ui.terminal.TerminalModifier
+import com.wand.app.ui.terminal.TerminalShortcut
+import com.wand.app.ui.terminal.buildTerminalShortcut
+import com.wand.app.ui.terminal.rememberTerminalShortcutPreferences
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
 /**
@@ -102,6 +124,7 @@ fun PtyTerminalScreen(
     api: WandApi,
     sessionId: String,
     isHapticEnabled: () -> Boolean,
+    onOpenSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
@@ -111,9 +134,17 @@ fun PtyTerminalScreen(
     var toast by remember(sessionId) { mutableStateOf<String?>(null) }
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
+    var showQuickStartGuide by remember(sessionId) { mutableStateOf(false) }
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
+    val (shortcutStore, shortcutSnapshot) = rememberTerminalShortcutPreferences()
+    // A slow or reconnecting server must not replay seconds of stale key-repeat input after the
+    // user has already released the key. Keep only a small, recent interaction window.
+    val shortcutQueue = remember(sessionId) {
+        Channel<TerminalShortcut>(capacity = 12, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    }
     val quickCommit = remember(sessionId) {
         QuickCommitStore(sessionId, api) { msg -> toast = msg }
     }
@@ -147,6 +178,23 @@ fun PtyTerminalScreen(
             null
         }
         snapshotResolved = true
+    }
+    LaunchedEffect(shortcutSnapshot.hasSeenGuide) {
+        if (!shortcutSnapshot.hasSeenGuide) showQuickStartGuide = true
+    }
+    LaunchedEffect(api, sessionId, shortcutQueue) {
+        for (shortcut in shortcutQueue) {
+            try {
+                api.sendInput(
+                    id = sessionId,
+                    input = shortcut.bytes,
+                    view = "terminal",
+                    shortcutKey = "android-${shortcut.id.take(64)}",
+                )
+            } catch (error: Exception) {
+                toast = error.message ?: "终端按键发送失败"
+            }
+        }
     }
     QuickCommitStatusRefreshEffect(
         quickCommit = quickCommit,
@@ -189,6 +237,15 @@ fun PtyTerminalScreen(
                 onMicDown = onMicDown,
                 onPickPhoto = attachmentPickers.pickPhoto,
                 onPickFile = attachmentPickers.pickFile,
+                shortcuts = shortcutSnapshot.visibleShortcuts,
+                shortcutsEnabled = snapshot?.status != "exited",
+                onShortcut = { shortcutQueue.trySend(it) },
+                onDismissKeyboard = {
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                },
+                onShowGuide = { showQuickStartGuide = true },
+                onOpenSettings = onOpenSettings,
                 onSend = {
                     val body = draft
                     val attachments = pendingAttachments
@@ -243,6 +300,7 @@ fun PtyTerminalScreen(
                 PtyTerminalWebView(
                     serverUrl = api.baseUrl,
                     sessionId = sessionId,
+                    onHardwareShortcut = { shortcutQueue.trySend(it) },
                 )
             }
             if (quickCommit.panelOpen) {
@@ -265,6 +323,15 @@ fun PtyTerminalScreen(
                         .clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.72f))
                         .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+            if (showQuickStartGuide) {
+                PtyQuickStartGuideDialog(
+                    onDismiss = { showQuickStartGuide = false },
+                    onFinished = {
+                        shortcutStore.markGuideSeen()
+                        showQuickStartGuide = false
+                    },
                 )
             }
         }
@@ -355,6 +422,12 @@ private fun PtyNativeInputBar(
     onMicDown: () -> Unit,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
+    shortcuts: List<TerminalShortcut>,
+    shortcutsEnabled: Boolean,
+    onShortcut: (TerminalShortcut) -> Unit,
+    onDismissKeyboard: () -> Unit,
+    onShowGuide: () -> Unit,
+    onOpenSettings: () -> Unit,
     onSend: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -391,6 +464,16 @@ private fun PtyNativeInputBar(
             .imePadding()
             .navigationBarsPadding(),
     ) {
+        PtyTerminalShortcutBar(
+            shortcuts = shortcuts,
+            enabled = shortcutsEnabled,
+            keyboardVisible = isFocused,
+            onShortcut = onShortcut,
+            onDismissKeyboard = onDismissKeyboard,
+            onShowGuide = onShowGuide,
+            onOpenSettings = onOpenSettings,
+        )
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.72f))
         if (voice.pressed) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 VoiceTranscriptBubble(backdrop, voice)
@@ -563,8 +646,13 @@ private fun PtyNativeInputBar(
 }
 
 @Composable
-private fun PtyTerminalWebView(serverUrl: String, sessionId: String) {
+private fun PtyTerminalWebView(
+    serverUrl: String,
+    sessionId: String,
+    onHardwareShortcut: (TerminalShortcut) -> Unit,
+) {
     val context = LocalContext.current
+    val latestHardwareShortcut by rememberUpdatedState(onHardwareShortcut)
     val webView = remember {
         @SuppressLint("SetJavaScriptEnabled")
         val view = WebView(context)
@@ -591,6 +679,11 @@ private fun PtyTerminalWebView(serverUrl: String, sessionId: String) {
             setAcceptThirdPartyCookies(view, true)
         }
         view.apply {
+            setOnKeyListener { _, _, event ->
+                val shortcut = terminalShortcutForHardwareEvent(event) ?: return@setOnKeyListener false
+                latestHardwareShortcut(shortcut)
+                true
+            }
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
                     // 原生头部已吃掉状态栏，网页内安全区清零，避免双重顶部留白。
@@ -646,6 +739,180 @@ private fun buildEmbedTerminalUrl(serverUrl: String, sessionId: String): String 
         .appendQueryParameter("nativeInput", "1")
         .build()
         .toString()
+
+@Composable
+private fun PtyTerminalShortcutBar(
+    shortcuts: List<TerminalShortcut>,
+    enabled: Boolean,
+    keyboardVisible: Boolean,
+    onShortcut: (TerminalShortcut) -> Unit,
+    onDismissKeyboard: () -> Unit,
+    onShowGuide: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .padding(horizontal = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (keyboardVisible) {
+            item(key = "dismiss-keyboard") {
+                WandIconButton(
+                    icon = WandIcons.keyboardHide,
+                    contentDescription = "收起软键盘",
+                    onClick = onDismissKeyboard,
+                    variant = WandIconButtonVariant.Quiet,
+                    iconSize = 18.dp,
+                )
+            }
+        }
+        items(shortcuts, key = TerminalShortcut::id) { shortcut ->
+            PtyShortcutKeycap(
+                shortcut = shortcut,
+                enabled = enabled,
+                onPress = { onShortcut(shortcut) },
+            )
+        }
+        item(key = "shortcut-help") {
+            WandIconButton(
+                icon = WandIcons.question,
+                contentDescription = "查看 PTY 快速上手",
+                onClick = onShowGuide,
+                variant = WandIconButtonVariant.Quiet,
+                iconSize = 18.dp,
+            )
+        }
+        item(key = "shortcut-settings") {
+            WandIconButton(
+                icon = WandIcons.tune,
+                contentDescription = "设置终端快捷键",
+                onClick = onOpenSettings,
+                variant = WandIconButtonVariant.Quiet,
+                iconSize = 18.dp,
+            )
+        }
+    }
+}
+
+/**
+ * Terminal keys commit on pointer-down so the PTY responds immediately. Repeatable navigation
+ * keys start repeating after a deliberate hold; their visual state is direct and has no delayed
+ * animation because this path can be used hundreds of times per day.
+ */
+@Composable
+private fun PtyShortcutKeycap(
+    shortcut: TerminalShortcut,
+    enabled: Boolean,
+    onPress: () -> Unit,
+) {
+    var pressed by remember(shortcut.id) { mutableStateOf(false) }
+    val repeatScope = rememberCoroutineScope()
+    val shape = RoundedCornerShape(9.dp)
+    val background = when {
+        !enabled -> WandColors.surfaceSoft.copy(alpha = 0.42f)
+        pressed -> WandColors.textPrimary.copy(alpha = 0.14f)
+        shortcut.builtIn -> WandColors.surfaceSoft.copy(alpha = 0.86f)
+        else -> WandColors.brandSoft.copy(alpha = 0.78f)
+    }
+    val border = if (shortcut.builtIn) WandColors.border else WandColors.brand.copy(alpha = 0.38f)
+
+    Box(
+        modifier = Modifier
+            .height(40.dp)
+            .widthIn(min = 40.dp)
+            .background(background, shape)
+            .border(0.65.dp, border, shape)
+            .semantics {
+                role = Role.Button
+                contentDescription = shortcut.accessibilityLabel
+                if (!enabled) disabled()
+                onClick {
+                    if (enabled) onPress()
+                    enabled
+                }
+            }
+            .pointerInput(shortcut.id, enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    pressed = true
+                    onPress()
+                    var repeatJob: Job? = null
+                    try {
+                        repeatJob = if (shortcut.repeatable) {
+                            repeatScope.launch {
+                                delay(380)
+                                while (isActive) {
+                                    onPress()
+                                    delay(72)
+                                }
+                            }
+                        } else null
+                        waitForUpOrCancellation()
+                    } finally {
+                        repeatJob?.cancel()
+                        pressed = false
+                    }
+                }
+            }
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            shortcut.label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = FontFamily.Monospace,
+            color = if (enabled) WandColors.textSecondary else WandColors.textMuted.copy(alpha = 0.48f),
+            maxLines = 1,
+        )
+    }
+}
+
+private fun terminalShortcutForHardwareEvent(event: AndroidKeyEvent): TerminalShortcut? {
+    if (event.action != AndroidKeyEvent.ACTION_DOWN) return null
+    val modifiers = buildSet {
+        if (event.isCtrlPressed) add(TerminalModifier.Ctrl)
+        if (event.isAltPressed) add(TerminalModifier.Alt)
+        if (event.isShiftPressed) add(TerminalModifier.Shift)
+    }
+    val key = when (event.keyCode) {
+        AndroidKeyEvent.KEYCODE_ESCAPE -> "escape"
+        AndroidKeyEvent.KEYCODE_TAB -> "tab"
+        AndroidKeyEvent.KEYCODE_ENTER,
+        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+        -> "enter"
+        AndroidKeyEvent.KEYCODE_DEL -> "backspace"
+        AndroidKeyEvent.KEYCODE_FORWARD_DEL -> "delete"
+        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> "arrowLeft"
+        AndroidKeyEvent.KEYCODE_DPAD_UP -> "arrowUp"
+        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> "arrowDown"
+        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> "arrowRight"
+        AndroidKeyEvent.KEYCODE_MOVE_HOME -> "home"
+        AndroidKeyEvent.KEYCODE_MOVE_END -> "end"
+        AndroidKeyEvent.KEYCODE_PAGE_UP -> "pageUp"
+        AndroidKeyEvent.KEYCODE_PAGE_DOWN -> "pageDown"
+        AndroidKeyEvent.KEYCODE_SPACE -> if (modifiers.isNotEmpty()) "space" else return null
+        in AndroidKeyEvent.KEYCODE_A..AndroidKeyEvent.KEYCODE_Z -> {
+            if (TerminalModifier.Ctrl !in modifiers && TerminalModifier.Alt !in modifiers) return null
+            ('a'.code + event.keyCode - AndroidKeyEvent.KEYCODE_A).toChar().toString()
+        }
+        in AndroidKeyEvent.KEYCODE_0..AndroidKeyEvent.KEYCODE_9 -> {
+            if (TerminalModifier.Ctrl !in modifiers && TerminalModifier.Alt !in modifiers) return null
+            ('0'.code + event.keyCode - AndroidKeyEvent.KEYCODE_0).toChar().toString()
+        }
+        else -> return null
+    }
+    return buildTerminalShortcut(
+        binding = TerminalKeyBinding(key, modifiers),
+        id = "hardware-${event.keyCode}",
+        accessibilityLabel = "硬件键盘 $key",
+    )
+}
 
 @Composable
 private fun PtyProviderBadge(provider: String?) {

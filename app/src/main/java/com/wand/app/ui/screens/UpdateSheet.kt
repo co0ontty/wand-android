@@ -139,37 +139,38 @@ fun UpdateSheet(
                     onDismiss = if (downloading) null else onDismiss,
                 )
                 AnimatedContent(
-                    targetState = presentation.contentKey(),
+                    targetState = presentation,
+                    contentKey = UpdatePresentation::contentKey,
                     transitionSpec = {
                         (fadeIn(tween(WandMotion.normal)) togetherWith fadeOut(tween(WandMotion.fast)))
                             .using(SizeTransform(clip = false))
                     },
                     label = "updateSheetContent",
-                ) {
-                    when (presentation) {
+                ) { targetPresentation ->
+                    when (targetPresentation) {
                         UpdatePresentation.Checking -> UpdateCheckingContent()
                         is UpdatePresentation.Available -> UpdateAvailableContent(
-                            update = presentation.update,
-                            onDownload = { onDownload(presentation.update) },
+                            update = targetPresentation.update,
+                            onDownload = { onDownload(targetPresentation.update) },
                             onDismiss = onDismiss,
-                            onSkip = { onSkipVersion(presentation.update) },
+                            onSkip = { onSkipVersion(targetPresentation.update) },
                         )
                         is UpdatePresentation.Downloading -> UpdateDownloadingContent(
-                            state = presentation,
+                            state = targetPresentation,
                             onCancel = onCancelDownload,
                         )
                         is UpdatePresentation.Ready -> UpdateReadyContent(
-                            state = presentation,
-                            onInstall = { onInstall(presentation.apkFile) },
+                            state = targetPresentation,
+                            onInstall = { onInstall(targetPresentation.apkFile) },
                             onDismiss = onDismiss,
                         )
                         is UpdatePresentation.Failed -> UpdateFailureContent(
-                            state = presentation,
-                            onRetry = { onDownload(presentation.update) },
+                            state = targetPresentation,
+                            onRetry = { onDownload(targetPresentation.update) },
                             onDismiss = onDismiss,
                         )
                         is UpdatePresentation.UpToDate -> UpdateUpToDateContent(
-                            message = presentation.message,
+                            message = targetPresentation.message,
                             onDismiss = onDismiss,
                         )
                         UpdatePresentation.Hidden -> Unit
