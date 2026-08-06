@@ -116,7 +116,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var serverVersion by remember { mutableStateOf<String?>(null) }
-    var showDisconnectConfirm by remember { mutableStateOf(false) }
+    var showRemoveServerConfirm by remember { mutableStateOf(false) }
 
     var selectedSound by remember { mutableStateOf(settings.getNotificationSound()) }
     var volume by remember { mutableFloatStateOf(settings.getNotificationVolume().toFloat()) }
@@ -141,23 +141,23 @@ fun SettingsScreen(
 
     val glassBackdrop = rememberGlassBackdrop()
 
-    if (showDisconnectConfirm) {
+    if (showRemoveServerConfirm) {
         WandDialog(
-            title = "断开连接",
-            onDismissRequest = { showDisconnectConfirm = false },
-            icon = WandIcons.logout,
+            title = "移除当前服务器？",
+            onDismissRequest = { showRemoveServerConfirm = false },
+            icon = WandIcons.delete,
             confirm = WandDialogAction(
-                label = "断开连接",
+                label = "移除服务器",
                 destructive = true,
                 onClick = {
-                    showDisconnectConfirm = false
+                    showRemoveServerConfirm = false
                     navigation.disconnect()
                 },
             ),
-            dismiss = WandDialogAction("取消", { showDisconnectConfirm = false }),
+            dismiss = WandDialogAction("取消", { showRemoveServerConfirm = false }),
         ) {
             Text(
-                "清除本机保存的服务器地址和连接码，并返回连接页。",
+                "仅从这台设备移除当前服务器及其连接凭据，不会删除服务器上的会话。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )
@@ -233,8 +233,8 @@ fun SettingsScreen(
                 TerminalShortcutSettingsSection()
 
                 SettingsSection(
-                    title = "连接",
-                    description = "查看当前服务器，或切换到其他 Wand 服务。",
+                    title = "服务器",
+                    description = "查看当前服务器，或管理此设备保存的 Wand 服务。",
                 ) {
                     SettingsCard(modifier = Modifier.fillMaxWidth()) {
                         ServerConnectionRow(
@@ -244,15 +244,15 @@ fun SettingsScreen(
                         RowDivider()
                         ConnectionActionsRow(
                             onOpenWeb = navigation.openWeb,
-                            onSwitchServer = navigation.switchServer,
+                            onSwitchServer = navigation.manageServers,
                         )
                         RowDivider()
                         ActionRow(
-                            label = "断开连接",
-                            icon = WandIcons.logout,
+                            label = "移除当前服务器",
+                            icon = WandIcons.delete,
                             danger = true,
                         ) {
-                            showDisconnectConfirm = true
+                            showRemoveServerConfirm = true
                         }
                     }
                 }
@@ -385,7 +385,7 @@ private fun SettingsOverview(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 SettingsStatePill(
-                    label = if (connection.hasToken) "已安全连接" else "已连接",
+                    label = if (connection.hasToken) "已认证" else "直接连接",
                     tint = WandColors.success,
                     modifier = Modifier.weight(1f),
                 )
@@ -829,7 +829,7 @@ private fun ServerConnectionRow(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                "服务器",
+                "当前服务器",
                 style = MaterialTheme.typography.titleSmall,
                 color = WandColors.textPrimary,
             )
@@ -854,7 +854,7 @@ private fun ServerConnectionRow(
                     ) {
                         Icon(
                             WandIcons.connectionCode,
-                            contentDescription = "已使用连接码连接",
+                            contentDescription = "当前服务器已认证",
                             tint = WandColors.success,
                             modifier = Modifier.size(14.dp),
                         )
@@ -888,7 +888,7 @@ private fun ConnectionActionsRow(
                 .background(WandColors.borderStrong.copy(alpha = 0.22f)),
         )
         CompactConnectionAction(
-            label = "切换服务器",
+            label = "管理服务器",
             icon = WandIcons.swapServer,
             onClick = onSwitchServer,
             modifier = Modifier.weight(1f),

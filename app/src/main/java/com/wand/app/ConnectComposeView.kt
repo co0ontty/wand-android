@@ -1,6 +1,8 @@
 package com.wand.app
 
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -16,10 +18,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,9 +34,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.AbstractComposeView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
@@ -48,8 +56,10 @@ import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandIconButton
+import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandTextField
-import com.wand.app.data.WandAuth
+import com.wand.app.data.ServerProfile
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandSpacing
@@ -60,9 +70,9 @@ interface ConnectUiListener {
     fun onScanQr()
     fun onCancelAutoConnect()
     fun onSwitchServer()
-    fun onPickRecent(entry: String)
-    fun onRemoveRecent(entry: String)
-    fun onClearRecent()
+    fun onPickServer(serverId: String)
+    fun onRemoveServer(serverId: String)
+    fun onClearServers()
 }
 
 /** Java 连接流程的 Compose 显示 adapter。业务状态仍由 ConnectActivity 掌管。 */
@@ -73,7 +83,9 @@ class ConnectComposeView(context: Context) : AbstractComposeView(context) {
     private var uiConnecting by mutableStateOf(false)
     private var statusMessage by mutableStateOf<String?>(null)
     private var statusIsError by mutableStateOf(true)
-    private var uiRecentEntries by mutableStateOf(emptyList<String>())
+    private var uiServerProfiles by mutableStateOf(emptyList<ServerProfile>())
+    private var uiActiveServerId by mutableStateOf<String?>(null)
+    private var uiConnectingServerId by mutableStateOf<String?>(null)
     private var focusGeneration by mutableIntStateOf(0)
     private var listener: ConnectUiListener? = null
 
@@ -106,6 +118,7 @@ class ConnectComposeView(context: Context) : AbstractComposeView(context) {
     fun setConnecting(value: Boolean) {
         uiConnecting = value
         if (value) statusMessage = null
+        if (!value) uiConnectingServerId = null
     }
 
     fun showStatus(message: String, isError: Boolean) {
@@ -113,8 +126,14 @@ class ConnectComposeView(context: Context) : AbstractComposeView(context) {
         statusIsError = isError
     }
 
-    fun setRecentEntries(entries: List<String>) {
-        uiRecentEntries = entries.toList()
+    fun setConnectingServer(serverId: String?) {
+        uiConnectingServerId = serverId
+        setConnecting(serverId != null)
+    }
+
+    fun setServerProfiles(profiles: List<ServerProfile>, activeServerId: String?) {
+        uiServerProfiles = profiles.toList()
+        uiActiveServerId = activeServerId
     }
 
     fun focusInput() {
@@ -132,7 +151,9 @@ class ConnectComposeView(context: Context) : AbstractComposeView(context) {
                 connecting = uiConnecting,
                 statusMessage = statusMessage,
                 statusIsError = statusIsError,
-                recentEntries = uiRecentEntries,
+                serverProfiles = uiServerProfiles,
+                activeServerId = uiActiveServerId,
+                connectingServerId = uiConnectingServerId,
                 focusGeneration = focusGeneration,
                 listener = listener,
             )
@@ -149,7 +170,9 @@ private fun ConnectScreen(
     connecting: Boolean,
     statusMessage: String?,
     statusIsError: Boolean,
-    recentEntries: List<String>,
+    serverProfiles: List<ServerProfile>,
+    activeServerId: String?,
+    connectingServerId: String?,
     focusGeneration: Int,
     listener: ConnectUiListener?,
 ) {
@@ -164,12 +187,12 @@ private fun ConnectScreen(
             focusRequester.requestFocus()
         }
     }
-    var pendingRemoval by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
+    var pendingRemoval by androidx.compose.runtime.remember { mutableStateOf<ServerProfile?>(null) }
     var confirmClear by androidx.compose.runtime.remember { mutableStateOf(false) }
 
-    pendingRemoval?.let { entry ->
+    pendingRemoval?.let { profile ->
         WandDialog(
-            title = "移除最近连接",
+            title = "移除服务器？",
             onDismissRequest = { pendingRemoval = null },
             icon = WandIcons.delete,
             confirm = WandDialogAction(
@@ -177,30 +200,38 @@ private fun ConnectScreen(
                 destructive = true,
                 onClick = {
                     pendingRemoval = null
-                    listener?.onRemoveRecent(entry)
+                    listener?.onRemoveServer(profile.id)
                 },
             ),
             dismiss = WandDialogAction("取消", { pendingRemoval = null }),
         ) {
-            Text("从最近连接中移除该服务器？", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "仅从这台设备移除「${profile.visibleName()}」及其连接凭据，不会删除服务器上的会话。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
         }
     }
     if (confirmClear) {
         WandDialog(
-            title = "清除连接记录",
+            title = "移除所有服务器？",
             onDismissRequest = { confirmClear = false },
             icon = WandIcons.delete,
             confirm = WandDialogAction(
-                label = "清除",
+                label = "全部移除",
                 destructive = true,
                 onClick = {
                     confirmClear = false
-                    listener?.onClearRecent()
+                    listener?.onClearServers()
                 },
             ),
             dismiss = WandDialogAction("取消", { confirmClear = false }),
         ) {
-            Text("确定清除所有最近连接记录吗？", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "仅清除此设备保存的服务器地址和连接凭据，不会删除任何服务器上的会话。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
         }
     }
 
@@ -252,7 +283,7 @@ private fun ConnectScreen(
                                 variant = WandButtonVariant.Text,
                             )
                             WandButton(
-                                label = "切换服务器",
+                                label = "管理服务器",
                                 onClick = { listener?.onSwitchServer() },
                                 variant = WandButtonVariant.Secondary,
                             )
@@ -289,10 +320,10 @@ private fun ConnectScreen(
                         )
                     }
                     WandButton(
-                        label = if (connecting) "连接中…" else "连接",
+                        label = if (connecting && connectingServerId == null) "连接中…" else "连接并保存",
                         onClick = { listener?.onConnect() },
-                        loading = connecting,
-                        enabled = inputValue.isNotBlank(),
+                        loading = connecting && connectingServerId == null,
+                        enabled = inputValue.isNotBlank() && !connecting,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = WandSpacing.md),
@@ -309,64 +340,43 @@ private fun ConnectScreen(
                     )
 
                     Text(
-                        "最近连接",
+                        "已保存的服务器",
                         style = MaterialTheme.typography.labelMedium,
                         color = WandColors.textMuted,
-                        modifier = Modifier.padding(top = WandSpacing.xl, bottom = WandSpacing.xs),
+                        modifier = Modifier.padding(top = WandSpacing.xl),
                     )
-                    if (recentEntries.isEmpty()) {
+                    Text(
+                        "选择一台服务器即可连接；每台服务器的认证信息独立保存。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WandColors.textMuted,
+                        modifier = Modifier.padding(top = WandSpacing.xxs, bottom = WandSpacing.xs),
+                    )
+                    if (serverProfiles.isEmpty()) {
                         Text(
-                            "暂无最近连接",
+                            "暂无已保存的服务器",
                             style = MaterialTheme.typography.bodySmall,
                             color = WandColors.textMuted,
                             modifier = Modifier.padding(vertical = WandSpacing.xs),
                         )
                     } else {
-                        recentEntries.forEach { entry ->
-                            val decoded = WandAuth.decodeConnectCode(entry)
-                            val display = decoded?.first ?: entry
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 54.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable { listener?.onPickRecent(entry) }
-                                        .padding(vertical = WandSpacing.xs),
-                                ) {
-                                    Text(
-                                        text = display,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            color = WandColors.brand,
-                                            fontFamily = FontFamily.Monospace,
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.MiddleEllipsis,
-                                    )
-                                    if (decoded != null) {
-                                        Text(
-                                            "已绑定连接码",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = WandColors.textSecondary,
-                                        )
-                                    }
-                                }
-                                com.wand.app.ui.components.WandIconButton(
-                                    icon = WandIcons.close,
-                                    contentDescription = "移除最近连接",
-                                    onClick = { pendingRemoval = entry },
-                                    variant = com.wand.app.ui.components.WandIconButtonVariant.Quiet,
-                                    tint = WandColors.textMuted,
-                                )
+                        serverProfiles.forEachIndexed { index, profile ->
+                            if (index > 0) {
+                                HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
                             }
+                            SavedServerRow(
+                                profile = profile,
+                                active = profile.id == activeServerId,
+                                connecting = profile.id == connectingServerId,
+                                enabled = !connecting,
+                                onClick = { listener?.onPickServer(profile.id) },
+                                onRemove = { pendingRemoval = profile },
+                            )
                         }
                         WandButton(
-                            label = "清除连接记录",
+                            label = "移除所有服务器",
                             onClick = { confirmClear = true },
-                            variant = WandButtonVariant.Text,
+                            variant = WandButtonVariant.DangerText,
+                            enabled = !connecting,
                             modifier = Modifier.align(Alignment.End),
                         )
                     }
@@ -376,3 +386,122 @@ private fun ConnectScreen(
         }
     }
 }
+
+@Composable
+private fun SavedServerRow(
+    profile: ServerProfile,
+    active: Boolean,
+    connecting: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val authenticationLabel = if (profile.hasToken) "已认证" else "直接连接"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 68.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (active) WandColors.brandSoft else androidx.compose.ui.graphics.Color.Transparent)
+            .border(
+                width = 0.5.dp,
+                color = if (active) WandColors.brand.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Icon(
+            WandIcons.server,
+            contentDescription = null,
+            tint = if (active) WandColors.brand else WandColors.textSecondary,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .semantics(mergeDescendants = true) {
+                    stateDescription = buildString {
+                        append(authenticationLabel)
+                        if (active) append("，当前服务器")
+                        if (connecting) append("，正在连接")
+                    }
+                }
+                .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+                .padding(vertical = 3.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    profile.visibleName(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (active) WandColors.brand else WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (active) {
+                    ServerStateBadge("当前", WandColors.brand, WandColors.brandSoft)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Text(
+                    profile.baseUrl,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                ServerStateBadge(
+                    label = authenticationLabel,
+                    tint = if (profile.hasToken) WandColors.success else WandColors.textSecondary,
+                    background = if (profile.hasToken) WandColors.successSoft else WandColors.surfaceSoft,
+                )
+            }
+        }
+        if (connecting) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .padding(horizontal = 11.dp)
+                    .size(18.dp),
+                color = WandColors.brand,
+                strokeWidth = 2.dp,
+            )
+        } else {
+            WandIconButton(
+                icon = WandIcons.close,
+                contentDescription = "移除服务器 ${profile.visibleName()}",
+                onClick = onRemove,
+                enabled = enabled,
+                variant = WandIconButtonVariant.Quiet,
+                tint = WandColors.textMuted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ServerStateBadge(label: String, tint: androidx.compose.ui.graphics.Color, background: androidx.compose.ui.graphics.Color) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = tint,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(background)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+private fun ServerProfile.visibleName(): String = displayName.ifBlank { baseUrl }

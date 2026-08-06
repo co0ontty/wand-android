@@ -18,13 +18,16 @@ import com.wand.app.data.SessionSnapshot
  */
 object WandShortcuts {
     const val EXTRA_QUICK_ACTION = "quick_action"
+    const val EXTRA_SERVER_ID = "server_id"
     const val EXTRA_OPEN_SESSION_ID = "open_session_id"
+    const val EXTRA_OPEN_SESSION_KIND = "open_session_kind"
+    const val EXTRA_FORCE_SERVER_RELOAD = "force_server_reload"
 
     const val ACTION_NEW_SESSION = "new-session"
     const val ACTION_OPEN_WEB = "open-web"
 
     /** 系统最多展示 4 个：固定「新建会话」「打开网页版」+ 最近 2 个结构化会话。 */
-    fun update(context: Context, sessions: List<SessionSnapshot>) {
+    fun update(context: Context, serverId: String, sessions: List<SessionSnapshot>) {
         val shortcuts = mutableListOf(
             staticShortcut(
                 context,
@@ -33,7 +36,10 @@ object WandShortcuts {
                 longLabel = "新建会话",
                 iconRes = R.drawable.ic_shortcut_new,
                 rank = 0,
-            ) { putExtra(EXTRA_QUICK_ACTION, ACTION_NEW_SESSION) },
+            ) {
+                putExtra(EXTRA_SERVER_ID, serverId)
+                putExtra(EXTRA_QUICK_ACTION, ACTION_NEW_SESSION)
+            },
             staticShortcut(
                 context,
                 id = "shortcut-open-web",
@@ -41,7 +47,10 @@ object WandShortcuts {
                 longLabel = "打开网页版",
                 iconRes = R.drawable.ic_shortcut_web,
                 rank = 1,
-            ) { putExtra(EXTRA_QUICK_ACTION, ACTION_OPEN_WEB) },
+            ) {
+                putExtra(EXTRA_SERVER_ID, serverId)
+                putExtra(EXTRA_QUICK_ACTION, ACTION_OPEN_WEB)
+            },
         )
 
         // 只取结构化会话：PTY 会话原生不承载（走网页版），快捷直达聊天才有意义。
@@ -51,17 +60,22 @@ object WandShortcuts {
             .forEachIndexed { index, session ->
                 shortcuts += staticShortcut(
                     context,
-                    id = "shortcut-session-${session.id}",
+                    id = "shortcut-session-$serverId-${session.id}",
                     shortLabel = session.displayTitle.take(20).ifEmpty { "会话" },
                     longLabel = "${session.providerLabel} · ${session.displayTitle}".take(40),
                     iconRes = R.drawable.ic_shortcut_chat,
                     rank = 2 + index,
-                ) { putExtra(EXTRA_OPEN_SESSION_ID, session.id) }
+                ) {
+                    putExtra(EXTRA_SERVER_ID, serverId)
+                    putExtra(EXTRA_OPEN_SESSION_ID, session.id)
+                    putExtra(EXTRA_OPEN_SESSION_KIND, "structured")
+                }
             }
 
         runCatching { ShortcutManagerCompat.setDynamicShortcuts(context, shortcuts) }
     }
 
+    @JvmStatic
     fun clear(context: Context) {
         runCatching { ShortcutManagerCompat.removeAllDynamicShortcuts(context) }
     }

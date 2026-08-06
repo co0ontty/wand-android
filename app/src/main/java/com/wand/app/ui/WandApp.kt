@@ -1,11 +1,20 @@
 package com.wand.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,7 +25,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -24,7 +32,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,11 +58,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -62,11 +71,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wand.app.SessionCreationCoordinator
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListEntry
 import com.wand.app.data.WandApi
@@ -83,6 +94,7 @@ import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.NewSessionScreen
 import com.wand.app.ui.screens.MissionsScreen
@@ -263,6 +275,10 @@ private fun ReadyContent(
     val listState = remember(api) { SessionListState(api) }
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
+    val creationState by SessionCreationCoordinator.state.collectAsStateWithLifecycle(
+        minActiveState = Lifecycle.State.RESUMED,
+    )
+    val sessionCreationInFlight = creationState !is SessionCreationCoordinator.State.Idle
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
     val viewPreferences = remember(context) {
         context.getSharedPreferences(SessionListViewPreferences, android.content.Context.MODE_PRIVATE)
@@ -285,8 +301,19 @@ private fun ReadyContent(
         listState.startSync()
         onDispose { listState.shutdown() }
     }
-    LaunchedEffect(listState.sessions) {
-        com.wand.app.WandShortcuts.update(context, listState.sessions)
+    LaunchedEffect(listState.sessions, actions.connection.serverId) {
+        com.wand.app.WandShortcuts.update(
+            context,
+            actions.connection.serverId,
+            listState.sessions,
+        )
+    }
+    // 目录数据跟随提升后的视图偏好，而不是依赖展开侧栏是否正在组合。
+    // 这样从已保存的「目录 + 收起」状态恢复时也能正常加载，切换动画也不会取消请求。
+    LaunchedEffect(sessionListViewMode, listState.entries) {
+        if (sessionListViewMode == SessionListViewMode.Directories) {
+            listState.loadDirectories(silent = listState.directoryTree != null)
+        }
     }
 
     fun dismissSettings() {
@@ -303,26 +330,39 @@ private fun ReadyContent(
             when (val action = initialQuickAction) {
                 is QuickAction.NewSession -> nav.push(Screen.NewSession())
                 is QuickAction.OpenWeb -> actions.navigation.openWeb()
-                is QuickAction.OpenSession -> nav.push(Screen.Chat(action.sessionId))
+                is QuickAction.OpenSession -> nav.push(
+                    if (action.isStructured == false) {
+                        Screen.PtyTerminal(action.sessionId)
+                    } else {
+                        Screen.Chat(action.sessionId)
+                    },
+                )
                 null -> {}
             }
         }
     }
 
     BackHandler(enabled = showSettings) { dismissSettings() }
-    BackHandler(enabled = nav.stack.size > 1 && !showSettings) { nav.pop() }
+    BackHandler(
+        enabled = nav.stack.size > 1 && !showSettings && !sessionCreationInFlight,
+    ) { nav.pop() }
+    BackHandler(
+        enabled = sessionCreationInFlight && nav.current !is Screen.NewSession,
+    ) {}
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wideLayout = usesWideListDetail(maxWidth, maxHeight)
         val listPaneWidth = wideListPaneWidth(maxWidth)
         val openDetail: (Screen) -> Unit = { screen ->
-            if (wideLayout) nav.setDetail(screen) else nav.push(screen)
+            if (!sessionCreationInFlight) {
+                if (wideLayout) nav.setDetail(screen) else nav.push(screen)
+            }
         }
         val openSession: (SessionSnapshot) -> Unit = { session ->
             openDetail(session.detailScreen())
         }
         val openHistory: (HistorySession) -> Unit = { history ->
-            if (!listState.isRestoringHistory) {
+            if (!sessionCreationInFlight && !listState.isRestoringHistory) {
                 scope.launch {
                     listState.restore(history)?.let { resumed ->
                         openDetail(resumed.detailScreen())
@@ -338,15 +378,6 @@ private fun ReadyContent(
                 .apply()
         }
         val openMissions = { openDetail(Screen.Missions) }
-        val onCreated: (SessionSnapshot) -> Unit = { snapshot ->
-            listState.addCreated(snapshot)
-            if (wideLayout) {
-                nav.setDetail(snapshot.detailScreen())
-            } else {
-                nav.pop()
-                nav.push(snapshot.detailScreen())
-            }
-        }
 
         if (wideLayout) {
             WideReadyContent(
@@ -362,10 +393,10 @@ private fun ReadyContent(
                 onOpenHistory = openHistory,
                 onNewSession = openNewSession,
                 onOpenMissions = openMissions,
-                onOpenSettings = { showSettings = true },
+                onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                 onViewModeChange = changeSessionListView,
-                onCreated = onCreated,
+                sessionCreationInFlight = sessionCreationInFlight,
             )
         } else {
             SinglePaneContent(
@@ -377,10 +408,13 @@ private fun ReadyContent(
                 onOpenSession = openSession,
                 onNewSession = openNewSession,
                 onOpenMissions = openMissions,
-                onOpenSettings = { showSettings = true },
+                onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onViewModeChange = changeSessionListView,
-                onCreated = onCreated,
+                sessionCreationInFlight = sessionCreationInFlight,
             )
+        }
+        if (sessionCreationInFlight && nav.current !is Screen.NewSession) {
+            SessionCreationRecoveryOverlay()
         }
     }
 
@@ -425,38 +459,49 @@ private fun SinglePaneContent(
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
-    onCreated: (SessionSnapshot) -> Unit,
+    sessionCreationInFlight: Boolean,
 ) {
     when (val screen = nav.current) {
         is Screen.SessionList -> SessionListScreen(
             state = listState,
+            serverDisplayName = actions.connection.serverDisplayName,
+            interactionEnabled = !sessionCreationInFlight,
             viewMode = viewMode,
             onOpenSession = onOpenSession,
             onNewSession = onNewSession,
             onViewModeChange = onViewModeChange,
             onOpenMissions = onOpenMissions,
             onOpenSettings = onOpenSettings,
-            onOpenWeb = actions.navigation.openWeb,
-            onSwitchServer = actions.navigation.switchServer,
+            onOpenWeb = {
+                if (!sessionCreationInFlight) actions.navigation.openWeb()
+            },
+            onSwitchServer = {
+                if (!sessionCreationInFlight) actions.navigation.switchServer()
+            },
         )
         is Screen.Chat -> ChatScreen(
             api = api,
             sessionId = screen.sessionId,
+            serverDisplayName = actions.connection.serverDisplayName,
             isHapticEnabled = actions.settings.isHapticEnabled,
             onBack = { nav.pop() },
         )
         is Screen.PtyTerminal -> PtyTerminalScreen(
             api = api,
             sessionId = screen.sessionId,
+            serverDisplayName = actions.connection.serverDisplayName,
             isHapticEnabled = actions.settings.isHapticEnabled,
             onOpenSettings = onOpenSettings,
             onBack = { nav.pop() },
         )
         is Screen.NewSession -> NewSessionScreen(
             api = api,
+            servers = actions.servers,
+            activeServerId = actions.connection.serverId,
             initialCwd = screen.initialCwd,
+            creating = sessionCreationInFlight,
+            onReconnectServer = actions.navigation.reconnectServer,
             onBack = { nav.pop() },
-            onCreated = onCreated,
         )
         is Screen.Missions -> MissionsScreen(
             api = api,
@@ -483,12 +528,13 @@ private fun WideReadyContent(
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
-    onCreated: (SessionSnapshot) -> Unit,
+    sessionCreationInFlight: Boolean,
 ) {
+    val lockedSidebarInteraction = remember { MutableInteractionSource() }
     val sidebarContentWidth = if (sidebarCollapsed) 56.dp else listPaneWidth
     val sidebarWidth by animateDpAsState(
         targetValue = sidebarContentWidth,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = WandMotion.settleSpringSpec(),
         label = "wideSidebarWidth",
     )
     Row(
@@ -502,34 +548,76 @@ private fun WideReadyContent(
                 .fillMaxHeight(),
         ) {
             WideSidebarPanel(modifier = Modifier.fillMaxSize()) {
-                if (sidebarCollapsed) {
-                    CollapsedSessionRail(
-                        listState = listState,
-                        selectedSessionId = selectedSessionId,
-                        onOpenSession = onOpenSession,
-                        onOpenHistory = onOpenHistory,
-                        onNewSession = onNewSession,
-                        onOpenMissions = onOpenMissions,
-                        onExpandSidebar = onToggleSidebarCollapsed,
-                    )
-                } else {
-                    SessionListScreen(
-                        state = listState,
+                AnimatedContent(
+                    targetState = sidebarCollapsed,
+                    modifier = Modifier.fillMaxSize(),
+                    transitionSpec = {
+                        val enterDelay = if (targetState) 55 else 75
+                        fadeIn(
+                            tween(
+                                durationMillis = 105,
+                                delayMillis = enterDelay,
+                                easing = WandMotion.easing,
+                            ),
+                        ) togetherWith fadeOut(
+                            tween(durationMillis = 70, easing = WandMotion.easing),
+                        )
+                    },
+                    label = "wideSidebarContent",
+                ) { collapsed ->
+                    Box(
                         modifier = Modifier.fillMaxSize(),
-                        selectedSessionId = selectedSessionId,
-                        topBarContentHeight = 64.dp,
-                        compactLayout = true,
-                        viewMode = viewMode,
-                        onOpenSession = onOpenSession,
-                        onNewSession = onNewSession,
-                        onViewModeChange = onViewModeChange,
-                        onOpenMissions = onOpenMissions,
-                        onOpenSettings = onOpenSettings,
-                        onOpenWeb = actions.navigation.openWeb,
-                        onSwitchServer = actions.navigation.switchServer,
-                        onCollapseSidebar = onToggleSidebarCollapsed,
-                    )
+                        contentAlignment = Alignment.TopStart,
+                    ) {
+                        if (collapsed) {
+                            CollapsedSessionRail(
+                                listState = listState,
+                                selectedSessionId = selectedSessionId,
+                                viewMode = viewMode,
+                                onOpenSession = onOpenSession,
+                                onOpenHistory = onOpenHistory,
+                                onNewSession = onNewSession,
+                                onOpenMissions = onOpenMissions,
+                                onExpandSidebar = onToggleSidebarCollapsed,
+                            )
+                        } else {
+                            SessionListScreen(
+                                state = listState,
+                                serverDisplayName = actions.connection.serverDisplayName,
+                                modifier = Modifier.fillMaxSize(),
+                                selectedSessionId = selectedSessionId,
+                                topBarContentHeight = 64.dp,
+                                compactLayout = true,
+                                interactionEnabled = !sessionCreationInFlight,
+                                viewMode = viewMode,
+                                onOpenSession = onOpenSession,
+                                onNewSession = onNewSession,
+                                onViewModeChange = onViewModeChange,
+                                onOpenMissions = onOpenMissions,
+                                onOpenSettings = onOpenSettings,
+                                onOpenWeb = {
+                                    if (!sessionCreationInFlight) actions.navigation.openWeb()
+                                },
+                                onSwitchServer = {
+                                    if (!sessionCreationInFlight) actions.navigation.switchServer()
+                                },
+                                onCollapseSidebar = onToggleSidebarCollapsed,
+                            )
+                        }
+                    }
                 }
+            }
+            if (sessionCreationInFlight) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(WandColors.bgPrimary.copy(alpha = 0.08f))
+                        .clickable(
+                            interactionSource = lockedSidebarInteraction,
+                            indication = null,
+                            onClick = {},
+                        ),
+                )
             }
         }
         Box(
@@ -542,21 +630,26 @@ private fun WideReadyContent(
                 is Screen.Chat -> ChatScreen(
                     api = api,
                     sessionId = screen.sessionId,
+                    serverDisplayName = actions.connection.serverDisplayName,
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     onBack = { nav.pop() },
                 )
                 is Screen.PtyTerminal -> PtyTerminalScreen(
                     api = api,
                     sessionId = screen.sessionId,
+                    serverDisplayName = actions.connection.serverDisplayName,
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     onOpenSettings = onOpenSettings,
                     onBack = { nav.pop() },
                 )
                 is Screen.NewSession -> NewSessionScreen(
                     api = api,
+                    servers = actions.servers,
+                    activeServerId = actions.connection.serverId,
                     initialCwd = screen.initialCwd,
+                    creating = sessionCreationInFlight,
+                    onReconnectServer = actions.navigation.reconnectServer,
                     onBack = { nav.pop() },
-                    onCreated = onCreated,
                 )
                 is Screen.Missions -> MissionsScreen(
                     api = api,
@@ -569,16 +662,70 @@ private fun WideReadyContent(
 }
 
 @Composable
+private fun SessionCreationRecoveryOverlay() {
+    val blockerInteraction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(WandColors.bgPrimary.copy(alpha = 0.88f))
+            .clickable(
+                interactionSource = blockerInteraction,
+                indication = null,
+                onClick = {},
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        WandCard(
+            modifier = Modifier
+                .padding(24.dp)
+                .fillMaxWidth()
+                .widthIn(max = 360.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(24.dp),
+                )
+                Text(
+                    "正在创建会话",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "请求仍在所选服务器上运行，完成后会自动打开。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun WideSidebarPanel(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val shape = RoundedCornerShape(0.dp)
-    val rimColor = WandColors.borderStrong.copy(alpha = 0.32f)
+    val rimColor = WandColors.borderStrong.copy(alpha = 0.38f)
+    val panelBrush = Brush.verticalGradient(
+        colors = listOf(
+            WandColors.bgElevated.copy(alpha = 0.94f),
+            WandColors.bgElevated.copy(alpha = 0.84f),
+            WandColors.bgPrimary.copy(alpha = 0.90f),
+        ),
+    )
     Box(
         modifier = modifier
             .clip(shape)
-            .background(WandColors.bgElevated.copy(alpha = 0.76f))
+            .background(panelBrush)
             .drawBehind {
                 val x = size.width - 0.6.dp.toPx()
                 drawLine(
@@ -598,6 +745,7 @@ private fun WideSidebarPanel(
 private fun CollapsedSessionRail(
     listState: SessionListState,
     selectedSessionId: String?,
+    viewMode: SessionListViewMode,
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: (String?) -> Unit,
@@ -605,25 +753,36 @@ private fun CollapsedSessionRail(
     onExpandSidebar: () -> Unit,
 ) {
     val entries = listState.entries
+    val scope = rememberCoroutineScope()
     Column(
         modifier = Modifier
-            .fillMaxSize()
+            .width(56.dp)
+            .fillMaxHeight()
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = 4.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        val showingSessions = viewMode == SessionListViewMode.Sessions
         CollapsedRailTile(
-            icon = rememberVectorPainter(WandIcons.chevronRight),
-            iconTint = WandColors.textSecondary,
-            selected = false,
-            badge = null,
-            contentDescription = "展开会话栏",
+            icon = rememberVectorPainter(if (showingSessions) WandIcons.chat else WandIcons.folder),
+            iconTint = WandColors.brand,
+            accentTint = WandColors.brand,
+            selected = true,
+            selectionStateEnabled = true,
+            contentDescription = if (showingSessions) "当前为会话视图" else "当前为目录视图",
+            onClickLabel = if (showingSessions) "展开会话栏" else "展开目录栏",
             outlined = true,
             onClick = onExpandSidebar,
         )
         Spacer(modifier = Modifier.height(10.dp))
-        if (listState.loading && entries.isEmpty()) {
+        CollapsedRailDivider()
+        Spacer(modifier = Modifier.height(10.dp))
+        val contentLoading = when (viewMode) {
+            SessionListViewMode.Sessions -> listState.loading && entries.isEmpty()
+            SessionListViewMode.Directories -> listState.directoryLoading && listState.directoryTree == null
+        }
+        if (contentLoading) {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -636,7 +795,7 @@ private fun CollapsedSessionRail(
                     modifier = Modifier.size(22.dp),
                 )
             }
-        } else {
+        } else if (viewMode == SessionListViewMode.Sessions) {
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
@@ -644,44 +803,87 @@ private fun CollapsedSessionRail(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                itemsIndexed(
+                items(
                     items = entries,
-                    key = { _, entry -> entry.key },
-                    contentType = { _, entry ->
+                    key = { entry -> entry.key },
+                    contentType = { entry ->
                         when (entry) {
                             is SessionListEntry.Managed -> "managed"
                             is SessionListEntry.Recoverable -> "recoverable"
                         }
                     },
-                ) { index, entry ->
+                ) { entry ->
                     when (entry) {
                         is SessionListEntry.Managed -> CollapsedSessionTile(
                             session = entry.session,
-                            index = index + 1,
                             selected = entry.session.id == selectedSessionId,
                             onClick = { onOpenSession(entry.session) },
                         )
                         is SessionListEntry.Recoverable -> CollapsedRecoverableSessionTile(
                             history = entry.history,
-                            index = index + 1,
                             loading = listState.isRestoring(entry.history),
                             onClick = { onOpenHistory(entry.history) },
                         )
                     }
                 }
             }
+        } else {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                val directoryError = listState.directoryError
+                if (directoryError != null && listState.directoryTree == null) {
+                    CollapsedRailTile(
+                        icon = rememberVectorPainter(WandIcons.error),
+                        iconTint = WandColors.danger,
+                        selected = false,
+                        contentDescription = directoryError,
+                        onClickLabel = "重新加载目录",
+                        outlined = true,
+                        onClick = { scope.launch { listState.loadDirectories() } },
+                    )
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = (listState.directoryTree?.directoryCount ?: 0).toString(),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = WandColors.textSecondary,
+                        )
+                        Text(
+                            text = "目录",
+                            fontSize = 9.sp,
+                            color = WandColors.textMuted,
+                        )
+                    }
+                }
+            }
         }
-        Spacer(modifier = Modifier.height(10.dp))
-        CollapsedNewSessionTile(onClick = { onNewSession(null) })
         Spacer(modifier = Modifier.height(8.dp))
+        CollapsedRailDivider()
+        Spacer(modifier = Modifier.height(8.dp))
+        CollapsedNewSessionTile(onClick = { onNewSession(null) })
+        Spacer(modifier = Modifier.height(4.dp))
         CollapsedMissionsTile(onClick = onOpenMissions)
     }
 }
 
 @Composable
+private fun CollapsedRailDivider() {
+    Box(
+        modifier = Modifier
+            .width(24.dp)
+            .height(1.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(WandColors.border.copy(alpha = 0.48f)),
+    )
+}
+
+@Composable
 private fun CollapsedSessionTile(
     session: SessionSnapshot,
-    index: Int,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -698,8 +900,8 @@ private fun CollapsedSessionTile(
         accentTint = accentTint,
         selected = selected,
         selectionStateEnabled = true,
-        badge = index.toString(),
-        contentDescription = "$index. ${session.providerLabel} ${session.displayTitle}",
+        contentDescription = "${session.providerLabel} ${session.displayTitle}",
+        onClickLabel = "打开会话",
         onClick = onClick,
     )
 }
@@ -707,7 +909,6 @@ private fun CollapsedSessionTile(
 @Composable
 private fun CollapsedRecoverableSessionTile(
     history: HistorySession,
-    index: Int,
     loading: Boolean,
     onClick: () -> Unit,
 ) {
@@ -718,18 +919,18 @@ private fun CollapsedRecoverableSessionTile(
         icon = icon,
         iconTint = tint,
         selected = false,
-        badge = index.toString(),
         contentDescription = buildString {
-            append(index)
-            append(". 可恢复的 ")
+            append("可恢复的 ")
             append(providerDisplayName(provider))
             append(' ')
             append(history.firstUserMessage.ifEmpty { "会话" })
         },
+        onClickLabel = "恢复会话",
         loading = loading,
         onClick = onClick,
     )
 }
+
 
 @Composable
 private fun CollapsedNewSessionTile(onClick: () -> Unit) {
@@ -737,9 +938,9 @@ private fun CollapsedNewSessionTile(onClick: () -> Unit) {
         icon = rememberVectorPainter(WandIcons.add),
         iconTint = WandColors.brand,
         selected = false,
-        badge = null,
         contentDescription = "新建会话",
-        outlined = true,
+        onClickLabel = "新建会话",
+        emphasized = true,
         onClick = onClick,
     )
 }
@@ -750,8 +951,8 @@ private fun CollapsedMissionsTile(onClick: () -> Unit) {
         icon = rememberVectorPainter(WandIcons.agent),
         iconTint = WandColors.info,
         selected = false,
-        badge = null,
         contentDescription = "Agent Inbox",
+        onClickLabel = "打开 Agent Inbox",
         outlined = true,
         onClick = onClick,
     )
@@ -762,33 +963,57 @@ private fun CollapsedRailTile(
     icon: Painter,
     iconTint: Color,
     selected: Boolean,
-    badge: String?,
     contentDescription: String,
+    onClickLabel: String = "打开",
     accentTint: Color = iconTint,
     selectionStateEnabled: Boolean = false,
     outlined: Boolean = false,
+    emphasized: Boolean = false,
     loading: Boolean = false,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
-    val badgeShape = RoundedCornerShape(8.dp)
-    val showContainer = outlined || selected
-    val background = when {
-        outlined -> WandColors.brand.copy(alpha = 0.06f)
-        selected -> accentTint.copy(alpha = 0.12f)
-        else -> Color.Transparent
-    }
-    val borderColor = when {
-        outlined -> WandColors.brand.copy(alpha = 0.50f)
-        selected -> accentTint.copy(alpha = 0.52f)
-        else -> Color.Transparent
-    }
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = tween(durationMillis = 110, easing = WandMotion.easing),
+        label = "collapsedRailPress",
+    )
+    val showContainer = outlined || emphasized || selected
+    val background by animateColorAsState(
+        targetValue = when {
+            selected -> accentTint.copy(alpha = 0.12f)
+            emphasized -> accentTint.copy(alpha = 0.09f)
+            outlined -> WandColors.surfaceSoft.copy(alpha = 0.58f)
+            else -> Color.Transparent
+        },
+        animationSpec = WandMotion.tweenFast(),
+        label = "collapsedRailBackground",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            selected -> accentTint.copy(alpha = 0.22f)
+            emphasized -> accentTint.copy(alpha = 0.28f)
+            outlined -> WandColors.border.copy(alpha = 0.48f)
+            else -> Color.Transparent
+        },
+        animationSpec = WandMotion.tweenFast(),
+        label = "collapsedRailBorder",
+    )
     Box(
         modifier = Modifier
             .size(48.dp)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .clip(shape)
             .clickable(
                 enabled = !loading,
-                onClickLabel = contentDescription,
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClickLabel = onClickLabel,
                 role = Role.Button,
                 onClick = onClick,
             )
@@ -799,6 +1024,16 @@ private fun CollapsedRailTile(
             },
         contentAlignment = Alignment.Center,
     ) {
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(3.dp)
+                    .height(22.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(accentTint.copy(alpha = 0.92f)),
+            )
+        }
         Box(
             modifier = Modifier
                 .size(40.dp)
@@ -827,38 +1062,15 @@ private fun CollapsedRailTile(
                     // Color.Unspecified must survive so multicolor assets do not receive a black filter.
                     tint = BrandLogos.tintWithAlpha(
                         iconTint,
-                        alpha = if (outlined) 0.86f else 0.94f,
+                        alpha = if (outlined && !emphasized && !selected) 0.82f else 0.96f,
                     ),
-                    modifier = Modifier.size(if (outlined) 20.dp else 25.dp),
-                )
-            }
-        }
-        if (badge != null) {
-            val badgeWidth = when {
-                badge.length <= 1 -> 17.dp
-                badge.length == 2 -> 21.dp
-                else -> 25.dp
-            }
-            val badgeBackground = WandColors.surfaceSoft.copy(alpha = if (selected) 0.98f else 0.92f)
-            val badgeBorder = accentTint.copy(alpha = if (selected) 0.78f else 0.46f)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = (-5).dp, y = (-5).dp)
-                    .width(badgeWidth)
-                    .height(16.dp)
-                    .clip(badgeShape)
-                    .background(badgeBackground)
-                    .border(0.7.dp, badgeBorder, badgeShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    badge,
-                    color = accentTint.copy(alpha = if (selected) 1f else 0.92f),
-                    fontSize = 9.sp,
-                    lineHeight = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
+                    modifier = Modifier.size(
+                        when {
+                            emphasized -> 20.dp
+                            outlined -> 19.dp
+                            else -> 23.dp
+                        },
+                    ),
                 )
             }
         }

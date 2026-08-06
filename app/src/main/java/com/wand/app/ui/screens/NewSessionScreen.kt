@@ -1,5 +1,7 @@
 package com.wand.app.ui.screens
 
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -53,6 +56,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +66,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
@@ -72,15 +77,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.SessionCreationCoordinator
 import com.wand.app.data.ModelInfo
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.ProviderDefaultModels
 import com.wand.app.data.RecentPath
-import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
+import com.wand.app.data.WandApiException
 import com.wand.app.data.defaultFor
 import com.wand.app.data.modelsForProvider
 import com.wand.app.data.providerDisplayName
+import com.wand.app.ui.HomeServerConnection
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
@@ -106,21 +113,50 @@ import com.wand.app.ui.theme.secondaryBarGlass
 import kotlinx.coroutines.launch
 
 /**
- * 新建会话按用户决策顺序组织：助手 → 项目 → 会话形式 → 运行方式。
- * 业务状态与默认值持久化保持不变，只调整信息层级、选择反馈和可读文案。
+ * 新建会话按用户决策顺序组织：服务器 → 助手 → 项目 → 会话形式 → 运行方式。
+ * 每次切换服务器都会重新 bootstrap，避免跨机器复用模型、默认值或工作目录。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewSessionScreen(
     api: WandApi,
+    servers: List<HomeServerConnection>,
+    activeServerId: String,
     initialCwd: String? = null,
+    creating: Boolean,
+    onReconnectServer: (serverId: String) -> Unit,
     onBack: () -> Unit,
-    onCreated: (SessionSnapshot) -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val workflow = remember(api) { NewSessionWorkflow(api) }
-    val defaultModelGenerations = remember { mutableMapOf<String, Int>() }
-    var defaultsUpdateGeneration by remember { mutableIntStateOf(0) }
+    val availableServers = remember(api, servers) {
+        servers.ifEmpty {
+            listOf(
+                HomeServerConnection(
+                    serverId = activeServerId,
+                    displayName = api.baseUrl,
+                    serverUrl = api.baseUrl,
+                    hasToken = !api.token.isNullOrEmpty(),
+                    api = api,
+                ),
+            )
+        }
+    }
+    var selectedServerId by rememberSaveable(activeServerId) { mutableStateOf(activeServerId) }
+    val selectedServer = availableServers.firstOrNull { it.serverId == selectedServerId }
+        ?: availableServers.first()
+    val selectedApi = selectedServer.api
+    val workflows = remember(availableServers) {
+        availableServers.associate { server ->
+            server.serverId to NewSessionWorkflow(server.api)
+        }
+    }
+    // Reuse each endpoint's workflow/Mutex when switching A → B → A. Otherwise a slow write from
+    // the first A instance can race a newer write from the second A instance and win last.
+    val workflow = workflows.getValue(selectedServer.serverId)
+    var serverSelectionGeneration by remember { mutableIntStateOf(0) }
+    val defaultModelGenerations = remember(selectedServer.serverId) { mutableMapOf<String, Int>() }
+    var defaultsUpdateGeneration by remember(selectedServer.serverId) { mutableIntStateOf(0) }
 
     var cwd by remember(initialCwd) { mutableStateOf(initialCwd?.trim().orEmpty()) }
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
@@ -137,7 +173,10 @@ fun NewSessionScreen(
     }
     var selectedModel by remember { mutableStateOf("") }
     var thinkingEffort by remember { mutableStateOf("off") }
-    var creating by remember { mutableStateOf(false) }
+    var bootstrapping by remember { mutableStateOf(true) }
+    var bootstrapRetryKey by remember { mutableIntStateOf(0) }
+    var bootstrapError by remember { mutableStateOf<String?>(null) }
+    var bootstrapAuthFailure by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
 
@@ -163,23 +202,74 @@ fun NewSessionScreen(
         ?: "自动"
     val supportedModes = workflow.supportedModes(provider)
 
-    LaunchedEffect(initialCwd) {
-        val initial = workflow.bootstrap()
-        provider = initial.provider
-        sessionKind = initial.kind
-        mode = initial.mode
-        serverDefaultModels = initial.defaultModels
-        confirmedDefaultModels = initial.defaultModels
+    LaunchedEffect(availableServers.map { it.serverId }) {
+        if (availableServers.none { it.serverId == selectedServerId }) {
+            serverSelectionGeneration += 1
+            selectedServerId = availableServers.first().serverId
+        }
+    }
+
+    LaunchedEffect(
+        workflow,
+        initialCwd,
+        selectedServer.serverId,
+        serverSelectionGeneration,
+        bootstrapRetryKey,
+    ) {
+        val bootstrapServerId = selectedServer.serverId
+        val bootstrapSelectionGeneration = serverSelectionGeneration
+        bootstrapping = true
+        bootstrapError = null
+        bootstrapAuthFailure = false
+        errorMessage = null
+        showBrowser = false
+        cwd = ""
+        recentPaths = emptyList()
+        modelsResponse = null
         selectedModel = ""
-        thinkingEffort = initial.thinkingEffort
-        modelsResponse = initial.models
-        recentPaths = initial.recentPaths
-        if (cwd.isEmpty()) cwd = initialCwd?.trim().takeUnless { it.isNullOrEmpty() } ?: initial.cwd
+        try {
+            val initial = workflow.bootstrap()
+            if (selectedServerId != bootstrapServerId ||
+                serverSelectionGeneration != bootstrapSelectionGeneration
+            ) {
+                return@LaunchedEffect
+            }
+            provider = initial.provider
+            sessionKind = initial.kind
+            mode = initial.mode
+            serverDefaultModels = initial.defaultModels
+            confirmedDefaultModels = initial.defaultModels
+            thinkingEffort = initial.thinkingEffort
+            modelsResponse = initial.models
+            recentPaths = initial.recentPaths
+            cwd = if (selectedServer.serverId == activeServerId) {
+                initialCwd?.trim().takeUnless { it.isNullOrEmpty() } ?: initial.cwd
+            } else {
+                initial.cwd
+            }
+        } catch (error: Exception) {
+            if (selectedServerId == bootstrapServerId &&
+                serverSelectionGeneration == bootstrapSelectionGeneration
+            ) {
+                bootstrapAuthFailure = error is WandApiException && error.status == 401
+                bootstrapError = "无法连接到「${selectedServer.displayName}」：${error.message ?: "请求失败"}"
+            }
+        } finally {
+            if (selectedServerId == bootstrapServerId &&
+                serverSelectionGeneration == bootstrapSelectionGeneration
+            ) {
+                bootstrapping = false
+            }
+        }
+    }
+
+    BackHandler(enabled = creating) {
+        Toast.makeText(context, "会话正在所选服务器上创建，请稍候", Toast.LENGTH_SHORT).show()
     }
 
     if (showBrowser) {
         DirectoryBrowserScreen(
-            api = api,
+            api = selectedApi,
             startPath = cwd,
             onPick = { picked ->
                 cwd = picked
@@ -190,7 +280,7 @@ fun NewSessionScreen(
         return
     }
 
-    val canCreate = cwd.trim().isNotEmpty() && !creating
+    val canCreate = cwd.trim().isNotEmpty() && !creating && !bootstrapping && bootstrapError == null
 
     // 持久化到服务端偏好；失败仅提示，不打断当前页面上的选择。
     fun persistDefaults(
@@ -204,6 +294,8 @@ fun NewSessionScreen(
         onFailure: (() -> Unit)? = null,
     ) {
         val generation = ++defaultsUpdateGeneration
+        val requestServerId = selectedServer.serverId
+        val requestSelectionGeneration = serverSelectionGeneration
         scope.launch {
             try {
                 workflow.persistDefaults(
@@ -214,11 +306,24 @@ fun NewSessionScreen(
                     defaultProvider = defaultProvider,
                     defaultSessionKind = defaultSessionKind,
                 )
-                onSuccess?.invoke()
+                if (selectedServerId == requestServerId &&
+                    serverSelectionGeneration == requestSelectionGeneration
+                ) {
+                    onSuccess?.invoke()
+                }
             } catch (e: Exception) {
-                onFailure?.invoke()
+                if (selectedServerId == requestServerId &&
+                    serverSelectionGeneration == requestSelectionGeneration
+                ) {
+                    onFailure?.invoke()
+                }
                 // 后续操作已经排队时，不让旧请求的迟到错误覆盖当前选择反馈。
-                if (generation == defaultsUpdateGeneration) errorMessage = e.message
+                if (selectedServerId == requestServerId &&
+                    serverSelectionGeneration == requestSelectionGeneration &&
+                    generation == defaultsUpdateGeneration
+                ) {
+                    errorMessage = e.message
+                }
             }
         }
     }
@@ -242,8 +347,15 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(provider, selectedModel, thinkingLevelIds, thinkingEffort, canValidateThinkingEffort) {
-        if (canValidateThinkingEffort && thinkingEffort !in thinkingLevelIds) {
+    LaunchedEffect(
+        provider,
+        selectedModel,
+        thinkingLevelIds,
+        thinkingEffort,
+        canValidateThinkingEffort,
+        bootstrapping,
+    ) {
+        if (!bootstrapping && canValidateThinkingEffort && thinkingEffort !in thinkingLevelIds) {
             thinkingEffort = "off"
             persistDefaults(thinkingEffort = "off")
         }
@@ -251,28 +363,27 @@ fun NewSessionScreen(
 
     fun create() {
         if (!canCreate) return
-        creating = true
+        val requestServer = selectedServer
+        val requestWorkflow = workflow
+        val requestDraft = NewSessionDraft(
+            cwd = cwd,
+            provider = provider,
+            kind = sessionKind,
+            mode = mode,
+            model = selectedModel,
+            thinkingEffort = thinkingEffort,
+            firstMessage = "",
+        )
         errorMessage = null
         ++defaultsUpdateGeneration
-        scope.launch {
-            try {
-                val snapshot = workflow.create(
-                    NewSessionDraft(
-                        cwd = cwd,
-                        provider = provider,
-                        kind = sessionKind,
-                        mode = mode,
-                        model = selectedModel,
-                        thinkingEffort = thinkingEffort,
-                        firstMessage = "",
-                    ),
-                )
-                creating = false
-                onCreated(snapshot)
-            } catch (e: Exception) {
-                creating = false
-                errorMessage = e.message ?: "创建失败"
-            }
+        val started = SessionCreationCoordinator.start(
+            hostServerId = activeServerId,
+            targetServerId = requestServer.serverId,
+        ) {
+            requestWorkflow.create(requestDraft)
+        }
+        if (!started) {
+            Toast.makeText(context, "已有会话正在创建，请稍候", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -287,6 +398,7 @@ fun NewSessionScreen(
         providerModels.firstOrNull { it.id == selectedModel }?.label ?: selectedModel
     }
     val glassBackdrop = rememberGlassBackdrop()
+    val creationBlockerInteraction = remember { MutableInteractionSource() }
     Scaffold(
         containerColor = Color.Transparent,
         modifier = Modifier
@@ -302,8 +414,12 @@ fun NewSessionScreen(
                 ),
                 title = { Text("新建会话", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
-                    TextButton(onClick = onBack) {
-                        Text("取消", fontSize = 16.sp, color = WandColors.textSecondary)
+                    TextButton(onClick = onBack, enabled = !creating) {
+                        Text(
+                            if (creating) "创建中…" else "取消",
+                            fontSize = 16.sp,
+                            color = if (creating) WandColors.textMuted else WandColors.textSecondary,
+                        )
                     }
                 },
                 actions = {},
@@ -332,14 +448,18 @@ fun NewSessionScreen(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
                     Text(
-                        text = if (canCreate) {
-                            when (sessionKind) {
-                                NewSessionKind.Structured -> "${providerDisplayName(provider)} · 聊天 · ${modeLabel(mode)}"
-                                NewSessionKind.Pty -> "${providerDisplayName(provider)} · CLI 终端 · ${modeLabel(mode)}"
-                                NewSessionKind.Shell -> "空白终端 · Shell"
+                        text = when {
+                            bootstrapping -> "正在读取 ${selectedServer.displayName} 的配置…"
+                            bootstrapError != null -> "所选服务器暂时不可用"
+                            canCreate -> {
+                                val sessionSummary = when (sessionKind) {
+                                    NewSessionKind.Structured -> "${providerDisplayName(provider)} · 聊天 · ${modeLabel(mode)}"
+                                    NewSessionKind.Pty -> "${providerDisplayName(provider)} · CLI 终端 · ${modeLabel(mode)}"
+                                    NewSessionKind.Shell -> "空白终端 · Shell"
+                                }
+                                "${selectedServer.displayName} · $sessionSummary"
                             }
-                        } else {
-                            "选择工作目录后即可创建"
+                            else -> "选择工作目录后即可创建"
                         },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
@@ -378,6 +498,47 @@ fun NewSessionScreen(
 
                 SetupSectionHeader(
                     number = "01",
+                    title = "选择服务器",
+                    description = "会话与工作目录会保存在所选服务器。",
+                )
+                ServerPicker(
+                    servers = availableServers,
+                    selectedServerId = selectedServer.serverId,
+                    enabled = !creating,
+                    onSelect = {
+                        if (it != selectedServerId) {
+                            bootstrapping = true
+                            serverSelectionGeneration += 1
+                            selectedServerId = it
+                        }
+                    },
+                )
+
+                if (bootstrapping) {
+                    ServerBootstrapLoading(selectedServer.displayName)
+                } else if (bootstrapError != null) {
+                    ErrorBanner(bootstrapError ?: "服务器暂时不可用")
+                    WandButton(
+                        label = "重试连接",
+                        onClick = { bootstrapRetryKey += 1 },
+                        variant = com.wand.app.ui.components.WandButtonVariant.Secondary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                    )
+                    if (bootstrapAuthFailure) {
+                        WandButton(
+                            label = "重新连接此服务器",
+                            onClick = { onReconnectServer(selectedServer.serverId) },
+                            variant = com.wand.app.ui.components.WandButtonVariant.Secondary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                        )
+                    }
+                } else {
+                SetupSectionHeader(
+                    number = "02",
                     title = "选择助手",
                     description = "每个助手会使用各自的 CLI、模型和权限能力。",
                 )
@@ -394,7 +555,7 @@ fun NewSessionScreen(
                 )
 
                 SetupSectionHeader(
-                    number = "02",
+                    number = "03",
                     title = "选择项目",
                     description = "助手只会在这个工作目录里开始任务。",
                 )
@@ -402,12 +563,12 @@ fun NewSessionScreen(
                     cwd = cwd,
                     onCwdChange = { cwd = it },
                     recentPaths = recentPaths,
-                    onBrowse = { showBrowser = true },
+                    onBrowse = { if (!creating) showBrowser = true },
                     onPickRecent = { cwd = it },
                 )
 
                 SetupSectionHeader(
-                    number = "03",
+                    number = "04",
                     title = "选择会话形式",
                     description = "聊天适合阅读与协作，终端保留 CLI 的原始交互。",
                 )
@@ -421,7 +582,7 @@ fun NewSessionScreen(
                 InlineHint(sessionKindHint(provider, sessionKind))
 
                 SetupSectionHeader(
-                    number = "04",
+                    number = "05",
                     title = if (sessionKind == NewSessionKind.Shell) "确认终端环境" else "配置运行方式",
                     description = if (sessionKind == NewSessionKind.Shell) {
                         "将使用服务端配置的登录 Shell，不加载任何 AI CLI。"
@@ -515,8 +676,25 @@ fun NewSessionScreen(
                 if (errorMessage != null) {
                     ErrorBanner(errorMessage ?: "")
                 }
+                }
 
                 Spacer(modifier = Modifier.size(32.dp))
+            }
+            if (creating) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = creationBlockerInteraction,
+                            indication = null,
+                        ) {
+                            Toast.makeText(
+                                context,
+                                "会话正在所选服务器上创建，请稍候",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                )
             }
         }
     }
@@ -529,7 +707,7 @@ private fun PageIntro() {
         modifier = Modifier.padding(top = 24.dp, bottom = 6.dp),
     ) {
         Text(
-            "交给谁，在哪工作",
+            "在哪里，交给谁",
             fontSize = 27.sp,
             lineHeight = 32.sp,
             fontWeight = FontWeight.Bold,
@@ -537,9 +715,33 @@ private fun PageIntro() {
             letterSpacing = (-0.6).sp,
         )
         Text(
-            "选好助手与项目目录，再决定它如何执行。",
+            "选择服务器、助手与项目，再决定它如何执行。",
             fontSize = 14.sp,
             lineHeight = 20.sp,
+            color = WandColors.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun ServerBootstrapLoading(serverName: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp)
+            .selectCard(selected = false)
+            .padding(horizontal = 14.dp, vertical = 16.dp),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(20.dp),
+            color = WandColors.brand,
+            strokeWidth = 2.dp,
+        )
+        Text(
+            "正在读取 $serverName 的配置…",
+            fontSize = 13.sp,
             color = WandColors.textSecondary,
         )
     }
@@ -793,6 +995,165 @@ private fun SessionKindCard(
             lineHeight = 15.sp,
             color = WandColors.textSecondary,
         )
+    }
+}
+
+/** 服务器是新建流程的第一层作用域；名称与地址保持两行，避免相似主机被误选。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ServerPicker(
+    servers: List<HomeServerConnection>,
+    selectedServerId: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    val selected = servers.firstOrNull { it.serverId == selectedServerId } ?: servers.first()
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 66.dp)
+            .selectCard(selected = false)
+            .semantics(mergeDescendants = true) {
+                stateDescription = "当前服务器 ${selected.displayName}，地址 ${selected.serverUrl}"
+            }
+            .clickable(
+                enabled = enabled && servers.size > 1,
+                role = Role.DropdownList,
+            ) { expanded = true }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(WandColors.brand.copy(alpha = 0.10f)),
+        ) {
+            Icon(
+                WandIcons.server,
+                contentDescription = null,
+                tint = WandColors.brand,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Column(
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(
+                selected.displayName,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                selected.serverUrl,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                color = WandColors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.MiddleEllipsis,
+            )
+        }
+        Text(
+            if (servers.size > 1) "${servers.size} 台" else if (selected.hasToken) "已认证" else "直接连接",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = WandColors.textMuted,
+        )
+        if (servers.size > 1) {
+            Icon(
+                WandIcons.chevronRight,
+                contentDescription = "选择其他服务器",
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+
+    if (expanded) {
+        WandBottomSheet(onDismissRequest = { expanded = false }) {
+            NoOverscroll {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .navigationBarsPadding()
+                        .padding(bottom = 18.dp),
+                ) {
+                    Text(
+                        "选择服务器",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                    )
+                    servers.forEach { server ->
+                        val isSelected = server.serverId == selected.serverId
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 58.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSelected) WandColors.brandSoft else Color.Transparent)
+                                .semantics(mergeDescendants = true) {
+                                    stateDescription = if (isSelected) "已选择" else "未选择"
+                                }
+                                .selectable(
+                                    selected = isSelected,
+                                    role = Role.RadioButton,
+                                ) {
+                                    onSelect(server.serverId)
+                                    expanded = false
+                                }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                        ) {
+                            Icon(
+                                if (isSelected) WandIcons.check else Icons.Outlined.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (isSelected) WandColors.brand else WandColors.textMuted,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    server.displayName,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (isSelected) WandColors.brand else WandColors.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    server.serverUrl,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = WandColors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.MiddleEllipsis,
+                                )
+                            }
+                            Text(
+                                if (server.hasToken) "已认证" else "直接连接",
+                                fontSize = 10.sp,
+                                color = WandColors.textMuted,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

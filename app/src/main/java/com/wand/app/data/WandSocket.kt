@@ -16,7 +16,7 @@ import org.json.JSONObject
  *
  * 所有状态读写与回调都经主线程 Handler 串行化 —— Handler.post 保证 FIFO，
  * 这是增量合流（替换末条 vs 追加）正确性的前提；不能用协程 launch
- * （不保证顺序）。复用 WandHttp 的 client，自签证书与 session cookie 自动生效。
+ * （不保证顺序）。复用当前 endpoint 的 WandHttp client，自签证书与 session cookie 自动生效。
  */
 class WandSocket(baseUrl: String) {
 
@@ -27,6 +27,7 @@ class WandSocket(baseUrl: String) {
     var onConnectionChange: ((Boolean) -> Unit)? = null
 
     private val baseUrl = WandHttp.normalizeBaseUrl(baseUrl)
+    private val client = WandHttp.clientFor(this.baseUrl)
     private val handler = Handler(Looper.getMainLooper())
 
     private var webSocket: WebSocket? = null
@@ -93,7 +94,7 @@ class WandSocket(baseUrl: String) {
         val gen = generation
         lastMessageAt = SystemClock.elapsedRealtime()
         val request = Request.Builder().url(wsUrl).build()
-        val socket = WandHttp.client.newWebSocket(request, object : WebSocketListener() {
+        val socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 handler.post {
                     if (gen != generation || closed) return@post

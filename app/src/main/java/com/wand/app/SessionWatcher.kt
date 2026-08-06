@@ -1,12 +1,14 @@
 package com.wand.app
 
-import android.app.Activity
-import android.app.Application
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Bundle
+import android.net.Uri
 import android.os.SystemClock
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.MessageUpdate
@@ -66,6 +68,7 @@ object SessionWatcher {
     private var helper: NotificationHelper? = null
     private var serverStore: ServerStore? = null
     private var scope: CoroutineScope? = null
+    private var serverId: String = ""
     private var serverUrl: String = ""
     private var appToken: String? = null
 
@@ -76,26 +79,37 @@ object SessionWatcher {
     /** ChatScreen 注册的「正在看」的会话；前台 + 正在看 → 抑制该会话的打扰通知。 */
     var activeChatSessionId: String? = null
 
-    private var startedActivities = 0
     private var lifecycleRegistered = false
-    private val appInForeground: Boolean get() = startedActivities > 0
+    private var processInForeground = false
+    private val appInForeground: Boolean get() = processInForeground
+    private val processLifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) {
+            processInForeground = true
+        }
+
+        override fun onStop(owner: LifecycleOwner) {
+            processInForeground = false
+        }
+    }
 
     // MARK: - 生命周期（主线程调用）
 
-    fun start(context: Context, baseUrl: String, token: String?) {
-        // 同一服务器重复 start（Activity 重建 / 重新认证）幂等。
-        if (socket != null && serverUrl == baseUrl) return
+    fun start(context: Context, serverId: String, baseUrl: String, token: String?) {
+        // 同一服务器、同一凭据重复 start（Activity 重建 / 重新认证）幂等；凭据更新时
+        // 必须重建 runtime，否则旧 WebSocket 可能继续沿用已经失效的 cookie。
+        if (socket != null && this.serverId == serverId && serverUrl == baseUrl && appToken == token) return
         stop()
 
         val app = context.applicationContext
         appContext = app
+        this.serverId = serverId
         serverUrl = baseUrl
         appToken = token
         api = WandApi(baseUrl, token)
         helper = NotificationHelper(app).also { it.createChannels() }
         serverStore = ServerStore(app)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        registerForegroundTracking(app)
+        registerForegroundTracking()
 
         val ws = WandSocket(baseUrl)
         ws.onEvent = { event -> handle(event) }
@@ -112,28 +126,20 @@ object SessionWatcher {
         helper?.cancelAllProgress()
         sessions.clear()
         notificationPolicy.reset()
+        activeChatSessionId = null
+        serverId = ""
         serverUrl = ""
+        appToken = null
     }
 
-    private fun registerForegroundTracking(app: Context) {
+    private fun registerForegroundTracking() {
         if (lifecycleRegistered) return
-        val application = app as? Application ?: return
+        // ProcessLifecycleOwner immediately synchronizes a newly added observer to the current
+        // state, unlike late ActivityLifecycleCallbacks registration after Home is already STARTED.
+        val lifecycle = ProcessLifecycleOwner.get().lifecycle
         lifecycleRegistered = true
-        application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-            override fun onActivityStarted(activity: Activity) {
-                startedActivities += 1
-            }
-
-            override fun onActivityStopped(activity: Activity) {
-                startedActivities = (startedActivities - 1).coerceAtLeast(0)
-            }
-
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
-            override fun onActivityResumed(activity: Activity) {}
-            override fun onActivityPaused(activity: Activity) {}
-            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-            override fun onActivityDestroyed(activity: Activity) {}
-        })
+        lifecycle.addObserver(processLifecycleObserver)
+        processInForeground = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
     }
 
     // MARK: - 会话列表（label 来源）
@@ -384,10 +390,20 @@ object SessionWatcher {
         h.sendNotification(
             notification.title,
             notification.body,
-            notification.tag,
+            scopedNotificationTag(notification.tag),
             contentIntent(),
             store,
         )
+    }
+
+    /** 保留通知类型前缀供 NotificationHelper 选 channel，同时避免不同服务器同 sessionId 覆盖。 */
+    private fun scopedNotificationTag(tag: String): String {
+        val separator = tag.indexOf(':')
+        return if (separator < 0) {
+            "$tag:$serverId"
+        } else {
+            "${tag.substring(0, separator + 1)}$serverId:${tag.substring(separator + 1)}"
+        }
     }
 
     private fun contentIntent(): PendingIntent? {
@@ -396,8 +412,14 @@ object SessionWatcher {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("server_url", serverUrl)
-            appToken?.let { putExtra("app_token", it) }
+            // PendingIntent identity 不包含 extras；把 serverId 放进 data，旧服务器通知
+            // 才不会被新服务器创建的 FLAG_UPDATE_CURRENT PendingIntent 改写目标。
+            data = Uri.Builder()
+                .scheme("wand")
+                .authority("server")
+                .appendPath(serverId)
+                .build()
+            putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId)
         }
         return PendingIntent.getActivity(
             ctx,

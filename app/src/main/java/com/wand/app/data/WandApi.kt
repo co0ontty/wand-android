@@ -19,12 +19,14 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
 
 /**
  * wand 服务端 REST 客户端 —— 对称 iOS 端 WandAPI.swift。
- * 复用 WandHttp（自签证书放行 + 共享 CookieJar），登录 cookie 自动携带；
+ * 复用当前 endpoint 的 WandHttp client（自签证书放行 + endpoint 独立 CookieJar），
+ * 登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
 class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSessionPort, MissionsPort {
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
+    private val client = WandHttp.clientFor(this.baseUrl)
 
     // MARK: - 基础请求
 
@@ -41,20 +43,20 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     }
 
     private val longTimeoutClient by lazy {
-        WandHttp.client.newBuilder()
+        client.newBuilder()
             .readTimeout(180, TimeUnit.SECONDS)
             .build()
     }
 
     private fun execute(request: Request, timeoutSec: Int): Pair<Int, String> {
-        val client = when (timeoutSec) {
-            30 -> WandHttp.client
+        val requestClient = when (timeoutSec) {
+            30 -> client
             180 -> longTimeoutClient
-            else -> WandHttp.client.newBuilder()
+            else -> client.newBuilder()
                 .readTimeout(timeoutSec.toLong(), TimeUnit.SECONDS)
                 .build()
         }
-        client.newCall(request).execute().use { response ->
+        requestClient.newCall(request).execute().use { response ->
             return response.code to (response.body?.string() ?: "")
         }
     }
@@ -72,7 +74,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
             }
             if (code == 401 && !token.isNullOrEmpty()) {
                 try {
-                    WandAuth.loginWithToken(baseUrl, token)
+                    WandAuth.loginWithToken(baseUrl, token, client)
                 } catch (_: Exception) {
                     throw WandApiException(401, "登录已失效，请重新连接")
                 }
@@ -152,6 +154,14 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun fetchSessionDirectories(): SessionDirectoryTreeResponse =
         SessionDirectoryTreeResponse.parse(requestObject("GET", "/api/session-directories"))
+
+    override suspend fun renameSessionDirectory(path: String, name: String) {
+        requestObject(
+            "PUT",
+            "/api/session-directories/name",
+            JSONObject().put("path", path).put("name", name),
+        )
+    }
 
     private suspend fun fetchLegacySessionList(
         offset: Int,

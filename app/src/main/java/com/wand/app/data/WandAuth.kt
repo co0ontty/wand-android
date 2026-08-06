@@ -4,6 +4,7 @@ import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -16,8 +17,9 @@ import java.io.IOException
  * appToken 走一次 POST /api/login，session cookie 由 WandHttp 的 CookieJar 承接，
  * 之后的 REST 请求与 /ws 升级请求自动携带。
  *
- * 登录成功后同时把 Set-Cookie 镜像进 android.webkit.CookieManager，
- * 这样从设置页打开「网页版」（MainActivity WebView）时已是登录态。
+ * WebView CookieManager 是进程全局状态，且 cookie 不按端口隔离，因此 native 登录
+ * 绝不向它镜像 cookie。真正承载 WebView 的页面会在加载前显式执行 clear → 当前
+ * endpoint login → load。
  */
 object WandAuth {
 
@@ -47,6 +49,15 @@ object WandAuth {
      * 失败抛 AuthException（中文文案与 ConnectActivity 对齐）。
      */
     suspend fun loginWithToken(baseUrl: String, appToken: String) {
+        loginWithToken(baseUrl, appToken, WandHttp.clientFor(baseUrl))
+    }
+
+    /** Relogin for an existing API must stay bound to that API's retirement-aware client. */
+    internal suspend fun loginWithToken(
+        baseUrl: String,
+        appToken: String,
+        client: OkHttpClient,
+    ) {
         withContext(Dispatchers.IO) {
             val normalized = WandHttp.normalizeBaseUrl(baseUrl)
             val body = JSONObject().put("appToken", appToken).toString()
@@ -56,20 +67,9 @@ object WandAuth {
                 .post(body)
                 .build()
             try {
-                WandHttp.client.newCall(request).execute().use { response ->
+                client.newCall(request).execute().use { response ->
                     when (response.code) {
-                        200 -> {
-                            // 镜像 cookie 到 WebView，保证「网页版」兜底入口已登录。
-                            try {
-                                val cookieManager = android.webkit.CookieManager.getInstance()
-                                for (setCookie in response.headers("Set-Cookie")) {
-                                    cookieManager.setCookie(normalized, setCookie)
-                                }
-                                cookieManager.flush()
-                            } catch (_: Exception) {
-                                // WebView 不可用（极少数环境）时忽略，不影响原生路径
-                            }
-                        }
+                        200 -> Unit
                         401 -> throw AuthException("认证失败，连接码可能已过期（密码已更改），请重新获取连接码")
                         429 -> throw AuthException("登录尝试次数过多，请稍后再试")
                         else -> throw AuthException("服务器返回异常状态码：${response.code}")
@@ -82,4 +82,5 @@ object WandAuth {
             }
         }
     }
+
 }

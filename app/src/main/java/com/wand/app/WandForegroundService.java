@@ -35,10 +35,14 @@ public class WandForegroundService extends Service {
         Intent mainIntent = new Intent(this, HomeActivity.class);
         mainIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         if (intent != null) {
+            String serverId = intent.getStringExtra(WandShortcuts.EXTRA_SERVER_ID);
             String serverUrl = intent.getStringExtra("server_url");
-            String appToken = intent.getStringExtra("app_token");
-            if (serverUrl != null) mainIntent.putExtra("server_url", serverUrl);
-            if (appToken != null) mainIntent.putExtra("app_token", appToken);
+            if (serverId != null) {
+                mainIntent.putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId);
+            } else {
+                // 兼容旧版 MainActivity 发起的保活 Intent。
+                if (serverUrl != null) mainIntent.putExtra("server_url", serverUrl);
+            }
         }
         PendingIntent pi = PendingIntent.getActivity(this, 0, mainIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

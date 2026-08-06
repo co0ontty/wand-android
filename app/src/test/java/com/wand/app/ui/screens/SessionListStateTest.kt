@@ -48,6 +48,69 @@ class SessionListStateTest {
     }
 
     @Test
+    fun directoryRenameTrimsNameReloadsTreeAndCanRestoreDefault() = runBlocking {
+        val defaultRoot = directoryRoot()
+        val port = FakeSessionListPort().apply {
+            directoryResponse = directoryResponse(defaultRoot)
+        }
+        val state = SessionListState(port)
+        assertTrue(state.loadDirectories())
+
+        port.directoryResponse = directoryResponse(defaultRoot.copy(customName = "Wand 工作区"))
+        assertTrue(state.renameDirectory(defaultRoot.path, "  Wand 工作区  "))
+
+        assertEquals(listOf(defaultRoot.path to "Wand 工作区"), port.directoryRenameCalls)
+        assertEquals("Wand 工作区", state.directoryTree?.roots?.single()?.displayName)
+        assertNull(state.directoryRenamePath)
+
+        port.directoryResponse = directoryResponse(defaultRoot)
+        assertTrue(state.renameDirectory(defaultRoot.path, "   "))
+
+        assertEquals(defaultRoot.path to "", port.directoryRenameCalls.last())
+        assertEquals("project", state.directoryTree?.roots?.single()?.displayName)
+    }
+
+    @Test
+    fun directoryRenameFailureKeepsTreeAndPublishesError() = runBlocking {
+        val root = directoryRoot()
+        val port = FakeSessionListPort().apply {
+            directoryResponse = directoryResponse(root)
+        }
+        val state = SessionListState(port)
+        assertTrue(state.loadDirectories())
+        port.directoryRenameFailure = IllegalStateException("无法保存工作区名称")
+
+        assertFalse(state.renameDirectory(root.path, "新名称"))
+
+        assertSame(root, state.directoryTree?.roots?.single())
+        assertEquals("无法保存工作区名称", state.directoryError)
+        assertNull(state.directoryRenamePath)
+    }
+
+    @Test
+    fun directoryRenameLimitCountsEmojiAsOneCharacter() = runBlocking {
+        val port = FakeSessionListPort()
+        val state = SessionListState(port)
+
+        assertTrue(state.renameDirectory("/tmp/project", "🚀".repeat(80)))
+        assertFalse(state.renameDirectory("/tmp/project", "🚀".repeat(81)))
+
+        assertEquals(1, port.directoryRenameCalls.size)
+        assertEquals("工作区名称最多 80 个字符", state.directoryError)
+    }
+
+    @Test
+    fun directoryRenameRejectsInvisibleLineBreaks() = runBlocking {
+        val port = FakeSessionListPort()
+        val state = SessionListState(port)
+
+        assertFalse(state.renameDirectory("/tmp/project", "两行\n名称"))
+
+        assertTrue(port.directoryRenameCalls.isEmpty())
+        assertEquals("工作区名称不能包含换行或控制字符", state.directoryError)
+    }
+
+    @Test
     fun loadMoreAppendsTheNextPageWithoutDuplicates() = runBlocking {
         val first = managed("first")
         val second = recoverable("history-2")
@@ -288,7 +351,9 @@ class SessionListStateTest {
         val pageRequests = mutableListOf<Triple<Int, Int, String?>>()
         val resumeResults = mutableMapOf<String, SessionSnapshot>()
         val historyDeleteCalls = mutableListOf<Pair<String, List<String>>>()
+        val directoryRenameCalls = mutableListOf<Pair<String, String>>()
         var directoryResponse = SessionDirectoryTreeResponse(emptyList(), 0, 0, "empty")
+        var directoryRenameFailure: Exception? = null
 
         override suspend fun fetchSessionList(
             offset: Int,
@@ -301,6 +366,11 @@ class SessionListStateTest {
         }
 
         override suspend fun fetchSessionDirectories(): SessionDirectoryTreeResponse = directoryResponse
+
+        override suspend fun renameSessionDirectory(path: String, name: String) {
+            directoryRenameFailure?.let { throw it }
+            directoryRenameCalls += path to name
+        }
 
         override suspend fun resumeHistory(history: HistorySession): SessionSnapshot =
             resumeResults["${history.apiProvider}:${history.id}"] ?: error("missing resume result")
@@ -319,6 +389,24 @@ class SessionListStateTest {
             total: Int,
             revision: String? = null,
         ) = SessionListPage(entries, offset, total, revision)
+
+        fun directoryRoot() = SessionDirectoryNode(
+            path = "/tmp/project",
+            name = "project",
+            synthetic = false,
+            directCount = 1,
+            totalCount = 1,
+            latestTimestamp = 1,
+            entries = listOf(managed("first")),
+            children = emptyList(),
+        )
+
+        fun directoryResponse(root: SessionDirectoryNode) = SessionDirectoryTreeResponse(
+            roots = listOf(root),
+            totalSessions = root.totalCount,
+            directoryCount = 1,
+            revision = "directory-${root.customName.orEmpty()}",
+        )
 
         fun managed(id: String) = SessionListEntry.Managed(
             key = "session-$id",

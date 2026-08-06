@@ -5,7 +5,8 @@ import android.content.Intent;
 import android.net.Uri;
 import android.provider.Settings;
 import android.view.View;
-import android.webkit.CookieManager;
+
+import com.wand.app.data.WandHttp;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -113,7 +114,7 @@ final class UpdateManager {
                 HttpURLConnection conn = NetUtils.openConnection(apiUrl,
                         NetUtils.CONNECT_TIMEOUT_MS, NetUtils.READ_TIMEOUT_MS);
 
-                String cookie = CookieManager.getInstance().getCookie(serverUrl);
+                String cookie = WandHttp.cookieHeaderFor(serverUrl);
                 if (cookie != null) conn.setRequestProperty("Cookie", cookie);
 
                 conn.setRequestMethod("GET");
@@ -304,7 +305,7 @@ final class UpdateManager {
                 conn = NetUtils.openConnection(fullUrl,
                         NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS);
                 if (!downloadUrl.startsWith("http")) {
-                    String cookie = CookieManager.getInstance().getCookie(serverUrl);
+                    String cookie = WandHttp.cookieHeaderFor(serverUrl);
                     if (cookie != null) conn.setRequestProperty("Cookie", cookie);
                 }
                 conn.setInstanceFollowRedirects(true);

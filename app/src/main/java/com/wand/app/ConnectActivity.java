@@ -11,6 +11,7 @@ import android.text.TextUtils;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.activity.OnBackPressedCallback;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
@@ -19,8 +20,10 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
+import com.wand.app.data.ServerProfile;
 import com.wand.app.data.WandAuth;
 import com.wand.app.data.WandHttp;
+import com.wand.app.data.WandWebSession;
 
 import org.json.JSONObject;
 
@@ -37,12 +40,15 @@ import kotlin.Pair;
 public class ConnectActivity extends AppCompatActivity {
 
     private static final int REQUEST_CAMERA_PERMISSION = 4242;
+    public static final String EXTRA_MANAGEMENT_MODE = "management_mode";
+    public static final String EXTRA_RETURN_SERVER_ID = "return_server_id";
+    private static final String EXTRA_PROFILES_CHANGED = "profiles_changed";
 
     private ConnectComposeView connectView;
     private ServerStore serverStore;
     // 跟踪当前是否处于自动连接阶段。后台连接探测线程跑完之后会
     // runOnUiThread 决定下一步 (跳 WebView / 报错回表单), 我们在那里
-    // 检查这面旗 — 用户如果已经点了"取消"/"切换服务器", autoConnecting
+    // 检查这面旗 — 用户如果已经点了"取消"/"管理服务器", autoConnecting
     // 会被翻成 false, 那次姗姗来迟的结果就必须被丢掉, 否则会出现
     // "用户已经在表单里输地址了, 突然又被旧请求强制跳到 WebView" 的
     // 体验事故 (尤其在 socket 已发出 → 用户点取消 → 服务器其实在
@@ -56,18 +62,22 @@ public class ConnectActivity extends AppCompatActivity {
     // (尤其在低端机网络慢的时候比较常见)。
     private ExecutorService networkExecutor;
     private Future<?> currentTask;
+    private long connectionGeneration = 0L;
+    private boolean managementMode = false;
+    private String returnServerId;
+    private boolean profilesChanged = false;
 
     private static final class ConnectionResult {
         final String serverUrl;
         final String appToken;
         final String error;
-        final boolean fromConnectCode;
+        final boolean authenticated;
 
-        ConnectionResult(String serverUrl, String appToken, String error, boolean fromConnectCode) {
+        ConnectionResult(String serverUrl, String appToken, String error, boolean authenticated) {
             this.serverUrl = serverUrl;
             this.appToken = appToken;
             this.error = error;
-            this.fromConnectCode = fromConnectCode;
+            this.authenticated = authenticated;
         }
 
         boolean isSuccess() {
@@ -78,23 +88,79 @@ public class ConnectActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (redirectToCreationHostIfBusy()) return;
+        managementMode = getIntent().getBooleanExtra(EXTRA_MANAGEMENT_MODE, false);
+        returnServerId = getIntent().getStringExtra(EXTRA_RETURN_SERVER_ID);
+        profilesChanged = getIntent().getBooleanExtra(EXTRA_PROFILES_CHANGED, false);
+        // ConnectActivity is the server-management boundary. A previous native/WebView runtime
+        // must not keep reconnecting or emitting notifications while profiles are edited.
+        if (!managementMode) {
+            SessionWatcher.INSTANCE.stop();
+            stopService(new Intent(this, WandForegroundService.class));
+        }
         connectView = new ConnectComposeView(this);
         connectView.setListener(new ConnectUiListener() {
-            @Override public void onConnect() { attemptConnect(); }
-            @Override public void onScanQr() { requestQrScan(); }
-            @Override public void onCancelAutoConnect() { abortAutoConnect(false); }
-            @Override public void onSwitchServer() { abortAutoConnect(true); }
-            @Override public void onPickRecent(String entry) {
-                connectView.setInputValue(entry);
-                attemptConnect();
+            @Override public void onConnect() {
+                if (!redirectToCreationHostIfBusy()) attemptConnect();
             }
-            @Override public void onRemoveRecent(String entry) {
-                serverStore.removeRecentUrl(entry);
-                refreshRecentList();
+            @Override public void onScanQr() {
+                if (!redirectToCreationHostIfBusy()) requestQrScan();
             }
-            @Override public void onClearRecent() {
-                serverStore.clearRecent();
-                refreshRecentList();
+            @Override public void onCancelAutoConnect() {
+                if (!redirectToCreationHostIfBusy()) abortAutoConnect(false);
+            }
+            @Override public void onSwitchServer() {
+                if (!redirectToCreationHostIfBusy()) abortAutoConnect(true);
+            }
+            @Override public void onPickServer(String serverId) {
+                if (redirectToCreationHostIfBusy()) return;
+                ServerProfile profile = serverStore.getServerProfile(serverId);
+                if (profile == null) {
+                    refreshServerList();
+                    return;
+                }
+                connectView.setInputValue(profile.getBaseUrl());
+                attemptConnect(profile);
+            }
+            @Override public void onRemoveServer(String serverId) {
+                if (redirectToCreationHostIfBusy()) return;
+                cancelPendingConnectionForProfileMutation();
+                ServerProfile profile = serverStore.getServerProfile(serverId);
+                ServerProfile active = serverStore.getActiveServerProfile();
+                if (profile != null) WandHttp.resetClient(profile.getBaseUrl());
+                serverStore.removeServerProfile(serverId);
+                boolean removedActive = active != null && active.getId().equals(serverId);
+                markProfilesChanged();
+                if (removedActive) {
+                    SessionWatcher.INSTANCE.stop();
+                    stopService(new Intent(ConnectActivity.this, WandForegroundService.class));
+                    clearWebViewCookies();
+                    WandShortcuts.INSTANCE.clear(ConnectActivity.this);
+                }
+                if (managementMode && serverId.equals(returnServerId)) {
+                    detachRemovedRuntime();
+                    return;
+                }
+                refreshServerList();
+            }
+            @Override public void onClearServers() {
+                if (redirectToCreationHostIfBusy()) return;
+                cancelPendingConnectionForProfileMutation();
+                for (ServerProfile profile : serverStore.getServerProfiles()) {
+                    WandHttp.resetClient(profile.getBaseUrl());
+                }
+                serverStore.clearServerProfiles();
+                markProfilesChanged();
+                SessionWatcher.INSTANCE.stop();
+                stopService(new Intent(ConnectActivity.this, WandForegroundService.class));
+                clearWebViewCookies();
+                WandShortcuts.INSTANCE.clear(ConnectActivity.this);
+                if (managementMode && returnServerId != null) {
+                    detachRemovedRuntime();
+                    return;
+                }
+                connectView.setInputValue("");
+                refreshServerList();
             }
         });
         setContentView(connectView);
@@ -102,16 +168,32 @@ public class ConnectActivity extends AppCompatActivity {
 
         serverStore = new ServerStore(this);
         networkExecutor = Executors.newSingleThreadExecutor();
+        if (managementMode) {
+            getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+                @Override public void handleOnBackPressed() { handleManagementBack(); }
+            });
+        }
+        refreshServerList();
         if (handleDeepLink(getIntent())) {
             return;
         }
 
         boolean skipAutoConnect = getIntent().getBooleanExtra("skip_auto_connect", false);
-        String lastUrl = serverStore.getLastUrl();
-        if (!TextUtils.isEmpty(lastUrl)) {
-            connectView.setInputValue(lastUrl);
+        String requestedServerId = getIntent().getStringExtra(WandShortcuts.EXTRA_SERVER_ID);
+        ServerProfile activeProfile;
+        if (requestedServerId != null) {
+            activeProfile = serverStore.getServerProfile(requestedServerId);
+            if (activeProfile == null) {
+                showFormWithMessage("该服务器已从此设备移除，请重新连接");
+                return;
+            }
+        } else {
+            activeProfile = serverStore.getActiveServerProfile();
+        }
+        if (activeProfile != null) {
+            connectView.setInputValue(activeProfile.getBaseUrl());
             if (!skipAutoConnect) {
-                tryAutoConnect(lastUrl);
+                tryAutoConnect(activeProfile);
             } else {
                 showForm();
             }
@@ -185,6 +267,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (redirectToCreationHostIfBusy()) return;
         IntentResult result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
         if (result != null) {
             String contents = result.getContents();
@@ -221,6 +304,8 @@ public class ConnectActivity extends AppCompatActivity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
+        if (redirectToCreationHostIfBusy()) return;
         handleDeepLink(intent);
     }
 
@@ -238,38 +323,36 @@ public class ConnectActivity extends AppCompatActivity {
         return false;
     }
 
-    private void tryAutoConnect(String savedInput) {
+    private void tryAutoConnect(ServerProfile profile) {
         autoConnecting = true;
-        connectView.showAutoConnecting(getString(R.string.auto_connecting));
+        connectView.showAutoConnecting("正在连接「" + profile.getDisplayName() + "」…");
 
         cancelCurrentTask();
+        final long requestGeneration = connectionGeneration;
         currentTask = networkExecutor.submit(() -> {
-            ConnectionResult result = verifyConnectionInput(savedInput, 5000, true);
-            runOnUiThread(() -> handleAutoConnectResult(result));
+            ConnectionResult result = verifyServerProfile(profile, 5000);
+            runOnUiThread(() -> handleAutoConnectResult(requestGeneration, result));
         });
     }
 
-    private void handleAutoConnectResult(ConnectionResult result) {
-        if (isDestroyed() || !autoConnecting) return;
+    private void handleAutoConnectResult(long requestGeneration, ConnectionResult result) {
+        if (isDestroyed() || requestGeneration != connectionGeneration || !autoConnecting) return;
         autoConnecting = false;
         if (!result.isSuccess()) {
-            String message = result.fromConnectCode
+            String message = result.authenticated
                     ? result.error
                     : getString(R.string.auto_connect_failed);
             showFormWithMessage(message);
             return;
         }
-        if (result.fromConnectCode) {
-            serverStore.setAppToken(result.appToken);
-        }
-        launchWebView(result.serverUrl, result.appToken);
+        saveActivateAndLaunch(result);
     }
 
     /**
-     * 用户在自动连接界面点了"取消"或"切换服务器"。立刻把 autoConnecting
+     * 用户在自动连接界面点了"取消"或"管理服务器"。立刻把 autoConnecting
      * 翻成 false (兜住后台请求姗姗来迟的回调), 中断网络任务, 露表单。
      *
-     * @param focusInput true 表示切换服务器流程, 需要顺手聚焦输入框 + 全选
+     * @param focusInput true 表示管理服务器流程, 需要顺手聚焦输入框 + 全选
      *                   文本; false 表示纯取消, 不打扰用户。
      */
     private void abortAutoConnect(boolean focusInput) {
@@ -286,7 +369,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     private void showForm() {
         connectView.showForm();
-        refreshRecentList();
+        refreshServerList();
     }
 
     private void showFormWithMessage(String errorMessage) {
@@ -306,62 +389,79 @@ public class ConnectActivity extends AppCompatActivity {
         connectView.setConnecting(true);
 
         cancelCurrentTask();
+        final long requestGeneration = connectionGeneration;
         currentTask = networkExecutor.submit(() -> {
-            ConnectionResult result = verifyConnectionInput(rawInput, 8000, false);
-            runOnUiThread(() -> handleManualConnectResult(rawInput, result));
+            ConnectionResult result = verifyConnectionInput(rawInput, 8000);
+            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result));
         });
     }
 
-    private ConnectionResult verifyConnectionInput(
-            String rawInput,
-            int timeout,
-            boolean reuseSavedToken
-    ) {
+    private void attemptConnect(ServerProfile profile) {
+        connectView.setConnectingServer(profile.getId());
+        cancelCurrentTask();
+        final long requestGeneration = connectionGeneration;
+        currentTask = networkExecutor.submit(() -> {
+            ConnectionResult result = verifyServerProfile(profile, 8000);
+            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result));
+        });
+    }
+
+    private ConnectionResult verifyConnectionInput(String rawInput, int timeout) {
         Pair<String, String> decoded = WandAuth.decodeConnectCode(rawInput);
         if (decoded != null) {
             setAutoStatus("正在验证连接码…");
-            String serverUrl = decoded.getFirst();
+            String serverUrl = WandHttp.normalizeBaseUrl(decoded.getFirst());
             String appToken = decoded.getSecond();
             String error = testConnectionWithToken(serverUrl, appToken, timeout);
             return new ConnectionResult(serverUrl, appToken, error, true);
         }
 
         String serverUrl = WandHttp.normalizeBaseUrl(rawInput);
-        if (reuseSavedToken) {
-            String savedToken = serverStore.getAppToken();
-            if (!TextUtils.isEmpty(savedToken)) {
-                setAutoStatus("正在验证连接码…");
-                String tokenError = testConnectionWithToken(serverUrl, savedToken, timeout);
-                if (tokenError == null) {
-                    return new ConnectionResult(serverUrl, savedToken, null, false);
-                }
-            }
-            setAutoStatus("正在尝试直接连接…");
+        ServerProfile savedProfile = serverStore.getServerProfileByUrl(serverUrl);
+        if (savedProfile != null && savedProfile.getHasToken()) {
+            String savedToken = savedProfile.getToken();
+            String tokenError = testConnectionWithToken(serverUrl, savedToken, timeout);
+            return new ConnectionResult(serverUrl, savedToken, tokenError, true);
         }
         String error = testConnection(serverUrl, timeout);
         return new ConnectionResult(serverUrl, null, error, false);
     }
 
-    private void handleManualConnectResult(String rawInput, ConnectionResult result) {
-        if (isDestroyed()) return;
+    private ConnectionResult verifyServerProfile(ServerProfile profile, int timeout) {
+        String serverUrl = profile.getBaseUrl();
+        if (profile.getHasToken()) {
+            String token = profile.getToken();
+            String error = testConnectionWithToken(serverUrl, token, timeout);
+            return new ConnectionResult(serverUrl, token, error, true);
+        }
+        return new ConnectionResult(
+                serverUrl,
+                null,
+                testConnection(serverUrl, timeout),
+                false
+        );
+    }
+
+    private void handleManualConnectResult(long requestGeneration, ConnectionResult result) {
+        if (isDestroyed() || requestGeneration != connectionGeneration) return;
         connectView.setConnecting(false);
         if (!result.isSuccess()) {
             showStatus(result.error);
             return;
         }
+        saveActivateAndLaunch(result);
+    }
 
-        String savedInput = result.fromConnectCode ? rawInput : result.serverUrl;
-        serverStore.setLastUrl(savedInput);
-        serverStore.addRecentUrl(savedInput);
-        if (result.appToken == null) {
-            serverStore.clearAppToken();
-        } else {
-            serverStore.setAppToken(result.appToken);
-        }
-        launchWebView(result.serverUrl, result.appToken);
+    private void saveActivateAndLaunch(ConnectionResult result) {
+        if (redirectToCreationHostIfBusy()) return;
+        ServerProfile profile = serverStore.saveServerProfile(result.serverUrl, result.appToken);
+        serverStore.setActiveServerId(profile.getId());
+        WandHttp.resetClient(profile.getBaseUrl());
+        launchWebView(profile);
     }
 
     private void cancelCurrentTask() {
+        connectionGeneration += 1L;
         if (currentTask != null && !currentTask.isDone()) {
             currentTask.cancel(true);
         }
@@ -396,14 +496,9 @@ public class ConnectActivity extends AppCompatActivity {
             }
 
             int code = conn.getResponseCode();
-            String setCookie = conn.getHeaderField("Set-Cookie");
             conn.disconnect();
 
             if (code == 200) {
-                if (setCookie != null) {
-                    android.webkit.CookieManager.getInstance().setCookie(baseUrl, setCookie);
-                    android.webkit.CookieManager.getInstance().flush();
-                }
                 return null;
             } else if (code == 401) {
                 return "认证失败，连接码可能已过期（密码已更改），请重新获取连接码";
@@ -437,22 +532,95 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     /** 连接成功后进入原生主界面（HomeActivity）；WebView（MainActivity）只作网页版兜底。 */
-    private void launchWebView(String url, String appToken) {
+    private void launchWebView(ServerProfile profile) {
+        SessionWatcher.INSTANCE.stop();
+        stopService(new Intent(this, WandForegroundService.class));
         Intent intent = new Intent(this, HomeActivity.class);
-        intent.putExtra("server_url", url);
-        if (appToken != null) {
-            intent.putExtra("app_token", appToken);
-        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.putExtra(WandShortcuts.EXTRA_SERVER_ID, profile.getId());
+        intent.putExtra(WandShortcuts.EXTRA_FORCE_SERVER_RELOAD, true);
         // 透传长按图标快捷操作的 extra（WandShortcuts → ConnectActivity → HomeActivity）。
         Intent source = getIntent();
+        String sourceServerId = source == null
+                ? null : source.getStringExtra(WandShortcuts.EXTRA_SERVER_ID);
+        // Session IDs are server-scoped. If an old shortcut for A failed and the user explicitly
+        // connects B, never forward A's navigation extras into B.
         if (source != null) {
+            boolean exactServerMatch = profile.getId().equals(sourceServerId);
             String quickAction = source.getStringExtra(WandShortcuts.EXTRA_QUICK_ACTION);
             String openSessionId = source.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID);
-            if (quickAction != null) intent.putExtra(WandShortcuts.EXTRA_QUICK_ACTION, quickAction);
-            if (openSessionId != null) intent.putExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID, openSessionId);
+            String openSessionKind = source.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_KIND);
+            if (quickAction != null && (sourceServerId == null || exactServerMatch)) {
+                intent.putExtra(WandShortcuts.EXTRA_QUICK_ACTION, quickAction);
+            }
+            // Legacy session shortcuts had no server ID, so their session ID cannot be routed
+            // safely after multi-server upgrade. Only an explicit exact match may pass through.
+            if (exactServerMatch && openSessionId != null) {
+                intent.putExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID, openSessionId);
+                if (openSessionKind != null) {
+                    intent.putExtra(WandShortcuts.EXTRA_OPEN_SESSION_KIND, openSessionKind);
+                }
+            }
         }
         startActivity(intent);
         finish();
+    }
+
+    private void handleManagementBack() {
+        if (redirectToCreationHostIfBusy()) return;
+        if (returnServerId != null && serverStore.getServerProfile(returnServerId) != null) {
+            if (profilesChanged) {
+                launchStoredHome(returnServerId);
+            } else {
+                finish();
+            }
+            return;
+        }
+        ServerProfile fallback = serverStore.getActiveServerProfile();
+        if (fallback == null) {
+            finish();
+            return;
+        }
+        launchStoredHome(fallback.getId());
+    }
+
+    private void launchStoredHome(String serverId) {
+        Intent intent = new Intent(this, HomeActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId);
+        intent.putExtra(WandShortcuts.EXTRA_FORCE_SERVER_RELOAD, true);
+        startActivity(intent);
+        finish();
+    }
+
+    private void markProfilesChanged() {
+        profilesChanged = true;
+        getIntent().putExtra(EXTRA_PROFILES_CHANGED, true);
+    }
+
+    /**
+     * Removing the server used by the paused HomeActivity must also destroy that Activity's
+     * Compose stores and sockets. Recreate management as the task root before accepting input.
+     */
+    private void detachRemovedRuntime() {
+        Intent replacement = new Intent(this, ConnectActivity.class);
+        replacement.putExtra("skip_auto_connect", true);
+        replacement.putExtra(EXTRA_MANAGEMENT_MODE, true);
+        replacement.putExtra(EXTRA_RETURN_SERVER_ID, returnServerId);
+        replacement.putExtra(EXTRA_PROFILES_CHANGED, true);
+        replacement.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(replacement);
+        finish();
+    }
+
+    private void cancelPendingConnectionForProfileMutation() {
+        autoConnecting = false;
+        cancelCurrentTask();
+        connectView.setConnecting(false);
+    }
+
+    private void clearWebViewCookies() {
+        WandWebSession.clearAsync();
     }
 
     private void showStatus(String message) {
@@ -472,13 +640,31 @@ public class ConnectActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (redirectToCreationHostIfBusy()) return;
         if (!autoConnecting) {
-            refreshRecentList();
+            refreshServerList();
         }
     }
 
-    private void refreshRecentList() {
-        List<String> urls = serverStore.getRecentUrls();
-        connectView.setRecentEntries(urls);
+    /** Existing management/multi-window instances must honor the same process-wide create gate. */
+    private boolean redirectToCreationHostIfBusy() {
+        if (!SessionCreationCoordinator.isBusy()) return false;
+        autoConnecting = false;
+        if (networkExecutor != null) cancelCurrentTask();
+        Intent homeIntent = new Intent(this, HomeActivity.class);
+        homeIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        String hostServerId = SessionCreationCoordinator.busyHostServerId();
+        if (hostServerId != null) {
+            homeIntent.putExtra(WandShortcuts.EXTRA_SERVER_ID, hostServerId);
+        }
+        startActivity(homeIntent);
+        finish();
+        return true;
+    }
+
+    private void refreshServerList() {
+        List<ServerProfile> profiles = serverStore.getServerProfiles();
+        ServerProfile active = serverStore.getActiveServerProfile();
+        connectView.setServerProfiles(profiles, active == null ? null : active.getId());
     }
 }

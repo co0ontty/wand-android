@@ -60,7 +60,8 @@ object WandServerFileLink {
     /** Downloads into the public Downloads/Wand folder, then opens it when an app supports the MIME type. */
     suspend fun downloadAndOpen(context: Context, baseUrl: String, serverPath: String) {
         val downloaded = withContext(Dispatchers.IO) {
-            val url = Uri.parse("${WandHttp.normalizeBaseUrl(baseUrl)}/api/file-raw")
+            val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
+            val url = Uri.parse("$endpoint/api/file-raw")
                 .buildUpon()
                 .appendQueryParameter("download", "1")
                 .appendQueryParameter("path", serverPath)
@@ -68,7 +69,7 @@ object WandServerFileLink {
                 .toString()
             val request = Request.Builder().url(url).get().build()
 
-            WandHttp.client.newCall(request).execute().use { response ->
+            WandHttp.clientFor(endpoint).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     throw IllegalStateException("服务端返回 HTTP ${response.code}")
                 }

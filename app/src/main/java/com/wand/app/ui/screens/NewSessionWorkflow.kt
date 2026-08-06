@@ -45,15 +45,17 @@ data class NewSessionDraft(
 class NewSessionWorkflow(private val port: NewSessionPort) {
     private val defaultsMutex = Mutex()
 
-    suspend fun bootstrap(): NewSessionBootstrap {
-        val config = runCatching { port.serverConfig() }.getOrNull()
+    suspend fun bootstrap(): NewSessionBootstrap = defaultsMutex.withLock {
+        // 服务器配置是后续所有默认值与创建请求的根；它失败时必须把错误交给页面，
+        // 不能静默展示一套本地空默认值后再让用户把请求发向不可达的服务器。
+        val config = port.serverConfig()
         val models = runCatching { port.models() }.getOrNull()
         val recentPaths = runCatching { port.recentPaths() }.getOrDefault(emptyList())
         val provider = normalizeProvider(config?.defaultProvider)
         val defaults = models?.resolvedDefaults()
             ?: config?.resolvedDefaults()
             ?: EMPTY_DEFAULT_MODELS
-        return NewSessionBootstrap(
+        NewSessionBootstrap(
             provider = provider,
             kind = if (config?.defaultSessionKind == "pty") NewSessionKind.Pty else NewSessionKind.Structured,
             mode = clampSessionMode(config?.defaultMode ?: "managed", provider),

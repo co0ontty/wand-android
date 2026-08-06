@@ -9,8 +9,14 @@ import com.wand.app.data.RecentPath
 import com.wand.app.data.ReasoningEffortInfo
 import com.wand.app.data.ServerConfigInfo
 import com.wand.app.data.SessionSnapshot
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.fail
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,6 +51,42 @@ class NewSessionWorkflowTest {
         assertEquals("native", initial.mode)
         assertEquals("/config", initial.cwd)
         assertEquals("claude-config", initial.defaultModels.claude)
+    }
+
+    @Test
+    fun bootstrapSurfacesRequiredServerConfigFailure() = runBlocking {
+        val port = FakeNewSessionPort().apply { failConfig = true }
+
+        try {
+            NewSessionWorkflow(port).bootstrap()
+            fail("bootstrap should fail when the selected server is unavailable")
+        } catch (error: IllegalStateException) {
+            assertEquals("config failed", error.message)
+        }
+    }
+
+    @Test
+    fun bootstrapWaitsForAnOlderDefaultsWriteOnTheSameServer() = runBlocking {
+        val persistStarted = CompletableDeferred<Unit>()
+        val releasePersist = CompletableDeferred<Unit>()
+        val port = FakeNewSessionPort().apply {
+            this.persistStarted = persistStarted
+            this.releasePersist = releasePersist
+        }
+        val workflow = NewSessionWorkflow(port)
+
+        coroutineScope {
+            val persist = async { workflow.persistDefaults(mode = "native") }
+            persistStarted.await()
+            val bootstrap = async { workflow.bootstrap() }
+            yield()
+            assertFalse(bootstrap.isCompleted)
+            releasePersist.complete(Unit)
+            persist.await()
+            bootstrap.await()
+        }
+
+        assertEquals(listOf("persist", "config"), port.calls.take(2))
     }
 
     @Test
@@ -186,7 +228,10 @@ class NewSessionWorkflowTest {
         var config = config()
         var modelResponse = modelFixture()
         var paths = emptyList<RecentPath>()
+        var failConfig = false
         var failModels = false
+        var persistStarted: CompletableDeferred<Unit>? = null
+        var releasePersist: CompletableDeferred<Unit>? = null
         val calls = mutableListOf<String>()
         var lastMode: String? = null
         var lastProvider: String? = null
@@ -194,7 +239,11 @@ class NewSessionWorkflowTest {
         var lastPrompt: String? = null
         var lastModel: String? = null
 
-        override suspend fun serverConfig(): ServerConfigInfo = config
+        override suspend fun serverConfig(): ServerConfigInfo {
+            calls += "config"
+            if (failConfig) error("config failed")
+            return config
+        }
         override suspend fun models(): ModelsResponse {
             if (failModels) error("models failed")
             return modelResponse
@@ -206,6 +255,8 @@ class NewSessionWorkflowTest {
             defaultProvider: String?, defaultSessionKind: String?,
         ) {
             calls += "persist"
+            persistStarted?.complete(Unit)
+            releasePersist?.await()
             lastMode = mode
             lastProvider = modelProvider
             lastModel = model

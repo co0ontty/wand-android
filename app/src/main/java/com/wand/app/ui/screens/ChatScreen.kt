@@ -186,6 +186,7 @@ internal fun shouldRefreshQuickCommitStatus(isLoading: Boolean, isResponding: Bo
 fun ChatScreen(
     api: WandApi,
     sessionId: String,
+    serverDisplayName: String,
     isHapticEnabled: () -> Boolean,
     onBack: () -> Unit,
 ) {
@@ -394,18 +395,21 @@ fun ChatScreen(
                                 text = store.snapshot?.displayTitle ?: "对话详情",
                                 generating = store.snapshot?.titleGenerating == true,
                             )
-                            chatWorkingPath(store.snapshot?.cwd)?.let { path ->
-                                TailMarqueePathText(
-                                    path = path,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    fontSize = 11.sp,
-                                    color = WandColors.textMuted,
-                                    fallback = "",
-                                    initialDelayMillis = 1_800L,
-                                    velocity = 28.dp,
-                                    revealOnce = true,
-                                )
-                            }
+                            val workingPath = chatWorkingPath(store.snapshot?.cwd)
+                            TailMarqueePathText(
+                                path = if (workingPath == null) {
+                                    serverDisplayName
+                                } else {
+                                    "$serverDisplayName · $workingPath"
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                fontSize = 11.sp,
+                                color = WandColors.textMuted,
+                                fallback = serverDisplayName,
+                                initialDelayMillis = 1_800L,
+                                velocity = 28.dp,
+                                revealOnce = true,
+                            )
                         }
                     }
                 },

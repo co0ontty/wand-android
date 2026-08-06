@@ -48,7 +48,9 @@ import com.wand.app.data.WandHttp
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandShapes
+import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
+import okhttp3.OkHttpClient
 
 /**
  * 聊天会话的服务端 base URL（用于拼 /api/file-raw 取图 URL）。
@@ -60,10 +62,15 @@ val LocalServerBaseUrl = compositionLocalOf { "" }
 
 /**
  * 聊天内联图片支持：对齐网页端 renderUserAttachmentBlock / Read 读图缩略图。
- * 图片必须经共享 WandHttp.client 加载（自签证书放行 + 会话 cookie），
+ * 图片必须经对应 endpoint 的 WandHttp client 加载（自签名证书放行 + 会话 cookie），
  * 否则 /api/file-raw 的 requireAuth 与 HTTPS 校验都会失败。
  */
 object WandImage {
+
+    private data class LoaderEntry(
+        val client: OkHttpClient,
+        val loader: ImageLoader,
+    )
 
     // 对齐网页 IMAGE_PATH_RE：去掉 ?query/#hash 后判后缀。
     private val IMAGE_PATH_RE: Pattern =
@@ -81,27 +88,36 @@ object WandImage {
      * （空格 %20 而非 +，对齐网页 encodeURIComponent）。
      */
     fun fileRawUrl(baseUrl: String, path: String): String =
-        Uri.parse("$baseUrl/api/file-raw")
+        Uri.parse("${WandHttp.normalizeBaseUrl(baseUrl)}/api/file-raw")
             .buildUpon()
             .appendQueryParameter("path", path)
             .build()
             .toString()
 
-    // 进程级单例：所有 AsyncImage 共用一个走 WandHttp.client 的 ImageLoader。
-    private lateinit var loader: ImageLoader
+    /** 每个 endpoint 一个 ImageLoader；resetClient 后会按新 client 自动替换。 */
+    private val loaders = ConcurrentHashMap<String, LoaderEntry>()
 
-    fun imageLoader(context: Context): ImageLoader {
-        if (::loader.isInitialized) return loader
-        loader = ImageLoader.Builder(context.applicationContext)
-            .okHttpClient { WandHttp.client }
-            .crossfade(true)
-            .build()
-        return loader
+    fun imageLoader(context: Context, baseUrl: String): ImageLoader {
+        val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
+        val endpointClient = WandHttp.clientFor(endpoint)
+        return loaders.compute(endpoint) { _, current ->
+            if (current?.client === endpointClient) {
+                current
+            } else {
+                LoaderEntry(
+                    client = endpointClient,
+                    loader = ImageLoader.Builder(context.applicationContext)
+                        .okHttpClient { endpointClient }
+                        .crossfade(true)
+                        .build(),
+                )
+            }
+        }!!.loader
     }
 }
 
 /**
- * 内联图片缩略图：经 WandHttp.client 加载，圆角 + Fit，点击放大到全屏预览。
+ * 内联图片缩略图：经对应 endpoint 的 WandHttp client 加载，圆角 + Fit，点击放大到全屏预览。
  * 加载失败时整块隐藏（对齐网页 onerror → display:none），绝不崩溃或留占位。
  */
 @Composable
@@ -113,7 +129,7 @@ fun WandAsyncImage(
     maxHeight: Int = 200,
 ) {
     val context = LocalContext.current
-    val loader = remember { WandImage.imageLoader(context) }
+    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
     val url = remember(baseUrl, path) { WandImage.fileRawUrl(baseUrl, path) }
     var failed by remember(url) { mutableStateOf(false) }
     var showViewer by remember { mutableStateOf(false) }
@@ -156,7 +172,7 @@ private fun FullscreenImageViewer(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val loader = remember { WandImage.imageLoader(context) }
+    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
     val url = remember(baseUrl, path) { WandImage.fileRawUrl(baseUrl, path) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }

@@ -3,6 +3,7 @@ package com.wand.app.ui
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
+import com.wand.app.data.WandApi
 import com.wand.app.ui.theme.WandAppearanceMode
 
 /** 原生界面的页面栈。结构化对话原生承载，PTY 套在原生头部里嵌一层终端 WebView。 */
@@ -18,7 +19,10 @@ sealed class Screen {
 sealed class QuickAction {
     data object NewSession : QuickAction()
     data object OpenWeb : QuickAction()
-    data class OpenSession(val sessionId: String) : QuickAction()
+    data class OpenSession(
+        val sessionId: String,
+        val isStructured: Boolean? = null,
+    ) : QuickAction()
 }
 
 class NavState {
@@ -95,13 +99,30 @@ class NavState {
  * 包成 lambda 给 ui 包用，避免 Kotlin 跨包访问不到 Java package-private 成员。
  */
 data class HomeConnectionInfo(
+    val serverId: String,
+    val serverDisplayName: String,
     val serverUrl: String,
     val hasToken: Boolean,
+    val savedServerCount: Int,
+)
+
+/**
+ * 已保存服务器在原生界面中的运行时视图。凭据封装在对应 WandApi 内，页面与 Intent
+ * 只传稳定 serverId，避免连接码在导航参数中扩散。
+ */
+class HomeServerConnection(
+    val serverId: String,
+    val displayName: String,
+    val serverUrl: String,
+    val hasToken: Boolean,
+    val api: WandApi,
 )
 
 class HomeNavigationActions(
     val openWeb: () -> Unit,
     val switchServer: () -> Unit,
+    val manageServers: () -> Unit,
+    val reconnectServer: (serverId: String) -> Unit,
     val disconnect: () -> Unit,
 )
 
@@ -127,6 +148,7 @@ class HomeSettingsActions(
 /** 宿主能力按连接信息、导航和设备设置分组，页面只向下传递实际需要的能力。 */
 class HomeActions(
     val connection: HomeConnectionInfo,
+    val servers: List<HomeServerConnection>,
     val navigation: HomeNavigationActions,
     val settings: HomeSettingsActions,
 )

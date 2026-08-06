@@ -1,17 +1,25 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -27,7 +35,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -73,16 +80,24 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -104,6 +119,9 @@ import com.wand.app.ui.components.WandStatusTone
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandDialogAction
+import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.GlassStyle
@@ -132,10 +150,12 @@ enum class SessionListViewMode {
 @Composable
 fun SessionListScreen(
     state: SessionListState,
+    serverDisplayName: String,
     modifier: Modifier = Modifier,
     selectedSessionId: String? = null,
     topBarContentHeight: Dp = 64.dp,
     compactLayout: Boolean = false,
+    interactionEnabled: Boolean = true,
     viewMode: SessionListViewMode = SessionListViewMode.Sessions,
     onOpenSession: (SessionSnapshot) -> Unit,
     onNewSession: (String?) -> Unit,
@@ -174,10 +194,9 @@ fun SessionListScreen(
         clearDragSelection()
     }
 
-    LaunchedEffect(viewMode, state.entries) {
+    LaunchedEffect(viewMode) {
         if (viewMode == SessionListViewMode.Directories) {
             endSelection()
-            state.loadDirectories(silent = state.directoryTree != null)
         }
     }
 
@@ -220,6 +239,13 @@ fun SessionListScreen(
             state.clearError(message)
         }
     }
+    LaunchedEffect(state.directoryError, state.directoryTree != null) {
+        val message = state.directoryError ?: return@LaunchedEffect
+        if (state.directoryTree != null) {
+            snackbarHostState.showSnackbar(message)
+            state.clearDirectoryError(message)
+        }
+    }
 
     // 液态玻璃：列表是 backdrop 捕获源，顶栏/多选栏悬浮其上采样模糊。
     val glassBackdrop = rememberGlassBackdrop()
@@ -237,6 +263,7 @@ fun SessionListScreen(
                 onMenuOpenChange = { menuOpen = it },
                 isSelecting = isSelecting,
                 selectedCount = selectedIds.size,
+                serverDisplayName = serverDisplayName,
                 entryCount = if (viewMode == SessionListViewMode.Directories) {
                     state.directoryTree?.directoryCount ?: 0
                 } else {
@@ -299,6 +326,7 @@ fun SessionListScreen(
                         state = state,
                         selectedSessionId = selectedSessionId,
                         compact = compactLayout,
+                        interactionEnabled = interactionEnabled,
                         contentPadding = padding,
                         onOpenSession = onOpenSession,
                         onNewSession = onNewSession,
@@ -506,7 +534,7 @@ fun SessionListScreen(
                                             ) { revealed, closeReveal ->
                                                 HistorySessionCard(
                                                     history = session,
-                                                    enabled = !state.isRestoringHistory,
+                                                    enabled = interactionEnabled && !state.isRestoringHistory,
                                                     selecting = false,
                                                     selected = false,
                                                     compact = compactLayout,
@@ -515,7 +543,7 @@ fun SessionListScreen(
                                                         if (revealed || revealedEntryKey != null) {
                                                             revealedEntryKey = null
                                                             closeReveal()
-                                                        } else if (!state.isRestoringHistory) {
+                                                        } else if (interactionEnabled && !state.isRestoringHistory) {
                                                             scope.launch {
                                                                 state.restore(session)?.let(onOpenSession)
                                                             }
@@ -567,6 +595,7 @@ private fun SessionListTopBar(
     onMenuOpenChange: (Boolean) -> Unit,
     isSelecting: Boolean,
     selectedCount: Int,
+    serverDisplayName: String,
     entryCount: Int,
     viewMode: SessionListViewMode,
     contentHeight: Dp,
@@ -585,15 +614,15 @@ private fun SessionListTopBar(
             .fillMaxWidth()
             .glassSurface(backdrop, RoundedCornerShape(0.dp), barGlass, edgeToEdge = true),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .heightIn(min = contentHeight)
-                .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (isSelecting) {
+        if (isSelecting) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .heightIn(min = contentHeight)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 ToolbarIconButton(
                     icon = WandIcons.close,
                     contentDescription = "退出多选",
@@ -608,73 +637,96 @@ private fun SessionListTopBar(
                     style = MaterialTheme.typography.titleLarge,
                     color = WandColors.textPrimary,
                 )
-            } else {
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = if (compact) 52.dp else contentHeight)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "$serverDisplayName · " +
+                            if (viewMode == SessionListViewMode.Directories) {
+                                "$entryCount 个目录"
+                            } else {
+                                "$entryCount 个会话"
+                            },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 12.dp, end = 6.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = WandColors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (onCollapseSidebar != null) {
+                        ToolbarIconButton(
+                            icon = WandIcons.chevronRight,
+                            contentDescription = "收起会话栏",
+                            onClick = onCollapseSidebar,
+                            modifier = Modifier.graphicsLayer { scaleX = -1f },
+                        )
+                    }
+                    TopBarPrimaryAction(onClick = onNewSession)
+                    Box {
+                        ToolbarIconButton(
+                            icon = WandIcons.more,
+                            contentDescription = "更多选项",
+                            onClick = { onMenuOpenChange(true) },
+                            tint = WandColors.textSecondary,
+                        )
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { onMenuOpenChange(false) },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Agent Inbox", color = WandColors.textPrimary) },
+                                leadingIcon = {
+                                    Icon(WandIcons.agent, contentDescription = null, tint = WandColors.info)
+                                },
+                                onClick = { onMenuOpenChange(false); onOpenMissions() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("设置", color = WandColors.textPrimary) },
+                                leadingIcon = {
+                                    Icon(WandIcons.settings, contentDescription = null, tint = WandColors.textSecondary)
+                                },
+                                onClick = { onMenuOpenChange(false); onOpenSettings() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("打开网页版", color = WandColors.textPrimary) },
+                                leadingIcon = {
+                                    Icon(WandIcons.web, contentDescription = null, tint = WandColors.textSecondary)
+                                },
+                                onClick = { onMenuOpenChange(false); onOpenWeb() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("切换服务器", color = WandColors.textPrimary) },
+                                leadingIcon = {
+                                    Icon(WandIcons.swapServer, contentDescription = null, tint = WandColors.textSecondary)
+                                },
+                                onClick = { onMenuOpenChange(false); onSwitchServer() },
+                            )
+                        }
+                    }
+                }
                 Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 12.dp, end = 8.dp),
-                    verticalArrangement = Arrangement.Center,
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
                 ) {
                     SessionListViewSwitch(
                         mode = viewMode,
                         compact = compact,
                         onChange = onViewModeChange,
                     )
-                    Text(
-                        if (viewMode == SessionListViewMode.Directories) "$entryCount 个目录" else "$entryCount 个会话",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = WandColors.textMuted,
-                    )
-                }
-                if (onCollapseSidebar != null) {
-                    ToolbarIconButton(
-                        icon = WandIcons.chevronRight,
-                        contentDescription = "收起会话栏",
-                        onClick = onCollapseSidebar,
-                        modifier = Modifier.graphicsLayer { scaleX = -1f },
-                    )
-                }
-                TopBarPrimaryAction(onClick = onNewSession)
-                Box {
-                    ToolbarIconButton(
-                        icon = WandIcons.more,
-                        contentDescription = "更多选项",
-                        onClick = { onMenuOpenChange(true) },
-                        tint = WandColors.textSecondary,
-                    )
-                    DropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { onMenuOpenChange(false) },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Agent Inbox", color = WandColors.textPrimary) },
-                            leadingIcon = {
-                                Icon(WandIcons.agent, contentDescription = null, tint = WandColors.info)
-                            },
-                            onClick = { onMenuOpenChange(false); onOpenMissions() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("设置", color = WandColors.textPrimary) },
-                            leadingIcon = {
-                                Icon(WandIcons.settings, contentDescription = null, tint = WandColors.textSecondary)
-                            },
-                            onClick = { onMenuOpenChange(false); onOpenSettings() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("打开网页版", color = WandColors.textPrimary) },
-                            leadingIcon = {
-                                Icon(WandIcons.web, contentDescription = null, tint = WandColors.textSecondary)
-                            },
-                            onClick = { onMenuOpenChange(false); onOpenWeb() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("切换服务器", color = WandColors.textPrimary) },
-                            leadingIcon = {
-                                Icon(WandIcons.swapServer, contentDescription = null, tint = WandColors.textSecondary)
-                            },
-                            onClick = { onMenuOpenChange(false); onSwitchServer() },
-                        )
-                    }
                 }
             }
         }
@@ -687,34 +739,89 @@ private fun SessionListViewSwitch(
     compact: Boolean,
     onChange: (SessionListViewMode) -> Unit,
 ) {
-    Row(
+    val shape = RoundedCornerShape(14.dp)
+    BoxWithConstraints(
         modifier = Modifier
-            .widthIn(max = if (compact) 126.dp else 146.dp)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
-            .border(0.5.dp, WandColors.border.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
-            .padding(2.dp),
+            .height(48.dp)
+            .clip(shape)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
+            .border(0.6.dp, WandColors.border.copy(alpha = 0.62f), shape)
+            .selectableGroup(),
     ) {
-        SessionListViewMode.entries.forEach { value ->
-            val selected = mode == value
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = if (compact) 28.dp else 30.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) WandColors.bgElevated else Color.Transparent)
-                    .clickable(role = Role.Tab) { onChange(value) }
-                    .semantics { this.selected = selected },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = if (value == SessionListViewMode.Sessions) "会话" else "目录",
-                    fontSize = if (compact) 11.sp else 12.sp,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (selected) WandColors.textPrimary else WandColors.textMuted,
-                    maxLines = 1,
+        val itemWidth = maxWidth / SessionListViewMode.entries.size
+        val selectedOffset by animateDpAsState(
+            targetValue = if (mode == SessionListViewMode.Sessions) 0.dp else itemWidth,
+            animationSpec = tween(durationMillis = 180, easing = WandMotion.easing),
+            label = "sessionViewIndicator",
+        )
+        Box(
+            modifier = Modifier
+                .offset(x = selectedOffset)
+                .width(itemWidth)
+                .fillMaxHeight()
+                .padding(3.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(WandColors.bgElevated.copy(alpha = 0.94f))
+                .border(
+                    width = 0.6.dp,
+                    color = WandColors.borderStrong.copy(alpha = 0.34f),
+                    shape = RoundedCornerShape(11.dp),
+                ),
+        )
+        Row(modifier = Modifier.fillMaxSize()) {
+            SessionListViewMode.entries.forEach { value ->
+                val selected = mode == value
+                val interactionSource = remember { MutableInteractionSource() }
+                val pressed by interactionSource.collectIsPressedAsState()
+                val pressScale by animateFloatAsState(
+                    targetValue = if (pressed) 0.97f else 1f,
+                    animationSpec = tween(durationMillis = 110, easing = WandMotion.easing),
+                    label = "sessionViewPress",
                 )
+                val contentColor by animateColorAsState(
+                    targetValue = if (selected) WandColors.textPrimary else WandColors.textSecondary,
+                    animationSpec = WandMotion.tweenFast(),
+                    label = "sessionViewContent",
+                )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            scaleX = pressScale
+                            scaleY = pressScale
+                        }
+                        .clip(RoundedCornerShape(11.dp))
+                        .selectable(
+                            selected = selected,
+                            interactionSource = interactionSource,
+                            indication = LocalIndication.current,
+                            role = Role.Tab,
+                            onClick = { onChange(value) },
+                        )
+                        .semantics {
+                            this.selected = selected
+                            stateDescription = if (selected) "已选择" else "未选择"
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        imageVector = if (value == SessionListViewMode.Sessions) WandIcons.chat else WandIcons.folder,
+                        contentDescription = null,
+                        tint = if (selected) WandColors.brand else contentColor,
+                        modifier = Modifier.size(if (compact) 16.dp else 17.dp),
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        text = if (value == SessionListViewMode.Sessions) "会话" else "目录",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = contentColor,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -760,6 +867,7 @@ private fun SessionDirectoryTreeContent(
     state: SessionListState,
     selectedSessionId: String?,
     compact: Boolean,
+    interactionEnabled: Boolean,
     contentPadding: PaddingValues,
     onOpenSession: (SessionSnapshot) -> Unit,
     onNewSession: (String?) -> Unit,
@@ -767,8 +875,34 @@ private fun SessionDirectoryTreeContent(
     val scope = rememberCoroutineScope()
     val tree = state.directoryTree
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    var renameTarget by remember { mutableStateOf<SessionDirectoryNode?>(null) }
+    var renameError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(tree?.revision, selectedSessionId) {
+    renameTarget?.let { target ->
+        RenameDirectoryDialog(
+            node = target,
+            saving = state.directoryRenamePath == target.path,
+            error = renameError,
+            onDismiss = {
+                if (state.directoryRenamePath != target.path) {
+                    renameTarget = null
+                    renameError = null
+                }
+            },
+            onConfirm = { name ->
+                renameError = null
+                scope.launch {
+                    if (state.renameDirectory(target.path, name)) {
+                        renameTarget = null
+                    } else {
+                        renameError = state.directoryError ?: "无法保存工作区名称"
+                    }
+                }
+            },
+        )
+    }
+
+    LaunchedEffect(tree?.treeRevision, selectedSessionId) {
         tree?.roots?.forEach { root ->
             expanded.putIfAbsent(directoryNodeKey(root), true)
             fun openActivePath(node: SessionDirectoryNode) {
@@ -828,14 +962,32 @@ private fun SessionDirectoryTreeContent(
                                 active = node.containsSession(selectedSessionId),
                                 compact = compact,
                                 onToggle = { expanded[key] = !isExpanded },
+                                onRename = {
+                                    renameError = null
+                                    renameTarget = node
+                                },
                                 onNewSession = { onNewSession(node.path) },
                             )
                         }
                         is SessionDirectoryDisplayRow.Entry -> {
+                            val entryIndent = (
+                                row.depth.coerceAtMost(6) * if (compact) 9 else 12
+                            ).dp
+                            val guideColor = WandColors.borderStrong.copy(alpha = 0.34f)
                             Box(
-                                modifier = Modifier.padding(
-                                    start = (row.depth.coerceAtMost(6) * if (compact) 7 else 10).dp,
-                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .drawBehind {
+                                        val guideX = (entryIndent - 5.dp).toPx().coerceAtLeast(1.dp.toPx())
+                                        drawLine(
+                                            color = guideColor,
+                                            start = Offset(guideX, 0f),
+                                            end = Offset(guideX, size.height),
+                                            strokeWidth = 1.dp.toPx(),
+                                            cap = StrokeCap.Round,
+                                        )
+                                    }
+                                    .padding(start = entryIndent),
                             ) {
                                 when (val entry = row.entry) {
                                     is SessionListEntry.Managed -> SessionCard(
@@ -847,13 +999,13 @@ private fun SessionDirectoryTreeContent(
                                     )
                                     is SessionListEntry.Recoverable -> HistorySessionCard(
                                         history = entry.history,
-                                        enabled = !state.isRestoringHistory,
+                                        enabled = interactionEnabled && !state.isRestoringHistory,
                                         selecting = false,
                                         selected = false,
                                         compact = compact,
                                         restoring = state.isRestoring(entry.history),
                                         onClick = {
-                                            if (!state.isRestoringHistory) {
+                                            if (interactionEnabled && !state.isRestoringHistory) {
                                                 scope.launch {
                                                     state.restore(entry.history)?.let(onOpenSession)
                                                 }
@@ -878,16 +1030,53 @@ private fun SessionDirectoryFolderRow(
     active: Boolean,
     compact: Boolean,
     onToggle: () -> Unit,
+    onRename: () -> Unit,
     onNewSession: () -> Unit,
 ) {
     val indent = (depth.coerceAtMost(6) * if (compact) 8 else 11).dp
+    val shape = RoundedCornerShape(12.dp)
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = tween(durationMillis = 160, easing = WandMotion.easing),
+        label = "directoryChevron",
+    )
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            active -> WandColors.brand.copy(alpha = 0.075f)
+            expanded -> WandColors.surfaceSoft.copy(alpha = 0.30f)
+            else -> Color.Transparent
+        },
+        animationSpec = WandMotion.tweenFast(),
+        label = "directoryContainer",
+    )
+    val guideColor = if (active) {
+        WandColors.brand.copy(alpha = 0.30f)
+    } else {
+        WandColors.borderStrong.copy(alpha = 0.28f)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = indent)
-            .clip(RoundedCornerShape(11.dp))
-            .background(if (active) WandColors.brand.copy(alpha = 0.08f) else Color.Transparent)
-            .heightIn(min = 44.dp),
+            .then(
+                if (depth > 0) {
+                    Modifier.drawBehind {
+                        val x = 1.dp.toPx()
+                        drawLine(
+                            color = guideColor,
+                            start = Offset(x, 0f),
+                            end = Offset(x, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                            cap = StrokeCap.Round,
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .clip(shape)
+            .background(containerColor)
+            .heightIn(min = 46.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -895,7 +1084,10 @@ private fun SessionDirectoryFolderRow(
                 .weight(1f)
                 .fillMaxHeight()
                 .clickable(role = Role.Button, onClick = onToggle)
-                .padding(start = 7.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                .semantics {
+                    stateDescription = if (expanded) "已展开" else "已收起"
+                }
+                .padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -905,7 +1097,7 @@ private fun SessionDirectoryFolderRow(
                 tint = WandColors.textMuted,
                 modifier = Modifier
                     .size(15.dp)
-                    .graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+                    .graphicsLayer { rotationZ = chevronRotation },
             )
             Icon(
                 WandIcons.folder,
@@ -913,43 +1105,168 @@ private fun SessionDirectoryFolderRow(
                 tint = if (active) WandColors.brand else WandColors.textSecondary,
                 modifier = Modifier.size(18.dp),
             )
-            Text(
-                node.name,
-                modifier = Modifier.weight(1f),
-                fontSize = if (compact) 12.sp else 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    node.displayName,
+                    fontSize = if (compact) 12.sp else 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (node.customName != null) {
+                    Text(
+                        node.name,
+                        fontSize = 10.sp,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             Text(
                 node.totalCount.toString(),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(WandColors.bgElevated.copy(alpha = 0.84f))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                modifier = Modifier.padding(horizontal = 4.dp),
                 fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = WandColors.textMuted,
+                fontWeight = FontWeight.SemiBold,
+                color = if (active) WandColors.brand else WandColors.textMuted,
             )
         }
         if (!node.synthetic && node.path.isNotEmpty()) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(role = Role.Button, onClick = onNewSession)
-                    .semantics { contentDescription = "在 ${node.path} 新建会话" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    WandIcons.add,
-                    contentDescription = null,
-                    tint = WandColors.brand,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
+            WandIconButton(
+                icon = WandIcons.edit,
+                contentDescription = "重命名工作区 ${node.displayName}，目录 ${node.path}",
+                onClick = onRename,
+                variant = WandIconButtonVariant.Toolbar,
+                tint = WandColors.textSecondary,
+                iconSize = 17.dp,
+            )
+            WandIconButton(
+                icon = WandIcons.add,
+                contentDescription = "在 ${node.path} 新建会话",
+                onClick = onNewSession,
+                variant = WandIconButtonVariant.Toolbar,
+                tint = if (active) WandColors.brand else WandColors.textSecondary,
+                iconSize = 17.dp,
+            )
         }
+    }
+}
+
+@Composable
+private fun RenameDirectoryDialog(
+    node: SessionDirectoryNode,
+    saving: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val initialName = node.displayName
+    val focusRequester = remember { FocusRequester() }
+    var value by remember(node.path, node.customName) {
+        mutableStateOf(
+            TextFieldValue(
+                text = initialName,
+                selection = TextRange(0, initialName.length),
+            ),
+        )
+    }
+    val trimmedName = value.text.trim()
+    val nameLength = trimmedName.codePointCount(0, trimmedName.length)
+    val tooLong = nameLength > MAX_WORKSPACE_NAME_LENGTH
+    val hasInvalidCharacters = trimmedName.any {
+        it.isISOControl() || it == '\u2028' || it == '\u2029'
+    }
+    var visibleError by remember(error) { mutableStateOf(error) }
+    // 输入与文件夹名相同时直接恢复默认，避免保存一条无意义的别名。
+    val submittedName = if (trimmedName == node.name) "" else trimmedName
+    val submit = {
+        if (!saving && !tooLong && !hasInvalidCharacters) onConfirm(submittedName)
+    }
+
+    LaunchedEffect(node.path) {
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    WandDialog(
+        title = "重命名工作区",
+        onDismissRequest = { if (!saving) onDismiss() },
+        icon = WandIcons.edit,
+        confirm = WandDialogAction(
+            label = if (saving) "保存中…" else "保存",
+            onClick = submit,
+            enabled = !saving && !tooLong && !hasInvalidCharacters,
+        ),
+        dismiss = WandDialogAction(
+            label = "取消",
+            onClick = onDismiss,
+            enabled = !saving,
+        ),
+    ) {
+        Text(
+            text = "自定义名称只改变 Wand 中的显示，不会重命名磁盘上的文件夹。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = WandColors.textSecondary,
+        )
+        Spacer(Modifier.height(12.dp))
+        WandTextField(
+            value = value,
+            onValueChange = {
+                value = it
+                visibleError = null
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
+            label = "工作区名称",
+            placeholder = node.name,
+            enabled = !saving,
+            singleLine = true,
+            isError = tooLong || hasInvalidCharacters || !visibleError.isNullOrBlank(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { submit() }),
+            trailingIcon = if (saving) {
+                {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = WandColors.brand,
+                    )
+                }
+            } else {
+                null
+            },
+        )
+        Text(
+            text = if (hasInvalidCharacters) {
+                "名称不能包含换行或控制字符"
+            } else if (tooLong) {
+                "名称最多 $MAX_WORKSPACE_NAME_LENGTH 个字符（当前 $nameLength 个）"
+            } else {
+                "清空后保存可恢复默认名称「${node.name}」"
+            },
+            modifier = Modifier.padding(start = 4.dp, top = 7.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (tooLong || hasInvalidCharacters) WandColors.danger else WandColors.textMuted,
+        )
+        if (!visibleError.isNullOrBlank()) {
+            Text(
+                text = visibleError.orEmpty(),
+                modifier = Modifier
+                    .padding(start = 4.dp, top = 7.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.danger,
+            )
+        }
+        Text(
+            text = node.path,
+            modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+            color = WandColors.textMuted,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1275,6 +1592,7 @@ private fun SessionCard(
 }
 
 private const val AUTO_LOAD_REMAINING_ITEMS = 2
+private const val MAX_WORKSPACE_NAME_LENGTH = 80
 
 private fun sessionListTitle(session: SessionSnapshot): String {
     return session.displayTitle.ifBlank {

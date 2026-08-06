@@ -522,6 +522,7 @@ sealed interface SessionListEntry {
 data class SessionDirectoryNode(
     val path: String,
     val name: String,
+    val customName: String? = null,
     val synthetic: Boolean,
     val directCount: Int,
     val totalCount: Int,
@@ -529,6 +530,8 @@ data class SessionDirectoryNode(
     val entries: List<SessionListEntry>,
     val children: List<SessionDirectoryNode>,
 ) {
+    val displayName: String get() = customName?.takeIf { it.isNotBlank() } ?: name
+
     fun containsSession(sessionId: String?): Boolean {
         if (sessionId == null) return false
         return entries.any { it is SessionListEntry.Managed && it.session.id == sessionId } ||
@@ -544,6 +547,7 @@ data class SessionDirectoryNode(
             return SessionDirectoryNode(
                 path = path,
                 name = name,
+                customName = o.str("customName")?.takeIf { it.isNotBlank() },
                 synthetic = o.bool("synthetic") ?: false,
                 directCount = o.int("directCount") ?: entries.size,
                 totalCount = o.int("totalCount") ?: entries.size,
@@ -560,6 +564,7 @@ data class SessionDirectoryTreeResponse(
     val totalSessions: Int,
     val directoryCount: Int,
     val revision: String,
+    val treeRevision: String = revision,
 ) {
     companion object {
         fun parse(o: JSONObject): SessionDirectoryTreeResponse {
@@ -569,6 +574,7 @@ data class SessionDirectoryTreeResponse(
                 totalSessions = o.int("totalSessions") ?: roots.sumOf { it.totalCount },
                 directoryCount = o.int("directoryCount") ?: 0,
                 revision = o.str("revision").orEmpty(),
+                treeRevision = o.str("treeRevision") ?: o.str("revision").orEmpty(),
             )
         }
     }

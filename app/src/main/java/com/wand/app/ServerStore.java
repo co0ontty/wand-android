@@ -3,11 +3,17 @@ package com.wand.app;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.wand.app.data.ServerProfile;
+import com.wand.app.data.ServerProfiles;
+import com.wand.app.data.ServerProfilesState;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * Manages server URL persistence using SharedPreferences.
@@ -18,6 +24,9 @@ public class ServerStore {
     private static final String KEY_RECENT = "recent_urls";
     private static final String KEY_LAST = "last_url";
     private static final String KEY_APP_TOKEN = "app_token";
+    private static final String KEY_SERVER_PROFILES_STATE = "server_profiles_v2";
+    private static final String KEY_SERVER_PROFILES_LEGACY_FINGERPRINT =
+            "server_profiles_v2_legacy_fingerprint";
     private static final String KEY_APP_ICON = "app_icon";
     private static final String KEY_NOTIFICATION_SOUND_ENABLED = "notification_sound_enabled";
     private static final String KEY_NOTIFICATION_SOUND = "notification_sound";
@@ -27,11 +36,186 @@ public class ServerStore {
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
     private static final int MAX_RECENT = 5;
+    private static final Object PROFILE_LOCK = new Object();
 
     private final SharedPreferences prefs;
 
     public ServerStore(Context context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    /** Returns all saved endpoints in most-recently-selected order. */
+    public List<ServerProfile> getServerProfiles() {
+        synchronized (PROFILE_LOCK) {
+            return new ArrayList<>(readProfileStateLocked().getProfiles());
+        }
+    }
+
+    public ServerProfile getServerProfile(String id) {
+        if (id == null) return null;
+        synchronized (PROFILE_LOCK) {
+            for (ServerProfile profile : readProfileStateLocked().getProfiles()) {
+                if (id.equals(profile.getId())) return profile;
+            }
+            return null;
+        }
+    }
+
+    public ServerProfile getServerProfileByUrl(String url) {
+        if (url == null) return null;
+        synchronized (PROFILE_LOCK) {
+            return ServerProfiles.profileByUrl(readProfileStateLocked(), url);
+        }
+    }
+
+    public ServerProfile getActiveServerProfile() {
+        synchronized (PROFILE_LOCK) {
+            ServerProfilesState state = readProfileStateLocked();
+            String activeId = state.getActiveServerId();
+            if (activeId == null) return null;
+            for (ServerProfile profile : state.getProfiles()) {
+                if (activeId.equals(profile.getId())) return profile;
+            }
+            return null;
+        }
+    }
+
+    /** Saves or replaces the endpoint credential. A null token explicitly clears an old token. */
+    public ServerProfile saveServerProfile(String baseUrl, String token) {
+        synchronized (PROFILE_LOCK) {
+            ServerProfilesState next = ServerProfiles.withSavedProfile(
+                    readProfileStateLocked(), baseUrl, token);
+            writeProfileStateLocked(next);
+            return next.getProfiles().get(0);
+        }
+    }
+
+    /** Selects a saved endpoint. Null disconnects without deleting any saved profiles. */
+    public void setActiveServerId(String id) {
+        synchronized (PROFILE_LOCK) {
+            ServerProfilesState current = readProfileStateLocked();
+            ServerProfilesState next = ServerProfiles.withActiveServerId(current, id);
+            if (!next.equals(current)) writeProfileStateLocked(next);
+        }
+    }
+
+    /** Removing the active endpoint deterministically activates the first remaining profile. */
+    public void removeServerProfile(String id) {
+        if (id == null) return;
+        synchronized (PROFILE_LOCK) {
+            ServerProfilesState current = readProfileStateLocked();
+            ServerProfilesState next = ServerProfiles.withoutProfile(current, id);
+            if (!next.equals(current)) writeProfileStateLocked(next);
+        }
+    }
+
+    public void clearServerProfiles() {
+        synchronized (PROFILE_LOCK) {
+            writeProfileStateLocked(new ServerProfilesState());
+        }
+    }
+
+    private ServerProfilesState readProfileStateLocked() {
+        if (prefs.contains(KEY_SERVER_PROFILES_STATE)) {
+            ServerProfilesState decoded = ServerProfiles.decodeOrNull(
+                    prefs.getString(KEY_SERVER_PROFILES_STATE, null));
+            String storedFingerprint = prefs.getString(
+                    KEY_SERVER_PROFILES_LEGACY_FINGERPRINT, null);
+            String currentFingerprint = currentLegacyFingerprint();
+            if (decoded != null && storedFingerprint == null) {
+                // A previous v2 build had no marker. Trust it only when its projected legacy view
+                // still equals the actual legacy keys; a mismatch means an older APK changed them.
+                if (legacyFingerprintForState(decoded).equals(currentFingerprint)) {
+                    writeProfileStateLocked(decoded);
+                    return decoded;
+                }
+            }
+            if (decoded != null && storedFingerprint != null
+                    && storedFingerprint.equals(currentFingerprint)) {
+                return decoded;
+            }
+            // Corrupt v2, or legacy keys changed while an older APK was installed. Import the
+            // downgrade-era state instead of resurrecting stale profiles/credentials.
+        }
+        ServerProfilesState migrated = ServerProfiles.migrateLegacy(
+                getLastUrl(), getRecentUrls(), getAppToken());
+        writeProfileStateLocked(migrated);
+        return migrated;
+    }
+
+    private void writeProfileStateLocked(ServerProfilesState state) {
+        JSONArray recent = new JSONArray();
+        ServerProfile active = null;
+        for (ServerProfile profile : state.getProfiles()) {
+            // Keep the legacy view downgrade-compatible without ever writing a raw connect code.
+            recent.put(profile.getBaseUrl());
+            if (profile.getId().equals(state.getActiveServerId())) active = profile;
+        }
+
+        String legacyLast = active == null ? "" : active.getBaseUrl();
+        String legacyToken = active == null || active.getToken() == null
+                ? "" : active.getToken();
+        SharedPreferences.Editor editor = prefs.edit()
+                .putString(KEY_SERVER_PROFILES_STATE, ServerProfiles.encode(state))
+                .putString(KEY_RECENT, recent.toString())
+                .putString(
+                        KEY_SERVER_PROFILES_LEGACY_FINGERPRINT,
+                        legacyFingerprint(legacyLast, recent.toString(), legacyToken));
+        if (active == null) {
+            editor.putString(KEY_LAST, "").remove(KEY_APP_TOKEN);
+        } else {
+            editor.putString(KEY_LAST, active.getBaseUrl());
+            if (active.getToken() == null || active.getToken().isEmpty()) {
+                editor.remove(KEY_APP_TOKEN);
+            } else {
+                editor.putString(KEY_APP_TOKEN, active.getToken());
+            }
+        }
+        editor.apply();
+    }
+
+    private String currentLegacyFingerprint() {
+        return legacyFingerprint(
+                prefs.getString(KEY_LAST, ""),
+                prefs.getString(KEY_RECENT, "[]"),
+                prefs.getString(KEY_APP_TOKEN, ""));
+    }
+
+    private static String legacyFingerprintForState(ServerProfilesState state) {
+        JSONArray recent = new JSONArray();
+        ServerProfile active = null;
+        for (ServerProfile profile : state.getProfiles()) {
+            recent.put(profile.getBaseUrl());
+            if (profile.getId().equals(state.getActiveServerId())) active = profile;
+        }
+        String last = active == null ? "" : active.getBaseUrl();
+        String token = active == null || active.getToken() == null ? "" : active.getToken();
+        return legacyFingerprint(last, recent.toString(), token);
+    }
+
+    private static String legacyFingerprint(String last, String recent, String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            updateDigestField(digest, last);
+            updateDigestField(digest, recent);
+            updateDigestField(digest, token);
+            StringBuilder result = new StringBuilder(64);
+            for (byte value : digest.digest()) {
+                result.append(String.format("%02x", value & 0xff));
+            }
+            return result.toString();
+        } catch (Exception impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    private static void updateDigestField(MessageDigest digest, String value) {
+        byte[] bytes = (value == null ? "" : value).getBytes(StandardCharsets.UTF_8);
+        digest.update((byte) (bytes.length >>> 24));
+        digest.update((byte) (bytes.length >>> 16));
+        digest.update((byte) (bytes.length >>> 8));
+        digest.update((byte) bytes.length);
+        digest.update(bytes);
     }
 
     public String getLastUrl() {

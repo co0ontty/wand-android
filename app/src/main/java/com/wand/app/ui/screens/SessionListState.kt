@@ -6,10 +6,11 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.HistorySession
+import com.wand.app.data.SessionDirectoryNode
+import com.wand.app.data.SessionDirectoryTreeResponse
 import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionListPage
 import com.wand.app.data.SessionListPort
-import com.wand.app.data.SessionDirectoryTreeResponse
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApiException
 import com.wand.app.ui.ScopedStore
@@ -39,6 +40,8 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
         private set
     var directoryError by mutableStateOf<String?>(null)
         private set
+    var directoryRenamePath by mutableStateOf<String?>(null)
+        private set
     val scrollState = LazyListState()
     var scrollToLatestRequest by mutableLongStateOf(0L)
         private set
@@ -47,6 +50,7 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
     private var revision: String? = null
 
     private val operationMutex = Mutex()
+    private val directoryOperationMutex = Mutex()
     private var syncing = false
 
     val sessions: List<SessionSnapshot>
@@ -64,6 +68,9 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
             while (true) {
                 delay(10_000)
                 load(silent = true)
+                // Workspace names are shared server state and can be changed from Web or
+                // another native client without altering the session-list revision.
+                if (directoryTree != null) loadDirectories(silent = true)
             }
         }
     }
@@ -118,7 +125,14 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
         }
     }
 
-    suspend fun loadDirectories(silent: Boolean = false): Boolean {
+    suspend fun loadDirectories(silent: Boolean = false): Boolean = directoryOperationMutex.withLock {
+        loadDirectoriesUnlocked(silent)
+    }
+
+    private suspend fun loadDirectoriesUnlocked(
+        silent: Boolean,
+        reportCachedError: Boolean = !silent,
+    ): Boolean {
         if (!silent) directoryLoading = true
         return try {
             val next = port.fetchSessionDirectories()
@@ -127,11 +141,62 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
             true
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            if (!silent || directoryTree == null) directoryError = e.message ?: "目录加载失败"
+            if (reportCachedError || directoryTree == null) directoryError = e.message ?: "目录加载失败"
             false
         } finally {
             directoryLoading = false
         }
+    }
+
+    fun clearDirectoryError(message: String) {
+        if (directoryError == message) directoryError = null
+    }
+
+    suspend fun renameDirectory(path: String, name: String): Boolean {
+        val normalizedPath = path.trim()
+        val normalizedName = name.trim()
+        if (normalizedPath.isEmpty()) return false
+        val nameLength = normalizedName.codePointCount(0, normalizedName.length)
+        if (nameLength > MAX_DIRECTORY_NAME_LENGTH) {
+            directoryError = "工作区名称最多 $MAX_DIRECTORY_NAME_LENGTH 个字符"
+            return false
+        }
+        if (normalizedName.any { it.isISOControl() || it == '\u2028' || it == '\u2029' }) {
+            directoryError = "工作区名称不能包含换行或控制字符"
+            return false
+        }
+        if (directoryRenamePath != null) return false
+
+        directoryRenamePath = normalizedPath
+        return try {
+            directoryOperationMutex.withLock {
+                port.renameSessionDirectory(normalizedPath, normalizedName)
+                val customName = normalizedName.takeIf { it.isNotEmpty() }
+                directoryTree = directoryTree?.withDirectoryName(normalizedPath, customName)
+                directoryError = null
+                // 服务端 revision 会纳入自定义名称，保存后立即取回最新树。
+                loadDirectoriesUnlocked(silent = true, reportCachedError = true)
+            }
+            true
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            directoryError = e.message ?: "工作区重命名失败"
+            false
+        } finally {
+            directoryRenamePath = null
+        }
+    }
+
+    private fun SessionDirectoryTreeResponse.withDirectoryName(
+        path: String,
+        customName: String?,
+    ): SessionDirectoryTreeResponse {
+        fun rename(node: SessionDirectoryNode): SessionDirectoryNode {
+            if (node.path == path) return node.copy(customName = customName)
+            val updatedChildren = node.children.map(::rename)
+            return if (updatedChildren == node.children) node else node.copy(children = updatedChildren)
+        }
+        return copy(roots = roots.map(::rename))
     }
 
     private fun publishRefreshedPage(page: SessionListPage, refreshLimit: Int) {
@@ -253,6 +318,7 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
     private companion object {
         const val PAGE_SIZE = 20
         const val MAX_REFRESH_LIMIT = 200
+        const val MAX_DIRECTORY_NAME_LENGTH = 80
         val HistorySession.key: String get() = "$apiProvider:$id"
     }
 }

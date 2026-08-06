@@ -18,6 +18,7 @@ import android.os.Message;
 import android.provider.Settings;
 import android.provider.MediaStore;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
@@ -50,6 +51,10 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewFeature;
 
+import com.wand.app.data.ServerProfile;
+import com.wand.app.data.WandHttp;
+import com.wand.app.data.WandWebSession;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -59,6 +64,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -69,9 +75,12 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     private static final int WEB_MEDIA_PERMISSION_REQUEST = 1004;
 
     private WebView webView;
+    private ViewGroup webViewParent;
+    private final List<WebView> popupWebViews = new ArrayList<>();
     private LinearLayout errorOverlay;
     private LinearLayout loadingOverlay;
     private TextView errorMessage;
+    private String serverId;
     private String serverUrl;
     private String appToken;
     private String sessionId;
@@ -83,6 +92,9 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     private boolean keepAliveRunning = false;
     private long lastBackPressedTime = 0;
     private ExecutorService backgroundExecutor;
+    private int webSessionGeneration = 0;
+    private final String webSessionOwnerId = "main-" + UUID.randomUUID();
+    private boolean activityResumed = false;
 
     private ServerStore serverStore;
     private NotificationHelper notificationHelper;
@@ -105,28 +117,50 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         applySystemBarAppearance();
 
-        serverUrl = getIntent().getStringExtra("server_url");
-        appToken = getIntent().getStringExtra("app_token");
+        serverStore = new ServerStore(this);
+        serverId = getIntent().getStringExtra(WandShortcuts.EXTRA_SERVER_ID);
+        if (serverId != null) {
+            ServerProfile profile = serverStore.getServerProfile(serverId);
+            if (profile == null) {
+                openMissingServerScreen(serverId);
+                return;
+            }
+            serverUrl = profile.getBaseUrl();
+            appToken = profile.getToken();
+        } else {
+            // Legacy PendingIntents may contain URL/token. Resolve the migrated saved profile by
+            // URL and ignore the embedded token, so a notification cannot resurrect credentials
+            // after that profile has been removed.
+            String legacyUrl = getIntent().getStringExtra("server_url");
+            ServerProfile profile = legacyUrl == null
+                    ? null : serverStore.getServerProfileByUrl(legacyUrl);
+            if (profile == null) {
+                openConnectScreen();
+                return;
+            }
+            serverId = profile.getId();
+            serverUrl = profile.getBaseUrl();
+            appToken = profile.getToken();
+        }
         sessionId = getIntent().getStringExtra("session_id");
         if (serverUrl == null || serverUrl.isEmpty()) {
             finish();
             return;
         }
 
-        serverStore = new ServerStore(this);
         notificationHelper = new NotificationHelper(this);
         backgroundExecutor = Executors.newFixedThreadPool(2);
         updateManager = new UpdateManager(this, serverStore, backgroundExecutor, serverUrl);
         networkMonitor = new NetworkMonitor(this, this);
 
         webView = findViewById(R.id.webView);
+        webViewParent = (ViewGroup) webView.getParent();
         errorOverlay = findViewById(R.id.errorOverlay);
         loadingOverlay = findViewById(R.id.loadingOverlay);
         errorMessage = findViewById(R.id.errorMessage);
 
         findViewById(R.id.retryButton).setOnClickListener(v -> {
-            hideError();
-            webView.loadUrl(buildTargetUrl());
+            prepareWebViewSessionAndLoad();
         });
         findViewById(R.id.backToConnectButton).setOnClickListener(v -> openConnectScreen());
 
@@ -135,7 +169,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         notificationHelper.createChannels();
         setupWebView();
         networkMonitor.register();
-        webView.loadUrl(buildTargetUrl());
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -166,11 +199,10 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     @Override
     public void onNetworkStateChanged(String state) {
         runOnUiThread(() -> {
-            if (webView == null) return;
+            if (!activityResumed || webView == null) return;
             if (("available".equals(state) || "validated".equals(state) || "changed".equals(state))
                     && errorOverlay != null && errorOverlay.getVisibility() == View.VISIBLE) {
-                hideError();
-                webView.reload();
+                prepareWebViewSessionAndLoad();
                 return;
             }
             String safe = state == null ? "" : state.replace("'", "");
@@ -182,9 +214,19 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     // ── Navigation ──
 
     private void openConnectScreen() {
+        SessionWatcher.INSTANCE.stop();
+        stopService(new Intent(this, WandForegroundService.class));
         Intent connectIntent = new Intent(this, ConnectActivity.class);
         connectIntent.putExtra("skip_auto_connect", true);
-        connectIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+        connectIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(connectIntent);
+        finish();
+    }
+
+    private void openMissingServerScreen(String missingServerId) {
+        Intent connectIntent = new Intent(this, ConnectActivity.class);
+        connectIntent.putExtra("skip_auto_connect", true);
+        connectIntent.putExtra(WandShortcuts.EXTRA_SERVER_ID, missingServerId);
         startActivity(connectIntent);
         finish();
     }
@@ -193,8 +235,9 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
      *  点通知直接拉起本页时任务栈里可能没有 HomeActivity。 */
     private void navigateBackToNative() {
         Intent home = new Intent(this, HomeActivity.class);
-        home.putExtra("server_url", serverUrl);
-        if (appToken != null) home.putExtra("app_token", appToken);
+        if (serverId != null) {
+            home.putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId);
+        }
         home.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(home);
         finish();
@@ -209,6 +252,136 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                 .appendQueryParameter("session", sessionId)
                 .build()
                 .toString();
+    }
+
+    /**
+     * WebView's CookieManager is process-global and cookie identity does not include a port.
+     * Clear the app-private WebView cookie store, authenticate only the selected endpoint, and
+     * only then issue the first page request. Native endpoint CookieJars remain independent.
+     */
+    private void prepareWebViewSession(Runnable onReady) {
+        final int generation = ++webSessionGeneration;
+        WandWebSession.prepareAsync(
+                webSessionOwnerId,
+                serverUrl,
+                appToken,
+                this::revokeWebSession,
+                error -> {
+            if (generation != webSessionGeneration || isDestroyed() || !activityResumed) return;
+            if (error != null) {
+                showError(error);
+                return;
+            }
+            onReady.run();
+        });
+    }
+
+    /** Called synchronously before another endpoint may replace process-global WebView cookies. */
+    private void revokeWebSession() {
+        webSessionGeneration++;
+        cancelPendingWebInteractions();
+        destroyOwnedPopupWebViews();
+        destroyOwnedWebView();
+    }
+
+    private void ensureWebView() {
+        if (webView != null || webViewParent == null) return;
+        WebView replacement = new WebView(this);
+        replacement.setId(R.id.webView);
+        replacement.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        webViewParent.addView(replacement, 0);
+        webView = replacement;
+        hasLoadedPage = false;
+        lastLoadFailed = false;
+        if (loadingOverlay != null) {
+            loadingOverlay.animate().cancel();
+            loadingOverlay.setAlpha(1f);
+            loadingOverlay.setVisibility(View.VISIBLE);
+        }
+        setupWebView();
+    }
+
+    private void destroyOwnedWebView() {
+        WebView current = webView;
+        if (current == null) return;
+        webView = null;
+        hasLoadedPage = false;
+        lastLoadFailed = false;
+        try { current.getSettings().setBlockNetworkLoads(true); } catch (Exception ignored) {}
+        try { current.getSettings().setJavaScriptEnabled(false); } catch (Exception ignored) {}
+        try { current.stopLoading(); } catch (Exception ignored) {}
+        try { current.onPause(); } catch (Exception ignored) {}
+        try {
+            if (current.getParent() instanceof ViewGroup) {
+                ((ViewGroup) current.getParent()).removeView(current);
+            }
+        } catch (Exception ignored) {}
+        try { current.removeAllViews(); } catch (Exception ignored) {}
+        try { current.destroy(); } catch (Exception ignored) {}
+    }
+
+    private void destroyOwnedPopupWebViews() {
+        for (WebView popup : new ArrayList<>(popupWebViews)) {
+            destroyPopupWebView(popup);
+        }
+    }
+
+    private void destroyPopupWebView(WebView popup) {
+        if (!popupWebViews.remove(popup)) return;
+        try { popup.getSettings().setBlockNetworkLoads(true); } catch (Exception ignored) {}
+        try { popup.getSettings().setJavaScriptEnabled(false); } catch (Exception ignored) {}
+        try { popup.stopLoading(); } catch (Exception ignored) {}
+        try { popup.onPause(); } catch (Exception ignored) {}
+        try {
+            if (popup.getParent() instanceof ViewGroup) {
+                ((ViewGroup) popup.getParent()).removeView(popup);
+            }
+        } catch (Exception ignored) {}
+        try { popup.removeAllViews(); } catch (Exception ignored) {}
+        try { popup.destroy(); } catch (Exception ignored) {}
+    }
+
+    private void cancelPendingWebInteractions() {
+        if (pendingFileChooserCallback != null) {
+            pendingFileChooserCallback.onReceiveValue(null);
+            pendingFileChooserCallback = null;
+        }
+        if (pendingWebPermissionRequest != null) {
+            pendingWebPermissionRequest.deny();
+            pendingWebPermissionRequest = null;
+            pendingWebPermissionResources = null;
+        }
+    }
+
+    private void prepareWebViewSessionAndLoad() {
+        prepareWebViewSession(() -> {
+            if (webView == null) return;
+            webView.onResume();
+            hideError();
+            webView.loadUrl(buildTargetUrl());
+        });
+    }
+
+    private void prepareWebViewSessionForResume() {
+        final boolean shouldReload = !hasLoadedPage || lastLoadFailed
+                || (errorOverlay != null && errorOverlay.getVisibility() == View.VISIBLE);
+        prepareWebViewSession(() -> {
+            if (webView == null) return;
+            webView.onResume();
+            if (shouldReload) {
+                hideError();
+                webView.loadUrl(buildTargetUrl());
+                return;
+            }
+            webView.post(() -> {
+                try {
+                    webView.evaluateJavascript(
+                            "window.dispatchEvent(new Event('wand-android-resume'));", null);
+                } catch (Exception ignored) {}
+            });
+        });
     }
 
     // ── WebView setup ──
@@ -309,22 +482,14 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
             @Override
             public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 try {
-                    android.view.ViewGroup parent = (android.view.ViewGroup) view.getParent();
-                    if (parent != null) parent.removeView(view);
-                    view.destroy();
-                    webView = new WebView(MainActivity.this);
-                    webView.setLayoutParams(new android.view.ViewGroup.LayoutParams(
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT));
-                    if (parent != null) parent.addView(webView, 0);
-                    if (loadingOverlay != null) {
-                        loadingOverlay.setAlpha(1f);
-                        loadingOverlay.setVisibility(View.VISIBLE);
-                    }
+                    webSessionGeneration++;
+                    cancelPendingWebInteractions();
+                    destroyOwnedPopupWebViews();
+                    destroyOwnedWebView();
+                    ensureWebView();
                     Toast.makeText(MainActivity.this, R.string.renderer_crashed,
                             Toast.LENGTH_SHORT).show();
-                    setupWebView();
-                    webView.loadUrl(buildTargetUrl());
+                    if (activityResumed) prepareWebViewSessionAndLoad();
                 } catch (Exception e) {
                     recreate();
                 }
@@ -374,18 +539,27 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                                           Message resultMsg) {
                 if (!isUserGesture) return false;
                 WebView popup = new WebView(MainActivity.this);
+                final int popupGeneration = webSessionGeneration;
                 boolean[] handled = {false};
+                popupWebViews.add(popup);
                 popup.setWebViewClient(new WebViewClient() {
                     private void handle(Uri uri) {
                         if (handled[0] || uri == null) return;
                         if ("about".equalsIgnoreCase(uri.getScheme())) return;
                         handled[0] = true;
+                        WebView current = webView;
+                        if (popupGeneration != webSessionGeneration
+                                || !popupWebViews.contains(popup)
+                                || current == null) {
+                            destroyPopupWebView(popup);
+                            return;
+                        }
                         if (isSameServerOrigin(uri)) {
-                            webView.loadUrl(uri.toString());
+                            current.loadUrl(uri.toString());
                         } else {
                             openExternalUri(uri);
                         }
-                        popup.destroy();
+                        destroyPopupWebView(popup);
                     }
 
                     @Override
@@ -408,8 +582,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                 popup.postDelayed(() -> {
                     if (handled[0]) return;
                     handled[0] = true;
-                    popup.stopLoading();
-                    popup.destroy();
+                    destroyPopupWebView(popup);
                 }, 10_000);
                 return true;
             }
@@ -545,7 +718,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
             Toast.makeText(this, "下载服务暂不可用", Toast.LENGTH_LONG).show();
             return;
         }
-        String cookie = CookieManager.getInstance().getCookie(uri.toString());
+        String cookie = WandHttp.cookieHeaderFor(serverUrl);
         Toast.makeText(this, "已开始下载：" + fileName, Toast.LENGTH_SHORT).show();
         backgroundExecutor.execute(() -> {
             Uri outputUri = null;
@@ -675,11 +848,34 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
     PendingIntent buildSelfPendingIntent(int requestCode) {
         Intent intent = new Intent(this, MainActivity.class);
-        intent.putExtra("server_url", serverUrl);
-        if (appToken != null) intent.putExtra("app_token", appToken);
+        if (serverId != null) {
+            intent.putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId);
+        }
+        intent.setData(new Uri.Builder()
+                .scheme("wand")
+                .authority("web-server")
+                .appendPath(serverId == null ? serverUrl : serverId)
+                .appendPath(String.valueOf(requestCode))
+                .build());
         intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         return PendingIntent.getActivity(this, requestCode, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    private String notificationScope() {
+        return serverId != null ? serverId : "legacy-" + Integer.toHexString(serverUrl.hashCode());
+    }
+
+    private String scopedNotificationTag(String tag) {
+        if (tag == null || tag.isEmpty()) return tag;
+        int separator = tag.indexOf(':');
+        if (separator < 0) return tag + ":" + notificationScope();
+        return tag.substring(0, separator + 1)
+                + notificationScope() + ":" + tag.substring(separator + 1);
+    }
+
+    private String scopedProgressId(String sessionId) {
+        return notificationScope() + ":" + sessionId;
     }
 
     // ── JS bridge ──
@@ -759,8 +955,9 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         @JavascriptInterface
         public void sendNotification(String title, String body, String tag) {
-            int requestCode = (tag != null ? tag.hashCode() : 0) & 0x7FFFFFFF;
-            notificationHelper.sendNotification(title, body, tag,
+            String scopedTag = scopedNotificationTag(tag);
+            int requestCode = (scopedTag != null ? scopedTag.hashCode() : 0) & 0x7FFFFFFF;
+            notificationHelper.sendNotification(title, body, scopedTag,
                     buildSelfPendingIntent(requestCode), serverStore);
         }
 
@@ -828,14 +1025,15 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         @JavascriptInterface
         public void updateSessionProgress(String sessionId, String jsonData) {
-            int requestCode = ("progress:" + sessionId).hashCode() & 0x7FFFFFFF;
-            notificationHelper.updateSessionProgress(sessionId, jsonData,
+            String scopedSessionId = scopedProgressId(sessionId);
+            int requestCode = ("progress:" + scopedSessionId).hashCode() & 0x7FFFFFFF;
+            notificationHelper.updateSessionProgress(scopedSessionId, jsonData,
                     buildSelfPendingIntent(requestCode));
         }
 
         @JavascriptInterface
         public void clearSessionProgress(String sessionId) {
-            notificationHelper.clearSessionProgress(sessionId);
+            notificationHelper.clearSessionProgress(scopedProgressId(sessionId));
         }
 
         @JavascriptInterface
@@ -871,8 +1069,9 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
             runOnUiThread(() -> {
                 try {
                     Intent serviceIntent = new Intent(MainActivity.this, WandForegroundService.class);
-                    serviceIntent.putExtra("server_url", serverUrl);
-                    serviceIntent.putExtra("app_token", appToken);
+                    if (serverId != null) {
+                        serviceIntent.putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId);
+                    }
                     startForegroundService(serviceIntent);
                 } catch (Exception ignored) {}
             });
@@ -997,40 +1196,49 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     // ── Lifecycle ──
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String targetServerId = intent.getStringExtra(WandShortcuts.EXTRA_SERVER_ID);
+        String targetServerUrl = intent.getStringExtra("server_url");
+        boolean differentEndpoint = targetServerId != null
+                ? !targetServerId.equals(serverId)
+                : targetServerUrl != null && !targetServerUrl.equals(serverUrl);
+        if (!differentEndpoint) return;
+
+        // SINGLE_TOP/CLEAR_TOP notifications must not reuse a WebView authenticated to another
+        // endpoint. A fresh Activity gets a fresh routing state and runs cookie preparation first.
+        Intent replacement = new Intent(intent).setClass(this, MainActivity.class);
+        replacement.setFlags(0);
+        SessionWatcher.INSTANCE.stop();
+        stopService(new Intent(this, WandForegroundService.class));
+        startActivity(replacement);
+        finish();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        activityResumed = true;
+        ensureWebView();
         if (webView == null) return;
-        webView.onResume();
-        if (errorOverlay != null && errorOverlay.getVisibility() == View.VISIBLE) {
-            hideError();
-            webView.reload();
-            return;
-        }
-        webView.post(() -> {
-            try {
-                webView.evaluateJavascript(
-                    "window.dispatchEvent(new Event('wand-android-resume'));", null);
-            } catch (Exception ignored) {}
-        });
+        prepareWebViewSessionForResume();
     }
 
     @Override
     protected void onPause() {
-        super.onPause();
+        activityResumed = false;
         if (webView != null) webView.onPause();
+        super.onPause();
     }
 
     @Override
     protected void onDestroy() {
-        if (pendingFileChooserCallback != null) {
-            pendingFileChooserCallback.onReceiveValue(null);
-            pendingFileChooserCallback = null;
-        }
-        if (pendingWebPermissionRequest != null) {
-            pendingWebPermissionRequest.deny();
-            pendingWebPermissionRequest = null;
-            pendingWebPermissionResources = null;
-        }
+        activityResumed = false;
+        webSessionGeneration++;
+        cancelPendingWebInteractions();
+        destroyOwnedPopupWebViews();
+        destroyOwnedWebView();
+        WandWebSession.release(webSessionOwnerId);
         if (keepAliveRunning) {
             try { stopService(new Intent(this, WandForegroundService.class)); } catch (Exception ignored) {}
             keepAliveRunning = false;
@@ -1041,7 +1249,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
             backgroundExecutor = null;
         }
         if (notificationHelper != null) notificationHelper.cancelAllProgress();
-        if (webView != null) webView.destroy();
         super.onDestroy();
     }
 

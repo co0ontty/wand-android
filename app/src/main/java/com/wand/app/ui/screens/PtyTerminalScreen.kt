@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -78,9 +79,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
+import com.wand.app.data.WandWebSession
 import com.wand.app.data.providerDisplayName
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.QuickCommitStore
@@ -103,26 +108,29 @@ import com.wand.app.ui.terminal.TerminalModifier
 import com.wand.app.ui.terminal.TerminalShortcut
 import com.wand.app.ui.terminal.buildTerminalShortcut
 import com.wand.app.ui.terminal.rememberTerminalShortcutPreferences
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
  * 下方嵌一层加载 `embed=terminal&nativeInput=1` 的 WebView，只展示终端黑窗 + 悬浮球。
  * 对称 iOS PtySessionView——把网页终端套进原生 chrome，而不是整页跳出去。
  *
- * 鉴权沿用全局 CookieManager（ConnectActivity 登录后已写入并持久化的会话 cookie），
- * 与 MainActivity（网页版兜底）共用同一进程的 cookie，无需重新注入。
+ * 内嵌 WebView 加载前显式执行 clear → 当前 endpoint login → load，避免进程全局
+ * CookieManager 在同 host 不同端口之间串用 session。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PtyTerminalScreen(
     api: WandApi,
     sessionId: String,
+    serverDisplayName: String,
     isHapticEnabled: () -> Boolean,
     onOpenSettings: () -> Unit,
     onBack: () -> Unit,
@@ -216,6 +224,7 @@ fun PtyTerminalScreen(
             PtyTopBar(
                 backdrop = glassBackdrop,
                 snapshot = snapshot,
+                serverDisplayName = serverDisplayName,
                 quickCommit = quickCommit,
                 onBack = onBack,
                 onOpenQuickCommit = { quickCommit.openPanel() },
@@ -299,6 +308,7 @@ fun PtyTerminalScreen(
             ) {
                 PtyTerminalWebView(
                     serverUrl = api.baseUrl,
+                    token = api.token,
                     sessionId = sessionId,
                     onHardwareShortcut = { shortcutQueue.trySend(it) },
                 )
@@ -342,6 +352,7 @@ fun PtyTerminalScreen(
 private fun PtyTopBar(
     backdrop: GlassBackdrop,
     snapshot: SessionSnapshot?,
+    serverDisplayName: String,
     quickCommit: QuickCommitStore,
     onBack: () -> Unit,
     onOpenQuickCommit: () -> Unit,
@@ -381,7 +392,9 @@ private fun PtyTopBar(
                     overflow = TextOverflow.Ellipsis,
                 )
                 TailMarqueePathText(
-                    path = snapshot?.cwd.orEmpty(),
+                    path = snapshot?.cwd?.takeIf { it.isNotBlank() }?.let {
+                        "$serverDisplayName · $it"
+                    } ?: serverDisplayName,
                     fontSize = 10.sp,
                     color = WandColors.textMuted,
                     modifier = Modifier.fillMaxWidth(),
@@ -648,14 +661,101 @@ private fun PtyNativeInputBar(
 @Composable
 private fun PtyTerminalWebView(
     serverUrl: String,
+    token: String?,
     sessionId: String,
     onHardwareShortcut: (TerminalShortcut) -> Unit,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val webSessionOwnerId = remember { "pty-${UUID.randomUUID()}" }
+    val activeWebView = remember { AtomicReference<WebView?>(null) }
     val latestHardwareShortcut by rememberUpdatedState(onHardwareShortcut)
-    val webView = remember {
+    var lifecycleResumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    var preparationAttempt by remember(serverUrl, token) { mutableStateOf(0) }
+    var prepared by remember(serverUrl, token, preparationAttempt) { mutableStateOf(false) }
+    var preparationError by remember(serverUrl, token, preparationAttempt) {
+        mutableStateOf<String?>(null)
+    }
+    DisposableEffect(lifecycleOwner, serverUrl, token) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    lifecycleResumed = true
+                    preparationAttempt += 1
+                }
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP,
+                -> {
+                    lifecycleResumed = false
+                    prepared = false
+                    activeWebView.getAndSet(null)?.let(::disposePtyWebView)
+                    WandWebSession.release(webSessionOwnerId)
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            activeWebView.getAndSet(null)?.let(::disposePtyWebView)
+            WandWebSession.release(webSessionOwnerId)
+        }
+    }
+    LaunchedEffect(serverUrl, token, preparationAttempt, lifecycleResumed) {
+        if (!lifecycleResumed) {
+            prepared = false
+            return@LaunchedEffect
+        }
+        preparationError = null
+        try {
+            WandWebSession.prepare(
+                webSessionOwnerId,
+                serverUrl,
+                token,
+                WandWebSession.OwnerRevocation {
+                    activeWebView.getAndSet(null)?.let(::disposePtyWebView)
+                    prepared = false
+                },
+            )
+            if (lifecycleResumed) prepared = true
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            if (lifecycleResumed) preparationError = error.message ?: "网页版认证失败"
+        }
+    }
+    if (!prepared) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (preparationError == null) {
+                CircularProgressIndicator(color = WandColors.brand, strokeWidth = 2.dp)
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        preparationError ?: "网页版认证失败",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        "重试",
+                        color = WandColors.brand,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .padding(top = 12.dp)
+                            .clickable { preparationAttempt += 1 }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    val webView = remember(serverUrl, sessionId) {
         @SuppressLint("SetJavaScriptEnabled")
         val view = WebView(context)
+        activeWebView.getAndSet(view)?.let(::disposePtyWebView)
         view.layoutParams = android.view.ViewGroup.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
@@ -722,14 +822,23 @@ private fun PtyTerminalWebView(
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(webView) {
         onDispose {
-            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
-            webView.destroy()
+            if (activeWebView.compareAndSet(webView, null)) disposePtyWebView(webView)
         }
     }
 
     AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())
+}
+
+private fun disposePtyWebView(webView: WebView) {
+    runCatching { webView.settings.blockNetworkLoads = true }
+    runCatching { webView.settings.javaScriptEnabled = false }
+    runCatching { webView.stopLoading() }
+    runCatching { webView.onPause() }
+    runCatching { (webView.parent as? android.view.ViewGroup)?.removeView(webView) }
+    runCatching { webView.removeAllViews() }
+    runCatching { webView.destroy() }
 }
 
 private fun buildEmbedTerminalUrl(serverUrl: String, sessionId: String): String =
