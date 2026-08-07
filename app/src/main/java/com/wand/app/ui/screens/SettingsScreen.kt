@@ -230,8 +230,6 @@ fun SettingsScreen(
                     SttModelSection()
                 }
 
-                TerminalShortcutSettingsSection()
-
                 SettingsSection(
                     title = "服务器",
                     description = "查看当前服务器，或管理此设备保存的 Wand 服务。",
@@ -514,7 +512,7 @@ private fun rememberSettingsMotionEnabled(): Boolean {
 }
 
 @Composable
-internal fun SettingsSection(
+private fun SettingsSection(
     title: String,
     description: String? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -1052,7 +1050,7 @@ private fun SettingsCard(
 
 /** 卡片内行间分割线：0.5dp border 色，左右与行内边距对齐。 */
 @Composable
-internal fun RowDivider() {
+private fun RowDivider() {
     HorizontalDivider(
         thickness = 0.5.dp,
         color = WandColors.borderStrong.copy(alpha = 0.22f),

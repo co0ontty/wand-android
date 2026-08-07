@@ -2,7 +2,6 @@ package com.wand.app.ui.terminal
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TerminalShortcutsTest {
@@ -52,12 +51,5 @@ class TerminalShortcutsTest {
         assertNull(encodeTerminalKey(TerminalKeyBinding("")))
         assertNull(encodeTerminalKey(TerminalKeyBinding("hello")))
         assertNull(normalizeTerminalKeyInput("\n\t"))
-    }
-
-    @Test
-    fun builtInsHaveUniqueIdsAndNonEmptyBytes() {
-        assertEquals(BuiltInTerminalShortcuts.size, BuiltInTerminalShortcuts.map { it.id }.toSet().size)
-        assertTrue(BuiltInTerminalShortcuts.all { it.bytes.isNotEmpty() })
-        assertTrue(DefaultVisibleTerminalShortcutIds.all { id -> BuiltInTerminalShortcuts.any { it.id == id } })
     }
 }

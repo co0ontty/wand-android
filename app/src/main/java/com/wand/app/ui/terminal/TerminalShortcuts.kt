@@ -1,16 +1,6 @@
 package com.wand.app.ui.terminal
 
-import android.content.Context
-import android.content.SharedPreferences
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.UUID
 
 private const val Escape = "\u001B"
@@ -39,16 +29,6 @@ data class TerminalShortcut(
     val bytes: String get() = encodeTerminalKey(binding).orEmpty()
 }
 
-@Immutable
-data class TerminalShortcutSnapshot(
-    val visibleBuiltInIds: Set<String>,
-    val customShortcuts: List<TerminalShortcut>,
-    val hasSeenGuide: Boolean,
-) {
-    val visibleShortcuts: List<TerminalShortcut>
-        get() = BuiltInTerminalShortcuts.filter { it.id in visibleBuiltInIds } + customShortcuts
-}
-
 data class TerminalSpecialKey(
     val id: String,
     val label: String,
@@ -70,44 +50,6 @@ val TerminalSpecialKeys = listOf(
     TerminalSpecialKey("pageUp", "PgUp", "向上翻页"),
     TerminalSpecialKey("pageDown", "PgDn", "向下翻页"),
     TerminalSpecialKey("space", "Space", "空格"),
-)
-
-val BuiltInTerminalShortcuts: List<TerminalShortcut> = listOf(
-    builtIn("escape", TerminalKeyBinding("escape")),
-    builtIn("tab", TerminalKeyBinding("tab")),
-    builtIn("arrowLeft", TerminalKeyBinding("arrowLeft"), repeatable = true),
-    builtIn("arrowUp", TerminalKeyBinding("arrowUp"), repeatable = true),
-    builtIn("arrowDown", TerminalKeyBinding("arrowDown"), repeatable = true),
-    builtIn("arrowRight", TerminalKeyBinding("arrowRight"), repeatable = true),
-    builtIn("ctrlC", TerminalKeyBinding("c", setOf(TerminalModifier.Ctrl)), "中断当前任务"),
-    builtIn("ctrlD", TerminalKeyBinding("d", setOf(TerminalModifier.Ctrl)), "发送 EOF"),
-    builtIn("ctrlL", TerminalKeyBinding("l", setOf(TerminalModifier.Ctrl)), "清空终端画面"),
-    builtIn("ctrlR", TerminalKeyBinding("r", setOf(TerminalModifier.Ctrl)), "反向搜索历史"),
-    builtIn("ctrlA", TerminalKeyBinding("a", setOf(TerminalModifier.Ctrl)), "移动到行首"),
-    builtIn("ctrlE", TerminalKeyBinding("e", setOf(TerminalModifier.Ctrl)), "移动到行尾"),
-    builtIn("ctrlW", TerminalKeyBinding("w", setOf(TerminalModifier.Ctrl)), "删除前一个单词"),
-    builtIn("ctrlU", TerminalKeyBinding("u", setOf(TerminalModifier.Ctrl)), "清除光标前内容"),
-    builtIn("ctrlZ", TerminalKeyBinding("z", setOf(TerminalModifier.Ctrl)), "挂起当前进程"),
-    builtIn("shiftTab", TerminalKeyBinding("tab", setOf(TerminalModifier.Shift)), "反向 Tab"),
-    builtIn("enter", TerminalKeyBinding("enter")),
-    builtIn("backspace", TerminalKeyBinding("backspace"), repeatable = true),
-    builtIn("delete", TerminalKeyBinding("delete"), repeatable = true),
-    builtIn("home", TerminalKeyBinding("home"), repeatable = true),
-    builtIn("end", TerminalKeyBinding("end"), repeatable = true),
-    builtIn("pageUp", TerminalKeyBinding("pageUp"), repeatable = true),
-    builtIn("pageDown", TerminalKeyBinding("pageDown"), repeatable = true),
-)
-
-val DefaultVisibleTerminalShortcutIds: Set<String> = linkedSetOf(
-    "escape",
-    "tab",
-    "arrowLeft",
-    "arrowUp",
-    "arrowDown",
-    "arrowRight",
-    "ctrlC",
-    "ctrlD",
-    "ctrlL",
 )
 
 fun buildTerminalShortcut(
@@ -202,152 +144,6 @@ fun encodeTerminalKey(binding: TerminalKeyBinding): String? {
             encodePrintable(key[0], modifiers)
         } else null
     }
-}
-
-class TerminalShortcutPreferenceStore(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(
-        PreferencesName,
-        Context.MODE_PRIVATE,
-    )
-
-    fun read(): TerminalShortcutSnapshot = TerminalShortcutSnapshot(
-        visibleBuiltInIds = readVisibleBuiltIns(),
-        customShortcuts = readCustomShortcuts(),
-        hasSeenGuide = preferences.getBoolean(KeyGuideSeen, false),
-    )
-
-    fun setBuiltInVisible(id: String, visible: Boolean) {
-        if (BuiltInTerminalShortcuts.none { it.id == id }) return
-        val next = readVisibleBuiltIns().toMutableSet()
-        if (visible) next.add(id) else next.remove(id)
-        preferences.edit().putString(KeyVisibleBuiltIns, JSONArray(next.toList()).toString()).apply()
-    }
-
-    fun resetBuiltIns() {
-        preferences.edit().remove(KeyVisibleBuiltIns).apply()
-    }
-
-    fun addCustomShortcut(binding: TerminalKeyBinding): TerminalShortcut? {
-        val shortcut = buildTerminalShortcut(binding) ?: return null
-        val next = readCustomShortcuts() + shortcut
-        writeCustomShortcuts(next.takeLast(MaxCustomShortcuts))
-        return shortcut
-    }
-
-    fun deleteCustomShortcut(id: String) {
-        writeCustomShortcuts(readCustomShortcuts().filterNot { it.id == id })
-    }
-
-    fun markGuideSeen(seen: Boolean = true) {
-        preferences.edit().putBoolean(KeyGuideSeen, seen).apply()
-    }
-
-    fun registerListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
-        preferences.registerOnSharedPreferenceChangeListener(listener)
-    }
-
-    fun unregisterListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
-        preferences.unregisterOnSharedPreferenceChangeListener(listener)
-    }
-
-    private fun readVisibleBuiltIns(): Set<String> {
-        if (!preferences.contains(KeyVisibleBuiltIns)) return DefaultVisibleTerminalShortcutIds
-        val raw = preferences.getString(KeyVisibleBuiltIns, "[]") ?: return emptySet()
-        return runCatching {
-            val array = JSONArray(raw)
-            buildSet {
-                repeat(array.length()) { index ->
-                    val id = array.optString(index)
-                    if (BuiltInTerminalShortcuts.any { it.id == id }) add(id)
-                }
-            }
-        }.getOrElse { DefaultVisibleTerminalShortcutIds }
-    }
-
-    private fun readCustomShortcuts(): List<TerminalShortcut> {
-        val raw = preferences.getString(KeyCustomShortcuts, "[]") ?: return emptyList()
-        return runCatching {
-            val array = JSONArray(raw)
-            buildList {
-                repeat(array.length()) { index ->
-                    val objectValue = array.optJSONObject(index) ?: return@repeat
-                    val id = objectValue.optString("id").takeIf(String::isNotBlank) ?: return@repeat
-                    val key = objectValue.optString("key").takeIf(String::isNotBlank) ?: return@repeat
-                    val modifierValues = objectValue.optJSONArray("modifiers") ?: JSONArray()
-                    val modifiers = buildSet {
-                        repeat(modifierValues.length()) { modifierIndex ->
-                            val modifierId = modifierValues.optString(modifierIndex)
-                            TerminalModifier.entries.firstOrNull { it.id == modifierId }?.let(::add)
-                        }
-                    }
-                    buildTerminalShortcut(
-                        binding = TerminalKeyBinding(key, modifiers),
-                        id = id,
-                    )?.let(::add)
-                }
-            }.take(MaxCustomShortcuts)
-        }.getOrElse { emptyList() }
-    }
-
-    private fun writeCustomShortcuts(shortcuts: List<TerminalShortcut>) {
-        val array = JSONArray()
-        shortcuts.forEach { shortcut ->
-            array.put(
-                JSONObject()
-                    .put("id", shortcut.id)
-                    .put("key", shortcut.binding.key)
-                    .put(
-                        "modifiers",
-                        JSONArray(
-                            TerminalModifier.entries
-                                .filter { it in shortcut.binding.modifiers }
-                                .map(TerminalModifier::id),
-                        ),
-                    ),
-            )
-        }
-        preferences.edit().putString(KeyCustomShortcuts, array.toString()).apply()
-    }
-
-    private companion object {
-        const val PreferencesName = "wand_terminal_shortcuts"
-        const val KeyVisibleBuiltIns = "visible_built_ins_v1"
-        const val KeyCustomShortcuts = "custom_shortcuts_v1"
-        const val KeyGuideSeen = "pty_quick_start_seen_v1"
-        const val MaxCustomShortcuts = 12
-    }
-}
-
-@Composable
-fun rememberTerminalShortcutPreferences(): Pair<TerminalShortcutPreferenceStore, TerminalShortcutSnapshot> {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val store = remember(context) { TerminalShortcutPreferenceStore(context) }
-    var snapshot by remember(store) { mutableStateOf(store.read()) }
-    DisposableEffect(store) {
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-            snapshot = store.read()
-        }
-        store.registerListener(listener)
-        onDispose { store.unregisterListener(listener) }
-    }
-    return store to snapshot
-}
-
-private fun builtIn(
-    id: String,
-    binding: TerminalKeyBinding,
-    accessibilityLabel: String? = null,
-    repeatable: Boolean = false,
-): TerminalShortcut {
-    val shortcut = requireNotNull(
-        buildTerminalShortcut(
-            binding = binding,
-            id = id,
-            builtIn = true,
-            accessibilityLabel = accessibilityLabel,
-        ),
-    )
-    return shortcut.copy(repeatable = repeatable || shortcut.repeatable)
 }
 
 private fun normalizeTerminalBinding(binding: TerminalKeyBinding): TerminalKeyBinding? {
