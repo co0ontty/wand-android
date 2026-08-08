@@ -14,7 +14,7 @@ import com.wand.app.R
 
 /**
  * Provider 矢量图标（Claude / Codex 路径来自 simple-icons，CC0；24x24 viewBox）。
- * OpenCode 图标来自其官方仓库 packages/identity/mark.svg（MIT）。
+ * OpenCode 图标来自其官方仓库 packages/identity/mark.svg（MIT），Pi 来自 pi.dev/logo-auto.svg。
  * path 字符串保持单行原样——SVG path 里空格是数字分隔符，断行拼接容易吞掉语义。
  * 单色 Logo 以黑色定义，显示色由 Icon(tint) 覆盖；OpenCode 与 Qoder 保留官方配色，
  * 调用方需通过 tintForProvider 避免 ColorFilter 覆盖品牌色。
@@ -32,7 +32,8 @@ object BrandLogos {
 
     /** Grok（xAI 官方 SVG 的 mark 路径）。 */
     val grok: ImageVector by lazy { brandIcon("BrandGrok", GROK_PATH, 34f, 33f) }
-    val pi: ImageVector by lazy { brandIcon("BrandPi", "M4 5h16v4h-3v11h-4V9h-2v11H7V9H4Z") }
+    /** Pi 官方像素化品牌标，裁掉原 SVG 仅用于安全留白的外圈。 */
+    val pi: ImageVector by lazy { piIcon() }
     val terminal: ImageVector by lazy {
         brandIcon(
             "Terminal",
@@ -61,6 +62,13 @@ object BrandLogos {
     /** OpenCode 与 Qoder 官方标志包含品牌配色，不应用 Compose Icon 的单色 tint。 */
     fun tintForProvider(provider: String?, tint: Color): Color =
         if (provider == "opencode" || provider == "qoder") Color.Unspecified else tint
+
+    /**
+     * 多色方形品牌标需要略大于线性图标，才能在 15-20dp 的列表尺寸下保持可辨识。
+     * 比例与 Web 会话列表的 17dp / 15dp 光学补偿一致。
+     */
+    fun opticalScale(provider: String?): Float =
+        if (provider == "opencode" || provider == "qoder") 17f / 15f else 1f
 
     /** 调整单色图标透明度，同时保留多色品牌资源的“不着色”语义。 */
     fun tintWithAlpha(tint: Color, alpha: Float): Color =
@@ -101,6 +109,24 @@ private fun openCodeIcon(): ImageVector =
         pathData = addPathNodes("M384 416H128V96H384V416ZM320 160H192V352H320V160Z"),
         fill = SolidColor(Color.White),
         pathFillType = PathFillType.EvenOdd,
+    ).build()
+
+private fun piIcon(): ImageVector =
+    ImageVector.Builder(
+        name = "BrandPi",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 469.43f,
+        viewportHeight = 469.43f,
+    ).addPath(
+        pathData = addPathNodes(
+            "M0 0H352.07V234.71H234.71V352.07H117.36V469.43H0ZM117.36 117.36V234.71H234.71V117.36Z",
+        ),
+        fill = SolidColor(Color.Black),
+        pathFillType = PathFillType.EvenOdd,
+    ).addPath(
+        pathData = addPathNodes("M352.07 234.71H469.43V469.43H352.07Z"),
+        fill = SolidColor(Color.Black),
     ).build()
 
 private const val CLAUDE_PATH =

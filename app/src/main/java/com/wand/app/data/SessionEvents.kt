@@ -83,6 +83,8 @@ data class SessionChanges(
     val selectedModel: String? = null,
     val thinkingEffort: String? = null,
     val mode: String? = null,
+    val providerCliActive: Boolean? = null,
+    val providerCliExitCode: Int? = null,
 )
 
 /** transport packet → domain event。保持 internal，防止 WsData 超集重新泄漏给调用方。 */
@@ -96,7 +98,8 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
                 messages = it.messages?.let { turns ->
                     MessageUpdate.Full(turns, it.messageOffset, it.messageTotal)
                 },
-                responding = it.structuredState?.let { state -> state.inFlight ?: false },
+                responding = if (it.providerCliActive == false) false
+                else it.structuredState?.let { state -> state.inFlight ?: false },
                 changes = it.toChanges(),
             )
         }
@@ -105,7 +108,8 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
             SessionEvent.Output(
                 sessionId = sessionId,
                 messages = it.toMessageUpdate(),
-                responding = it.structuredState?.inFlight ?: it.isResponding,
+                responding = if (it.providerCliActive == false) false
+                else it.structuredState?.inFlight ?: it.isResponding,
                 changes = it.toChanges(),
             )
         }
@@ -114,7 +118,8 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
             SessionEvent.StatusChanged(
                 sessionId = sessionId,
                 permissionRequest = it.permissionRequest,
-                responding = it.structuredState?.inFlight,
+                responding = if (it.providerCliActive == false) false
+                else it.structuredState?.inFlight,
                 changes = it.toChanges(),
             )
         }
@@ -157,4 +162,6 @@ private fun WsData.toChanges() = SessionChanges(
     selectedModel = selectedModel,
     thinkingEffort = thinkingEffort,
     mode = mode,
+    providerCliActive = providerCliActive,
+    providerCliExitCode = providerCliExitCode,
 )

@@ -11,6 +11,8 @@ data class ChatSessionEventState(
     val pendingEscalation: EscalationRequest? = null,
     val legacyPermissionPrompt: PermissionRequestInfo? = null,
     val permissionBlocked: Boolean = false,
+    val providerCliActive: Boolean? = null,
+    val providerCliExitCode: Int? = null,
     val currentTaskTitle: String? = null,
     val snapshot: SessionSnapshot? = null,
     val selectedModel: String? = null,
@@ -48,6 +50,8 @@ object ChatSessionEventReducer {
             queuedMessages = snapshot.queuedMessages ?: emptyList(),
             pendingEscalation = snapshot.pendingEscalation,
             permissionBlocked = snapshot.permissionBlocked ?: (snapshot.pendingEscalation != null),
+            providerCliActive = snapshot.providerCliActive,
+            providerCliExitCode = snapshot.providerCliExitCode,
             currentTaskTitle = snapshot.currentTaskTitle,
             confirmedModel = snapshot.selectedModel,
             selectedModel = if (pending.model) next.selectedModel else snapshot.selectedModel,
@@ -186,14 +190,26 @@ object ChatSessionEventReducer {
                 )
             }
         }
+        changes.providerCliActive?.let { active ->
+            next = next.copy(
+                providerCliActive = active,
+                isResponding = if (active) next.isResponding else false,
+            )
+        }
+        changes.providerCliExitCode?.let { next = next.copy(providerCliExitCode = it) }
         changes.currentTaskTitle?.let { next = next.copy(currentTaskTitle = it) }
-        if (changes.title != null || changes.description != null || changes.summary != null || changes.titleGenerating != null) {
+        if (changes.title != null || changes.description != null || changes.summary != null
+            || changes.titleGenerating != null || changes.providerCliActive != null
+            || changes.providerCliExitCode != null
+        ) {
             next.snapshot?.let { snapshot ->
                 next = next.copy(snapshot = snapshot.copy(
                     title = changes.title ?: snapshot.title,
                     description = changes.description ?: snapshot.description,
                     summary = changes.summary ?: snapshot.summary,
                     titleGenerating = changes.titleGenerating ?: snapshot.titleGenerating,
+                    providerCliActive = changes.providerCliActive ?: snapshot.providerCliActive,
+                    providerCliExitCode = changes.providerCliExitCode ?: snapshot.providerCliExitCode,
                 ))
             }
         }

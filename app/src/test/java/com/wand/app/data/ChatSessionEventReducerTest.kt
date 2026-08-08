@@ -177,6 +177,38 @@ class ChatSessionEventReducerTest {
     }
 
     @Test
+    fun providerCliExitStopsRespondingWithoutEndingShellSession() {
+        val initial = ChatSessionEventReducer.applySnapshot(
+            ChatSessionEventState(isResponding = true),
+            snapshot("s1").copy(
+                sessionKind = "pty",
+                providerCliActive = true,
+            ),
+        ).copy(isResponding = true)
+
+        val next = ChatSessionEventReducer.reduce(
+            initial,
+            SessionEvent.StatusChanged(
+                sessionId = "s1",
+                permissionRequest = null,
+                responding = null,
+                changes = SessionChanges(
+                    providerCliActive = false,
+                    providerCliExitCode = 7,
+                    permissionBlocked = false,
+                ),
+            ),
+        )
+
+        assertEquals("running", next.status)
+        assertFalse(next.isResponding)
+        assertEquals(false, next.providerCliActive)
+        assertEquals(7, next.providerCliExitCode)
+        assertEquals(false, next.snapshot?.providerCliActive)
+        assertEquals(7, next.snapshot?.providerCliExitCode)
+    }
+
+    @Test
     fun topicOutputRefreshesSnapshotAndGeneratingState() {
         val initial = ChatSessionEventReducer.applySnapshot(
             ChatSessionEventState(),

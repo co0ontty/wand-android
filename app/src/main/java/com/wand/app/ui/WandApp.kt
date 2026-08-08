@@ -895,6 +895,7 @@ private fun CollapsedSessionTile(
     CollapsedRailTile(
         icon = icon,
         iconTint = iconTint,
+        iconScale = BrandLogos.opticalScale(session.provider),
         accentTint = accentTint,
         selected = selected,
         selectionStateEnabled = true,
@@ -912,10 +913,12 @@ private fun CollapsedRecoverableSessionTile(
 ) {
     val provider = history.apiProvider
     val tint = if (provider == "codex") WandColors.info else WandColors.brand
+    val iconTint = BrandLogos.tintForProvider(provider, tint)
     val icon = BrandLogos.painterForProvider(provider)
     CollapsedRailTile(
         icon = icon,
-        iconTint = tint,
+        iconTint = iconTint,
+        iconScale = BrandLogos.opticalScale(provider),
         selected = false,
         contentDescription = buildString {
             append("可恢复的 ")
@@ -960,6 +963,7 @@ private fun CollapsedMissionsTile(onClick: () -> Unit) {
 private fun CollapsedRailTile(
     icon: Painter,
     iconTint: Color,
+    iconScale: Float = 1f,
     selected: Boolean,
     contentDescription: String,
     onClickLabel: String = "打开",
@@ -1063,11 +1067,11 @@ private fun CollapsedRailTile(
                         alpha = if (outlined && !emphasized && !selected) 0.82f else 0.96f,
                     ),
                     modifier = Modifier.size(
-                        when {
+                        (when {
                             emphasized -> 20.dp
                             outlined -> 19.dp
                             else -> 23.dp
-                        },
+                        }) * iconScale,
                     ),
                 )
             }

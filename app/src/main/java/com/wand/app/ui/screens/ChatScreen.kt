@@ -1019,7 +1019,9 @@ private fun ProviderBrandMark(
             painter = BrandLogos.painterForProvider(provider),
             contentDescription = null,
             tint = BrandLogos.tintForProvider(provider, accent),
-            modifier = Modifier.size((size * 0.5f).dp),
+            modifier = Modifier.size(
+                (size * 0.5f * BrandLogos.opticalScale(provider)).dp,
+            ),
         )
     }
 }

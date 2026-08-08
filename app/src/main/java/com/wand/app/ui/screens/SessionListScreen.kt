@@ -1802,7 +1802,9 @@ private fun ProviderMark(
             painter = BrandLogos.painterForProvider(provider),
             contentDescription = null,
             tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.96f)),
-            modifier = Modifier.size(if (compact) 18.dp else 20.dp),
+            modifier = Modifier.size(
+                (if (compact) 18.dp else 20.dp) * BrandLogos.opticalScale(provider),
+            ),
         )
     }
 }

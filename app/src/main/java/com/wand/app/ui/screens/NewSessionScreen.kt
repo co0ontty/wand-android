@@ -859,7 +859,7 @@ private fun ProviderPicker(
                         painter = BrandLogos.painterForProvider(value),
                         contentDescription = null,
                         tint = BrandLogos.tintForProvider(value, iconColor),
-                        modifier = Modifier.size(21.dp),
+                        modifier = Modifier.size(21.dp * BrandLogos.opticalScale(value)),
                     )
                     Text(
                         label,

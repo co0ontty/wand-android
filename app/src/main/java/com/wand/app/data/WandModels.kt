@@ -388,6 +388,8 @@ data class SessionSnapshot(
     val title: String? = null,
     val description: String? = null,
     val titleGenerating: Boolean? = null,
+    val providerCliActive: Boolean? = null,
+    val providerCliExitCode: Int? = null,
 ) {
     val isStructured: Boolean get() = (sessionKind ?: "pty") == "structured"
 
@@ -442,6 +444,8 @@ data class SessionSnapshot(
             title = o.str("title"),
             description = o.str("description"),
             titleGenerating = o.bool("titleGenerating"),
+            providerCliActive = o.bool("providerCliActive"),
+            providerCliExitCode = o.int("providerCliExitCode"),
         )
 
         fun parseList(arr: JSONArray): List<SessionSnapshot> =
@@ -847,6 +851,8 @@ internal data class WsData(
     val pendingEscalation: EscalationRequest?,
     val permissionBlocked: Boolean?,
     val autoApprovePermissions: Boolean?,
+    val providerCliActive: Boolean?,
+    val providerCliExitCode: Int?,
     // —— output 事件增量字段 ——
     val lastMessage: ConversationTurn?,
     val messageCount: Int?,
@@ -872,6 +878,7 @@ internal data class WsData(
             structuredState = structuredState, pendingEscalation = pendingEscalation,
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
             title = title, description = description, titleGenerating = titleGenerating,
+            providerCliActive = providerCliActive, providerCliExitCode = providerCliExitCode,
         )
     }
 
@@ -905,6 +912,8 @@ internal data class WsData(
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
             permissionBlocked = o.bool("permissionBlocked"),
             autoApprovePermissions = o.bool("autoApprovePermissions"),
+            providerCliActive = o.bool("providerCliActive"),
+            providerCliExitCode = o.int("providerCliExitCode"),
             lastMessage = o.obj("lastMessage")?.let {
                 try {
                     ConversationTurn.parse(it)

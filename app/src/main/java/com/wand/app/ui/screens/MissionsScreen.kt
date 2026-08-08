@@ -316,7 +316,9 @@ private fun MissionsList(
                             painter = BrandLogos.painterForProvider(attempt.provider),
                             contentDescription = null,
                             tint = BrandLogos.tintForProvider(attempt.provider, WandColors.brand),
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(
+                                20.dp * BrandLogos.opticalScale(attempt.provider),
+                            ),
                         )
                         Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
                             Text(attempt.provider, color = WandColors.textPrimary, fontWeight = FontWeight.Medium)
