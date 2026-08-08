@@ -113,7 +113,8 @@ import com.wand.app.ui.theme.secondaryBarGlass
 import kotlinx.coroutines.launch
 
 /**
- * 新建会话按用户决策顺序组织：服务器 → 助手 → 项目 → 会话形式 → 运行方式。
+ * 新建会话按用户决策顺序组织：服务器 → 工具 → 项目 → 会话形式 → 运行方式。
+ * 空白终端是与 AI Provider 并列的工具，不是每个 Provider 下的会话形式。
  * 每次切换服务器都会重新 bootstrap，避免跨机器复用模型、默认值或工作目录。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -162,6 +163,7 @@ fun NewSessionScreen(
     var recentPaths by remember { mutableStateOf<List<RecentPath>>(emptyList()) }
     var provider by remember { mutableStateOf("claude") }
     var sessionKind by remember { mutableStateOf(NewSessionKind.Structured) }
+    var assistantSessionKind by remember { mutableStateOf(NewSessionKind.Structured) }
     // 默认托管模式（Claude / OpenCode 全自动完成）；Codex 切换时 clamp 成全权限。
     var mode by remember { mutableStateOf("managed") }
     var modelsResponse by remember { mutableStateOf<ModelsResponse?>(null) }
@@ -236,6 +238,7 @@ fun NewSessionScreen(
             }
             provider = initial.provider
             sessionKind = initial.kind
+            assistantSessionKind = initial.kind
             mode = initial.mode
             serverDefaultModels = initial.defaultModels
             confirmedDefaultModels = initial.defaultModels
@@ -539,25 +542,30 @@ fun NewSessionScreen(
                 } else {
                 SetupSectionHeader(
                     number = "02",
-                    title = "选择助手",
-                    description = "每个助手会使用各自的 CLI、模型和权限能力。",
+                    title = "选择工具",
+                    description = "选择 AI 助手，或直接启动一个空白终端。",
                 )
-                ProviderPicker(
-                    options = PROVIDER_OPTIONS,
-                    selected = provider,
-                    onSelect = { newProvider ->
-                        provider = newProvider
-                        persistDefaults(defaultProvider = newProvider)
-                        mode = workflow.clampMode(mode, newProvider)
-                        selectedModel = ""
-                        normalizeThinkingEffort(newProvider, "")
+                ToolPicker(
+                    options = TOOL_OPTIONS,
+                    selected = if (sessionKind == NewSessionKind.Shell) SHELL_TOOL_ID else provider,
+                    onSelect = { toolId ->
+                        if (toolId == SHELL_TOOL_ID) {
+                            sessionKind = NewSessionKind.Shell
+                        } else {
+                            provider = toolId
+                            sessionKind = assistantSessionKind
+                            persistDefaults(defaultProvider = toolId)
+                            mode = workflow.clampMode(mode, toolId)
+                            selectedModel = ""
+                            normalizeThinkingEffort(toolId, "")
+                        }
                     },
                 )
 
                 SetupSectionHeader(
                     number = "03",
                     title = "选择项目",
-                    description = "助手只会在这个工作目录里开始任务。",
+                    description = "新会话将从这个工作目录开始。",
                 )
                 CwdCard(
                     cwd = cwd,
@@ -567,22 +575,25 @@ fun NewSessionScreen(
                     onPickRecent = { cwd = it },
                 )
 
-                SetupSectionHeader(
-                    number = "04",
-                    title = "选择会话形式",
-                    description = "聊天适合阅读与协作，终端保留 CLI 的原始交互。",
-                )
-                SessionKindPicker(
-                    selected = sessionKind,
-                    onSelect = { kind ->
-                        sessionKind = kind
-                        kind.preferenceValue?.let { persistDefaults(defaultSessionKind = it) }
-                    },
-                )
-                InlineHint(sessionKindHint(provider, sessionKind))
+                if (sessionKind != NewSessionKind.Shell) {
+                    SetupSectionHeader(
+                        number = "04",
+                        title = "选择会话形式",
+                        description = "聊天适合阅读与协作，终端保留 CLI 的原始交互。",
+                    )
+                    SessionKindPicker(
+                        selected = sessionKind,
+                        onSelect = { kind ->
+                            sessionKind = kind
+                            assistantSessionKind = kind
+                            kind.preferenceValue?.let { persistDefaults(defaultSessionKind = it) }
+                        },
+                    )
+                    InlineHint(sessionKindHint(provider, sessionKind))
+                }
 
                 SetupSectionHeader(
-                    number = "05",
+                    number = if (sessionKind == NewSessionKind.Shell) "04" else "05",
                     title = if (sessionKind == NewSessionKind.Shell) "确认终端环境" else "配置运行方式",
                     description = if (sessionKind == NewSessionKind.Shell) {
                         "将使用服务端配置的登录 Shell，不加载任何 AI CLI。"
@@ -715,7 +726,7 @@ private fun PageIntro() {
             letterSpacing = (-0.6).sp,
         )
         Text(
-            "选择服务器、助手与项目，再决定它如何执行。",
+            "选择服务器、工具与项目，再决定会话如何运行。",
             fontSize = 14.sp,
             lineHeight = 20.sp,
             color = WandColors.textSecondary,
@@ -803,15 +814,14 @@ private fun PrimaryCreateButton(
 }
 
 @Composable
-private fun ProviderPicker(
+private fun ToolPicker(
     options: List<Pair<String, String>>,
     selected: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 72.dp)
@@ -820,56 +830,64 @@ private fun ProviderPicker(
             .border(0.55.dp, WandColors.borderStrong.copy(alpha = 0.26f), RoundedCornerShape(18.dp))
             .padding(4.dp),
     ) {
-        options.forEach { (value, label) ->
-            val active = value == selected
-            val iconColor by animateColorAsState(
-                if (active) WandColors.brand else WandColors.textSecondary,
-                WandMotion.tweenFast(),
-                label = "providerIconColor",
-            )
-            val itemBackground by animateColorAsState(
-                if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
-                WandMotion.tweenFast(),
-                label = "providerItemBg",
-            )
-            val itemBorder by animateColorAsState(
-                if (active) WandColors.borderStrong.copy(alpha = 0.24f) else Color.Transparent,
-                WandMotion.tweenFast(),
-                label = "providerItemBorder",
-            )
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 64.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(itemBackground)
-                    .border(0.8.dp, itemBorder, RoundedCornerShape(14.dp))
-                    .semantics {
-                        contentDescription = label
-                        stateDescription = if (active) "已选择" else "未选择"
-                    }
-                    .selectable(selected = active, role = Role.Tab) { onSelect(value) },
+        options.chunked(4).forEach { rowOptions ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    Icon(
-                        painter = BrandLogos.painterForProvider(value),
-                        contentDescription = null,
-                        tint = BrandLogos.tintForProvider(value, iconColor),
-                        modifier = Modifier.size(21.dp * BrandLogos.opticalScale(value)),
+                rowOptions.forEach { (value, label) ->
+                    val active = value == selected
+                    val iconColor by animateColorAsState(
+                        if (active) WandColors.brand else WandColors.textSecondary,
+                        WandMotion.tweenFast(),
+                        label = "toolIconColor",
                     )
-                    Text(
-                        label,
-                        fontSize = 10.sp,
-                        lineHeight = 12.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                        color = if (active) WandColors.brand else WandColors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    val itemBackground by animateColorAsState(
+                        if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
+                        WandMotion.tweenFast(),
+                        label = "toolItemBg",
                     )
+                    val itemBorder by animateColorAsState(
+                        if (active) WandColors.borderStrong.copy(alpha = 0.24f) else Color.Transparent,
+                        WandMotion.tweenFast(),
+                        label = "toolItemBorder",
+                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 64.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(itemBackground)
+                            .border(0.8.dp, itemBorder, RoundedCornerShape(14.dp))
+                            .semantics {
+                                contentDescription = label
+                                stateDescription = if (active) "已选择" else "未选择"
+                            }
+                            .selectable(selected = active, role = Role.Tab) { onSelect(value) },
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Icon(
+                                painter = BrandLogos.painterForProvider(value),
+                                contentDescription = null,
+                                tint = BrandLogos.tintForProvider(value, iconColor),
+                                modifier = Modifier.size(21.dp * BrandLogos.opticalScale(value)),
+                            )
+                            Text(
+                                label,
+                                fontSize = 10.sp,
+                                lineHeight = 12.sp,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (active) WandColors.brand else WandColors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -898,42 +916,31 @@ private fun Modifier.selectCard(selected: Boolean): Modifier {
 
 @Composable
 private fun SessionKindPicker(selected: NewSessionKind, onSelect: (NewSessionKind) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.height(IntrinsicSize.Max),
-        ) {
-            SessionKindCard(
-                title = "聊天",
-                technicalLabel = "结构化",
-                description = "清晰呈现消息与工具调用",
-                icon = WandIcons.chat,
-                selected = selected == NewSessionKind.Structured,
-                onClick = { onSelect(NewSessionKind.Structured) },
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            )
-            SessionKindCard(
-                title = "CLI 终端",
-                technicalLabel = "PTY",
-                description = "保留 AI CLI 的原始交互",
-                icon = WandIcons.terminal,
-                selected = selected == NewSessionKind.Pty,
-                onClick = { onSelect(NewSessionKind.Pty) },
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            )
-        }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.height(IntrinsicSize.Max),
+    ) {
         SessionKindCard(
-            title = "空白终端",
-            technicalLabel = "SHELL",
-            description = "只启动系统 Shell，不自动运行 CLI 工具",
+            title = "聊天",
+            technicalLabel = "结构化",
+            description = "清晰呈现消息与工具调用",
+            icon = WandIcons.chat,
+            selected = selected == NewSessionKind.Structured,
+            onClick = { onSelect(NewSessionKind.Structured) },
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+        )
+        SessionKindCard(
+            title = "CLI 终端",
+            technicalLabel = "PTY",
+            description = "保留 AI CLI 的原始交互",
             icon = WandIcons.terminal,
-            selected = selected == NewSessionKind.Shell,
-            onClick = { onSelect(NewSessionKind.Shell) },
-            modifier = Modifier.fillMaxWidth(),
+            selected = selected == NewSessionKind.Pty,
+            onClick = { onSelect(NewSessionKind.Pty) },
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
         )
     }
 }
@@ -1576,13 +1583,16 @@ private fun InlineHint(text: String) {
 /** 模式选项：id / 标签 / 卡片内一句话说明，与 Web renderModeCards 完全一致。 */
 private data class SessionMode(val id: String, val label: String, val desc: String)
 
-private val PROVIDER_OPTIONS = listOf(
+private const val SHELL_TOOL_ID = "terminal"
+
+private val TOOL_OPTIONS = listOf(
     "claude" to "Claude",
     "codex" to "Codex",
     "opencode" to "OpenCode",
     "grok" to "Grok",
     "qoder" to "Qoder",
     "pi" to "Pi",
+    SHELL_TOOL_ID to "空白终端",
 )
 
 private val SESSION_MODES = listOf(

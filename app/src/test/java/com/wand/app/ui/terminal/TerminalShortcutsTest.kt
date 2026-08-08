@@ -52,4 +52,15 @@ class TerminalShortcutsTest {
         assertNull(encodeTerminalKey(TerminalKeyBinding("hello")))
         assertNull(normalizeTerminalKeyInput("\n\t"))
     }
+
+    @Test
+    fun defaultShortcutBarCoversPtyNavigationWithoutAmbiguousBindings() {
+        assertEquals(
+            listOf("escape", "ctrl-c", "tab", "shift-tab", "arrow-left", "arrow-up", "arrow-down", "arrow-right", "enter"),
+            DefaultTerminalShortcuts.map { it.id },
+        )
+        assertEquals(DefaultTerminalShortcuts.size, DefaultTerminalShortcuts.map { it.bytes }.distinct().size)
+        assertEquals("\u0003", DefaultTerminalShortcuts.first { it.id == "ctrl-c" }.bytes)
+        assertEquals("\u001B[Z", DefaultTerminalShortcuts.first { it.id == "shift-tab" }.bytes)
+    }
 }

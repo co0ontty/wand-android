@@ -52,6 +52,63 @@ val TerminalSpecialKeys = listOf(
     TerminalSpecialKey("space", "Space", "空格"),
 )
 
+val DefaultTerminalShortcuts: List<TerminalShortcut> = listOfNotNull(
+    buildTerminalShortcut(
+        TerminalKeyBinding("escape"),
+        id = "escape",
+        builtIn = true,
+        accessibilityLabel = "Escape",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("c", setOf(TerminalModifier.Ctrl)),
+        id = "ctrl-c",
+        builtIn = true,
+        accessibilityLabel = "Control C",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("tab"),
+        id = "tab",
+        builtIn = true,
+        accessibilityLabel = "Tab",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("tab", setOf(TerminalModifier.Shift)),
+        id = "shift-tab",
+        builtIn = true,
+        accessibilityLabel = "Shift Tab",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("arrowLeft"),
+        id = "arrow-left",
+        builtIn = true,
+        accessibilityLabel = "左方向键",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("arrowUp"),
+        id = "arrow-up",
+        builtIn = true,
+        accessibilityLabel = "上方向键",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("arrowDown"),
+        id = "arrow-down",
+        builtIn = true,
+        accessibilityLabel = "下方向键",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("arrowRight"),
+        id = "arrow-right",
+        builtIn = true,
+        accessibilityLabel = "右方向键",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("enter"),
+        id = "enter",
+        builtIn = true,
+        accessibilityLabel = "Enter",
+    ),
+)
+
 fun buildTerminalShortcut(
     binding: TerminalKeyBinding,
     id: String = "custom-${UUID.randomUUID()}",

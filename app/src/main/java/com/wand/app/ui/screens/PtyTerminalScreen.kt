@@ -11,26 +11,23 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,24 +42,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,16 +63,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wand.app.data.SessionSnapshot
-import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandWebSession
 import com.wand.app.data.providerDisplayName
-import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.QuickCommitStore
-import com.wand.app.ui.SessionDraftStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.TailMarqueePathText
-import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandProviderMark
@@ -92,6 +80,7 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
+import com.wand.app.ui.terminal.DefaultTerminalShortcuts
 import com.wand.app.ui.terminal.TerminalKeyBinding
 import com.wand.app.ui.terminal.TerminalModifier
 import com.wand.app.ui.terminal.TerminalShortcut
@@ -99,13 +88,12 @@ import com.wand.app.ui.terminal.buildTerminalShortcut
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
- * 下方嵌一层加载 `embed=terminal&nativeInput=1` 的 WebView，只展示终端黑窗 + 悬浮球。
+ * 中间嵌一层纯透传终端，底部只保留高频 PTY 快捷键，不再叠加聊天式草稿输入框。
  * 对称 iOS PtySessionView——把网页终端套进原生 chrome，而不是整页跳出去。
  *
  * 内嵌 WebView 加载前显式执行 clear → 当前 endpoint login → load，避免进程全局
@@ -118,19 +106,11 @@ fun PtyTerminalScreen(
     sessionId: String,
     serverDisplayName: String,
     isHapticEnabled: () -> Boolean,
-    drafts: SessionDraftStore,
     onBack: () -> Unit,
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
     var snapshotResolved by remember(sessionId) { mutableStateOf(false) }
-    val draft = drafts[sessionId]
-    var sending by remember(sessionId) { mutableStateOf(false) }
     var toast by remember(sessionId) { mutableStateOf<String?>(null) }
-    var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
-    var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
-    val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
-    val scope = rememberCoroutineScope()
     // A slow or reconnecting server must not replay seconds of stale key-repeat input after the
     // user has already released the key. Keep only a small, recent interaction window.
     val shortcutQueue = remember(sessionId) {
@@ -139,24 +119,6 @@ fun PtyTerminalScreen(
     val quickCommit = remember(sessionId) {
         QuickCommitStore(sessionId, api) { msg -> toast = msg }
     }
-    val voiceInput = rememberVoiceInputHandle(
-        isHapticEnabled = isHapticEnabled,
-        onToast = { toast = it },
-        onCommit = { text -> drafts[sessionId] = appendVoiceText(draft, text) },
-    )
-    val voice = voiceInput.voice
-    val onMicDown = voiceInput.onMicDown
-    val attachmentPickers = rememberAttachmentPickerActions { uris ->
-        scope.launchAttachmentUpload(
-            context = context,
-            api = api,
-            sessionId = sessionId,
-            uris = uris,
-            onUploadingChange = { uploadingAttachments = it },
-            onUploaded = { uploaded -> pendingAttachments = (pendingAttachments + uploaded).takeLast(5) },
-            onToast = { toast = it },
-        )
-    }
     DisposableEffect(quickCommit) {
         onDispose { quickCommit.shutdown() }
     }
@@ -164,7 +126,17 @@ fun PtyTerminalScreen(
     // 仅为顶栏拉一次会话快照（标题 / provider / 工作目录）；失败就退化成最简头部。
     LaunchedEffect(sessionId) {
         snapshot = try {
-            api.getSession(sessionId)
+            val current = api.getSession(sessionId)
+            if (shouldResumePtyTerminal(current.status, current.sessionKind, current.claudeSessionId)) {
+                try {
+                    api.resumeSession(sessionId)
+                } catch (error: Exception) {
+                    toast = error.message ?: "终端会话恢复失败"
+                    current
+                }
+            } else {
+                current
+            }
         } catch (_: Exception) {
             null
         }
@@ -211,59 +183,16 @@ fun PtyTerminalScreen(
             )
         },
         bottomBar = {
-            PtyNativeInputBar(
+            PtyShortcutBar(
                 backdrop = glassBackdrop,
-                draft = draft,
-                sending = sending,
-                uploading = uploadingAttachments,
-                pendingAttachments = pendingAttachments,
-                baseUrl = api.baseUrl,
-                voice = voice,
-                onDraftChange = { drafts[sessionId] = it },
-                onRemoveAttachment = { file ->
-                    pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
-                },
-                onMicDown = onMicDown,
-                onPickPhoto = attachmentPickers.pickPhoto,
-                onPickFile = attachmentPickers.pickFile,
-                onSend = {
-                    val body = draft
-                    val attachments = pendingAttachments
-                    val text = buildAttachmentPrompt(attachments, body).trim()
-                    if (text.isEmpty() || sending) return@PtyNativeInputBar
-                    drafts[sessionId] = ""
-                    pendingAttachments = emptyList()
-                    sending = true
-                    scope.launch {
-                        try {
-                            api.sendInput(sessionId, text, view = "chat")
-                            delay(30)
-                            api.sendInput(
-                                id = sessionId,
-                                input = "\r",
-                                view = "chat",
-                                shortcutKey = "enter_text",
-                            )
-                        } catch (e: Exception) {
-                            toast = e.message ?: "发送失败"
-                            drafts[sessionId] = body
-                            pendingAttachments = attachments
-                        }
-                        sending = false
-                    }
-                },
+                isHapticEnabled = isHapticEnabled,
+                onShortcut = { shortcutQueue.trySend(it) },
             )
         },
     ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(focusManager) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
-                        focusManager.clearFocus()
-                    }
-                }
                 .glassBackdropSource(glassBackdrop),
         ) {
             AmbientBackground(Modifier.fillMaxSize())
@@ -277,12 +206,18 @@ fun PtyTerminalScreen(
                     .background(Color.Black)
                     .border(0.55.dp, WandColors.border.copy(alpha = 0.34f), terminalShape),
             ) {
-                PtyTerminalWebView(
-                    serverUrl = api.baseUrl,
-                    token = api.token,
-                    sessionId = sessionId,
-                    onHardwareShortcut = { shortcutQueue.trySend(it) },
-                )
+                if (snapshotResolved) {
+                    PtyTerminalWebView(
+                        serverUrl = api.baseUrl,
+                        token = api.token,
+                        sessionId = sessionId,
+                        onHardwareShortcut = { shortcutQueue.trySend(it) },
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = WandColors.brand, strokeWidth = 2.dp)
+                    }
+                }
             }
             if (quickCommit.panelOpen) {
                 QuickCommitSheet(
@@ -309,6 +244,15 @@ fun PtyTerminalScreen(
         }
     }
 }
+
+internal fun shouldResumePtyTerminal(
+    status: String?,
+    sessionKind: String?,
+    providerSessionId: String?,
+): Boolean =
+    (sessionKind ?: "pty") == "pty" &&
+        status != "running" &&
+        !providerSessionId.isNullOrBlank()
 
 @Composable
 private fun PtyTopBar(
@@ -384,42 +328,12 @@ private fun QuietPtyTopIconButton(
 }
 
 @Composable
-private fun PtyNativeInputBar(
+private fun PtyShortcutBar(
     backdrop: GlassBackdrop,
-    draft: String,
-    sending: Boolean,
-    uploading: Boolean,
-    pendingAttachments: List<UploadedFile>,
-    baseUrl: String,
-    voice: VoiceInputController,
-    onDraftChange: (String) -> Unit,
-    onRemoveAttachment: (UploadedFile) -> Unit,
-    onMicDown: () -> Unit,
-    onPickPhoto: () -> Unit,
-    onPickFile: () -> Unit,
-    onSend: () -> Unit,
+    isHapticEnabled: () -> Boolean,
+    onShortcut: (TerminalShortcut) -> Unit,
 ) {
-    val focusRequester = remember { FocusRequester() }
-    var isFocused by remember { mutableStateOf(false) }
-    var refocusAfterSend by remember { mutableStateOf(false) }
-    var voiceMode by remember { mutableStateOf(false) }
-    var focusAfterExitVoice by remember { mutableStateOf(false) }
-    var draftNeedsExpanded by remember { mutableStateOf(false) }
-    // 聚焦、语音、附件或多行草稿都使用两行布局，失焦后正文仍不会被截成单行。
-    val expanded = isFocused || voiceMode || draftNeedsExpanded || pendingAttachments.isNotEmpty()
-
-    LaunchedEffect(refocusAfterSend, sending) {
-        if (refocusAfterSend && !sending && !voiceMode) {
-            refocusAfterSend = false
-            runCatching { focusRequester.requestFocus() }
-        }
-    }
-    LaunchedEffect(voiceMode, focusAfterExitVoice) {
-        if (!voiceMode && focusAfterExitVoice) {
-            focusAfterExitVoice = false
-            runCatching { focusRequester.requestFocus() }
-        }
-    }
+    val haptic = LocalHapticFeedback.current
 
     Column(
         modifier = Modifier
@@ -434,173 +348,63 @@ private fun PtyNativeInputBar(
             .navigationBarsPadding(),
     ) {
         HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.72f))
-        if (voice.pressed) {
-            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                VoiceTranscriptBubble(backdrop, voice)
-            }
-        }
-        val terminalChip: @Composable () -> Unit = {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(WandColors.textSecondary.copy(alpha = 0.10f)),
-            ) {
-                Icon(
-                    WandIcons.keyboard,
-                    contentDescription = null,
-                    tint = WandColors.textSecondary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-        val inputContent: @Composable RowScope.() -> Unit = {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 34.dp),
-            ) {
-                if (expanded && pendingAttachments.isNotEmpty() && !voiceMode) {
-                    PendingAttachmentsPreview(
-                        attachments = pendingAttachments,
-                        baseUrl = baseUrl,
-                        onRemove = onRemoveAttachment,
-                        modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp),
-                    )
-                }
-                if (voiceMode) {
-                    VoiceHoldField(
-                        draft = draft,
-                        voice = voice,
-                        onMicDown = onMicDown,
-                        onExitVoiceMode = {
-                            focusAfterExitVoice = true
-                            voiceMode = false
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        BasicTextField(
-                            value = draft,
-                            onValueChange = onDraftChange,
-                            enabled = !sending,
-                            textStyle = TextStyle(
-                                color = WandColors.textPrimary,
-                                fontSize = 16.sp,
-                                lineHeight = 21.sp,
-                            ),
-                            cursorBrush = SolidColor(WandColors.brand),
-                            minLines = 1,
-                            maxLines = if (expanded) 6 else 1,
-                            onTextLayout = { layout ->
-                                draftNeedsExpanded = draft.isNotEmpty() &&
-                                    (layout.lineCount > 1 || layout.hasVisualOverflow)
-                            },
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 34.dp, max = if (expanded) 132.dp else 34.dp)
-                                .focusRequester(focusRequester)
-                                .onFocusChanged { isFocused = it.isFocused },
-                            decorationBox = { innerTextField ->
-                                Box(
-                                    contentAlignment = Alignment.CenterStart,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
-                                ) {
-                                    if (draft.isEmpty()) {
-                                        Text(
-                                            "输入到终端…",
-                                            fontSize = 16.sp,
-                                            color = WandColors.textMuted,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    innerTextField()
-                                }
-                            },
-                        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(60.dp)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp),
+        ) {
+            DefaultTerminalShortcuts.forEach { shortcut ->
+                TerminalShortcutKey(shortcut) {
+                    if (isHapticEnabled()) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
+                    onShortcut(shortcut)
                 }
             }
         }
-        val plusMenu: @Composable () -> Unit = {
-            ComposerActionsMenu(
-                backdrop = backdrop,
-                uploading = uploading,
-                onPickPhoto = onPickPhoto,
-                onPickFile = onPickFile,
+    }
+}
+
+@Composable
+private fun TerminalShortcutKey(
+    shortcut: TerminalShortcut,
+    onClick: () -> Unit,
+) {
+    val compact = shortcut.label.length == 1
+    val emphasized = shortcut.binding.modifiers.isNotEmpty()
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .height(40.dp)
+            .widthIn(min = if (compact) 42.dp else 52.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(
+                if (emphasized) WandColors.brandSoft
+                else WandColors.surfaceSoft.copy(alpha = 0.76f),
             )
-        }
-        val micButton: @Composable () -> Unit = {
-            VoiceMicButton(
-                voice = voice,
-                voiceMode = voiceMode,
-                onToggleMode = { voiceMode = !voiceMode },
-                onMicDown = onMicDown,
+            .border(
+                0.6.dp,
+                if (emphasized) WandColors.brand.copy(alpha = 0.24f) else WandColors.borderStrong,
+                RoundedCornerShape(11.dp),
             )
-        }
-        val sendButton: @Composable () -> Unit = {
-            val canSend = (draft.isNotBlank() || pendingAttachments.isNotEmpty()) && !sending
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .clickable(enabled = canSend) {
-                        refocusAfterSend = true
-                        onSend()
-                    },
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(ComposerActionVisualSize)
-                        .clip(CircleShape)
-                        .background(if (!canSend) WandColors.textMuted.copy(alpha = 0.10f) else WandColors.textPrimary),
-                ) {
-                    Icon(
-                        WandIcons.arrowUp,
-                        contentDescription = "发送",
-                        tint = if (!canSend) WandColors.textMuted.copy(alpha = 0.55f) else WandColors.surface,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-        NativeComposerSurface(
-            backdrop = backdrop,
-            expanded = expanded,
-            focused = isFocused,
-            collapsedLeading = { plusMenu() },
-            inputContent = inputContent,
-            collapsedTrailing = {
-                micButton()
-                sendButton()
-            },
-            expandedControls = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    plusMenu()
-                    terminalChip()
-                    Text(
-                        "终端",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = WandColors.textSecondary,
-                        maxLines = 1,
-                    )
-                }
-                micButton()
-                sendButton()
-            },
+            .clickable(
+                onClickLabel = shortcut.accessibilityLabel,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = if (compact) 10.dp else 12.dp),
+    ) {
+        Text(
+            shortcut.label,
+            color = if (emphasized) WandColors.brand else WandColors.textPrimary,
+            fontFamily = FontFamily.Monospace,
+            fontSize = if (compact) 18.sp else 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
         )
     }
 }
@@ -763,6 +567,9 @@ private fun PtyTerminalWebView(
                             "}catch(e){}})();",
                         null,
                     )
+                    // PTY 页面只有一个输入面：xterm 的 InputConnection。新服务直接识别
+                    // passthrough=1；旧服务则通过现有交互开关进入同一模式，保证混合版本可用。
+                    view.evaluateJavascript(EnableTerminalPassthroughScript, null)
                 }
             }
             loadUrl(buildEmbedTerminalUrl(serverUrl, sessionId))
@@ -793,11 +600,34 @@ private fun buildEmbedTerminalUrl(serverUrl: String, sessionId: String): String 
         .appendQueryParameter("session", sessionId)
         .appendQueryParameter("embed", "terminal")
         .appendQueryParameter("nativeInput", "1")
+        .appendQueryParameter("passthrough", "1")
         .build()
         .toString()
 
+private val EnableTerminalPassthroughScript =
+    """
+    (function() {
+      try {
+        document.documentElement.classList.add('is-wand-terminal-passthrough');
+        function enablePassthrough() {
+          try {
+            var toggle = document.getElementById('terminal-interactive-toggle-top');
+            if (toggle && toggle.getAttribute('aria-pressed') !== 'true') toggle.click();
+          } catch (e) {}
+        }
+        enablePassthrough();
+        if (window.__wandNativePassthroughTimer) {
+          clearInterval(window.__wandNativePassthroughTimer);
+        }
+        window.__wandNativePassthroughTimer = setInterval(enablePassthrough, 750);
+      } catch (e) {}
+    })();
+    """.trimIndent()
+
 private fun terminalShortcutForHardwareEvent(event: AndroidKeyEvent): TerminalShortcut? {
-    if (event.action != AndroidKeyEvent.ACTION_DOWN) return null
+    // 软件输入法也可能合成 Enter / Del KeyEvent；让它们继续进入 xterm 的
+    // InputConnection，避免候选确认被提前当成 PTY 回车，或出现重复退格。
+    if (event.action != AndroidKeyEvent.ACTION_DOWN || event.device?.isVirtual != false) return null
     val modifiers = buildSet {
         if (event.isCtrlPressed) add(TerminalModifier.Ctrl)
         if (event.isAltPressed) add(TerminalModifier.Alt)
