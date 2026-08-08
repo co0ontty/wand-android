@@ -270,6 +270,9 @@ private fun ReadyContent(
     initialQuickAction: QuickAction? = null,
 ) {
     val nav = rememberSaveable(saver = NavState.Saver) { NavState() }
+    val sessionDrafts = rememberSaveable(api.baseUrl, saver = SessionDraftStore.Saver) {
+        SessionDraftStore()
+    }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     // 列表状态提升到这里：进聊天再返回时不丢已加载的会话与滚动位置。
     val listState = remember(api) { SessionListState(api) }
@@ -384,6 +387,7 @@ private fun ReadyContent(
                 nav = nav,
                 api = api,
                 actions = actions,
+                sessionDrafts = sessionDrafts,
                 listState = listState,
                 listPaneWidth = listPaneWidth,
                 sidebarCollapsed = sidebarCollapsed,
@@ -403,6 +407,7 @@ private fun ReadyContent(
                 nav = nav,
                 api = api,
                 actions = actions,
+                sessionDrafts = sessionDrafts,
                 listState = listState,
                 viewMode = sessionListViewMode,
                 onOpenSession = openSession,
@@ -452,6 +457,7 @@ private fun SinglePaneContent(
     nav: NavState,
     api: WandApi,
     actions: HomeActions,
+    sessionDrafts: SessionDraftStore,
     listState: SessionListState,
     viewMode: SessionListViewMode,
     onOpenSession: (SessionSnapshot) -> Unit,
@@ -484,6 +490,7 @@ private fun SinglePaneContent(
             sessionId = screen.sessionId,
             serverDisplayName = actions.connection.serverDisplayName,
             isHapticEnabled = actions.settings.isHapticEnabled,
+            drafts = sessionDrafts,
             onBack = { nav.pop() },
         )
         is Screen.PtyTerminal -> PtyTerminalScreen(
@@ -491,6 +498,7 @@ private fun SinglePaneContent(
             sessionId = screen.sessionId,
             serverDisplayName = actions.connection.serverDisplayName,
             isHapticEnabled = actions.settings.isHapticEnabled,
+            drafts = sessionDrafts,
             onBack = { nav.pop() },
         )
         is Screen.NewSession -> NewSessionScreen(
@@ -515,6 +523,7 @@ private fun WideReadyContent(
     nav: NavState,
     api: WandApi,
     actions: HomeActions,
+    sessionDrafts: SessionDraftStore,
     listState: SessionListState,
     listPaneWidth: Dp,
     sidebarCollapsed: Boolean,
@@ -631,6 +640,7 @@ private fun WideReadyContent(
                     sessionId = screen.sessionId,
                     serverDisplayName = actions.connection.serverDisplayName,
                     isHapticEnabled = actions.settings.isHapticEnabled,
+                    drafts = sessionDrafts,
                     onBack = { nav.pop() },
                 )
                 is Screen.PtyTerminal -> PtyTerminalScreen(
@@ -638,6 +648,7 @@ private fun WideReadyContent(
                     sessionId = screen.sessionId,
                     serverDisplayName = actions.connection.serverDisplayName,
                     isHapticEnabled = actions.settings.isHapticEnabled,
+                    drafts = sessionDrafts,
                     onBack = { nav.pop() },
                 )
                 is Screen.NewSession -> NewSessionScreen(

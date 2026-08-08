@@ -133,6 +133,7 @@ import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.SessionDraftStore
 import com.wand.app.ui.ThinkingEffortOption
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.thinkingEffortOptions
@@ -188,6 +189,7 @@ fun ChatScreen(
     sessionId: String,
     serverDisplayName: String,
     isHapticEnabled: () -> Boolean,
+    drafts: SessionDraftStore,
     onBack: () -> Unit,
 ) {
     val store = remember(sessionId) { ChatStore(sessionId, api) }
@@ -217,7 +219,7 @@ fun ChatScreen(
         enabled = shouldRefreshQuickCommitStatus(store.loading, store.isResponding),
     )
 
-    var draft by rememberSaveable(sessionId) { mutableStateOf("") }
+    val draft = drafts[sessionId]
     // 发送后跟随列表底部；用户手动浏览时暂停跟随。
     var scrollMode by rememberSaveable(sessionId) { mutableStateOf(ChatScrollMode.StickToBottom) }
     val listState = key(sessionId) { rememberLazyListState() }
@@ -229,7 +231,7 @@ fun ChatScreen(
     val voiceInput = rememberVoiceInputHandle(
         isHapticEnabled = isHapticEnabled,
         onToast = { store.toast = it },
-        onCommit = { text -> draft = appendVoiceText(draft, text) },
+        onCommit = { text -> drafts[sessionId] = appendVoiceText(draft, text) },
     )
     val voice = voiceInput.voice
     val onMicDown = voiceInput.onMicDown
@@ -438,7 +440,7 @@ fun ChatScreen(
             backdrop = glassBackdrop,
             store = store,
             draft = draft,
-            onDraftChange = { draft = it },
+            onDraftChange = { drafts[sessionId] = it },
             voice = voice,
             onMicDown = onMicDown,
             uploading = uploadingAttachments,
@@ -454,7 +456,7 @@ fun ChatScreen(
             // 发送回调（带触感反馈）；新输入出现后，上一条回复会自动转为历史折叠态。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val text = buildAttachmentPrompt(pendingAttachments, draft)
-            draft = ""
+            drafts[sessionId] = ""
             pendingAttachments = emptyList()
             scrollMode = ChatScrollMode.StickToBottom
             store.send(text)

@@ -77,6 +77,7 @@ import com.wand.app.data.WandWebSession
 import com.wand.app.data.providerDisplayName
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.SessionDraftStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandIcons
@@ -117,11 +118,12 @@ fun PtyTerminalScreen(
     sessionId: String,
     serverDisplayName: String,
     isHapticEnabled: () -> Boolean,
+    drafts: SessionDraftStore,
     onBack: () -> Unit,
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
     var snapshotResolved by remember(sessionId) { mutableStateOf(false) }
-    var draft by remember(sessionId) { mutableStateOf("") }
+    val draft = drafts[sessionId]
     var sending by remember(sessionId) { mutableStateOf(false) }
     var toast by remember(sessionId) { mutableStateOf<String?>(null) }
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
@@ -140,7 +142,7 @@ fun PtyTerminalScreen(
     val voiceInput = rememberVoiceInputHandle(
         isHapticEnabled = isHapticEnabled,
         onToast = { toast = it },
-        onCommit = { text -> draft = appendVoiceText(draft, text) },
+        onCommit = { text -> drafts[sessionId] = appendVoiceText(draft, text) },
     )
     val voice = voiceInput.voice
     val onMicDown = voiceInput.onMicDown
@@ -217,7 +219,7 @@ fun PtyTerminalScreen(
                 pendingAttachments = pendingAttachments,
                 baseUrl = api.baseUrl,
                 voice = voice,
-                onDraftChange = { draft = it },
+                onDraftChange = { drafts[sessionId] = it },
                 onRemoveAttachment = { file ->
                     pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
                 },
@@ -229,7 +231,7 @@ fun PtyTerminalScreen(
                     val attachments = pendingAttachments
                     val text = buildAttachmentPrompt(attachments, body).trim()
                     if (text.isEmpty() || sending) return@PtyNativeInputBar
-                    draft = ""
+                    drafts[sessionId] = ""
                     pendingAttachments = emptyList()
                     sending = true
                     scope.launch {
@@ -244,7 +246,7 @@ fun PtyTerminalScreen(
                             )
                         } catch (e: Exception) {
                             toast = e.message ?: "发送失败"
-                            draft = body
+                            drafts[sessionId] = body
                             pendingAttachments = attachments
                         }
                         sending = false
