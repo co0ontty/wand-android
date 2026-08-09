@@ -13,6 +13,19 @@ sealed class Screen {
     data class PtyTerminal(val sessionId: String) : Screen()
     data class NewSession(val initialCwd: String? = null) : Screen()
     data object Missions : Screen()
+    /** 项目 / 任务列表。 */
+    data object Workspaces : Screen()
+    /**
+     * 任务详情宿主页：导航参数只携带稳定的 workspaceId/taskId 和编码短显示名，
+     * 不携带 cwd、layout 或凭据。Saver 用结构化 save record，避免任务名中的
+     * `:`、换行或 Unicode 破坏字符串恢复。
+     */
+    data class WorkspaceTask(
+        val workspaceId: String,
+        val taskId: String,
+        val workspaceName: String,
+        val taskName: String,
+    ) : Screen()
 }
 
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
@@ -68,6 +81,9 @@ class NavState {
         private const val NEW_SESSION_KEY = "new-session"
         private const val NEW_SESSION_PREFIX = "new-session:"
         private const val MISSIONS_KEY = "missions"
+        private const val WORKSPACES_KEY = "workspaces"
+        private const val WORKSPACE_TASK_KEY = "workspace-task"
+        private const val FIELD_SEP = "\u0001"
 
         private fun Screen.saveKey(): String = when (this) {
             Screen.SessionList -> SESSION_LIST_KEY
@@ -75,6 +91,11 @@ class NavState {
             is Screen.PtyTerminal -> "$PTY_TERMINAL_PREFIX$sessionId"
             is Screen.NewSession -> initialCwd?.let { "$NEW_SESSION_PREFIX$it" } ?: NEW_SESSION_KEY
             Screen.Missions -> MISSIONS_KEY
+            Screen.Workspaces -> WORKSPACES_KEY
+            // 结构化分隔：用 \u0001 作为不可打印分隔符，避免任务名中的 `:`
+            // 或换行破坏恢复（与 Web 不同，这里 ID 不含控制字符）。
+            is Screen.WorkspaceTask ->
+                WORKSPACE_TASK_KEY + FIELD_SEP + workspaceId + FIELD_SEP + taskId + FIELD_SEP + workspaceName + FIELD_SEP + taskName
         }
 
         private fun String.restoreScreen(): Screen? = when {
@@ -88,8 +109,26 @@ class NavState {
             this == NEW_SESSION_KEY -> Screen.NewSession()
             startsWith(NEW_SESSION_PREFIX) -> Screen.NewSession(removePrefix(NEW_SESSION_PREFIX))
             this == MISSIONS_KEY -> Screen.Missions
+            this == WORKSPACES_KEY -> Screen.Workspaces
+            startsWith(WORKSPACE_TASK_KEY + FIELD_SEP) -> {
+                val parts = removePrefix(WORKSPACE_TASK_KEY + FIELD_SEP).split(FIELD_SEP)
+                if (parts.size >= 4) {
+                    Screen.WorkspaceTask(
+                        workspaceId = parts[0],
+                        taskId = parts[1],
+                        workspaceName = parts[2],
+                        taskName = parts[3],
+                    )
+                } else {
+                    null
+                }
+            }
             else -> null
         }
+
+        // 测试辅助：把一个 Screen 序列化为字符串再恢复回来，验证 Saver 语义。
+        internal fun serializeScreen(screen: Screen): String = screen.saveKey()
+        internal fun deserializeScreen(key: String): Screen? = key.restoreScreen()
     }
 }
 

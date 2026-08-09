@@ -1700,7 +1700,6 @@ private fun InputBar(
     NativeComposerSurface(
         backdrop = backdrop,
         expanded = expanded,
-        focused = isFocused,
         collapsedLeading = { plusMenu() },
         inputContent = { inputContent() },
         collapsedTrailing = { trailing() },
@@ -2405,7 +2404,7 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
 
 private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
 
-/** 输入栏图标按钮：视觉无底色，但保留 48dp 触控区和按压反馈。 */
+/** 输入栏图标按钮：缩小视觉和排布槽位，保留清晰的圆形按压反馈。 */
 @Composable
 private fun ComposerIconButton(
     enabled: Boolean,

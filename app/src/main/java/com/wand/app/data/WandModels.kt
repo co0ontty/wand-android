@@ -390,6 +390,9 @@ data class SessionSnapshot(
     val titleGenerating: Boolean? = null,
     val providerCliActive: Boolean? = null,
     val providerCliExitCode: Int? = null,
+    /** 工作空间任务绑定：会话由任务内「+」创建并绑定到 workspaceId/workspaceTaskId。 */
+    val workspaceId: String? = null,
+    val workspaceTaskId: String? = null,
 ) {
     val isStructured: Boolean get() = (sessionKind ?: "pty") == "structured"
 
@@ -446,6 +449,8 @@ data class SessionSnapshot(
             titleGenerating = o.bool("titleGenerating"),
             providerCliActive = o.bool("providerCliActive"),
             providerCliExitCode = o.int("providerCliExitCode"),
+            workspaceId = o.str("workspaceId")?.takeIf { it.isNotEmpty() },
+            workspaceTaskId = o.str("workspaceTaskId")?.takeIf { it.isNotEmpty() },
         )
 
         fun parseList(arr: JSONArray): List<SessionSnapshot> =
@@ -853,6 +858,8 @@ internal data class WsData(
     val autoApprovePermissions: Boolean?,
     val providerCliActive: Boolean?,
     val providerCliExitCode: Int?,
+    val workspaceId: String? = null,
+    val workspaceTaskId: String? = null,
     // —— output 事件增量字段 ——
     val lastMessage: ConversationTurn?,
     val messageCount: Int?,
@@ -879,6 +886,7 @@ internal data class WsData(
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
             title = title, description = description, titleGenerating = titleGenerating,
             providerCliActive = providerCliActive, providerCliExitCode = providerCliExitCode,
+            workspaceId = workspaceId, workspaceTaskId = workspaceTaskId,
         )
     }
 
@@ -914,6 +922,8 @@ internal data class WsData(
             autoApprovePermissions = o.bool("autoApprovePermissions"),
             providerCliActive = o.bool("providerCliActive"),
             providerCliExitCode = o.int("providerCliExitCode"),
+            workspaceId = o.str("workspaceId")?.takeIf { it.isNotEmpty() },
+            workspaceTaskId = o.str("workspaceTaskId")?.takeIf { it.isNotEmpty() },
             lastMessage = o.obj("lastMessage")?.let {
                 try {
                     ConversationTurn.parse(it)

@@ -103,6 +103,8 @@ import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
 import com.wand.app.ui.screens.SessionListViewMode
 import com.wand.app.ui.screens.SettingsScreen
+import com.wand.app.ui.screens.WorkspaceListScreen
+import com.wand.app.ui.screens.WorkspaceTaskScreen
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -381,6 +383,10 @@ private fun ReadyContent(
                 .apply()
         }
         val openMissions = { openDetail(Screen.Missions) }
+        val openWorkspaces = { openDetail(Screen.Workspaces) }
+        val openWorkspaceTask: (String, String, String, String) -> Unit = { workspaceId, taskId, workspaceName, taskName ->
+            openDetail(Screen.WorkspaceTask(workspaceId, taskId, workspaceName, taskName))
+        }
 
         if (wideLayout) {
             WideReadyContent(
@@ -400,6 +406,8 @@ private fun ReadyContent(
                 onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                 onViewModeChange = changeSessionListView,
+                onOpenWorkspaces = openWorkspaces,
+                onOpenWorkspaceTask = openWorkspaceTask,
                 sessionCreationInFlight = sessionCreationInFlight,
             )
         } else {
@@ -415,6 +423,8 @@ private fun ReadyContent(
                 onOpenMissions = openMissions,
                 onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onViewModeChange = changeSessionListView,
+                onOpenWorkspaces = openWorkspaces,
+                onOpenWorkspaceTask = openWorkspaceTask,
                 sessionCreationInFlight = sessionCreationInFlight,
             )
         }
@@ -465,6 +475,8 @@ private fun SinglePaneContent(
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
+    onOpenWorkspaces: () -> Unit,
+    onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     sessionCreationInFlight: Boolean,
 ) {
     when (val screen = nav.current) {
@@ -484,6 +496,7 @@ private fun SinglePaneContent(
             onSwitchServer = {
                 if (!sessionCreationInFlight) actions.navigation.switchServer()
             },
+            onOpenWorkspaces = onOpenWorkspaces,
         )
         is Screen.Chat -> ChatScreen(
             api = api,
@@ -514,6 +527,28 @@ private fun SinglePaneContent(
             onBack = { nav.pop() },
             onOpenSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
         )
+        is Screen.Workspaces -> WorkspaceListScreen(
+            api = api,
+            onBack = { nav.pop() },
+            onOpenTask = { workspaceId, taskId, workspaceName, taskName ->
+                onOpenWorkspaceTask(workspaceId, taskId, workspaceName, taskName)
+            },
+        )
+        is Screen.WorkspaceTask -> WorkspaceTaskScreen(
+            api = api,
+            workspaceId = screen.workspaceId,
+            taskId = screen.taskId,
+            workspaceName = screen.workspaceName,
+            taskName = screen.taskName,
+            onBack = { nav.pop() },
+            onOpenSession = { sessionId ->
+                // 任务内打开会话：保留 WorkspaceTask 作为返回目的地。
+                nav.push(Screen.Chat(sessionId))
+            },
+            onOpenPty = { sessionId ->
+                nav.push(Screen.PtyTerminal(sessionId))
+            },
+        )
     }
 }
 
@@ -535,6 +570,8 @@ private fun WideReadyContent(
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
+    onOpenWorkspaces: () -> Unit,
+    onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     sessionCreationInFlight: Boolean,
 ) {
     val lockedSidebarInteraction = remember { MutableInteractionSource() }
@@ -609,6 +646,7 @@ private fun WideReadyContent(
                                     if (!sessionCreationInFlight) actions.navigation.switchServer()
                                 },
                                 onCollapseSidebar = onToggleSidebarCollapsed,
+                                onOpenWorkspaces = onOpenWorkspaces,
                             )
                         }
                     }
@@ -662,6 +700,27 @@ private fun WideReadyContent(
                     api = api,
                     onBack = { nav.pop() },
                     onOpenSession = { sessionId -> nav.setDetail(Screen.Chat(sessionId)) },
+                )
+                is Screen.Workspaces -> WorkspaceListScreen(
+                    api = api,
+                    onBack = { nav.pop() },
+                    onOpenTask = { workspaceId, taskId, workspaceName, taskName ->
+                        onOpenWorkspaceTask(workspaceId, taskId, workspaceName, taskName)
+                    },
+                )
+                is Screen.WorkspaceTask -> WorkspaceTaskScreen(
+                    api = api,
+                    workspaceId = screen.workspaceId,
+                    taskId = screen.taskId,
+                    workspaceName = screen.workspaceName,
+                    taskName = screen.taskName,
+                    onBack = { nav.pop() },
+                    onOpenSession = { sessionId ->
+                        nav.setDetail(Screen.Chat(sessionId))
+                    },
+                    onOpenPty = { sessionId ->
+                        nav.setDetail(Screen.PtyTerminal(sessionId))
+                    },
                 )
             }
         }
@@ -1129,4 +1188,6 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     Screen.SessionList,
     Screen.Missions -> null
     is Screen.NewSession -> null
+    Screen.Workspaces -> null
+    is Screen.WorkspaceTask -> null
 }

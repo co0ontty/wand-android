@@ -23,7 +23,7 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
  * 登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
-class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSessionPort, MissionsPort {
+class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSessionPort, MissionsPort, WorkspacePort {
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
@@ -630,6 +630,52 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         return GitPushResult.parse(
             requestObject("POST", "/api/sessions/$sessionId/git/push", body, timeoutSec = 180)
         )
+    }
+
+    // MARK: - 工作空间（项目）与任务
+
+    override suspend fun listWorkspaces(): List<Workspace> =
+        Workspace.parseList(requestArray("GET", "/api/workspaces"))
+
+    override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> =
+        WorkspaceTask.parseList(requestArray("GET", "/api/workspaces/${encode(workspaceId)}/tasks"))
+
+    override suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail {
+        val detail = WorkspaceTaskDetail.parse(requestObject("GET", "/api/workspace-tasks/${encode(taskId)}"))
+            ?: throw WandApiException(404, "未找到该任务。")
+        return detail
+    }
+
+    override suspend fun saveWorkspaceTaskLayout(
+        taskId: String,
+        layout: TaskWindowLayout?,
+    ): TaskWindowLayout? {
+        val body = JSONObject().put("layout", layout?.toJsonObject() ?: JSONObject.NULL)
+        val response = requestObject("PUT", "/api/workspace-tasks/${encode(taskId)}/layout", body)
+        // 服务端返回 { ok, layout }；layout 已经过 sanitizeTaskLayout 清洗。
+        return TaskWindowLayout.parse(response.opt("layout"))
+    }
+
+    /**
+     * 任务内选择 Agent 走 PTY，而不是结构化会话，也不跳转 NewSessionScreen。
+     * Shell 使用 {shell:true}；Provider 使用 PTY command（qoder → qodercli）。
+     * 绑定 workspaceId/workspaceTaskId 和任务 cwd。不调用 updateNewSessionDefaults。
+     */
+    override suspend fun createWorkspaceTaskWindow(
+        target: WorkspaceSessionTarget,
+        binding: WorkspaceBinding,
+    ): SessionSnapshot {
+        val body = JSONObject().put("cwd", binding.cwd)
+            .put("workspaceId", binding.workspaceId)
+            .put("workspaceTaskId", binding.workspaceTaskId)
+        if (target.isShell) {
+            body.put("shell", true)
+        } else {
+            val provider = target.raw
+            val command = if (provider == "qoder") "qodercli" else provider
+            body.put("command", command).put("provider", provider)
+        }
+        return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
     }
 
     // MARK: - 目录与配置

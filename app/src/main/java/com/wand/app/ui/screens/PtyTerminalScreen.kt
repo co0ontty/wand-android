@@ -1,7 +1,6 @@
 package com.wand.app.ui.screens
 
 import android.annotation.SuppressLint
-import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.view.KeyEvent as AndroidKeyEvent
 import android.webkit.CookieManager
@@ -90,6 +89,9 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+
+private const val TERMINAL_BACKGROUND_ARGB = 0xFF17120F.toInt()
+private val TerminalBackground = Color(TERMINAL_BACKGROUND_ARGB)
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
@@ -196,15 +198,11 @@ fun PtyTerminalScreen(
                 .glassBackdropSource(glassBackdrop),
         ) {
             AmbientBackground(Modifier.fillMaxSize())
-            val terminalShape = RoundedCornerShape(18.dp)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(horizontal = 8.dp, vertical = 8.dp)
-                    .clip(terminalShape)
-                    .background(Color.Black)
-                    .border(0.55.dp, WandColors.border.copy(alpha = 0.34f), terminalShape),
+                    .background(TerminalBackground),
             ) {
                 if (snapshotResolved) {
                     PtyTerminalWebView(
@@ -511,7 +509,7 @@ private fun PtyTerminalWebView(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
         )
-        view.setBackgroundColor(AndroidColor.BLACK)
+        view.setBackgroundColor(TERMINAL_BACKGROUND_ARGB)
         view.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true

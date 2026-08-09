@@ -165,6 +165,7 @@ fun SessionListScreen(
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
+    onOpenWorkspaces: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -286,6 +287,7 @@ fun SessionListScreen(
                 onOpenWeb = onOpenWeb,
                 onSwitchServer = onSwitchServer,
                 onCollapseSidebar = onCollapseSidebar,
+                onOpenWorkspaces = onOpenWorkspaces,
             )
         },
         bottomBar = {
@@ -608,6 +610,7 @@ private fun SessionListTopBar(
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)?,
+    onOpenWorkspaces: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -686,6 +689,15 @@ private fun SessionListTopBar(
                             expanded = menuOpen,
                             onDismissRequest = { onMenuOpenChange(false) },
                         ) {
+                            if (onOpenWorkspaces != null) {
+                                DropdownMenuItem(
+                                    text = { Text("项目 / 任务", color = WandColors.textPrimary) },
+                                    leadingIcon = {
+                                        Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand)
+                                    },
+                                    onClick = { onMenuOpenChange(false); onOpenWorkspaces() },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("Agent Inbox", color = WandColors.textPrimary) },
                                 leadingIcon = {
