@@ -569,6 +569,9 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
             JSONObject(),
         ).arr("comments"))
 
+    override suspend fun archiveMission(missionId: String): MissionInfo =
+        MissionInfo.parse(requestObject("POST", "/api/missions/${encode(missionId)}/archive"))
+
     override suspend fun markInboxRead(sessionId: String?) {
         val body = JSONObject()
         if (sessionId != null) body.put("sessionId", sessionId)
@@ -639,6 +642,17 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> =
         WorkspaceTask.parseList(requestArray("GET", "/api/workspaces/${encode(workspaceId)}/tasks"))
+
+    override suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask {
+        val body = JSONObject().put("name", name)
+        return WorkspaceTask.parse(
+            requestObject("PATCH", "/api/workspace-tasks/${encode(taskId)}", body),
+        ) ?: throw WandApiException(500, "任务重命名响应无效。")
+    }
+
+    override suspend fun deleteWorkspaceTask(taskId: String) {
+        requestData("DELETE", "/api/workspace-tasks/${encode(taskId)}?cascade=1")
+    }
 
     override suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail {
         val detail = WorkspaceTaskDetail.parse(requestObject("GET", "/api/workspace-tasks/${encode(taskId)}"))

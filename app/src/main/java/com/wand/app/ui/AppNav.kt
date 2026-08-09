@@ -9,8 +9,16 @@ import com.wand.app.ui.theme.WandAppearanceMode
 /** 原生界面的页面栈。结构化对话原生承载，PTY 套在原生头部里嵌一层终端 WebView。 */
 sealed class Screen {
     data object SessionList : Screen()
-    data class Chat(val sessionId: String) : Screen()
-    data class PtyTerminal(val sessionId: String) : Screen()
+    data class Chat(
+        val sessionId: String,
+        val workspaceName: String? = null,
+        val taskName: String? = null,
+    ) : Screen()
+    data class PtyTerminal(
+        val sessionId: String,
+        val workspaceName: String? = null,
+        val taskName: String? = null,
+    ) : Screen()
     data class NewSession(val initialCwd: String? = null) : Screen()
     data object Missions : Screen()
     /** 项目 / 任务列表。 */
@@ -59,6 +67,10 @@ class NavState {
         if (stack.size > 1) stack.removeAt(stack.size - 1)
     }
 
+    fun popToRoot() {
+        while (stack.size > 1) stack.removeAt(stack.size - 1)
+    }
+
     companion object {
         val Saver: Saver<NavState, Any> = listSaver(
             save = { nav -> nav.stack.map { screen -> screen.saveKey() } },
@@ -87,8 +99,13 @@ class NavState {
 
         private fun Screen.saveKey(): String = when (this) {
             Screen.SessionList -> SESSION_LIST_KEY
-            is Screen.Chat -> "$CHAT_PREFIX$sessionId"
-            is Screen.PtyTerminal -> "$PTY_TERMINAL_PREFIX$sessionId"
+            is Screen.Chat -> buildSessionDetailKey(CHAT_PREFIX, sessionId, workspaceName, taskName)
+            is Screen.PtyTerminal -> buildSessionDetailKey(
+                PTY_TERMINAL_PREFIX,
+                sessionId,
+                workspaceName,
+                taskName,
+            )
             is Screen.NewSession -> initialCwd?.let { "$NEW_SESSION_PREFIX$it" } ?: NEW_SESSION_KEY
             Screen.Missions -> MISSIONS_KEY
             Screen.Workspaces -> WORKSPACES_KEY
@@ -100,12 +117,18 @@ class NavState {
 
         private fun String.restoreScreen(): Screen? = when {
             this == SESSION_LIST_KEY -> Screen.SessionList
-            startsWith(CHAT_PREFIX) -> removePrefix(CHAT_PREFIX)
-                .takeIf(String::isNotBlank)
-                ?.let(Screen::Chat)
-            startsWith(PTY_TERMINAL_PREFIX) -> removePrefix(PTY_TERMINAL_PREFIX)
-                .takeIf(String::isNotBlank)
-                ?.let(Screen::PtyTerminal)
+            startsWith(CHAT_PREFIX) -> restoreSessionDetail(
+                prefix = CHAT_PREFIX,
+                create = { sessionId, workspaceName, taskName ->
+                    Screen.Chat(sessionId, workspaceName, taskName)
+                },
+            )
+            startsWith(PTY_TERMINAL_PREFIX) -> restoreSessionDetail(
+                prefix = PTY_TERMINAL_PREFIX,
+                create = { sessionId, workspaceName, taskName ->
+                    Screen.PtyTerminal(sessionId, workspaceName, taskName)
+                },
+            )
             this == NEW_SESSION_KEY -> Screen.NewSession()
             startsWith(NEW_SESSION_PREFIX) -> Screen.NewSession(removePrefix(NEW_SESSION_PREFIX))
             this == MISSIONS_KEY -> Screen.Missions
@@ -124,6 +147,27 @@ class NavState {
                 }
             }
             else -> null
+        }
+
+        private fun buildSessionDetailKey(
+            prefix: String,
+            sessionId: String,
+            workspaceName: String?,
+            taskName: String?,
+        ): String {
+            if (workspaceName.isNullOrBlank() && taskName.isNullOrBlank()) return "$prefix$sessionId"
+            return prefix + sessionId + FIELD_SEP + workspaceName.orEmpty() + FIELD_SEP + taskName.orEmpty()
+        }
+
+        private fun String.restoreSessionDetail(
+            prefix: String,
+            create: (String, String?, String?) -> Screen,
+        ): Screen? {
+            val parts = removePrefix(prefix).split(FIELD_SEP, limit = 3)
+            val sessionId = parts.firstOrNull()?.takeIf(String::isNotBlank) ?: return null
+            val workspaceName = parts.getOrNull(1)?.takeIf(String::isNotBlank)
+            val taskName = parts.getOrNull(2)?.takeIf(String::isNotBlank)
+            return create(sessionId, workspaceName, taskName)
         }
 
         // 测试辅助：把一个 Screen 序列化为字符串再恢复回来，验证 Saver 语义。

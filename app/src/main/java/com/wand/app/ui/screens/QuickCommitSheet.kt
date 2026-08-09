@@ -97,6 +97,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.wand.app.ui.QuickCommitEntryPhase
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.components.GitBranchIcon
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandButton
@@ -157,7 +158,7 @@ fun GitTopBarBadge(qc: QuickCommitStore, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     ) {
-        GitBranchIcon(tint = MaterialTheme.colorScheme.primary)
+        GitBranchIcon(tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
         Text(
             branch,
             fontSize = 12.sp,
@@ -433,26 +434,7 @@ private fun CompactGitChangesButton(
     }
 }
 
-/** 极简 git branch 图标（对齐网页 svg：两个节点 + 分叉到右侧节点）。 */
-@Composable
-private fun GitBranchIcon(tint: Color) {
-    Canvas(modifier = Modifier.size(13.dp)) {
-        val s = size.minDimension / 24f
-        val stroke = Stroke(width = 2.2f * s, cap = StrokeCap.Round)
-        fun c(x: Float, y: Float) = Offset(x * s, y * s)
-        drawCircle(tint, radius = 2.4f * s, center = c(6f, 5f), style = stroke)
-        drawCircle(tint, radius = 2.4f * s, center = c(6f, 19f), style = stroke)
-        drawCircle(tint, radius = 2.4f * s, center = c(18f, 8f), style = stroke)
-        drawLine(tint, c(6f, 7.8f), c(6f, 16.2f), strokeWidth = stroke.width, cap = StrokeCap.Round)
-        val path = Path().apply {
-            moveTo(18f * s, 10.8f * s)
-            lineTo(18f * s, 12f * s)
-            quadraticTo(18f * s, 15f * s, 15f * s, 15f * s)
-            lineTo(9.2f * s, 15f * s)
-        }
-        drawPath(path, tint, style = stroke)
-    }
-}
+// GitBranchIcon 已抽取为共享组件（ui/components/WandIcons.kt），供工作空间任务行复用。
 
 // MARK: - 弹层
 

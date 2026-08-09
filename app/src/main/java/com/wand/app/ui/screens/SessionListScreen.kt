@@ -56,6 +56,7 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -107,6 +108,7 @@ import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionDirectoryNode
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.WorkspacePort
 import com.wand.app.ui.parseIsoMillis
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
@@ -139,17 +141,18 @@ import kotlinx.coroutines.launch
 
 enum class SessionListViewMode {
     Sessions,
-    Directories,
+    Workspaces,
 }
 
 /**
- * 统一会话列表：普通、已归档和本机可恢复会话按时间混排。
- * 支持下拉刷新、10s 轮询、滑动删除；全部条目可长按多选并拖动连续选择。
+ * 原生主入口：会话模式混排普通、归档和本机可恢复会话，项目模式直接承载工作空间任务。
+ * 会话支持下拉刷新、10s 轮询、滑动删除；全部条目可长按多选并拖动连续选择。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionListScreen(
     state: SessionListState,
+    workspaceApi: WorkspacePort,
     serverDisplayName: String,
     modifier: Modifier = Modifier,
     selectedSessionId: String? = null,
@@ -165,7 +168,12 @@ fun SessionListScreen(
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
-    onOpenWorkspaces: (() -> Unit)? = null,
+    onOpenWorkspaceTask: (
+        workspaceId: String,
+        taskId: String,
+        workspaceName: String,
+        taskName: String,
+    ) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -173,6 +181,7 @@ fun SessionListScreen(
     var refreshing by remember { mutableStateOf(false) }
     var isSelecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var workspaceRefreshRequest by remember { mutableIntStateOf(0) }
     // 同一时间只保留一条侧滑操作，避免多个红色操作区悬在列表里造成状态混乱。
     var revealedEntryKey by remember { mutableStateOf<String?>(null) }
     var dragAnchorId by remember { mutableStateOf<String?>(null) }
@@ -196,7 +205,7 @@ fun SessionListScreen(
     }
 
     LaunchedEffect(viewMode) {
-        if (viewMode == SessionListViewMode.Directories) {
+        if (viewMode == SessionListViewMode.Workspaces) {
             endSelection()
         }
     }
@@ -265,15 +274,16 @@ fun SessionListScreen(
                 isSelecting = isSelecting,
                 selectedCount = selectedIds.size,
                 serverDisplayName = serverDisplayName,
-                entryCount = if (viewMode == SessionListViewMode.Directories) {
-                    state.directoryTree?.directoryCount ?: 0
+                contextLabel = if (viewMode == SessionListViewMode.Workspaces) {
+                    "项目与任务"
                 } else {
-                    state.total
+                    "${state.total} 个会话"
                 },
                 viewMode = viewMode,
                 contentHeight = topBarContentHeight,
                 compact = compactLayout,
                 onNewSession = { onNewSession(null) },
+                onRefreshWorkspaces = { workspaceRefreshRequest++ },
                 onViewModeChange = onViewModeChange,
                 onOpenMissions = onOpenMissions,
                 onExitSelection = { endSelection() },
@@ -287,7 +297,6 @@ fun SessionListScreen(
                 onOpenWeb = onOpenWeb,
                 onSwitchServer = onSwitchServer,
                 onCollapseSidebar = onCollapseSidebar,
-                onOpenWorkspaces = onOpenWorkspaces,
             )
         },
         bottomBar = {
@@ -323,15 +332,14 @@ fun SessionListScreen(
         ) {
             AmbientBackground(Modifier.fillMaxSize())
             when {
-                viewMode == SessionListViewMode.Directories -> {
-                    SessionDirectoryTreeContent(
-                        state = state,
-                        selectedSessionId = selectedSessionId,
-                        compact = compactLayout,
-                        interactionEnabled = interactionEnabled,
-                        contentPadding = padding,
-                        onOpenSession = onOpenSession,
-                        onNewSession = onNewSession,
+                viewMode == SessionListViewMode.Workspaces -> {
+                    WorkspaceListScreen(
+                        api = workspaceApi,
+                        onBack = {},
+                        onOpenTask = onOpenWorkspaceTask,
+                        modifier = Modifier.padding(padding),
+                        embedded = true,
+                        refreshRequest = workspaceRefreshRequest,
                     )
                 }
                 state.loading && visibleEntries.isEmpty() -> {
@@ -598,11 +606,12 @@ private fun SessionListTopBar(
     isSelecting: Boolean,
     selectedCount: Int,
     serverDisplayName: String,
-    entryCount: Int,
+    contextLabel: String,
     viewMode: SessionListViewMode,
     contentHeight: Dp,
     compact: Boolean,
     onNewSession: () -> Unit,
+    onRefreshWorkspaces: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
     onOpenMissions: () -> Unit,
     onExitSelection: () -> Unit,
@@ -610,7 +619,6 @@ private fun SessionListTopBar(
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)?,
-    onOpenWorkspaces: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -655,12 +663,7 @@ private fun SessionListTopBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "$serverDisplayName · " +
-                            if (viewMode == SessionListViewMode.Directories) {
-                                "$entryCount 个目录"
-                            } else {
-                                "$entryCount 个会话"
-                            },
+                        text = "$serverDisplayName · $contextLabel",
                         modifier = Modifier
                             .weight(1f)
                             .padding(start = 12.dp, end = 6.dp),
@@ -677,7 +680,17 @@ private fun SessionListTopBar(
                             modifier = Modifier.graphicsLayer { scaleX = -1f },
                         )
                     }
-                    TopBarPrimaryAction(onClick = onNewSession)
+                    if (viewMode == SessionListViewMode.Sessions) {
+                        TopBarPrimaryAction(onClick = onNewSession)
+                    } else {
+                        WandIconButton(
+                            icon = WandIcons.refresh,
+                            contentDescription = "刷新项目",
+                            onClick = onRefreshWorkspaces,
+                            variant = WandIconButtonVariant.Toolbar,
+                            tint = WandColors.textSecondary,
+                        )
+                    }
                     Box {
                         ToolbarIconButton(
                             icon = WandIcons.more,
@@ -689,15 +702,6 @@ private fun SessionListTopBar(
                             expanded = menuOpen,
                             onDismissRequest = { onMenuOpenChange(false) },
                         ) {
-                            if (onOpenWorkspaces != null) {
-                                DropdownMenuItem(
-                                    text = { Text("项目 / 任务", color = WandColors.textPrimary) },
-                                    leadingIcon = {
-                                        Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand)
-                                    },
-                                    onClick = { onMenuOpenChange(false); onOpenWorkspaces() },
-                                )
-                            }
                             DropdownMenuItem(
                                 text = { Text("Agent Inbox", color = WandColors.textPrimary) },
                                 leadingIcon = {
@@ -827,7 +831,7 @@ private fun SessionListViewSwitch(
                     )
                     Spacer(Modifier.width(7.dp))
                     Text(
-                        text = if (value == SessionListViewMode.Sessions) "会话" else "目录",
+                        text = if (value == SessionListViewMode.Sessions) "会话" else "项目",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                         color = contentColor,

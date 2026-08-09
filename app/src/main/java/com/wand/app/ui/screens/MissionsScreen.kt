@@ -27,8 +27,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -105,6 +108,7 @@ fun MissionsScreen(
     var defaultCwd by remember { mutableStateOf("") }
     var diffState by remember { mutableStateOf<Pair<MissionInfo, MissionAttempt>?>(null) }
     var diff by remember { mutableStateOf<MissionDiff?>(null) }
+    var archiveTarget by remember { mutableStateOf<MissionInfo?>(null) }
 
     suspend fun refresh(showProgress: Boolean = false) {
         if (showProgress) loading = true
@@ -184,6 +188,7 @@ fun MissionsScreen(
                                 .onFailure { error = it.message }
                         }
                     },
+                    onArchive = { archiveTarget = it },
                 )
             }
             error?.let { message ->
@@ -237,6 +242,31 @@ fun MissionsScreen(
                 }
             },
         )
+    }
+
+    archiveTarget?.let { mission ->
+        WandDialog(
+            title = "归档这个任务？",
+            onDismissRequest = { archiveTarget = null },
+            icon = WandIcons.delete,
+            confirm = WandDialogAction(
+                label = "归档",
+                destructive = true,
+                onClick = {
+                    val target = mission
+                    archiveTarget = null
+                    scope.launch {
+                        try {
+                            api.archiveMission(target.id)
+                            refresh(showProgress = true)
+                        } catch (e: Exception) { error = e.message }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction(label = "取消", onClick = { archiveTarget = null }),
+        ) {
+            Text("归档后将从任务列表隐藏，会话和 worktree 不会被删除。", color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
@@ -294,43 +324,87 @@ private fun MissionsList(
     missions: List<MissionInfo>,
     onOpenSession: (String) -> Unit,
     onOpenDiff: (MissionInfo, MissionAttempt) -> Unit,
+    onArchive: (MissionInfo) -> Unit,
 ) {
     LazyColumn(
         contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 30.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(missions, key = { it.id }) { mission ->
-            WandCard(contentPadding = PaddingValues(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(mission.title, color = WandColors.textPrimary, style = MaterialTheme.typography.titleMedium)
-                        Text("${mission.attempts.size} 个 Agent · ${mission.baseRef ?: "当前分支"}", color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall)
-                    }
-                    StatePill(mission.status)
+            MissionCard(
+                mission = mission,
+                onOpenSession = onOpenSession,
+                onOpenDiff = onOpenDiff,
+                onArchive = onArchive,
+            )
+        }
+        if (missions.isEmpty()) item { Text("创建任务后，每个 Provider 会在独立 worktree 中并行执行。", color = WandColors.textMuted, modifier = Modifier.padding(36.dp)) }
+    }
+}
+
+@Composable
+private fun MissionCard(
+    mission: MissionInfo,
+    onOpenSession: (String) -> Unit,
+    onOpenDiff: (MissionInfo, MissionAttempt) -> Unit,
+    onArchive: (MissionInfo) -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    WandCard(contentPadding = PaddingValues(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(mission.title, color = WandColors.textPrimary, style = MaterialTheme.typography.titleMedium)
+                Text("${mission.attempts.size} 个 Agent · ${mission.baseRef ?: "当前分支"}", color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall)
+            }
+            StatePill(mission.status)
+            Box {
+                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        WandIcons.more,
+                        contentDescription = "任务操作",
+                        tint = WandColors.textMuted,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
-                Text(mission.prompt, color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 10.dp))
-                mission.attempts.forEach { attempt ->
-                    HorizontalDivider(color = WandColors.border.copy(alpha = 0.55f))
-                    Row(modifier = Modifier.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            painter = BrandLogos.painterForProvider(attempt.provider),
-                            contentDescription = null,
-                            tint = BrandLogos.tintForProvider(attempt.provider, WandColors.brand),
-                            modifier = Modifier.size(
-                                20.dp * BrandLogos.opticalScale(attempt.provider),
-                            ),
-                        )
-                        Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
-                            Text(attempt.provider, color = WandColors.textPrimary, fontWeight = FontWeight.Medium)
-                            Text(attempt.summary ?: attempt.error ?: attempt.branch ?: "准备 worktree…", color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        TextButton(enabled = attempt.sessionId != null, onClick = { attempt.sessionId?.let(onOpenSession) }) { Text("会话") }
-                        TextButton(enabled = attempt.worktreePath != null, onClick = { onOpenDiff(mission, attempt) }) { Text("Diff") }
-                    }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("归档任务", color = WandColors.danger) },
+                        leadingIcon = {
+                            Icon(
+                                WandIcons.delete,
+                                contentDescription = null,
+                                tint = WandColors.danger,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        onClick = { menuExpanded = false; onArchive(mission) },
+                    )
                 }
             }
         }
-        if (missions.isEmpty()) item { Text("创建任务后，每个 Provider 会在独立 worktree 中并行执行。", color = WandColors.textMuted, modifier = Modifier.padding(36.dp)) }
+        Text(mission.prompt, color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 10.dp))
+        mission.attempts.forEach { attempt ->
+            HorizontalDivider(color = WandColors.border.copy(alpha = 0.55f))
+            Row(modifier = Modifier.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    painter = BrandLogos.painterForProvider(attempt.provider),
+                    contentDescription = null,
+                    tint = BrandLogos.tintForProvider(attempt.provider, WandColors.brand),
+                    modifier = Modifier.size(
+                        20.dp * BrandLogos.opticalScale(attempt.provider),
+                    ),
+                )
+                Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
+                    Text(attempt.provider, color = WandColors.textPrimary, fontWeight = FontWeight.Medium)
+                    Text(attempt.summary ?: attempt.error ?: attempt.branch ?: "准备 worktree…", color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                TextButton(enabled = attempt.sessionId != null, onClick = { attempt.sessionId?.let(onOpenSession) }) { Text("会话") }
+                TextButton(enabled = attempt.worktreePath != null, onClick = { onOpenDiff(mission, attempt) }) { Text("Diff") }
+            }
+        }
     }
 }
 

@@ -121,6 +121,8 @@ fun PtyTerminalScreen(
     api: WandApi,
     sessionId: String,
     serverDisplayName: String,
+    workspaceName: String? = null,
+    taskName: String? = null,
     isHapticEnabled: () -> Boolean,
     onBack: () -> Unit,
 ) {
@@ -230,6 +232,8 @@ fun PtyTerminalScreen(
                 backdrop = null,
                 snapshot = snapshot,
                 serverDisplayName = serverDisplayName,
+                workspaceName = workspaceName,
+                taskName = taskName,
                 quickCommit = quickCommit,
                 onBack = onBack,
                 onOpenQuickCommit = { quickCommit.openPanel() },
@@ -323,6 +327,8 @@ private fun PtyTopBar(
     backdrop: GlassBackdrop?,
     snapshot: SessionSnapshot?,
     serverDisplayName: String,
+    workspaceName: String?,
+    taskName: String?,
     quickCommit: QuickCommitStore,
     onBack: () -> Unit,
     onOpenQuickCommit: () -> Unit,
@@ -354,17 +360,24 @@ private fun PtyTopBar(
             PtyProviderBadge(snapshot?.provider)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    snapshot?.displayTitle ?: "终端会话",
+                    taskName?.trim().takeUnless { it.isNullOrEmpty() }
+                        ?: snapshot?.displayTitle
+                        ?: "终端会话",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
                 TailMarqueePathText(
-                    path = snapshot?.cwd?.takeIf { it.isNotBlank() }?.let {
-                        "$serverDisplayName · $it"
-                    } ?: serverDisplayName,
+                    path = if (workspaceTitle != null) {
+                        "$serverDisplayName · $workspaceTitle"
+                    } else {
+                        snapshot?.cwd?.takeIf { it.isNotBlank() }?.let {
+                            "$serverDisplayName · $it"
+                        } ?: serverDisplayName
+                    },
                     fontSize = 10.sp,
                     color = WandColors.textMuted,
                     modifier = Modifier.fillMaxWidth(),

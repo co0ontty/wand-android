@@ -1,5 +1,7 @@
 package com.wand.app.ui.components
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -52,7 +54,14 @@ import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material.icons.outlined.WifiOff
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 
 /**
  * 统一图标层（重设计规范 v1 第 2.2 节）：替换 UI 中所有 emoji 图标。
@@ -200,6 +209,33 @@ object WandIcons {
 
     /** 时钟（历史会话相对时间徽章，对称 iOS clock）。 */
     val clock: ImageVector = Icons.Outlined.Schedule
+}
+
+/**
+ * Git 分支三节点图标（对称 Web 的 branch SVG 与 iOS 的 SF Symbol）。
+ * 工作空间任务标识统一使用该图形，替代旧的 commit 圆点直线图标。
+ */
+@androidx.compose.runtime.Composable
+fun GitBranchIcon(
+    tint: Color,
+    modifier: androidx.compose.ui.Modifier = Modifier.size(13.dp),
+) {
+    Canvas(modifier = modifier) {
+        val s = size.minDimension / 24f
+        val stroke = Stroke(width = 2.2f * s, cap = StrokeCap.Round)
+        fun c(x: Float, y: Float) = Offset(x * s, y * s)
+        drawCircle(tint, radius = 2.4f * s, center = c(6f, 5f), style = stroke)
+        drawCircle(tint, radius = 2.4f * s, center = c(6f, 19f), style = stroke)
+        drawCircle(tint, radius = 2.4f * s, center = c(18f, 8f), style = stroke)
+        drawLine(tint, c(6f, 7.8f), c(6f, 16.2f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+        val path = Path().apply {
+            moveTo(18f * s, 10.8f * s)
+            lineTo(18f * s, 12f * s)
+            quadraticTo(18f * s, 15f * s, 15f * s, 15f * s)
+            lineTo(9.2f * s, 15f * s)
+        }
+        drawPath(path, tint, style = stroke)
+    }
 }
 
 /**

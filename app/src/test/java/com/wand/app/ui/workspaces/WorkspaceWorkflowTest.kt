@@ -249,6 +249,9 @@ class WorkspaceWorkflowTest {
 
         override suspend fun listWorkspaces(): List<Workspace> = emptyList()
         override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> = emptyList()
+        override suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask =
+            taskDetail.task.copy(name = name)
+        override suspend fun deleteWorkspaceTask(taskId: String) = Unit
         override suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail = taskDetail
         override suspend fun saveWorkspaceTaskLayout(taskId: String, layout: TaskWindowLayout?): TaskWindowLayout? {
             saveLayoutCalls += taskId to layout

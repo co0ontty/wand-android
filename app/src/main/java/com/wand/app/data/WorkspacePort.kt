@@ -1,15 +1,18 @@
 package com.wand.app.data
 
-/**
- * 第一批（只读 + 创建）工作空间接口。WandApi 实现该端口；测试用 fake 实现。
- * 不把危险的删除/重命名接口放入此端口 —— 第二批 CRUD 再扩展，避免页面误触发。
- */
+/** 工作空间接口。WandApi 实现该端口；测试用 fake 实现。 */
 interface WorkspacePort {
     /** GET /api/workspaces —— 列出所有项目（按最近打开排序）。 */
     suspend fun listWorkspaces(): List<Workspace>
 
     /** GET /api/workspaces/:id/tasks —— 列出某项目下的任务。 */
     suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask>
+
+    /** PATCH /api/workspace-tasks/:taskId —— 重命名任务。 */
+    suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask
+
+    /** DELETE /api/workspace-tasks/:taskId?cascade=1 —— 删除任务、会话和隔离 worktree。 */
+    suspend fun deleteWorkspaceTask(taskId: String)
 
     /** GET /api/workspace-tasks/:taskId —— 任务详情（含会话列表与派生字段）。 */
     suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail

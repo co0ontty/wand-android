@@ -19,12 +19,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,38 +46,70 @@ import com.wand.app.data.WorkspacePort
 import com.wand.app.data.parseWorkspaceTaskStatus
 import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.data.raw
+import com.wand.app.ui.components.GitBranchIcon
 import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
 import kotlinx.coroutines.launch
 
 /**
- * 项目 / 任务只读浏览页。项目折叠，点击任务进入任务详情；支持下拉刷新。
- * 第一批不含新建/编辑/删除（第二批再扩展 CRUD）。
+ * 项目 / 任务浏览页。项目折叠，点击任务进入任务详情；支持重命名 / 删除任务（第二批 CRUD）。
+ * 任务标识统一使用 Git 分支三节点图标（GitBranchIcon）。
  */
 @Composable
 fun WorkspaceListScreen(
     api: WorkspacePort,
     onBack: () -> Unit,
     onOpenTask: (workspaceId: String, taskId: String, workspaceName: String, taskName: String) -> Unit,
+    modifier: Modifier = Modifier,
+    embedded: Boolean = false,
+    refreshRequest: Int = 0,
+    selectedTaskId: String? = null,
+    onTaskRenamed: (WorkspaceTask) -> Unit = {},
+    onTaskDeleted: (String) -> Unit = {},
 ) {
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var workspaces by remember { mutableStateOf<List<Workspace>>(emptyList()) }
-    // 每个项目下展开的任务列表（按 workspaceId 缓存）。
-    val taskCache = remember { mutableMapOf<String, List<WorkspaceTask>>() }
-    val expanded = remember { mutableSetOf<String>() }
-    val loadingTasks = remember { mutableSetOf<String>() }
+    var renameTarget by remember { mutableStateOf<WorkspaceTask?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<WorkspaceTask?>(null) }
+    var mutationBusy by remember { mutableStateOf(false) }
+    var mutationError by remember { mutableStateOf<String?>(null) }
+    // Compose 可观察缓存：异步任务返回后立即刷新展开区，不依赖其他状态碰巧重组。
+    val taskCache = remember { mutableStateMapOf<String, List<WorkspaceTask>>() }
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    val loadingTasks = remember { mutableStateMapOf<String, Boolean>() }
     val scope = rememberCoroutineScope()
+
+    fun loadWorkspaceTasks(workspace: Workspace, force: Boolean = false) {
+        if (loadingTasks[workspace.id] == true) return
+        if (!force && taskCache[workspace.id] != null) return
+        loadingTasks[workspace.id] = true
+        scope.launch {
+            try {
+                taskCache[workspace.id] = api.listWorkspaceTasks(workspace.id)
+            } catch (_: Exception) {
+                taskCache[workspace.id] = emptyList()
+            } finally {
+                loadingTasks.remove(workspace.id)
+            }
+        }
+    }
 
     suspend fun refresh() {
         loading = true
         try {
-            workspaces = api.listWorkspaces()
+            val loaded = api.listWorkspaces()
+            workspaces = loaded
             error = null
-            // 首个项目默认展开，便于直接看到任务。
-            if (expanded.isEmpty() && workspaces.isNotEmpty()) {
-                expanded.add(workspaces.first().id)
+            // 项目入口默认展开项目，并主动拉取各自任务。
+            loaded.forEach { workspace ->
+                expanded.putIfAbsent(workspace.id, true)
+                loadWorkspaceTasks(workspace, force = true)
             }
         } catch (e: Exception) {
             error = e.message ?: "无法加载项目列表"
@@ -82,69 +118,167 @@ fun WorkspaceListScreen(
         }
     }
 
-    LaunchedEffect(api) { refresh() }
+    LaunchedEffect(api, refreshRequest) { refresh() }
 
     fun toggleWorkspace(workspace: Workspace) {
-        if (expanded.contains(workspace.id)) {
-            expanded.remove(workspace.id)
-            return
+        val nextExpanded = expanded[workspace.id] != true
+        expanded[workspace.id] = nextExpanded
+        if (nextExpanded) loadWorkspaceTasks(workspace)
+    }
+
+    renameTarget?.let { task ->
+        val trimmed = renameDraft.trim()
+        val invalid = trimmed.isEmpty() || trimmed.codePointCount(0, trimmed.length) > 80 ||
+            trimmed.any { it.isISOControl() || it == '\u2028' || it == '\u2029' }
+        WandDialog(
+            title = "重命名任务",
+            onDismissRequest = { if (!mutationBusy) renameTarget = null },
+            icon = WandIcons.edit,
+            confirm = WandDialogAction(
+                label = if (mutationBusy) "保存中…" else "保存",
+                enabled = !mutationBusy && !invalid,
+                onClick = {
+                    if (mutationBusy || invalid) return@WandDialogAction
+                    scope.launch {
+                        mutationBusy = true
+                        mutationError = null
+                        try {
+                            val updated = api.renameWorkspaceTask(task.id, trimmed)
+                            taskCache[task.workspaceId] = taskCache[task.workspaceId]
+                                .orEmpty()
+                                .map { if (it.id == updated.id) updated else it }
+                            renameTarget = null
+                            if (selectedTaskId == updated.id) onTaskRenamed(updated)
+                        } catch (error: Exception) {
+                            mutationError = error.message ?: "重命名任务失败"
+                        } finally {
+                            mutationBusy = false
+                        }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction(
+                label = "取消",
+                enabled = !mutationBusy,
+                onClick = { renameTarget = null },
+            ),
+        ) {
+            WandTextField(
+                value = renameDraft,
+                onValueChange = {
+                    renameDraft = it
+                    mutationError = null
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = "任务名称",
+                enabled = !mutationBusy,
+                singleLine = true,
+                isError = invalid || mutationError != null,
+            )
+            mutationError?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.danger,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
-        expanded.add(workspace.id)
-        if (taskCache[workspace.id] == null && !loadingTasks.contains(workspace.id)) {
-            loadingTasks.add(workspace.id)
-            scope.launch {
-                try {
-                    taskCache[workspace.id] = api.listWorkspaceTasks(workspace.id)
-                } catch (_: Exception) {
-                    taskCache[workspace.id] = emptyList()
-                } finally {
-                    loadingTasks.remove(workspace.id)
-                }
+    }
+
+    deleteTarget?.let { task ->
+        WandDialog(
+            title = "删除任务？",
+            onDismissRequest = { if (!mutationBusy) deleteTarget = null },
+            icon = WandIcons.delete,
+            confirm = WandDialogAction(
+                label = if (mutationBusy) "删除中…" else "删除",
+                destructive = true,
+                enabled = !mutationBusy,
+                onClick = {
+                    if (mutationBusy) return@WandDialogAction
+                    scope.launch {
+                        mutationBusy = true
+                        mutationError = null
+                        try {
+                            api.deleteWorkspaceTask(task.id)
+                            taskCache[task.workspaceId] = taskCache[task.workspaceId]
+                                .orEmpty()
+                                .filterNot { it.id == task.id }
+                            deleteTarget = null
+                            onTaskDeleted(task.id)
+                        } catch (error: Exception) {
+                            mutationError = error.message ?: "删除任务失败"
+                        } finally {
+                            mutationBusy = false
+                        }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction(
+                label = "取消",
+                enabled = !mutationBusy,
+                onClick = { deleteTarget = null },
+            ),
+        ) {
+            Text(
+                "任务「${task.name}」及其会话和独立 worktree 将被删除，此操作无法撤销。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+            mutationError?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.danger,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(WandColors.bgPrimary),
     ) {
-        // 顶栏
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .heightIn(min = 56.dp)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Icon(
-                WandIcons.chevronRight,
-                contentDescription = "返回",
-                tint = WandColors.textSecondary,
+        if (!embedded) {
+            Row(
                 modifier = Modifier
-                    .size(40.dp)
-                    .graphicsLayerRotate180()
-                    .clickable(onClick = onBack)
-                    .padding(8.dp),
-            )
-            Text(
-                "项目 / 任务",
-                style = MaterialTheme.typography.titleLarge,
-                color = WandColors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f).padding(start = 4.dp),
-            )
-            Icon(
-                WandIcons.refresh,
-                contentDescription = "刷新",
-                tint = WandColors.textSecondary,
-                modifier = Modifier
-                    .size(40.dp)
-                    .clickable { scope.launch { refresh() } }
-                    .padding(8.dp),
-            )
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    WandIcons.chevronRight,
+                    contentDescription = "返回",
+                    tint = WandColors.textSecondary,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .graphicsLayerRotate180()
+                        .clickable(onClick = onBack)
+                        .padding(8.dp),
+                )
+                Text(
+                    "项目 / 任务",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = WandColors.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f).padding(start = 4.dp),
+                )
+                Icon(
+                    WandIcons.refresh,
+                    contentDescription = "刷新",
+                    tint = WandColors.textSecondary,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clickable { scope.launch { refresh() } }
+                        .padding(8.dp),
+                )
+            }
         }
 
         when {
@@ -186,9 +320,9 @@ fun WorkspaceListScreen(
                     items(items = workspaces, key = { it.id }) { workspace ->
                         WorkspaceCard(
                             workspace = workspace,
-                            isExpanded = expanded.contains(workspace.id),
+                            isExpanded = expanded[workspace.id] == true,
                             tasks = taskCache[workspace.id],
-                            isLoadingTasks = loadingTasks.contains(workspace.id),
+                            isLoadingTasks = loadingTasks[workspace.id] == true,
                             onToggle = { toggleWorkspace(workspace) },
                             onOpenTask = { task ->
                                 onOpenTask(
@@ -197,6 +331,15 @@ fun WorkspaceListScreen(
                                     workspace.name,
                                     task.name,
                                 )
+                            },
+                            onRenameTask = { task ->
+                                mutationError = null
+                                renameDraft = task.name
+                                renameTarget = task
+                            },
+                            onDeleteTask = { task ->
+                                mutationError = null
+                                deleteTarget = task
                             },
                         )
                     }
@@ -214,6 +357,8 @@ private fun WorkspaceCard(
     isLoadingTasks: Boolean,
     onToggle: () -> Unit,
     onOpenTask: (WorkspaceTask) -> Unit,
+    onRenameTask: (WorkspaceTask) -> Unit,
+    onDeleteTask: (WorkspaceTask) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -285,7 +430,12 @@ private fun WorkspaceCard(
                 )
             } else if (tasks != null) {
                 tasks.forEach { task ->
-                    TaskRow(task = task, onClick = { onOpenTask(task) })
+                    TaskRow(
+                        task = task,
+                        onClick = { onOpenTask(task) },
+                        onRename = { onRenameTask(task) },
+                        onDelete = { onDeleteTask(task) },
+                    )
                 }
             }
         }
@@ -293,22 +443,35 @@ private fun WorkspaceCard(
 }
 
 @Composable
-private fun TaskRow(task: WorkspaceTask, onClick: () -> Unit) {
+private fun TaskRow(
+    task: WorkspaceTask,
+    onClick: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 38.dp, vertical = 10.dp),
+            .padding(start = 38.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(
-            if (task.status.raw() == "done") WandIcons.check else WandIcons.commit,
-            contentDescription = null,
-            tint = if (task.status.raw() == "done") WandColors.success else WandColors.textSecondary,
-            modifier = Modifier.size(16.dp),
-        )
+        if (task.status.raw() == "done") {
+            Icon(
+                WandIcons.statusDone,
+                contentDescription = null,
+                tint = WandColors.success,
+                modifier = Modifier.size(16.dp),
+            )
+        } else {
+            GitBranchIcon(
+                tint = WandColors.textSecondary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
         Text(
             task.name.ifEmpty { "未命名任务" },
             style = MaterialTheme.typography.bodyMedium,
@@ -317,6 +480,47 @@ private fun TaskRow(task: WorkspaceTask, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        Box {
+            IconButton(
+                onClick = { menuExpanded = true },
+                modifier = Modifier.size(30.dp),
+            ) {
+                Icon(
+                    WandIcons.more,
+                    contentDescription = "任务操作",
+                    tint = WandColors.textMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("重命名") },
+                    leadingIcon = { Icon(WandIcons.edit, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    onClick = {
+                        menuExpanded = false
+                        onRename()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("删除", color = WandColors.danger) },
+                    leadingIcon = {
+                        Icon(
+                            WandIcons.delete,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = WandColors.danger,
+                        )
+                    },
+                    onClick = {
+                        menuExpanded = false
+                        onDelete()
+                    },
+                )
+            }
+        }
         Icon(
             WandIcons.chevronRight,
             contentDescription = "打开任务",

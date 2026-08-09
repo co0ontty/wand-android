@@ -61,9 +61,21 @@ class AppNavTest {
     }
 
     @Test
+    fun roundTrip_chatScreenPreservesWorkspaceHeader() {
+        val restored = roundTrip(Screen.Chat("session-123", "Wand 项目", "修复顶部栏"))
+        assertEquals(Screen.Chat("session-123", "Wand 项目", "修复顶部栏"), restored)
+    }
+
+    @Test
     fun roundTrip_ptyScreen() {
         val restored = roundTrip(Screen.PtyTerminal("session-456"))
         assertEquals(Screen.PtyTerminal("session-456"), restored)
+    }
+
+    @Test
+    fun roundTrip_ptyScreenPreservesWorkspaceHeader() {
+        val restored = roundTrip(Screen.PtyTerminal("session-456", "Project", "Run checks"))
+        assertEquals(Screen.PtyTerminal("session-456", "Project", "Run checks"), restored)
     }
 
     @Test
@@ -87,5 +99,17 @@ class AppNavTest {
     @Test
     fun roundTrip_unknownKey_returnsNull() {
         assertNull(NavState.deserializeScreen("totally-unknown-key"))
+    }
+
+    @Test
+    fun popToRootClearsWorkspaceOrSessionDetail() {
+        val nav = NavState().apply {
+            push(Screen.WorkspaceTask("ws-1", "task-1", "Project", "Task"))
+            push(Screen.Chat("session-1", "Project", "Task"))
+        }
+
+        nav.popToRoot()
+
+        assertEquals(listOf(Screen.SessionList), nav.stack)
     }
 }

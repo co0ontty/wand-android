@@ -290,8 +290,10 @@ private fun ReadyContent(
     }
     var sessionListViewMode by rememberSaveable {
         mutableStateOf(
-            if (viewPreferences.getString(SessionListViewPreferenceKey, null) == "directories") {
-                SessionListViewMode.Directories
+            if (viewPreferences.getString(SessionListViewPreferenceKey, null) in
+                setOf("workspaces", "directories")
+            ) {
+                SessionListViewMode.Workspaces
             } else {
                 SessionListViewMode.Sessions
             },
@@ -313,14 +315,6 @@ private fun ReadyContent(
             listState.sessions,
         )
     }
-    // 目录数据跟随提升后的视图偏好，而不是依赖展开侧栏是否正在组合。
-    // 这样从已保存的「目录 + 收起」状态恢复时也能正常加载，切换动画也不会取消请求。
-    LaunchedEffect(sessionListViewMode, listState.entries) {
-        if (sessionListViewMode == SessionListViewMode.Directories) {
-            listState.loadDirectories(silent = listState.directoryTree != null)
-        }
-    }
-
     fun dismissSettings() {
         scope.launch {
             runCatching { settingsSheetState.hide() }
@@ -377,13 +371,29 @@ private fun ReadyContent(
         }
         val openNewSession: (String?) -> Unit = { cwd -> openDetail(Screen.NewSession(cwd)) }
         val changeSessionListView: (SessionListViewMode) -> Unit = { mode ->
+            if (sessionListViewMode != mode) {
+                when (mode) {
+                    SessionListViewMode.Workspaces -> if (
+                        nav.current is Screen.Chat || nav.current is Screen.PtyTerminal
+                    ) {
+                        nav.popToRoot()
+                    }
+                    SessionListViewMode.Sessions -> if (
+                        nav.current is Screen.Workspaces || nav.current is Screen.WorkspaceTask
+                    ) {
+                        nav.popToRoot()
+                    }
+                }
+            }
             sessionListViewMode = mode
             viewPreferences.edit()
-                .putString(SessionListViewPreferenceKey, if (mode == SessionListViewMode.Directories) "directories" else "sessions")
+                .putString(
+                    SessionListViewPreferenceKey,
+                    if (mode == SessionListViewMode.Workspaces) "workspaces" else "sessions",
+                )
                 .apply()
         }
         val openMissions = { openDetail(Screen.Missions) }
-        val openWorkspaces = { openDetail(Screen.Workspaces) }
         val openWorkspaceTask: (String, String, String, String) -> Unit = { workspaceId, taskId, workspaceName, taskName ->
             openDetail(Screen.WorkspaceTask(workspaceId, taskId, workspaceName, taskName))
         }
@@ -406,7 +416,6 @@ private fun ReadyContent(
                 onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                 onViewModeChange = changeSessionListView,
-                onOpenWorkspaces = openWorkspaces,
                 onOpenWorkspaceTask = openWorkspaceTask,
                 sessionCreationInFlight = sessionCreationInFlight,
             )
@@ -423,7 +432,6 @@ private fun ReadyContent(
                 onOpenMissions = openMissions,
                 onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onViewModeChange = changeSessionListView,
-                onOpenWorkspaces = openWorkspaces,
                 onOpenWorkspaceTask = openWorkspaceTask,
                 sessionCreationInFlight = sessionCreationInFlight,
             )
@@ -475,13 +483,13 @@ private fun SinglePaneContent(
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
-    onOpenWorkspaces: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     sessionCreationInFlight: Boolean,
 ) {
     when (val screen = nav.current) {
         is Screen.SessionList -> SessionListScreen(
             state = listState,
+            workspaceApi = api,
             serverDisplayName = actions.connection.serverDisplayName,
             interactionEnabled = !sessionCreationInFlight,
             viewMode = viewMode,
@@ -496,12 +504,15 @@ private fun SinglePaneContent(
             onSwitchServer = {
                 if (!sessionCreationInFlight) actions.navigation.switchServer()
             },
-            onOpenWorkspaces = onOpenWorkspaces,
+            onCollapseSidebar = null,
+            onOpenWorkspaceTask = onOpenWorkspaceTask,
         )
         is Screen.Chat -> ChatScreen(
             api = api,
             sessionId = screen.sessionId,
             serverDisplayName = actions.connection.serverDisplayName,
+            workspaceName = screen.workspaceName,
+            taskName = screen.taskName,
             isHapticEnabled = actions.settings.isHapticEnabled,
             drafts = sessionDrafts,
             onBack = { nav.pop() },
@@ -510,6 +521,8 @@ private fun SinglePaneContent(
             api = api,
             sessionId = screen.sessionId,
             serverDisplayName = actions.connection.serverDisplayName,
+            workspaceName = screen.workspaceName,
+            taskName = screen.taskName,
             isHapticEnabled = actions.settings.isHapticEnabled,
             onBack = { nav.pop() },
         )
@@ -533,6 +546,18 @@ private fun SinglePaneContent(
             onOpenTask = { workspaceId, taskId, workspaceName, taskName ->
                 onOpenWorkspaceTask(workspaceId, taskId, workspaceName, taskName)
             },
+            onTaskRenamed = { updated ->
+                val top = nav.stack.lastOrNull()
+                if (top is Screen.WorkspaceTask && top.taskId == updated.id) {
+                    nav.stack[nav.stack.lastIndex] = top.copy(taskName = updated.name)
+                }
+            },
+            onTaskDeleted = { taskId ->
+                val top = nav.stack.lastOrNull()
+                if (top is Screen.WorkspaceTask && top.taskId == taskId) {
+                    nav.pop()
+                }
+            },
         )
         is Screen.WorkspaceTask -> WorkspaceTaskScreen(
             api = api,
@@ -543,10 +568,10 @@ private fun SinglePaneContent(
             onBack = { nav.pop() },
             onOpenSession = { sessionId ->
                 // 任务内打开会话：保留 WorkspaceTask 作为返回目的地。
-                nav.push(Screen.Chat(sessionId))
+                nav.push(Screen.Chat(sessionId, screen.workspaceName, screen.taskName))
             },
             onOpenPty = { sessionId ->
-                nav.push(Screen.PtyTerminal(sessionId))
+                nav.push(Screen.PtyTerminal(sessionId, screen.workspaceName, screen.taskName))
             },
         )
     }
@@ -570,7 +595,6 @@ private fun WideReadyContent(
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
-    onOpenWorkspaces: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     sessionCreationInFlight: Boolean,
 ) {
@@ -627,6 +651,7 @@ private fun WideReadyContent(
                         } else {
                             SessionListScreen(
                                 state = listState,
+                                workspaceApi = api,
                                 serverDisplayName = actions.connection.serverDisplayName,
                                 modifier = Modifier.fillMaxSize(),
                                 selectedSessionId = selectedSessionId,
@@ -646,7 +671,7 @@ private fun WideReadyContent(
                                     if (!sessionCreationInFlight) actions.navigation.switchServer()
                                 },
                                 onCollapseSidebar = onToggleSidebarCollapsed,
-                                onOpenWorkspaces = onOpenWorkspaces,
+                                onOpenWorkspaceTask = onOpenWorkspaceTask,
                             )
                         }
                     }
@@ -676,6 +701,8 @@ private fun WideReadyContent(
                     api = api,
                     sessionId = screen.sessionId,
                     serverDisplayName = actions.connection.serverDisplayName,
+                    workspaceName = screen.workspaceName,
+                    taskName = screen.taskName,
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     drafts = sessionDrafts,
                     onBack = { nav.pop() },
@@ -684,6 +711,8 @@ private fun WideReadyContent(
                     api = api,
                     sessionId = screen.sessionId,
                     serverDisplayName = actions.connection.serverDisplayName,
+                    workspaceName = screen.workspaceName,
+                    taskName = screen.taskName,
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     onBack = { nav.pop() },
                 )
@@ -707,6 +736,18 @@ private fun WideReadyContent(
                     onOpenTask = { workspaceId, taskId, workspaceName, taskName ->
                         onOpenWorkspaceTask(workspaceId, taskId, workspaceName, taskName)
                     },
+                    onTaskRenamed = { updated ->
+                        val detail = nav.stack.lastOrNull()
+                        if (detail is Screen.WorkspaceTask && detail.taskId == updated.id) {
+                            nav.setDetail(detail.copy(taskName = updated.name))
+                        }
+                    },
+                    onTaskDeleted = { taskId ->
+                        val detail = nav.stack.lastOrNull()
+                        if (detail is Screen.WorkspaceTask && detail.taskId == taskId) {
+                            nav.popToRoot()
+                        }
+                    },
                 )
                 is Screen.WorkspaceTask -> WorkspaceTaskScreen(
                     api = api,
@@ -716,10 +757,10 @@ private fun WideReadyContent(
                     taskName = screen.taskName,
                     onBack = { nav.pop() },
                     onOpenSession = { sessionId ->
-                        nav.setDetail(Screen.Chat(sessionId))
+                        nav.setDetail(Screen.Chat(sessionId, screen.workspaceName, screen.taskName))
                     },
                     onOpenPty = { sessionId ->
-                        nav.setDetail(Screen.PtyTerminal(sessionId))
+                        nav.setDetail(Screen.PtyTerminal(sessionId, screen.workspaceName, screen.taskName))
                     },
                 )
             }
@@ -819,7 +860,6 @@ private fun CollapsedSessionRail(
     onExpandSidebar: () -> Unit,
 ) {
     val entries = listState.entries
-    val scope = rememberCoroutineScope()
     Column(
         modifier = Modifier
             .width(56.dp)
@@ -836,8 +876,8 @@ private fun CollapsedSessionRail(
             accentTint = WandColors.brand,
             selected = true,
             selectionStateEnabled = true,
-            contentDescription = if (showingSessions) "当前为会话视图" else "当前为目录视图",
-            onClickLabel = if (showingSessions) "展开会话栏" else "展开目录栏",
+            contentDescription = if (showingSessions) "当前为会话视图" else "当前为项目视图",
+            onClickLabel = if (showingSessions) "展开会话栏" else "展开项目栏",
             outlined = true,
             onClick = onExpandSidebar,
         )
@@ -846,7 +886,7 @@ private fun CollapsedSessionRail(
         Spacer(modifier = Modifier.height(10.dp))
         val contentLoading = when (viewMode) {
             SessionListViewMode.Sessions -> listState.loading && entries.isEmpty()
-            SessionListViewMode.Directories -> listState.directoryLoading && listState.directoryTree == null
+            SessionListViewMode.Workspaces -> false
         }
         if (contentLoading) {
             Box(
@@ -900,30 +940,18 @@ private fun CollapsedSessionRail(
                     .fillMaxWidth(),
                 contentAlignment = Alignment.Center,
             ) {
-                val directoryError = listState.directoryError
-                if (directoryError != null && listState.directoryTree == null) {
-                    CollapsedRailTile(
-                        icon = rememberVectorPainter(WandIcons.error),
-                        iconTint = WandColors.danger,
-                        selected = false,
-                        contentDescription = directoryError,
-                        onClickLabel = "重新加载目录",
-                        outlined = true,
-                        onClick = { scope.launch { listState.loadDirectories() } },
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = WandIcons.folder,
+                        contentDescription = null,
+                        tint = WandColors.brand,
+                        modifier = Modifier.size(18.dp),
                     )
-                } else {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = (listState.directoryTree?.directoryCount ?: 0).toString(),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = WandColors.textSecondary,
-                        )
-                        Text(
-                            text = "目录",
-                            fontSize = 9.sp,
-                            color = WandColors.textMuted,
-                        )
-                    }
+                    Text(
+                        text = "项目",
+                        fontSize = 9.sp,
+                        color = WandColors.textMuted,
+                    )
                 }
             }
         }

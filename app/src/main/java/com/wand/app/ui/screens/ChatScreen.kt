@@ -188,6 +188,8 @@ fun ChatScreen(
     api: WandApi,
     sessionId: String,
     serverDisplayName: String,
+    workspaceName: String? = null,
+    taskName: String? = null,
     isHapticEnabled: () -> Boolean,
     drafts: SessionDraftStore,
     onBack: () -> Unit,
@@ -393,13 +395,17 @@ fun ChatScreen(
                             horizontalAlignment = Alignment.Start,
                             modifier = Modifier.weight(1f),
                         ) {
+                            val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
+                            val workspaceTaskTitle = taskName?.trim().takeUnless { it.isNullOrEmpty() }
                             ChatTopicTitle(
-                                text = store.snapshot?.displayTitle ?: "对话详情",
-                                generating = store.snapshot?.titleGenerating == true,
+                                text = workspaceTaskTitle ?: store.snapshot?.displayTitle ?: "对话详情",
+                                generating = workspaceTaskTitle == null && store.snapshot?.titleGenerating == true,
                             )
                             val workingPath = chatWorkingPath(store.snapshot?.cwd)
                             TailMarqueePathText(
-                                path = if (workingPath == null) {
+                                path = if (workspaceTitle != null) {
+                                    "$serverDisplayName · $workspaceTitle"
+                                } else if (workingPath == null) {
                                     serverDisplayName
                                 } else {
                                     "$serverDisplayName · $workingPath"

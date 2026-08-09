@@ -159,5 +159,6 @@ interface MissionsPort {
         body: String,
     ): MissionReviewComment
     suspend fun sendMissionReview(missionId: String, attemptId: String): List<MissionReviewComment>
+    suspend fun archiveMission(missionId: String): MissionInfo
     suspend fun markInboxRead(sessionId: String?)
 }
