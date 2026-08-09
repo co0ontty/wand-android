@@ -85,7 +85,7 @@ latest_tag_version() {
 # 1. 编译
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   repair_build_permissions "app/build"
-  VERSION="$(latest_tag_version)"
+  VERSION="${1:-$(latest_tag_version)}"
   STAMP="${VERSION}-debug.$(date +%m%d%H%M)"
   echo "==> 编译 debug APK（${STAMP}）"
   ./gradlew assembleDebug -PAPP_VERSION_NAME="$STAMP"
