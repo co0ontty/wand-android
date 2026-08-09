@@ -7,9 +7,11 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -27,8 +30,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -41,19 +47,27 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,15 +84,14 @@ import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
+import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
-import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
-import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
-import com.wand.app.ui.theme.rememberGlassBackdrop
 import com.wand.app.ui.terminal.DefaultTerminalShortcuts
 import com.wand.app.ui.terminal.TerminalKeyBinding
 import com.wand.app.ui.terminal.TerminalModifier
@@ -87,6 +100,7 @@ import com.wand.app.ui.terminal.buildTerminalShortcut
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
@@ -112,7 +126,18 @@ fun PtyTerminalScreen(
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
     var snapshotResolved by remember(sessionId) { mutableStateOf(false) }
+    var webViewReady by remember(sessionId) { mutableStateOf(false) }
     var toast by remember(sessionId) { mutableStateOf<String?>(null) }
+    // 底部快捷栏左端的拉手：折叠时只露出快捷键栏，展开时在上方滑出输入抽屉
+    // （文本框 + 发送 + 按住说话）。默认折叠，给终端留出最大可视区，对称 iOS PtySessionView。
+    var inputDrawerOpen by remember(sessionId) { mutableStateOf(false) }
+    var draft by remember(sessionId) { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    val voiceInput = rememberVoiceInputHandle(
+        isHapticEnabled = isHapticEnabled,
+        onToast = { message -> toast = message },
+        onCommit = { text -> draft = appendVoiceText(draft, text) },
+    )
     // A slow or reconnecting server must not replay seconds of stale key-repeat input after the
     // user has already released the key. Keep only a small, recent interaction window.
     val shortcutQueue = remember(sessionId) {
@@ -171,12 +196,38 @@ fun PtyTerminalScreen(
         }
     }
 
-    val glassBackdrop = rememberGlassBackdrop()
+    fun sendPtyDraft() {
+        val text = draft.trim()
+        if (text.isEmpty()) return
+        val restore = draft
+        draft = ""
+        scope.launch {
+            try {
+                // 对齐 iOS sendPtyInput：先发文本，再发回车（带 enter_text 标记），
+                // 两个 input 之间留一点间隔，避免服务端把文本和回车粘成一条。
+                api.sendInput(id = sessionId, input = text, view = "terminal")
+                delay(30)
+                api.sendInput(
+                    id = sessionId,
+                    input = "\r",
+                    view = "terminal",
+                    shortcutKey = "enter_text",
+                )
+            } catch (error: Exception) {
+                toast = error.message ?: "终端命令发送失败"
+                if (draft.isEmpty()) draft = restore
+            }
+        }
+    }
+
     Scaffold(
-        containerColor = Color.Transparent,
+        // WebView 不能放进动态玻璃的 backdrop 捕获层：平台视图与离屏采样会互相争用
+        // 合成缓冲，部分 Android GPU 上会表现为整块终端反复闪烁。PTY 的 chrome 使用
+        // 稳定的半透明降级材质，终端本体保持直接合成。
+        containerColor = WandColors.bgPrimary,
         topBar = {
             PtyTopBar(
-                backdrop = glassBackdrop,
+                backdrop = null,
                 snapshot = snapshot,
                 serverDisplayName = serverDisplayName,
                 quickCommit = quickCommit,
@@ -185,19 +236,21 @@ fun PtyTerminalScreen(
             )
         },
         bottomBar = {
-            PtyShortcutBar(
-                backdrop = glassBackdrop,
+            PtyBottomBar(
+                backdrop = null,
+                inputDrawerOpen = inputDrawerOpen,
+                onToggleInputDrawer = { inputDrawerOpen = !inputDrawerOpen },
+                draft = draft,
+                onDraftChange = { draft = it },
+                onSend = { sendPtyDraft() },
                 isHapticEnabled = isHapticEnabled,
                 onShortcut = { shortcutQueue.trySend(it) },
+                voice = voiceInput.voice,
+                onMicDown = voiceInput.onMicDown,
             )
         },
     ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .glassBackdropSource(glassBackdrop),
-        ) {
-            AmbientBackground(Modifier.fillMaxSize())
+        Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -210,7 +263,20 @@ fun PtyTerminalScreen(
                         token = api.token,
                         sessionId = sessionId,
                         onHardwareShortcut = { shortcutQueue.trySend(it) },
+                        onReadyChange = { webViewReady = it },
                     )
+                    // Cookie 就绪不等于网页首帧就绪。等页面初始化脚本真正执行完成后再
+                    // 移除不透明遮罩，避免 WebView 的空白帧、首屏和终端画面来回闪现。
+                    if (!webViewReady) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(TerminalBackground),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(color = WandColors.brand, strokeWidth = 2.dp)
+                        }
+                    }
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = WandColors.brand, strokeWidth = 2.dp)
@@ -254,7 +320,7 @@ internal fun shouldResumePtyTerminal(
 
 @Composable
 private fun PtyTopBar(
-    backdrop: GlassBackdrop,
+    backdrop: GlassBackdrop?,
     snapshot: SessionSnapshot?,
     serverDisplayName: String,
     quickCommit: QuickCommitStore,
@@ -326,13 +392,19 @@ private fun QuietPtyTopIconButton(
 }
 
 @Composable
-private fun PtyShortcutBar(
-    backdrop: GlassBackdrop,
+private fun PtyBottomBar(
+    backdrop: GlassBackdrop?,
+    inputDrawerOpen: Boolean,
+    onToggleInputDrawer: () -> Unit,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onSend: () -> Unit,
     isHapticEnabled: () -> Boolean,
     onShortcut: (TerminalShortcut) -> Unit,
+    voice: VoiceInputController,
+    onMicDown: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -345,6 +417,15 @@ private fun PtyShortcutBar(
             .imePadding()
             .navigationBarsPadding(),
     ) {
+        AnimatedVisibility(visible = inputDrawerOpen) {
+            PtyInputDrawer(
+                draft = draft,
+                onDraftChange = onDraftChange,
+                onSend = onSend,
+                voice = voice,
+                onMicDown = onMicDown,
+            )
+        }
         HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.72f))
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -355,6 +436,8 @@ private fun PtyShortcutBar(
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 10.dp),
         ) {
+            // 第一个固定项是输入抽屉的拉手：键盘图标 + 上/下箭头，点击或上拉展开输入框。
+            InputDrawerHandle(open = inputDrawerOpen, onClick = onToggleInputDrawer)
             DefaultTerminalShortcuts.forEach { shortcut ->
                 TerminalShortcutKey(shortcut) {
                     if (isHapticEnabled()) {
@@ -364,6 +447,154 @@ private fun PtyShortcutBar(
                 }
             }
         }
+    }
+}
+
+/// 输入抽屉的拉手：快捷键栏的第一个固定项。折叠态显示键盘 + 向上箭头，
+/// 展开态翻转成向下箭头。点击切换；带一个纵向拖动手势，上拉展开、下拉收起。
+@Composable
+private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
+    val targetColor = if (open) WandColors.brand else WandColors.textPrimary
+    val background = if (open) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.76f)
+    val borderColor = if (open) WandColors.brand.copy(alpha = 0.24f) else WandColors.borderStrong
+    val shape = RoundedCornerShape(11.dp)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .height(40.dp)
+            .widthIn(min = 52.dp)
+            .clip(shape)
+            .background(background)
+            .border(0.6.dp, borderColor, shape)
+            .clickable(
+                onClickLabel = if (open) "收起输入框" else "展开输入框",
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 10.dp)
+            .pointerInput(open) {
+                detectVerticalDragGestures(
+                    onDragEnd = {},
+                ) { _, dragAmount ->
+                    // 向上拖动（负值）展开，向下拖动（正值）收起。
+                    if (dragAmount < -6f && !open) onClick()
+                    else if (dragAmount > 6f && open) onClick()
+                }
+            },
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                WandIcons.keyboard,
+                contentDescription = null,
+                tint = targetColor,
+                modifier = Modifier.size(16.dp),
+            )
+            Icon(
+                if (open) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
+                contentDescription = null,
+                tint = targetColor,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+    }
+}
+
+/// 展开后的终端输入抽屉：多行文本框 + 按住说话 + 发送。显示在快捷键栏上方。
+@Composable
+private fun PtyInputDrawer(
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onSend: () -> Unit,
+    voice: VoiceInputController,
+    onMicDown: () -> Unit,
+) {
+    val canSend = draft.isNotBlank()
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        runCatching { focusRequester.requestFocus() }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        BasicTextField(
+            value = draft,
+            onValueChange = onDraftChange,
+            textStyle = TextStyle(
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
+                color = WandColors.textPrimary,
+            ),
+            cursorBrush = SolidColor(WandColors.brand),
+            minLines = 1,
+            maxLines = 5,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            decorationBox = { innerTextField ->
+                Box(
+                    contentAlignment = Alignment.CenterStart,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 40.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(WandColors.surfaceSoft.copy(alpha = 0.7f))
+                        .border(0.6.dp, WandColors.borderStrong, RoundedCornerShape(16.dp))
+                        .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+                ) {
+                    if (draft.isEmpty()) {
+                        Text(
+                            "输入终端命令",
+                            fontSize = 16.sp,
+                            color = WandColors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+            modifier = Modifier
+                .weight(1f)
+                .focusRequester(focusRequester),
+        )
+        VoiceMicButton(
+            voice = voice,
+            voiceMode = false,
+            onToggleMode = {},
+            onMicDown = onMicDown,
+        )
+        PtyDrawerSendButton(enabled = canSend, onClick = onSend)
+    }
+}
+
+@Composable
+private fun PtyDrawerSendButton(enabled: Boolean, onClick: () -> Unit) {
+    val tint = if (enabled) WandColors.textPrimary else WandColors.textSecondary.copy(alpha = 0.55f)
+    val background = if (enabled) WandColors.brand else WandColors.textSecondary.copy(alpha = 0.16f)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(
+                enabled = enabled,
+                onClickLabel = "发送",
+                role = Role.Button,
+                onClick = onClick,
+            ),
+    ) {
+        Icon(
+            WandIcons.arrowUp,
+            contentDescription = "发送",
+            tint = tint,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -413,12 +644,14 @@ private fun PtyTerminalWebView(
     token: String?,
     sessionId: String,
     onHardwareShortcut: (TerminalShortcut) -> Unit,
+    onReadyChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val webSessionOwnerId = remember { "pty-${UUID.randomUUID()}" }
     val activeWebView = remember { AtomicReference<WebView?>(null) }
     val latestHardwareShortcut by rememberUpdatedState(onHardwareShortcut)
+    val latestOnReadyChange by rememberUpdatedState(onReadyChange)
     var lifecycleResumed by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
     }
@@ -439,6 +672,7 @@ private fun PtyTerminalWebView(
                 -> {
                     lifecycleResumed = false
                     prepared = false
+                    latestOnReadyChange(false)
                     activeWebView.getAndSet(null)?.let(::disposePtyWebView)
                     WandWebSession.release(webSessionOwnerId)
                 }
@@ -448,6 +682,7 @@ private fun PtyTerminalWebView(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            latestOnReadyChange(false)
             activeWebView.getAndSet(null)?.let(::disposePtyWebView)
             WandWebSession.release(webSessionOwnerId)
         }
@@ -455,6 +690,7 @@ private fun PtyTerminalWebView(
     LaunchedEffect(serverUrl, token, preparationAttempt, lifecycleResumed) {
         if (!lifecycleResumed) {
             prepared = false
+            latestOnReadyChange(false)
             return@LaunchedEffect
         }
         preparationError = null
@@ -466,6 +702,7 @@ private fun PtyTerminalWebView(
                 WandWebSession.OwnerRevocation {
                     activeWebView.getAndSet(null)?.let(::disposePtyWebView)
                     prepared = false
+                    latestOnReadyChange(false)
                 },
             )
             if (lifecycleResumed) prepared = true
@@ -535,39 +772,19 @@ private fun PtyTerminalWebView(
             }
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
-                    // 原生头部已吃掉状态栏，网页内安全区清零，避免双重顶部留白。
-                    view.evaluateJavascript(
-                        "(function(){try{var r=document.documentElement;" +
-                            "r.classList.add('is-wand-app-native-insets');" +
-                            "r.style.setProperty('--app-inset-top','0px');" +
-                            "r.style.setProperty('--app-inset-bottom','0px');" +
-                            "r.style.setProperty('--app-inset-left','0px');" +
-                            "r.style.setProperty('--app-inset-right','0px');" +
-                            "if(!document.getElementById('wand-native-terminal-compact-style')){" +
-                            "var s=document.createElement('style');" +
-                            "s.id='wand-native-terminal-compact-style';" +
-                            "s.textContent='" +
-                            ".is-wand-embed-terminal .wand-joystick-root{z-index:120;}" +
-                            ".is-wand-embed-terminal .wand-joystick-root.visible{opacity:1!important;visibility:visible!important;}" +
-                            ".is-wand-embed-terminal .wand-joystick-ball{opacity:1!important;transform:none;}" +
-                            ".is-wand-embed-terminal .wand-joystick-panel{z-index:124;}" +
-                            ".is-wand-embed-terminal .terminal-scroll-wrap{padding:8px 4px 8px!important;--term-font-family:\\\"Roboto Mono\\\",\\\"Droid Sans Mono\\\",\\\"Noto Sans Mono\\\",\\\"Noto Sans Symbols 2\\\",\\\"Noto Sans Symbols\\\",monospace!important;--term-font-size:10px!important;--term-row-height:15px!important;}" +
-                            ".is-wand-embed-terminal .terminal-container{margin:0!important;border-left:0!important;border-right:0!important;border-radius:0!important;box-shadow:none!important;}" +
-                            "';" +
-                            "document.head.appendChild(s);}" +
-                            "if(!window.__wandNativeJoystickFocusGuard){" +
-                            "window.__wandNativeJoystickFocusGuard=true;" +
-                            "function blurJoystickFocus(){try{var a=document.activeElement;if(a&&typeof a.blur==='function')a.blur();setTimeout(function(){try{var n=document.activeElement;if(n&&typeof n.blur==='function')n.blur();}catch(e){}},0);}catch(e){}}" +
-                            "['pointerdown','pointerup','touchstart','touchend','click'].forEach(function(type){document.addEventListener(type,function(e){try{var t=e.target;if(t&&t.closest&&t.closest('.wand-joystick-root'))blurJoystickFocus();}catch(err){}},true);});" +
-                            "}" +
-                            "function fit(){try{window.dispatchEvent(new Event('resize'));var o=document.getElementById('output');if(o){var w=o.style.width;o.style.width='calc(100% - 0.01px)';void o.offsetWidth;o.style.width=w;}}catch(e){}}" +
-                            "[0,80,220,520].forEach(function(d){setTimeout(fit,d);});" +
-                            "}catch(e){}})();",
-                        null,
-                    )
-                    // PTY 页面只有一个输入面：xterm 的 InputConnection。新服务直接识别
-                    // passthrough=1；旧服务则通过现有交互开关进入同一模式，保证混合版本可用。
-                    view.evaluateJavascript(EnableTerminalPassthroughScript, null)
+                    // 悬浮球的显隐、拖动和面板展开完全由网页端管理。原生层不再强制
+                    // 覆盖 opacity / transform，也不再重复注册焦点手势监听。
+                    view.evaluateJavascript(NativeTerminalSetupScript) {
+                        if (activeWebView.get() === view && lifecycleResumed) {
+                            // 新服务直接识别 passthrough=1；旧服务只做有限次数的兼容启用，
+                            // 成功后立即停止，避免永久定时器反复切换终端交互状态。
+                            view.evaluateJavascript(EnableTerminalPassthroughScript) {
+                                if (activeWebView.get() === view && lifecycleResumed) {
+                                    latestOnReadyChange(true)
+                                }
+                            }
+                        }
+                    }
                 }
             }
             loadUrl(buildEmbedTerminalUrl(serverUrl, sessionId))
@@ -602,22 +819,67 @@ private fun buildEmbedTerminalUrl(serverUrl: String, sessionId: String): String 
         .build()
         .toString()
 
+private val NativeTerminalSetupScript =
+    """
+    (function() {
+      try {
+        var root = document.documentElement;
+        root.classList.add('is-wand-app-native-insets');
+        root.style.setProperty('--app-inset-top', '0px');
+        root.style.setProperty('--app-inset-bottom', '0px');
+        root.style.setProperty('--app-inset-left', '0px');
+        root.style.setProperty('--app-inset-right', '0px');
+        if (!document.getElementById('wand-native-terminal-compact-style')) {
+          var style = document.createElement('style');
+          style.id = 'wand-native-terminal-compact-style';
+          style.textContent =
+            'html.is-wand-embed-terminal,html.is-wand-embed-terminal body,' +
+            '.is-wand-embed-terminal .main-content{background:#17120f!important;}' +
+            '.is-wand-embed-terminal .terminal-scroll-wrap{' +
+            'padding:0!important;' +
+            '--term-font-family:"Roboto Mono","Droid Sans Mono","Noto Sans Mono","Noto Sans Symbols 2","Noto Sans Symbols",monospace!important;' +
+            '--term-font-size:10px!important;--term-row-height:15px!important;}' +
+            '.is-wand-embed-terminal .terminal-scroll-wrap .xterm{padding:8px 4px 6px!important;}' +
+            '.is-wand-embed-terminal .terminal-container{' +
+            'margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;}';
+          document.head.appendChild(style);
+        }
+        function fit() {
+          try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+        }
+        requestAnimationFrame(fit);
+        setTimeout(fit, 180);
+      } catch (e) {}
+    })();
+    """.trimIndent()
+
 private val EnableTerminalPassthroughScript =
     """
     (function() {
       try {
         document.documentElement.classList.add('is-wand-terminal-passthrough');
+        var attempts = 0;
         function enablePassthrough() {
+          attempts += 1;
           try {
             var toggle = document.getElementById('terminal-interactive-toggle-top');
             if (toggle && toggle.getAttribute('aria-pressed') !== 'true') toggle.click();
+            return !!toggle && toggle.getAttribute('aria-pressed') === 'true';
           } catch (e) {}
+          return false;
         }
-        enablePassthrough();
         if (window.__wandNativePassthroughTimer) {
           clearInterval(window.__wandNativePassthroughTimer);
         }
-        window.__wandNativePassthroughTimer = setInterval(enablePassthrough, 750);
+        window.__wandNativePassthroughTimer = null;
+        if (!enablePassthrough()) {
+          window.__wandNativePassthroughTimer = setInterval(function() {
+            if (enablePassthrough() || attempts >= 12) {
+              clearInterval(window.__wandNativePassthroughTimer);
+              window.__wandNativePassthroughTimer = null;
+            }
+          }, 250);
+        }
       } catch (e) {}
     })();
     """.trimIndent()
