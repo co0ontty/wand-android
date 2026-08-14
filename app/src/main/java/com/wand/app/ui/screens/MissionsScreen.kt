@@ -8,18 +8,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -54,7 +49,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.wand.app.data.AgentActivityItem
 import com.wand.app.data.MissionAttempt
 import com.wand.app.data.MissionDiff
 import com.wand.app.data.MissionInfo
@@ -99,9 +93,7 @@ fun MissionsScreen(
     onOpenSession: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var selectedTab by remember { mutableStateOf(0) }
     var missions by remember { mutableStateOf<List<MissionInfo>>(emptyList()) }
-    var inbox by remember { mutableStateOf<List<AgentActivityItem>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var showCreate by remember { mutableStateOf(false) }
@@ -113,13 +105,10 @@ fun MissionsScreen(
     suspend fun refresh(showProgress: Boolean = false) {
         if (showProgress) loading = true
         try {
-            val nextInbox = api.fetchInbox()
-            val nextMissions = api.fetchMissions()
-            inbox = nextInbox
-            missions = nextMissions
+            missions = api.fetchMissions()
             error = null
         } catch (e: Exception) {
-            error = e.message ?: "无法加载 Agent Inbox"
+            error = e.message ?: "无法加载并行任务"
         } finally {
             loading = false
         }
@@ -152,15 +141,10 @@ fun MissionsScreen(
                 ) {
                     TextButton(onClick = onBack) { Text("返回", color = WandColors.brand) }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Agent Inbox", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
-                        Text("并行任务与待处理会话", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                        Text("并行任务", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
+                        Text("多 Agent 并行尝试与 Diff 审查", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
                     }
                     WandButton(label = "新任务", onClick = { showCreate = true }, variant = WandButtonVariant.Secondary)
-                }
-                Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    MissionTab("Inbox", inbox.count { it.state == "needs_input" || it.state == "needs_permission" }, selectedTab == 0) { selectedTab = 0 }
-                    Spacer(Modifier.width(8.dp))
-                    MissionTab("任务", missions.size, selectedTab == 1) { selectedTab = 1 }
                 }
                 HorizontalDivider(color = WandColors.border)
             }
@@ -168,14 +152,10 @@ fun MissionsScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when {
-                loading && inbox.isEmpty() && missions.isEmpty() -> CircularProgressIndicator(
+                loading && missions.isEmpty() -> CircularProgressIndicator(
                     color = WandColors.brand,
                     modifier = Modifier.align(Alignment.Center).size(26.dp),
                 )
-                selectedTab == 0 -> InboxList(inbox, onOpenSession = { sessionId ->
-                    scope.launch { runCatching { api.markInboxRead(sessionId) } }
-                    onOpenSession(sessionId)
-                })
                 else -> MissionsList(
                     missions = missions,
                     onOpenSession = onOpenSession,
@@ -210,7 +190,6 @@ fun MissionsScreen(
                     try {
                         api.createMission(title, prompt, cwd, providers, baseRef, shared, copied)
                         showCreate = false
-                        selectedTab = 1
                         refresh(showProgress = true)
                     } catch (e: Exception) { error = e.message }
                 }
@@ -267,55 +246,6 @@ fun MissionsScreen(
         ) {
             Text("归档后将从任务列表隐藏，会话和 worktree 不会被删除。", color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall)
         }
-    }
-}
-
-@Composable
-private fun MissionTab(label: String, count: Int, selected: Boolean, onClick: () -> Unit) {
-    Surface(
-        color = if (selected) WandColors.brandSoft else Color.Transparent,
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.clickable(onClick = onClick),
-    ) {
-        Text(
-            "$label  $count",
-            color = if (selected) WandColors.brand else WandColors.textSecondary,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-        )
-    }
-}
-
-@Composable
-private fun InboxList(items: List<AgentActivityItem>, onOpenSession: (String) -> Unit) {
-    val groups = listOf(
-        "需要你" to items.filter { it.state == "needs_input" || it.state == "needs_permission" },
-        "执行中" to items.filter { it.state == "working" },
-        "已结束" to items.filter { it.state == "done" || it.state == "failed" },
-    )
-    LazyColumn(
-        contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 30.dp),
-        verticalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        groups.forEach { (title, entries) ->
-            if (entries.isNotEmpty()) {
-                item(key = "header-$title") { Text(title, color = WandColors.textMuted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)) }
-                items(entries, key = { it.sessionId }) { item ->
-                    WandCard(onClick = { onOpenSession(item.sessionId) }, contentPadding = PaddingValues(13.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            val colors = missionStateColors(item.state)
-                            Box(Modifier.size(9.dp).background(colors.first, RoundedCornerShape(50)))
-                            Column(Modifier.weight(1f).padding(horizontal = 11.dp)) {
-                                Text(item.title, color = WandColors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(item.summary ?: item.cwd ?: "暂无摘要", color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                            StatePill(item.state)
-                        }
-                    }
-                }
-            }
-        }
-        if (items.isEmpty()) item { Text("目前没有 Agent 活动", color = WandColors.textMuted, modifier = Modifier.fillMaxWidth().padding(40.dp)) }
     }
 }
 

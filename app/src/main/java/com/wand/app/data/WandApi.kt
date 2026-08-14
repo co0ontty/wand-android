@@ -505,7 +505,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         requestData("POST", "/api/settings/config", body)
     }
 
-    // MARK: - Missions / Agent Inbox
+    // MARK: - Missions
 
     override suspend fun defaultMissionCwd(): String =
         requestObject("GET", "/api/config").str("defaultCwd").orEmpty()

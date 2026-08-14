@@ -703,7 +703,7 @@ private fun SessionListTopBar(
                             onDismissRequest = { onMenuOpenChange(false) },
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Agent Inbox", color = WandColors.textPrimary) },
+                                text = { Text("并行任务", color = WandColors.textPrimary) },
                                 leadingIcon = {
                                     Icon(WandIcons.agent, contentDescription = null, tint = WandColors.info)
                                 },

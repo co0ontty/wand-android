@@ -1048,8 +1048,8 @@ private fun CollapsedMissionsTile(onClick: () -> Unit) {
         icon = rememberVectorPainter(WandIcons.agent),
         iconTint = WandColors.info,
         selected = false,
-        contentDescription = "Agent Inbox",
-        onClickLabel = "打开 Agent Inbox",
+        contentDescription = "并行任务",
+        onClickLabel = "打开并行任务",
         outlined = true,
         onClick = onClick,
     )
