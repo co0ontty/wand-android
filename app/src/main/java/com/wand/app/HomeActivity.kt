@@ -115,7 +115,6 @@ class HomeActivity : AppCompatActivity() {
         } else {
             when (intent.getStringExtra(WandShortcuts.EXTRA_QUICK_ACTION)) {
                 WandShortcuts.ACTION_NEW_SESSION -> QuickAction.NewSession
-                WandShortcuts.ACTION_OPEN_WEB -> QuickAction.OpenWeb
                 else -> intent.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID)
                     ?.takeIf { it.isNotEmpty() }
                     ?.let { sessionId ->
@@ -271,15 +270,6 @@ class HomeActivity : AppCompatActivity() {
                 manualCheckUpdate = { checkUpdate(manual = true) },
                 isBetaChannel = { serverStore.isBetaChannel },
                 setBetaChannel = { serverStore.setBetaChannel(it) },
-                getAppIcon = { serverStore.appIcon },
-                setAppIcon = { AppIconSwitcher.setAppIcon(this, serverStore, it) },
-                getNotificationSound = { serverStore.notificationSound },
-                setNotificationSound = { serverStore.notificationSound = it },
-                previewSound = { name ->
-                    notificationHelper.playPresetSound(name, serverStore.notificationVolume / 100f)
-                },
-                getNotificationVolume = { serverStore.notificationVolume },
-                setNotificationVolume = { serverStore.notificationVolume = it },
                 isHapticEnabled = { serverStore.isHapticEnabled },
                 setHapticEnabled = { serverStore.setHapticEnabled(it) },
                 isKeepAlive = { serverStore.isKeepAliveEnabled },

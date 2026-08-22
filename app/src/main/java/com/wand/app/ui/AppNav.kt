@@ -40,7 +40,6 @@ sealed class Screen {
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
 sealed class QuickAction {
     data object NewSession : QuickAction()
-    data object OpenWeb : QuickAction()
     data class OpenSession(
         val sessionId: String,
         val isStructured: Boolean? = null,
@@ -249,13 +248,6 @@ class HomeSettingsActions(
     val manualCheckUpdate: () -> Unit,
     val isBetaChannel: () -> Boolean,
     val setBetaChannel: (Boolean) -> Unit,
-    val getAppIcon: () -> String,
-    val setAppIcon: (String) -> Unit,
-    val getNotificationSound: () -> String,
-    val setNotificationSound: (String) -> Unit,
-    val previewSound: (String) -> Unit,
-    val getNotificationVolume: () -> Int,
-    val setNotificationVolume: (Int) -> Unit,
     val isHapticEnabled: () -> Boolean,
     val setHapticEnabled: (Boolean) -> Unit,
     val isKeepAlive: () -> Boolean,

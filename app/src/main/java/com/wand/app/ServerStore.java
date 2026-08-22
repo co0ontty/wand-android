@@ -27,11 +27,9 @@ public class ServerStore {
     private static final String KEY_SERVER_PROFILES_STATE = "server_profiles_v2";
     private static final String KEY_SERVER_PROFILES_LEGACY_FINGERPRINT =
             "server_profiles_v2_legacy_fingerprint";
-    private static final String KEY_APP_ICON = "app_icon";
     private static final String KEY_NOTIFICATION_SOUND_ENABLED = "notification_sound_enabled";
     private static final String KEY_NOTIFICATION_SOUND = "notification_sound";
     private static final String KEY_NOTIFICATION_VOLUME = "notification_volume";
-    private static final String KEY_NOTIFICATION_PERMISSION_REQUESTED = "notification_permission_requested";
     private static final String KEY_HAPTIC_ENABLED = "haptic_enabled";
     private static final String KEY_KEEP_ALIVE = "keep_alive_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
@@ -307,14 +305,6 @@ public class ServerStore {
         prefs.edit().remove(KEY_APP_TOKEN).apply();
     }
 
-    public String getAppIcon() {
-        return prefs.getString(KEY_APP_ICON, "shorthair");
-    }
-
-    public void setAppIcon(String iconName) {
-        prefs.edit().putString(KEY_APP_ICON, iconName).apply();
-    }
-
     public String getNotificationSound() {
         return prefs.getString(KEY_NOTIFICATION_SOUND, "chime");
     }
@@ -337,14 +327,6 @@ public class ServerStore {
 
     public void setNotificationVolume(int volume) {
         prefs.edit().putInt(KEY_NOTIFICATION_VOLUME, Math.max(0, Math.min(100, volume))).apply();
-    }
-
-    public boolean wasNotificationPermissionRequested() {
-        return prefs.getBoolean(KEY_NOTIFICATION_PERMISSION_REQUESTED, false);
-    }
-
-    public void markNotificationPermissionRequested() {
-        prefs.edit().putBoolean(KEY_NOTIFICATION_PERMISSION_REQUESTED, true).apply();
     }
 
     public boolean isHapticEnabled() {
