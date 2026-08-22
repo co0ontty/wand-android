@@ -76,6 +76,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandWebSession
 import com.wand.app.data.providerDisplayName
@@ -135,7 +136,21 @@ fun PtyTerminalScreen(
     // （文本框 + 发送 + 按住说话）。默认折叠，给终端留出最大可视区，对称 iOS PtySessionView。
     var inputDrawerOpen by remember(sessionId) { mutableStateOf(false) }
     var draft by remember(sessionId) { mutableStateOf("") }
+    var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
+    var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val attachmentPickers = rememberAttachmentPickerActions { uris ->
+        scope.launchAttachmentUpload(
+            context = context,
+            api = api,
+            sessionId = sessionId,
+            uris = uris,
+            onUploadingChange = { uploadingAttachments = it },
+            onUploaded = { uploaded -> pendingAttachments = (pendingAttachments + uploaded).takeLast(5) },
+            onToast = { message -> toast = message },
+        )
+    }
     val voiceInput = rememberVoiceInputHandle(
         isHapticEnabled = isHapticEnabled,
         onToast = { message -> toast = message },
@@ -200,14 +215,18 @@ fun PtyTerminalScreen(
     }
 
     fun sendPtyDraft() {
-        val text = draft.trim()
-        if (text.isEmpty()) return
+        val body = draft.trim()
+        val attachments = pendingAttachments
+        if (body.isEmpty() && attachments.isEmpty()) return
+        val text = buildAttachmentPrompt(attachments, body).trim()
         val restore = draft
         draft = ""
+        pendingAttachments = emptyList()
         scope.launch {
             try {
                 // 对齐 iOS sendPtyInput：先发文本，再发回车（带 enter_text 标记），
                 // 两个 input 之间留一点间隔，避免服务端把文本和回车粘成一条。
+                // 附件已先经 /api/sessions/:id/uploads 落盘，正文里只带路径前缀。
                 api.sendInput(id = sessionId, input = text, view = "terminal")
                 delay(30)
                 api.sendInput(
@@ -218,7 +237,10 @@ fun PtyTerminalScreen(
                 )
             } catch (error: Exception) {
                 toast = error.message ?: "终端命令发送失败"
-                if (draft.isEmpty()) draft = restore
+                if (draft.isEmpty()) {
+                    draft = restore
+                    pendingAttachments = attachments
+                }
             }
         }
     }
@@ -249,6 +271,14 @@ fun PtyTerminalScreen(
                 draft = draft,
                 onDraftChange = { draft = it },
                 onSend = { sendPtyDraft() },
+                uploadingAttachments = uploadingAttachments,
+                pendingAttachments = pendingAttachments,
+                baseUrl = api.baseUrl,
+                onRemoveAttachment = { file ->
+                    pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
+                },
+                onPickPhoto = attachmentPickers.pickPhoto,
+                onPickFile = attachmentPickers.pickFile,
                 isHapticEnabled = isHapticEnabled,
                 onShortcut = { shortcutQueue.trySend(it) },
                 voice = voiceInput.voice,
@@ -410,6 +440,12 @@ private fun PtyBottomBar(
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    uploadingAttachments: Boolean,
+    pendingAttachments: List<UploadedFile>,
+    baseUrl: String,
+    onRemoveAttachment: (UploadedFile) -> Unit,
+    onPickPhoto: () -> Unit,
+    onPickFile: () -> Unit,
     isHapticEnabled: () -> Boolean,
     onShortcut: (TerminalShortcut) -> Unit,
     voice: VoiceInputController,
@@ -433,6 +469,12 @@ private fun PtyBottomBar(
                 draft = draft,
                 onDraftChange = onDraftChange,
                 onSend = onSend,
+                uploading = uploadingAttachments,
+                pendingAttachments = pendingAttachments,
+                baseUrl = baseUrl,
+                onRemoveAttachment = onRemoveAttachment,
+                onPickPhoto = onPickPhoto,
+                onPickFile = onPickFile,
                 voice = voice,
                 onMicDown = onMicDown,
             )
@@ -525,76 +567,98 @@ private fun PtyInputDrawer(
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    uploading: Boolean,
+    pendingAttachments: List<UploadedFile>,
+    baseUrl: String,
+    onRemoveAttachment: (UploadedFile) -> Unit,
+    onPickPhoto: () -> Unit,
+    onPickFile: () -> Unit,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
 ) {
-    val canSend = draft.isNotBlank()
+    val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
     }
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        BasicTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            textStyle = TextStyle(
-                fontSize = 16.sp,
-                lineHeight = 21.sp,
-                color = WandColors.textPrimary,
-            ),
-            cursorBrush = SolidColor(WandColors.brand),
-            minLines = 1,
-            maxLines = 5,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.None,
-                autoCorrectEnabled = false,
-                imeAction = ImeAction.Send,
-            ),
-            keyboardActions = KeyboardActions(
-                onSend = { if (canSend) onSend() },
-            ),
-            decorationBox = { innerTextField ->
-                Box(
-                    contentAlignment = Alignment.CenterStart,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 40.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(WandColors.surfaceSoft.copy(alpha = 0.7f))
-                        .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
-                ) {
-                    if (draft.isEmpty()) {
-                        Text(
-                            "输入终端命令",
-                            fontSize = 16.sp,
-                            color = WandColors.textMuted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+        if (pendingAttachments.isNotEmpty()) {
+            PendingAttachmentsPreview(
+                attachments = pendingAttachments,
+                baseUrl = baseUrl,
+                onRemove = onRemoveAttachment,
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ComposerActionsMenu(
+                backdrop = null,
+                uploading = uploading,
+                onPickPhoto = onPickPhoto,
+                onPickFile = onPickFile,
+            )
+            BasicTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                textStyle = TextStyle(
+                    fontSize = 16.sp,
+                    lineHeight = 21.sp,
+                    color = WandColors.textPrimary,
+                ),
+                cursorBrush = SolidColor(WandColors.brand),
+                minLines = 1,
+                maxLines = 5,
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrectEnabled = false,
+                    imeAction = ImeAction.Send,
+                ),
+                keyboardActions = KeyboardActions(
+                    onSend = { if (canSend) onSend() },
+                ),
+                decorationBox = { innerTextField ->
+                    Box(
+                        contentAlignment = Alignment.CenterStart,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 40.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(WandColors.surfaceSoft.copy(alpha = 0.7f))
+                            .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+                    ) {
+                        if (draft.isEmpty()) {
+                            Text(
+                                "输入终端命令",
+                                fontSize = 16.sp,
+                                color = WandColors.textMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        innerTextField()
                     }
-                    innerTextField()
-                }
-            },
-            modifier = Modifier
-                .weight(1f)
-                .focusRequester(focusRequester),
-        )
-        VoiceMicButton(
-            voice = voice,
-            voiceMode = false,
-            onToggleMode = {},
-            onMicDown = onMicDown,
-        )
-        PtyDrawerSendButton(enabled = canSend, onClick = onSend)
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+            )
+            VoiceMicButton(
+                voice = voice,
+                voiceMode = false,
+                onToggleMode = {},
+                onMicDown = onMicDown,
+            )
+            PtyDrawerSendButton(enabled = canSend, onClick = onSend)
+        }
     }
 }
-
 @Composable
 private fun PtyDrawerSendButton(enabled: Boolean, onClick: () -> Unit) {
     val tint = if (enabled) WandColors.textPrimary else WandColors.textSecondary.copy(alpha = 0.55f)

@@ -2021,7 +2021,7 @@ private fun ModelThinkingChip(
  */
 @Composable
 internal fun ComposerActionsMenu(
-    backdrop: GlassBackdrop,
+    backdrop: GlassBackdrop?,
     uploading: Boolean,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
