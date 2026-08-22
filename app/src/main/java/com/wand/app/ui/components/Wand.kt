@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -79,7 +78,7 @@ fun Modifier.clickableWithoutRipple(
     val pressed by interaction.collectIsPressedAsState()
     val pressAlpha by animateFloatAsState(
         targetValue = if (pressed) 0.72f else 1f,
-        animationSpec = tween(durationMillis = if (pressed) 90 else 150),
+        animationSpec = if (pressed) WandMotion.tweenPress() else WandMotion.tweenFast(),
         label = "pressAlpha",
     )
     return graphicsLayer { alpha = pressAlpha }

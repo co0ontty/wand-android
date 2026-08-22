@@ -112,4 +112,55 @@ class AppNavTest {
 
         assertEquals(listOf(Screen.SessionList), nav.stack)
     }
+
+    @Test
+    fun setDetailReplacesTheEntireDetailStack() {
+        val nav = NavState().apply {
+            push(Screen.WorkspaceTask("ws-1", "task-1", "Project", "Task"))
+            push(Screen.Chat("session-1", "Project", "Task"))
+        }
+
+        nav.setDetail(Screen.WorkspaceTask("ws-2", "task-2", "Other", "Next"))
+
+        assertEquals(
+            listOf(
+                Screen.SessionList,
+                Screen.WorkspaceTask("ws-2", "task-2", "Other", "Next"),
+            ),
+            nav.stack.toList(),
+        )
+    }
+
+    @Test
+    fun closeWorkspaceTaskPopsNestedSession() {
+        val nav = NavState().apply {
+            push(Screen.WorkspaceTask("ws-1", "task-1", "Project", "Task"))
+            push(Screen.Chat("session-1", "Project", "Task"))
+        }
+
+        nav.closeWorkspaceTask("task-1")
+
+        assertEquals(listOf(Screen.SessionList), nav.stack.toList())
+    }
+
+    @Test
+    fun renameWorkspaceTaskKeepsNestedSession() {
+        val nav = NavState().apply {
+            push(Screen.WorkspaceTask("ws-1", "task-1", "Project", "Task"))
+            push(Screen.Chat("session-1", "Project", "Task"))
+        }
+
+        nav.renameWorkspaceTask("task-1", "Renamed")
+
+        assertEquals(
+            Screen.WorkspaceTask("ws-1", "task-1", "Project", "Renamed"),
+            nav.stack[1],
+        )
+        assertEquals(Screen.Chat("session-1", "Project", "Task"), nav.current)
+    }
+
+    @Test
+    fun roundTrip_settingsScreen() {
+        assertEquals(Screen.Settings, roundTrip(Screen.Settings))
+    }
 }

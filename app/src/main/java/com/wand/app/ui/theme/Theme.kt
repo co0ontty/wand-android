@@ -1,5 +1,6 @@
 package com.wand.app.ui.theme
 
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.InfiniteRepeatableSpec
@@ -48,12 +49,13 @@ private object LightTokens {
     val surface = Color(0xFFFFFDF9)
     val surfaceSoft = Color(0xFFECE8E1)
     val textPrimary = Color(0xFF28231F)
-    val textSecondary = Color(0xFF625A53)
-    val textMuted = Color(0xFF8B8279)
+    val textSecondary = Color(0xFF5C544D)
+    val textMuted = Color(0xFF7A7168)
     val brand = Color(0xFFC5653D)
-    val brandSoft = Color(0xFFC5653D).copy(alpha = 0.12f)
-    val border = Color(0xFF967655).copy(alpha = 0.07f)
-    val borderStrong = Color(0xFF7D5B39).copy(alpha = 0.14f)
+    val brandSoft = Color(0xFFC5653D).copy(alpha = 0.14f)
+    // 对齐 Web --border-default / --border-strong：旧 7% 描边在米色底上几乎看不见。
+    val border = Color(0xFFD9D2C9)
+    val borderStrong = Color(0xFF6D5848).copy(alpha = 0.28f)
     val focusRing = Color(0xFFC5653D).copy(alpha = 0.50f)
 
     // 语义色
@@ -64,41 +66,41 @@ private object LightTokens {
     val danger = Color(0xFFB24F45)
     val dangerSoft = Color(0xFFB24F45).copy(alpha = 0.14f)
     val permission = Color(0xFFC28A20)
-    val permissionSoft = Color(0xFFC28A20).copy(alpha = 0.11f)
+    val permissionSoft = Color(0xFFC28A20).copy(alpha = 0.12f)
     val info = Color(0xFF4A6FA5)
     val infoSoft = Color(0xFF4A6FA5).copy(alpha = 0.14f)
-    val thinking = Color(0xFF7776A9)
-    val thinkingSoft = Color(0xFF7776A9).copy(alpha = 0.08f)
+    val thinking = Color(0xFF6F6DA3)
+    val thinkingSoft = Color(0xFF6F6DA3).copy(alpha = 0.10f)
 }
 
 // —— 暗色 Token ——
 private object DarkTokens {
-    val bgPrimary = Color(0xFF13110F)
-    val bgElevated = Color(0xFF1D1A17)
-    val surface = Color(0xFF211E1A)
-    val surfaceSoft = Color(0xFF2A2621)
-    val textPrimary = Color(0xFFF3EEE7)
-    val textSecondary = Color(0xFFC7BEB4)
-    val textMuted = Color(0xFF958B81)
+    val bgPrimary = Color(0xFF12100E)
+    val bgElevated = Color(0xFF1C1916)
+    val surface = Color(0xFF242017)
+    val surfaceSoft = Color(0xFF2F2A24)
+    val textPrimary = Color(0xFFF4EFE8)
+    val textSecondary = Color(0xFFB4AAA0)
+    val textMuted = Color(0xFF8C8278)
     val brand = Color(0xFFD47550)
-    val brandSoft = Color(0xFFD47550).copy(alpha = 0.16f)
-    val border = Color(0xFFEDE2D5).copy(alpha = 0.07f)
-    val borderStrong = Color(0xFFEDE2D5).copy(alpha = 0.14f)
-    val focusRing = Color(0xFFD47550).copy(alpha = 0.46f)
+    val brandSoft = Color(0xFFD47550).copy(alpha = 0.18f)
+    val border = Color(0xFFEDE2D5).copy(alpha = 0.14f)
+    val borderStrong = Color(0xFFEDE2D5).copy(alpha = 0.24f)
+    val focusRing = Color(0xFFD47550).copy(alpha = 0.50f)
 
     // 语义色
-    val success = Color(0xFF82B38B)
-    val successSoft = Color(0xFF82B38B).copy(alpha = 0.13f)
-    val warning = Color(0xFFD39A56)
-    val warningSoft = Color(0xFFD39A56).copy(alpha = 0.13f)
-    val danger = Color(0xFFE07C72)
-    val dangerSoft = Color(0xFFE07C72).copy(alpha = 0.13f)
-    val permission = Color(0xFFE3AF4A)
-    val permissionSoft = Color(0xFFE3AF4A).copy(alpha = 0.13f)
-    val info = Color(0xFF88AADB)
-    val infoSoft = Color(0xFF88AADB).copy(alpha = 0.13f)
-    val thinking = Color(0xFFA4A1D2)
-    val thinkingSoft = Color(0xFFA4A1D2).copy(alpha = 0.09f)
+    val success = Color(0xFF8BBA94)
+    val successSoft = Color(0xFF8BBA94).copy(alpha = 0.14f)
+    val warning = Color(0xFFD9A15C)
+    val warningSoft = Color(0xFFD9A15C).copy(alpha = 0.14f)
+    val danger = Color(0xFFE4887E)
+    val dangerSoft = Color(0xFFE4887E).copy(alpha = 0.14f)
+    val permission = Color(0xFFE6B75A)
+    val permissionSoft = Color(0xFFE6B75A).copy(alpha = 0.14f)
+    val info = Color(0xFF8FB0DC)
+    val infoSoft = Color(0xFF8FB0DC).copy(alpha = 0.14f)
+    val thinking = Color(0xFFA8A5D4)
+    val thinkingSoft = Color(0xFFA8A5D4).copy(alpha = 0.12f)
 }
 
 private val LightScheme: ColorScheme = lightColorScheme(
@@ -284,44 +286,60 @@ object WandColors {
  * 用法：tween(WandMotion.normal, easing = WandMotion.easing)，或直接用 tweenNormal() 等快捷函数。
  */
 object WandMotion {
+    /** 按压 / 点按反馈。 */
+    const val press = 110
+
     /** 快（小元素淡入淡出 / 颜色切换）。 */
     const val fast = 150
 
     /** 标准（出现 / 消失 / 折叠展开）。 */
-    const val normal = 250
+    const val normal = 240
 
     /** 慢（大面积布局过渡）。 */
-    const val slow = 400
+    const val slow = 360
 
     /** 呼吸动画单程时长。 */
-    const val breathDuration = 1200
+    const val breathDuration = 1_600
 
-    /** 呼吸动画 alpha 低点（1f ↔ 0.35f）。 */
-    const val breathAlphaMin = 0.35f
+    /** 呼吸动画 alpha 低点。过低会闪成空心点。 */
+    const val breathAlphaMin = 0.55f
 
-    /** 呼吸动画 scale 高点（1f ↔ 1.25f）。 */
-    const val breathScaleMax = 1.25f
+    /** 呼吸动画 scale 高点。过大看起来像在跳。 */
+    const val breathScaleMax = 1.12f
 
-    /** 标准缓动。 */
+    /** 标准缓动（兼容旧调用）。 */
     val easing: Easing = FastOutSlowInEasing
+
+    /** 对齐 Web --ease-out-expo：进入和位置变化更干脆地落稳。 */
+    val emphasized: Easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+
+    val enterEasing: Easing = emphasized
+
+    val exitEasing: Easing = CubicBezierEasing(0.4f, 0f, 1f, 1f)
+
+    fun <T> tweenPress(): TweenSpec<T> = tween(press, easing = easing)
 
     fun <T> tweenFast(): TweenSpec<T> = tween(fast, easing = easing)
 
-    fun <T> tweenNormal(): TweenSpec<T> = tween(normal, easing = easing)
+    fun <T> tweenNormal(): TweenSpec<T> = tween(normal, easing = emphasized)
 
-    fun <T> tweenSlow(): TweenSpec<T> = tween(slow, easing = easing)
+    fun <T> tweenSlow(): TweenSpec<T> = tween(slow, easing = emphasized)
 
-    /** 弹性进入（dampingRatio 0.8 + MediumLow 刚度）。 */
+    fun <T> tweenEnter(): TweenSpec<T> = tween(normal, easing = enterEasing)
+
+    fun <T> tweenExit(): TweenSpec<T> = tween(fast, easing = exitEasing)
+
+    /** 弹性进入（轻过冲，适合面板出现）。 */
     fun <T> springSpec(): SpringSpec<T> =
-        spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
+        spring(dampingRatio = 0.84f, stiffness = Spring.StiffnessMediumLow)
 
     /** 直接操作反馈：临界阻尼、无过冲，适合按压和非动量状态切换。 */
     fun <T> settleSpringSpec(): SpringSpec<T> =
         spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
 
-    /** 状态呼吸灯规格：tween(1200) 往返。配合 breathAlphaMin / breathScaleMax 使用。 */
+    /** 状态呼吸灯规格。配合 breathAlphaMin / breathScaleMax 使用。 */
     fun <T> breath(): InfiniteRepeatableSpec<T> =
-        infiniteRepeatable(tween(breathDuration), RepeatMode.Reverse)
+        infiniteRepeatable(tween(breathDuration, easing = FastOutSlowInEasing), RepeatMode.Reverse)
 }
 
 /** 统一圆角（规范 1.2）。 */

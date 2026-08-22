@@ -22,10 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,12 +40,12 @@ import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -104,6 +101,7 @@ import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandIcons
@@ -127,7 +125,7 @@ import kotlinx.coroutines.launch
  * 空白终端是与 AI Provider 并列的工具，不是每个 Provider 下的会话形式。
  * 每次切换服务器都会重新 bootstrap，避免跨机器复用模型、默认值或工作目录。
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewSessionScreen(
     api: WandApi,
@@ -138,6 +136,7 @@ fun NewSessionScreen(
     onReconnectServer: (serverId: String) -> Unit,
     onOpenMissions: () -> Unit = {},
     onBack: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -473,39 +472,26 @@ fun NewSessionScreen(
     }
     val glassBackdrop = rememberGlassBackdrop()
     val creationBlockerInteraction = remember { MutableInteractionSource() }
-    val imeVisible = WindowInsets.isImeVisible
     Scaffold(
         containerColor = Color.Transparent,
-        modifier = Modifier
-            .imePadding()
-            .ambientBackground(),
+        modifier = Modifier.ambientBackground(),
         topBar = {
-            CenterAlignedTopAppBar(
-                modifier = Modifier.glassSurface(
-                    glassBackdrop,
-                    RoundedCornerShape(0.dp),
-                    secondaryBarGlass,
-                    edgeToEdge = true,
-                ),
-                title = { Text("新建会话", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
-                navigationIcon = {
+            WandDetailTopBar(
+                title = "新建会话",
+                backdrop = glassBackdrop,
+                leading = {
                     TextButton(onClick = onBack, enabled = !creating) {
                         Text(
                             if (creating) "创建中…" else "取消",
-                            fontSize = 16.sp,
+                            style = MaterialTheme.typography.labelLarge,
                             color = if (creating) WandColors.textMuted else WandColors.textSecondary,
                         )
                     }
                 },
-                actions = {},
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                ),
             )
         },
         bottomBar = {
-            if (!imeVisible) Column(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .glassSurface(
@@ -514,11 +500,17 @@ fun NewSessionScreen(
                         secondaryBarGlass,
                         edgeToEdge = true,
                     )
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .imePadding(),
             ) {
                 HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
                 Column(
                     modifier = Modifier
+                        .widthIn(max = NewSessionFormMaxWidth)
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
@@ -564,6 +556,7 @@ fun NewSessionScreen(
                         },
                     )
                 }
+                }
             }
         },
     ) { padding ->
@@ -587,7 +580,7 @@ fun NewSessionScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
                 ) {
-                PageIntro()
+                PageIntro(compact = embedded)
 
                 SetupSectionHeader(
                     number = "01",
@@ -873,23 +866,22 @@ fun NewSessionScreen(
 }
 
 @Composable
-private fun PageIntro() {
+private fun PageIntro(compact: Boolean = false) {
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.padding(top = 24.dp, bottom = 6.dp),
+        modifier = Modifier.padding(top = if (compact) 16.dp else 24.dp, bottom = 6.dp),
     ) {
         Text(
             "在哪里，交给谁",
-            fontSize = 27.sp,
-            lineHeight = 32.sp,
+            fontSize = if (compact) 24.sp else 27.sp,
+            lineHeight = if (compact) 30.sp else 32.sp,
             fontWeight = FontWeight.Bold,
             color = WandColors.textPrimary,
             letterSpacing = (-0.6).sp,
         )
         Text(
             "选择服务器、工具与项目，再决定会话如何运行。",
-            fontSize = 14.sp,
-            lineHeight = 20.sp,
+            style = MaterialTheme.typography.bodyMedium,
             color = WandColors.textSecondary,
         )
     }

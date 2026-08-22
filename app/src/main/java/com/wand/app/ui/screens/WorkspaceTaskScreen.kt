@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -53,8 +52,11 @@ import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.data.workspaceSessionLabel
 import com.wand.app.ui.components.BrandLogos
+import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
+import com.wand.app.ui.components.WandDetailBackButton
+import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.theme.WandColors
@@ -75,6 +77,7 @@ fun WorkspaceTaskScreen(
     taskId: String,
     workspaceName: String,
     taskName: String,
+    showBack: Boolean = true,
     onBack: () -> Unit,
     onOpenSession: (String) -> Unit,
     onOpenPty: (String) -> Unit,
@@ -125,57 +128,29 @@ fun WorkspaceTaskScreen(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(WandColors.bgPrimary),
+        modifier = Modifier.fillMaxSize(),
     ) {
-        // 顶栏
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .heightIn(min = 56.dp)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Icon(
-                WandIcons.chevronRight,
-                contentDescription = "返回",
-                tint = WandColors.textSecondary,
-                modifier = Modifier
-                    .size(44.dp)
-                    .graphicsLayerRotate180()
-                    .clickable(onClick = onBack)
-                    .padding(10.dp),
-            )
-            Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
-                Text(
-                    taskName.ifEmpty { "任务" },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = WandColors.textPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        WandDetailTopBar(
+            title = taskName.ifEmpty { "任务" },
+            subtitle = workspaceName.ifEmpty { "项目" },
+            leading = if (showBack) {
+                {
+                    WandDetailBackButton(
+                        onClick = onBack,
+                        icon = WandIcons.back,
+                    )
+                }
+            } else {
+                null
+            },
+            actions = {
+                ToolbarIconButton(
+                    icon = WandIcons.refresh,
+                    contentDescription = "刷新任务",
+                    onClick = { workflow.loadTask(taskId) },
                 )
-                Text(
-                    workspaceName.ifEmpty { "项目" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Icon(
-                WandIcons.refresh,
-                contentDescription = "刷新任务",
-                tint = WandColors.textSecondary,
-                modifier = Modifier
-                    .size(44.dp)
-                    .clickable { workflow.loadTask(taskId) }
-                    .padding(10.dp),
-            )
-        }
+            },
+        )
 
         when (val state = taskState) {
             is WorkspaceTaskState.Loading -> {
@@ -261,6 +236,9 @@ private fun EmptyTaskWelcome(
         contentAlignment = Alignment.Center,
     ) {
         Column(
+            modifier = Modifier
+                .widthIn(max = 420.dp)
+                .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -328,10 +306,16 @@ private fun TaskSessionList(
     onSelectSession: (WorkspaceSessionSummary) -> Unit,
     onAddWindow: () -> Unit,
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .navigationBarsPadding()
+            .navigationBarsPadding(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+    Column(
+        modifier = Modifier
+            .widthIn(max = 640.dp)
+            .fillMaxSize()
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -363,6 +347,7 @@ private fun TaskSessionList(
             modifier = Modifier.fillMaxWidth(),
             variant = WandButtonVariant.Secondary,
         )
+    }
     }
 }
 
@@ -446,6 +431,3 @@ private fun TaskErrorState(message: String, onRetry: () -> Unit) {
 /** 判断会话摘要是否为结构化（非 PTY）会话，决定路由到 Chat 还是 PTY 页。 */
 private fun WorkspaceSessionSummary.isStructuredSession(): Boolean =
     sessionKind == "structured"
-
-private fun Modifier.graphicsLayerRotate180(): Modifier =
-    this.graphicsLayer { rotationZ = 180f }

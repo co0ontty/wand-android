@@ -3,6 +3,7 @@ package com.wand.app.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
@@ -197,6 +198,9 @@ object WandIcons {
 
     /** 关闭。 */
     val close: ImageVector = Icons.Outlined.Close
+
+    /** 返回上一级。 */
+    val back: ImageVector = Icons.AutoMirrored.Outlined.ArrowBack
 
     /** 新建。 */
     val add: ImageVector = Icons.Outlined.Add

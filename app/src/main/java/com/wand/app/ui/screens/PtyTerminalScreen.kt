@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,12 +33,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,7 +57,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -84,8 +82,8 @@ import com.wand.app.data.providerDisplayName
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.TailMarqueePathText
-import com.wand.app.ui.components.WandIconButton
-import com.wand.app.ui.components.WandIconButtonVariant
+import com.wand.app.ui.components.WandDetailBackButton
+import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
@@ -126,6 +124,7 @@ fun PtyTerminalScreen(
     workspaceName: String? = null,
     taskName: String? = null,
     isHapticEnabled: () -> Boolean,
+    showBack: Boolean = true,
     onBack: () -> Unit,
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
@@ -237,6 +236,7 @@ fun PtyTerminalScreen(
                 workspaceName = workspaceName,
                 taskName = taskName,
                 quickCommit = quickCommit,
+                showBack = showBack,
                 onBack = onBack,
                 onOpenQuickCommit = { quickCommit.openPanel() },
             )
@@ -337,41 +337,32 @@ private fun PtyTopBar(
     workspaceName: String?,
     taskName: String?,
     quickCommit: QuickCommitStore,
+    showBack: Boolean,
     onBack: () -> Unit,
     onOpenQuickCommit: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(
-                backdrop,
-                RoundedCornerShape(0.dp),
-                WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
-                edgeToEdge = true,
-            ),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .height(64.dp)
-                .padding(start = 6.dp, end = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            QuietPtyTopIconButton(
-                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "返回",
-                onClick = onBack,
-            )
+    WandDetailTopBar(
+        title = "终端会话",
+        backdrop = backdrop,
+        contentHeight = 56.dp,
+        leading = if (showBack) {
+            {
+                WandDetailBackButton(
+                    onClick = onBack,
+                    icon = WandIcons.back,
+                )
+            }
+        } else {
+            null
+        },
+        titleContent = {
             PtyProviderBadge(snapshot?.provider)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     taskName?.trim().takeUnless { it.isNullOrEmpty() }
                         ?: snapshot?.displayTitle
                         ?: "终端会话",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMedium,
                     color = WandColors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -385,14 +376,16 @@ private fun PtyTopBar(
                             "$serverDisplayName · $it"
                         } ?: serverDisplayName
                     },
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     color = WandColors.textMuted,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+        },
+        actions = {
             GitChangesButton(quickCommit, compact = true) { onOpenQuickCommit() }
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -406,21 +399,6 @@ private fun PtyConnectionBanner(message: String) {
             .fillMaxWidth()
             .background(Color.Black.copy(alpha = 0.42f))
             .padding(horizontal = 14.dp, vertical = 8.dp),
-    )
-}
-
-@Composable
-private fun QuietPtyTopIconButton(
-    icon: ImageVector,
-    contentDescription: String,
-    onClick: () -> Unit,
-) {
-    WandIconButton(
-        icon = icon,
-        contentDescription = contentDescription,
-        onClick = onClick,
-        variant = WandIconButtonVariant.Toolbar,
-        iconSize = 22.dp,
     )
 }
 

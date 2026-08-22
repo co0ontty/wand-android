@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -59,6 +60,8 @@ import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandDetailBackButton
+import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
@@ -93,6 +96,7 @@ fun MissionsScreen(
     api: MissionsPort,
     onBack: () -> Unit,
     onOpenSession: (String) -> Unit,
+    embedded: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var missions by remember { mutableStateOf<List<MissionInfo>>(emptyList()) }
@@ -128,38 +132,29 @@ fun MissionsScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(WandColors.bgElevated.copy(alpha = 0.94f))
-                    .statusBarsPadding(),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 58.dp)
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onBack) {
-                        Icon(WandIcons.close, contentDescription = "返回", tint = WandColors.textSecondary)
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("并行任务", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
-                        Text("多 Agent 并行尝试与 Diff 审查", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-                    }
-                    WandButton(label = "新任务", onClick = { showCreate = true }, variant = WandButtonVariant.Secondary)
-                }
-            }
+            WandDetailTopBar(
+                title = "并行任务",
+                subtitle = "多 Agent 并行尝试与 Diff 审查",
+                leading = { WandDetailBackButton(onClick = onBack) },
+                actions = {
+                    WandButton(
+                        label = "新任务",
+                        onClick = { showCreate = true },
+                        variant = WandButtonVariant.Secondary,
+                        compact = true,
+                    )
+                },
+            )
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
             when {
                 loading && missions.isEmpty() -> CircularProgressIndicator(
                     color = WandColors.brand,
                     modifier = Modifier.align(Alignment.Center).size(26.dp),
                 )
                 else -> MissionsList(
+                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
                     missions = missions,
                     onOpenSession = onOpenSession,
                     onOpenDiff = { mission, attempt ->
@@ -258,8 +253,10 @@ private fun MissionsList(
     onOpenSession: (String) -> Unit,
     onOpenDiff: (MissionInfo, MissionAttempt) -> Unit,
     onArchive: (MissionInfo) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     LazyColumn(
+        modifier = modifier,
         contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 30.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {

@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -862,7 +861,7 @@ private fun SessionListViewSwitch(
         val showIcons = itemWidth >= 76.dp
         val selectedOffset by animateDpAsState(
             targetValue = if (mode == SessionListViewMode.Sessions) 0.dp else itemWidth,
-            animationSpec = tween(durationMillis = 180, easing = WandMotion.easing),
+            animationSpec = WandMotion.tweenNormal(),
             label = "sessionViewIndicator",
         )
         Box(
@@ -881,7 +880,7 @@ private fun SessionListViewSwitch(
                 val pressed by interactionSource.collectIsPressedAsState()
                 val pressScale by animateFloatAsState(
                     targetValue = if (pressed) 0.97f else 1f,
-                    animationSpec = tween(durationMillis = 110, easing = WandMotion.easing),
+                    animationSpec = WandMotion.tweenPress(),
                     label = "sessionViewPress",
                 )
                 val contentColor by animateColorAsState(
@@ -1144,7 +1143,7 @@ private fun SessionDirectoryFolderRow(
     val shape = RoundedCornerShape(12.dp)
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 90f else 0f,
-        animationSpec = tween(durationMillis = 160, easing = WandMotion.easing),
+        animationSpec = WandMotion.tweenFast(),
         label = "directoryChevron",
     )
     val containerColor by animateColorAsState(

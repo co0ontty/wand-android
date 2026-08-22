@@ -21,6 +21,7 @@ sealed class Screen {
     ) : Screen()
     data class NewSession(val initialCwd: String? = null) : Screen()
     data object Missions : Screen()
+    data object Settings : Screen()
     /** 项目 / 任务列表。 */
     data object Workspaces : Screen()
     /**
@@ -56,7 +57,23 @@ class NavState {
     }
 
     fun setDetail(screen: Screen) {
-        if (stack.size == 1) {
+        if (stack.size <= 1) {
+            stack.add(screen)
+            return
+        }
+        // 列表-详情：侧栏点选应替换整条详情栈，而不是只换栈顶。
+        // 否则 [列表, 任务, 聊天] 再点另一个任务会变成 [列表, 任务, 新任务]，
+        // 返回还会落到已离开的旧任务上。
+        if (stack.size > 2) {
+            stack.removeRange(2, stack.size)
+        }
+        if (stack[1] != screen) {
+            stack[1] = screen
+        }
+    }
+
+    fun replaceTop(screen: Screen) {
+        if (stack.size <= 1) {
             stack.add(screen)
         } else {
             stack[stack.lastIndex] = screen
@@ -69,6 +86,21 @@ class NavState {
 
     fun popToRoot() {
         while (stack.size > 1) stack.removeAt(stack.size - 1)
+    }
+
+    fun renameWorkspaceTask(taskId: String, taskName: String) {
+        val index = stack.indexOfLast { it is Screen.WorkspaceTask && it.taskId == taskId }
+        if (index < 0) return
+        val current = stack[index] as Screen.WorkspaceTask
+        if (current.taskName != taskName) {
+            stack[index] = current.copy(taskName = taskName)
+        }
+    }
+
+    fun closeWorkspaceTask(taskId: String) {
+        val index = stack.indexOfFirst { it is Screen.WorkspaceTask && it.taskId == taskId }
+        if (index < 0) return
+        while (stack.size > index) stack.removeAt(stack.lastIndex)
     }
 
     companion object {
@@ -93,6 +125,7 @@ class NavState {
         private const val NEW_SESSION_KEY = "new-session"
         private const val NEW_SESSION_PREFIX = "new-session:"
         private const val MISSIONS_KEY = "missions"
+        private const val SETTINGS_KEY = "settings"
         private const val WORKSPACES_KEY = "workspaces"
         private const val WORKSPACE_TASK_KEY = "workspace-task"
         private const val FIELD_SEP = "\u0001"
@@ -108,6 +141,7 @@ class NavState {
             )
             is Screen.NewSession -> initialCwd?.let { "$NEW_SESSION_PREFIX$it" } ?: NEW_SESSION_KEY
             Screen.Missions -> MISSIONS_KEY
+            Screen.Settings -> SETTINGS_KEY
             Screen.Workspaces -> WORKSPACES_KEY
             // 结构化分隔：用 \u0001 作为不可打印分隔符，避免任务名中的 `:`
             // 或换行破坏恢复（与 Web 不同，这里 ID 不含控制字符）。
@@ -132,6 +166,7 @@ class NavState {
             this == NEW_SESSION_KEY -> Screen.NewSession()
             startsWith(NEW_SESSION_PREFIX) -> Screen.NewSession(removePrefix(NEW_SESSION_PREFIX))
             this == MISSIONS_KEY -> Screen.Missions
+            this == SETTINGS_KEY -> Screen.Settings
             this == WORKSPACES_KEY -> Screen.Workspaces
             startsWith(WORKSPACE_TASK_KEY + FIELD_SEP) -> {
                 val parts = removePrefix(WORKSPACE_TASK_KEY + FIELD_SEP).split(FIELD_SEP)

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -248,6 +249,12 @@ private fun ConnectScreen(
                 .padding(horizontal = WandSpacing.lg, vertical = WandSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 480.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
             WandBrandMark(size = 58)
             Text(
                 "Wand",
@@ -385,6 +392,7 @@ private fun ConnectScreen(
                 }
             }
             Spacer(Modifier.height(WandSpacing.xl))
+            }
         }
     }
 }

@@ -10,7 +10,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -79,6 +78,8 @@ import com.wand.app.ui.HomeConnectionInfo
 import com.wand.app.ui.HomeNavigationActions
 import com.wand.app.ui.HomeSettingsActions
 import com.wand.app.ui.components.WandBrandMark
+import com.wand.app.ui.components.WandDetailBackButton
+import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandButton
@@ -115,6 +116,7 @@ fun SettingsScreen(
     settings: HomeSettingsActions,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    embedded: Boolean = false,
 ) {
     var serverVersion by remember { mutableStateOf<String?>(null) }
     var showRemoveServerConfirm by remember { mutableStateOf(false) }
@@ -189,6 +191,7 @@ fun SettingsScreen(
                     connection = connection,
                     betaChannel = betaChannel,
                     appearanceMode = appearanceMode,
+                    compact = embedded,
                 )
                 SettingsSection(
                     title = "外观与反馈",
@@ -311,9 +314,15 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
         }
-        SettingsSheetHeader(
+        WandDetailTopBar(
+            title = "设置",
             backdrop = glassBackdrop,
-            onBack = onBack,
+            leading = {
+                WandDetailBackButton(
+                    onClick = onBack,
+                    contentDescription = "关闭设置",
+                )
+            },
         )
     }
 }
@@ -349,25 +358,36 @@ private fun SettingsOverview(
     connection: HomeConnectionInfo,
     betaChannel: Boolean,
     appearanceMode: WandAppearanceMode,
+    compact: Boolean = false,
 ) {
     SettingsCard(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = if (compact) 13.dp else 15.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 14.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                WandBrandMark(size = 48)
+                WandBrandMark(size = if (compact) 40 else 48)
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
-                        "系统设置",
-                        style = MaterialTheme.typography.titleLarge,
+                        connection.serverDisplayName.ifBlank { "这台设备" },
+                        style = if (compact) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.titleLarge
+                        },
                         color = WandColors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        "连接、设备和工作流偏好都在这里调整。",
+                        if (compact) {
+                            "外观、通知和更新都在这里调整。"
+                        } else {
+                            "连接、设备和工作流偏好都在这里调整。"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = WandColors.textSecondary,
                     )
@@ -715,63 +735,6 @@ private fun UpdateControlDeck(
     }
 }
 
-@Composable
-private fun SettingsSheetHeader(
-    backdrop: GlassBackdrop,
-    onBack: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(
-                backdrop = backdrop,
-                shape = RoundedCornerShape(0.dp),
-                style = WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
-                edgeToEdge = true,
-            ),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .height(56.dp)
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            SettingsHeaderButton(
-                icon = WandIcons.close,
-                contentDescription = "关闭设置",
-                onClick = onBack,
-            )
-            Text(
-                "系统设置",
-                style = MaterialTheme.typography.titleMedium,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(modifier = Modifier.size(44.dp))
-        }
-    }
-}
-
-@Composable
-private fun SettingsHeaderButton(
-    icon: ImageVector,
-    contentDescription: String,
-    onClick: () -> Unit,
-    tint: Color = WandColors.textSecondary,
-) {
-    WandIconButton(
-        icon = icon,
-        contentDescription = contentDescription,
-        onClick = onClick,
-        variant = WandIconButtonVariant.Quiet,
-        tint = tint,
-    )
-}
 
 @Composable
 private fun SettingsAboutContent(
@@ -1307,16 +1270,16 @@ private fun AppIconCard(
                 androidx.compose.animation.AnimatedVisibility(
                     visible = selected,
                     enter = fadeIn(
-                        animationSpec = if (motionEnabled) tween(160, easing = WandMotion.easing) else snap(),
+                        animationSpec = if (motionEnabled) WandMotion.tweenFast() else snap(),
                     ) + scaleIn(
                         initialScale = 0.88f,
-                        animationSpec = if (motionEnabled) tween(180, easing = WandMotion.easing) else snap(),
+                        animationSpec = if (motionEnabled) WandMotion.tweenNormal() else snap(),
                     ),
                     exit = fadeOut(
-                        animationSpec = if (motionEnabled) tween(90, easing = WandMotion.easing) else snap(),
+                        animationSpec = if (motionEnabled) WandMotion.tweenPress() else snap(),
                     ) + scaleOut(
                         targetScale = 0.92f,
-                        animationSpec = if (motionEnabled) tween(90, easing = WandMotion.easing) else snap(),
+                        animationSpec = if (motionEnabled) WandMotion.tweenPress() else snap(),
                     ),
                         modifier = Modifier
                             .align(Alignment.TopEnd)

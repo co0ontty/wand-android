@@ -65,8 +65,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -146,7 +144,8 @@ import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.TailMarqueePathText
-import com.wand.app.ui.components.ToolbarIconButton
+import com.wand.app.ui.components.WandDetailBackButton
+import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandBottomSheet
@@ -195,6 +194,7 @@ fun ChatScreen(
     taskName: String? = null,
     isHapticEnabled: () -> Boolean,
     drafts: SessionDraftStore,
+    showBack: Boolean = true,
     onBack: () -> Unit,
 ) {
     val store = remember(sessionId) { ChatStore(sessionId, api) }
@@ -395,69 +395,54 @@ fun ChatScreen(
         topBar = {
             // 稳定标题 + 简明会话上下文；避免流式任务名和长路径持续跳动、抢占操作区。
             // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
-            TopAppBar(
-                modifier = Modifier.glassSurface(
-                    glassBackdrop,
-                    RoundedCornerShape(0.dp),
-                    WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
-                    edgeToEdge = true,
-                ),
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp),
-                        modifier = Modifier.fillMaxWidth(),
+            WandDetailTopBar(
+                title = "对话详情",
+                backdrop = glassBackdrop,
+                contentHeight = 56.dp,
+                leading = if (showBack) {
+                    {
+                        WandDetailBackButton(
+                            onClick = onBack,
+                            icon = WandIcons.back,
+                        )
+                    }
+                } else {
+                    null
+                },
+                titleContent = {
+                    ChatProviderBadge(store.snapshot?.provider)
+                    Column(
+                        horizontalAlignment = Alignment.Start,
+                        modifier = Modifier.weight(1f),
                     ) {
-                        ChatProviderBadge(store.snapshot?.provider)
-                        Column(
-                            horizontalAlignment = Alignment.Start,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
-                            val workspaceTaskTitle = taskName?.trim().takeUnless { it.isNullOrEmpty() }
-                            ChatTopicTitle(
-                                text = workspaceTaskTitle ?: store.snapshot?.displayTitle ?: "对话详情",
-                                generating = workspaceTaskTitle == null && store.snapshot?.titleGenerating == true,
-                            )
-                            val workingPath = chatWorkingPath(store.snapshot?.cwd)
-                            TailMarqueePathText(
-                                path = if (workspaceTitle != null) {
-                                    "$serverDisplayName · $workspaceTitle"
-                                } else if (workingPath == null) {
-                                    serverDisplayName
-                                } else {
-                                    "$serverDisplayName · $workingPath"
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                fontSize = 11.sp,
-                                color = WandColors.textMuted,
-                                fallback = serverDisplayName,
-                                initialDelayMillis = 1_800L,
-                                velocity = 28.dp,
-                                revealOnce = true,
-                            )
-                        }
+                        val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
+                        val workspaceTaskTitle = taskName?.trim().takeUnless { it.isNullOrEmpty() }
+                        ChatTopicTitle(
+                            text = workspaceTaskTitle ?: store.snapshot?.displayTitle ?: "对话详情",
+                            generating = workspaceTaskTitle == null && store.snapshot?.titleGenerating == true,
+                        )
+                        val workingPath = chatWorkingPath(store.snapshot?.cwd)
+                        TailMarqueePathText(
+                            path = if (workspaceTitle != null) {
+                                "$serverDisplayName · $workspaceTitle"
+                            } else if (workingPath == null) {
+                                serverDisplayName
+                            } else {
+                                "$serverDisplayName · $workingPath"
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            fontSize = 11.sp,
+                            color = WandColors.textMuted,
+                            fallback = serverDisplayName,
+                            initialDelayMillis = 1_800L,
+                            velocity = 28.dp,
+                            revealOnce = true,
+                        )
                     }
                 },
-                navigationIcon = {
-                    ToolbarIconButton(
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
-                        onClick = onBack,
-                        modifier = Modifier.padding(start = 6.dp),
-                        iconSize = 22.dp,
-                    )
-                },
                 actions = {
-                    // 模型 / 思考深度 / 模式开关已下沉到输入栏展开态的控制行（对齐 Codex App），
-                    // 顶栏右侧只留 Git 变更入口。
                     GitChangesButton(quickCommit, compact = true) { quickCommit.openPanel() }
-                    Spacer(modifier = Modifier.size(6.dp))
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                ),
             )
         },
         bottomBar = { BottomBar(

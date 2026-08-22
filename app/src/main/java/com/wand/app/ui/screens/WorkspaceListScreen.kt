@@ -241,7 +241,7 @@ fun WorkspaceListScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(WandColors.bgPrimary),
+            .then(if (embedded) Modifier else Modifier.background(WandColors.bgPrimary)),
     ) {
         if (!embedded) {
             Row(
@@ -311,16 +311,17 @@ fun WorkspaceListScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .navigationBarsPadding(),
+                        .then(if (embedded) Modifier else Modifier.navigationBarsPadding()),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 12.dp,
-                        vertical = 8.dp,
+                        horizontal = if (embedded) 8.dp else 12.dp,
+                        vertical = if (embedded) 4.dp else 8.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (embedded) 2.dp else 8.dp),
                 ) {
                     items(items = workspaces, key = { it.id }) { workspace ->
                         WorkspaceCard(
                             workspace = workspace,
+                            compact = embedded,
                             isExpanded = expanded[workspace.id] == true,
                             tasks = taskCache[workspace.id],
                             isLoadingTasks = loadingTasks[workspace.id] == true,
@@ -354,6 +355,7 @@ fun WorkspaceListScreen(
 @Composable
 private fun WorkspaceCard(
     workspace: Workspace,
+    compact: Boolean = false,
     isExpanded: Boolean,
     tasks: List<WorkspaceTask>?,
     isLoadingTasks: Boolean,
@@ -366,17 +368,22 @@ private fun WorkspaceCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(WandColors.bgElevated.copy(alpha = 0.6f))
+            .clip(RoundedCornerShape(if (compact) 12.dp else 14.dp))
+            .background(
+                if (compact) Color.Transparent else WandColors.bgElevated.copy(alpha = 0.6f),
+            )
             .clickable(onClick = onToggle),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .heightIn(min = if (compact) 48.dp else 52.dp)
+                .padding(
+                    horizontal = if (compact) 10.dp else 14.dp,
+                    vertical = if (compact) 8.dp else 10.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
         ) {
             Icon(
                 WandIcons.folder,
@@ -435,6 +442,7 @@ private fun WorkspaceCard(
                 tasks.forEach { task ->
                     TaskRow(
                         task = task,
+                        compact = compact,
                         selected = task.id == selectedTaskId,
                         onClick = { onOpenTask(task) },
                         onRename = { onRenameTask(task) },
@@ -449,6 +457,7 @@ private fun WorkspaceCard(
 @Composable
 private fun TaskRow(
     task: WorkspaceTask,
+    compact: Boolean = false,
     selected: Boolean,
     onClick: () -> Unit,
     onRename: () -> Unit,
@@ -458,12 +467,18 @@ private fun TaskRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .heightIn(min = if (compact) 44.dp else 48.dp)
+            .clip(if (compact) RoundedCornerShape(10.dp) else RoundedCornerShape(0.dp))
             .background(if (selected) WandColors.brandSoft else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(start = 38.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+            .padding(
+                start = if (compact) 20.dp else 38.dp,
+                end = if (compact) 4.dp else 12.dp,
+                top = if (compact) 8.dp else 10.dp,
+                bottom = if (compact) 8.dp else 10.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
     ) {
         if (task.status.raw() == "done") {
             Icon(
@@ -489,7 +504,7 @@ private fun TaskRow(
         Box {
             IconButton(
                 onClick = { menuExpanded = true },
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(if (compact) 36.dp else 48.dp),
             ) {
                 Icon(
                     WandIcons.more,
@@ -527,12 +542,14 @@ private fun TaskRow(
                 )
             }
         }
-        Icon(
-            WandIcons.chevronRight,
-            contentDescription = "打开任务",
-            tint = WandColors.textMuted,
-            modifier = Modifier.size(16.dp),
-        )
+        if (!compact) {
+            Icon(
+                WandIcons.chevronRight,
+                contentDescription = "打开任务",
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
