@@ -211,22 +211,29 @@ internal fun PendingAttachmentsPreview(
                         modifier = Modifier.widthIn(max = 190.dp),
                     )
                 }
+                // 触控区扩到 44dp（可见圆点仍为 22dp），避免缩略图右上角难点中。
                 Box(
-                    contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(WandColors.surface.copy(alpha = 0.92f))
-                        .border(1.dp, WandColors.border, CircleShape)
-                        .clickable { onRemove(file) },
+                        .size(44.dp)
+                        .clickable(onClickLabel = "移除附件") { onRemove(file) },
                 ) {
-                    Icon(
-                        WandIcons.close,
-                        contentDescription = "移除附件",
-                        tint = WandColors.textSecondary,
-                        modifier = Modifier.size(13.dp),
-                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(WandColors.surface.copy(alpha = 0.92f))
+                            .border(1.dp, WandColors.border, CircleShape),
+                    ) {
+                        Icon(
+                            WandIcons.close,
+                            contentDescription = null,
+                            tint = WandColors.textSecondary,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    }
                 }
             }
         }

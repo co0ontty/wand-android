@@ -6,10 +6,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
@@ -200,6 +203,15 @@ object WandIcons {
 
     /** 更多菜单。 */
     val more: ImageVector = Icons.Outlined.MoreVert
+
+    /** 重命名（铅笔）。EditNote 留给内容编辑场景，避免「改名字」和「写内容」混用。 */
+    val rename: ImageVector = Icons.Outlined.Edit
+
+    /** 展开侧边栏（汉堡菜单，通用「打开面板」语义）。 */
+    val panelExpand: ImageVector = Icons.Outlined.Menu
+
+    /** 收起侧边栏（面板收起箭头，RTL 自动镜像）。 */
+    val panelCollapse: ImageVector = Icons.AutoMirrored.Outlined.MenuOpen
 
     /** 空态大图标 / 会话列表空态。 */
     val sparkle: ImageVector = Icons.Outlined.AutoAwesome

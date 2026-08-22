@@ -137,6 +137,12 @@ final class NotificationHelper {
             if (mp != null) {
                 mp.setVolume(vol, vol);
                 mp.setOnCompletionListener(MediaPlayer::release);
+                // 音频焦点冲突 / 编解码错误走 onError 而不是 completion，
+                // 不监听会漏 release，通知频繁时积累 native 播放器实例。
+                mp.setOnErrorListener((player, what, extra) -> {
+                    player.release();
+                    return true;
+                });
                 mp.start();
             }
         } catch (Exception ignored) {}

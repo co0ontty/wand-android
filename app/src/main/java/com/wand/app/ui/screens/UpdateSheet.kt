@@ -66,6 +66,8 @@ data class AppUpdateInfo(
     val source: String,
     val releaseNotes: String,
     val channel: String,
+    /** 服务端下发的安装包 SHA-256；旧服务端为空串 → 客户端跳过校验。 */
+    val sha256: String = "",
 )
 
 /**
@@ -129,7 +131,7 @@ fun UpdateSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
                     .padding(bottom = 26.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -217,7 +219,7 @@ private fun UpdateSheetHeader(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 "软件更新",
                 style = MaterialTheme.typography.titleLarge,
@@ -250,7 +252,7 @@ private fun UpdateSheetHeader(
             )
         }
         if (onDismiss != null) {
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(8.dp))
             WandIconButton(
                 icon = WandIcons.close,
                 contentDescription = "关闭更新面板",
@@ -297,7 +299,7 @@ private fun UpdateAvailableContent(
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
             UpdateOrb(icon = WandIcons.update, tint = WandColors.brand)
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("新版本已准备好", style = MaterialTheme.typography.titleMedium, color = WandColors.textPrimary)
                 Text(
                     update.fileName,
@@ -339,7 +341,7 @@ private fun UpdateDownloadingContent(
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
             UpdateOrb(icon = WandIcons.update, tint = WandColors.brand, active = true)
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("正在下载 v${state.update.latestVersion}", style = MaterialTheme.typography.titleMedium, color = WandColors.textPrimary)
                 Text(
                     if (hasTotal) "下载完成后会提示你安装。" else "正在确定更新包大小。",
@@ -409,7 +411,7 @@ private fun UpdateReadyContent(
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
             UpdateOrb(icon = WandIcons.check, tint = WandColors.success)
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("v${state.update.latestVersion} 已下载", style = MaterialTheme.typography.titleMedium, color = WandColors.textPrimary)
                 Text("Android 将在下一步完成安装。", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
             }
@@ -440,7 +442,7 @@ private fun UpdateFailureContent(
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
             UpdateOrb(icon = WandIcons.error, tint = WandColors.danger)
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("下载未完成", style = MaterialTheme.typography.titleMedium, color = WandColors.textPrimary)
                 Text("更新包没有被保留。请检查网络后重试。", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
             }
@@ -525,7 +527,7 @@ private fun VersionBridge(update: AppUpdateInfo) {
 
 @Composable
 private fun VersionToken(label: String, version: String, modifier: Modifier = Modifier, accent: Boolean = false) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, fontSize = 11.sp, color = WandColors.textMuted)
         Text(
             "v$version",

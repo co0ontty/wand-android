@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -133,7 +134,7 @@ fun WorkspaceListScreen(
         WandDialog(
             title = "重命名任务",
             onDismissRequest = { if (!mutationBusy) renameTarget = null },
-            icon = WandIcons.edit,
+            icon = WandIcons.rename,
             confirm = WandDialogAction(
                 label = if (mutationBusy) "保存中…" else "保存",
                 enabled = !mutationBusy && !invalid,
@@ -257,10 +258,10 @@ fun WorkspaceListScreen(
                     contentDescription = "返回",
                     tint = WandColors.textSecondary,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(44.dp)
                         .graphicsLayerRotate180()
                         .clickable(onClick = onBack)
-                        .padding(8.dp),
+                        .padding(10.dp),
                 )
                 Text(
                     "项目 / 任务",
@@ -274,9 +275,9 @@ fun WorkspaceListScreen(
                     contentDescription = "刷新",
                     tint = WandColors.textSecondary,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(44.dp)
                         .clickable { scope.launch { refresh() } }
-                        .padding(8.dp),
+                        .padding(10.dp),
                 )
             }
         }
@@ -303,7 +304,7 @@ fun WorkspaceListScreen(
             workspaces.isEmpty() -> {
                 EmptyState(
                     title = "还没有项目",
-                    message = "在网页版或桌面端创建项目与任务，这里会同步显示。",
+                    message = "先在网页版创建项目与任务，这里会同步显示。也可以打开网页版继续。",
                 )
             }
             else -> {
@@ -323,6 +324,7 @@ fun WorkspaceListScreen(
                             isExpanded = expanded[workspace.id] == true,
                             tasks = taskCache[workspace.id],
                             isLoadingTasks = loadingTasks[workspace.id] == true,
+                            selectedTaskId = selectedTaskId,
                             onToggle = { toggleWorkspace(workspace) },
                             onOpenTask = { task ->
                                 onOpenTask(
@@ -355,6 +357,7 @@ private fun WorkspaceCard(
     isExpanded: Boolean,
     tasks: List<WorkspaceTask>?,
     isLoadingTasks: Boolean,
+    selectedTaskId: String?,
     onToggle: () -> Unit,
     onOpenTask: (WorkspaceTask) -> Unit,
     onRenameTask: (WorkspaceTask) -> Unit,
@@ -432,6 +435,7 @@ private fun WorkspaceCard(
                 tasks.forEach { task ->
                     TaskRow(
                         task = task,
+                        selected = task.id == selectedTaskId,
                         onClick = { onOpenTask(task) },
                         onRename = { onRenameTask(task) },
                         onDelete = { onDeleteTask(task) },
@@ -445,6 +449,7 @@ private fun WorkspaceCard(
 @Composable
 private fun TaskRow(
     task: WorkspaceTask,
+    selected: Boolean,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -454,6 +459,7 @@ private fun TaskRow(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
+            .background(if (selected) WandColors.brandSoft else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(start = 38.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -483,7 +489,7 @@ private fun TaskRow(
         Box {
             IconButton(
                 onClick = { menuExpanded = true },
-                modifier = Modifier.size(30.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     WandIcons.more,
@@ -498,7 +504,7 @@ private fun TaskRow(
             ) {
                 DropdownMenuItem(
                     text = { Text("重命名") },
-                    leadingIcon = { Icon(WandIcons.edit, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    leadingIcon = { Icon(WandIcons.rename, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     onClick = {
                         menuExpanded = false
                         onRename()

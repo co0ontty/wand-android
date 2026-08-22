@@ -9,6 +9,11 @@ import android.net.NetworkRequest;
 final class NetworkMonitor {
 
     interface Listener {
+        /**
+         * 网络状态变化回调。注意：ConnectivityManager.NetworkCallback 的回调发生在
+         * 系统 ConnectivityThread（非主线程），调用方需自行切换线程
+         * （如 runOnUiThread）再做 UI / WebView 操作。
+         */
         void onNetworkStateChanged(String state);
     }
 

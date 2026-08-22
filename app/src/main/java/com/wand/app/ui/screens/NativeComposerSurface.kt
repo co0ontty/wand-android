@@ -62,8 +62,8 @@ fun NativeComposerSurface(
                     style = composerGlass,
                     drawRim = false,
                 )
-                .padding(horizontal = 4.dp, vertical = 3.dp),
-            verticalArrangement = Arrangement.spacedBy(if (expanded) 4.dp else 0.dp),
+                .padding(horizontal = 6.dp, vertical = 5.dp),
+            verticalArrangement = Arrangement.spacedBy(if (expanded) 6.dp else 0.dp),
         ) {
             Row(
                 verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,

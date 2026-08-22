@@ -67,6 +67,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -386,7 +387,7 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 1.dp, start = 2.dp, end = 2.dp),
+            .padding(top = 2.dp, start = 2.dp, end = 2.dp),
     ) {
         Icon(
             WandIcons.usage,
@@ -396,7 +397,7 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
         )
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.weight(1f),
         ) {
             visibleParts.forEach { part ->
@@ -471,7 +472,7 @@ internal fun SubagentActivityDock(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
         AnimatedVisibility(
@@ -493,7 +494,7 @@ internal fun SubagentActivityDock(
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxWidth().height(30.dp),
+                    modifier = Modifier.fillMaxWidth().height(34.dp),
                 ) {
                     Text(
                         "${pagerState.currentPage + 1} / ${activities.size}",
@@ -691,7 +692,7 @@ private fun AgentBubbleBody(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
-            .height(34.dp)
+            .height(36.dp)
             .glassSurface(
                 backdrop,
                 CircleShape,
@@ -706,7 +707,7 @@ private fun AgentBubbleBody(
     ) {
         GeneratedAgentLogo(activity, size = 24.dp, animate = animateLogo)
         if (activity.running) {
-            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     agentBubbleTitle(activity),
                     fontSize = 10.sp,
@@ -772,7 +773,7 @@ private fun StackedAgentCluster(
                 )
                 .padding(start = 4.dp, end = if (runningCount > 0) 8.dp else 4.dp),
         ) {
-            Box(Modifier.width(stackWidth).height(30.dp)) {
+            Box(Modifier.width(stackWidth).height(32.dp)) {
                 visible.forEachIndexed { index, activity ->
                     Box(
                         contentAlignment = Alignment.Center,
@@ -889,10 +890,12 @@ private fun GeneratedAgentLogo(
             contentAlignment = Alignment.Center,
             modifier = Modifier.size(size - 2.dp),
         ) {
-            Canvas(modifier = Modifier.size(size - 2.dp)) {
-                val canvasSize = this.size
-                val width = canvasSize.width
-                val height = canvasSize.height
+            // 运行中的 agent 带 60fps 呼吸动画：Path 在组合期按像素尺寸构建并缓存，
+            // 避免每帧绘制都分配三个新对象造成 GC 压力（remember 不能进 draw 相位）。
+            val sidePx = with(LocalDensity.current) { (size - 2.dp).toPx() }
+            val paths = remember(sidePx) {
+                val width = sidePx
+                val height = sidePx
                 val center = Offset(width * 0.50f, height * 0.50f)
                 val gem = Path().apply {
                     moveTo(width * 0.50f, height * 0.02f)
@@ -903,6 +906,27 @@ private fun GeneratedAgentLogo(
                     lineTo(width * 0.14f, height * 0.20f)
                     close()
                 }
+                val lightFacet = Path().apply {
+                    moveTo(width * 0.50f, height * 0.02f)
+                    lineTo(center.x, center.y)
+                    lineTo(width * 0.02f, height * 0.62f)
+                    lineTo(width * 0.14f, height * 0.20f)
+                    close()
+                }
+                val depthFacet = Path().apply {
+                    moveTo(center.x, center.y)
+                    lineTo(width * 0.98f, height * 0.62f)
+                    lineTo(width * 0.50f, height * 0.98f)
+                    close()
+                }
+                Triple(gem, lightFacet, depthFacet)
+            }
+            Canvas(modifier = Modifier.size(size - 2.dp)) {
+                val canvasSize = this.size
+                val width = canvasSize.width
+                val height = canvasSize.height
+                val center = Offset(width * 0.50f, height * 0.50f)
+                val gem = paths.first
                 val gradientStart = when (variant.facetIndex) {
                     0 -> Offset(0f, 0f)
                     1 -> Offset(width, 0f)
@@ -917,21 +941,8 @@ private fun GeneratedAgentLogo(
                     path = gem,
                     brush = Brush.linearGradient(palette, gradientStart, gradientEnd),
                 )
-                val lightFacet = Path().apply {
-                    moveTo(width * 0.50f, height * 0.02f)
-                    lineTo(center.x, center.y)
-                    lineTo(width * 0.02f, height * 0.62f)
-                    lineTo(width * 0.14f, height * 0.20f)
-                    close()
-                }
-                drawPath(lightFacet, Color.White.copy(alpha = 0.19f))
-                val depthFacet = Path().apply {
-                    moveTo(center.x, center.y)
-                    lineTo(width * 0.98f, height * 0.62f)
-                    lineTo(width * 0.50f, height * 0.98f)
-                    close()
-                }
-                drawPath(depthFacet, Color.Black.copy(alpha = 0.10f))
+                drawPath(paths.second, Color.White.copy(alpha = 0.19f))
+                drawPath(paths.third, Color.Black.copy(alpha = 0.10f))
                 when (variant.facetIndex) {
                     0 -> drawCircle(
                         color = Color.White.copy(alpha = 0.54f),
@@ -1371,8 +1382,7 @@ private fun SubagentActivityPage(activity: SubagentActivity) {
             .fillMaxWidth()
             .fillMaxHeight()
             .clip(WandShapes.md)
-            .background(WandColors.bgPrimary.copy(alpha = 0.58f))
-            .border(0.7.dp, statusColor.copy(alpha = 0.30f), WandShapes.md),
+            .background(WandColors.bgPrimary.copy(alpha = 0.58f)),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1419,7 +1429,7 @@ private fun SubagentActivityPage(activity: SubagentActivity) {
                     .padding(horizontal = 7.dp, vertical = 4.dp),
             )
         }
-        HorizontalDivider(color = WandColors.border)
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2188,7 +2198,6 @@ private fun UnknownBlockCard(block: ContentBlock.Unknown, initiallyExpanded: Boo
             .fillMaxWidth()
             .clip(WandShapes.md)
             .background(WandColors.warningSoft)
-            .border(0.55.dp, WandColors.warning.copy(alpha = 0.32f), WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -2226,7 +2235,7 @@ private fun UnknownBlockCard(block: ContentBlock.Unknown, initiallyExpanded: Boo
             ExpandChevron(expanded = expanded, tint = WandColors.warning, size = 16.dp)
         }
         if (expanded && block.payload.isNotBlank()) {
-            HorizontalDivider(color = WandColors.warning.copy(alpha = 0.20f))
+            HorizontalDivider(thickness = 0.5.dp, color = WandColors.warning.copy(alpha = 0.20f))
             SelectionContainer(modifier = Modifier.padding(12.dp)) {
                 Text(
                     block.payload.take(8_000) + if (block.payload.length > 8_000) "\n…（已截断）" else "",
@@ -2246,7 +2255,7 @@ private fun SubagentTag(meta: SubagentMeta?) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
-        modifier = Modifier.padding(start = 2.dp, top = 1.dp, bottom = 2.dp),
+        modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
     ) {
         Icon(
             WandIcons.agent,
@@ -2448,11 +2457,14 @@ fun ToolCard(
                                 modifier = Modifier
                                     .clip(WandShapes.full)
                                     .background(WandColors.infoSoft)
-                                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                                    .padding(horizontal = 6.dp, vertical = 3.dp),
                             )
                         }
                     }
-                    val summary = toolSummary(use.description, use.input)
+                    // 遍历 JSON key 的摘要计算按输入缓存：可见工具卡每次重组不必重算。
+                    val summary = remember(use.description, use.input) {
+                        toolSummary(use.description, use.input)
+                    }
                     if (summary.isNotEmpty()) {
                         Text(
                             summary,
@@ -2509,7 +2521,7 @@ fun ToolCard(
         }
         if (expanded && hasBody) {
             HorizontalDivider(
-                thickness = 1.dp,
+                thickness = 0.5.dp,
                 color = WandColors.border.copy(alpha = 0.7f),
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
@@ -2629,7 +2641,6 @@ private fun ExplorationDetailCard(
             .fillMaxWidth()
             .clip(WandShapes.md)
             .background(WandColors.textPrimary.copy(alpha = 0.035f))
-            .border(0.55.dp, tint.copy(alpha = 0.16f), WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(
@@ -2703,7 +2714,7 @@ private fun ExplorationDetailCard(
         }
         if (expanded) {
             HorizontalDivider(
-                thickness = 1.dp,
+                thickness = 0.5.dp,
                 color = WandColors.border.copy(alpha = 0.7f),
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
@@ -2829,7 +2840,7 @@ private fun ToolInputBody(input: JSONObject) {
             color = WandColors.textMuted,
         )
         entries.forEach { entry ->
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     entry.key,
                     fontSize = 10.sp,
@@ -3106,12 +3117,14 @@ fun PermissionCard(
     val target = escalation?.target ?: legacy?.target
 
     val permissionGlass = WandGlass.regular.tinted(WandColors.permission, 0.22f)
+    var expanded by remember(scopeTitle, detail, target) { mutableStateOf(false) }
+    val canExpand = (detail.isNotEmpty() && detail != scopeTitle) || !target.isNullOrEmpty()
     Column(
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .glassSurface(backdrop, WandShapes.md, permissionGlass)
-            .padding(14.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -3121,30 +3134,26 @@ fun PermissionCard(
                 WandIcons.permission,
                 contentDescription = null,
                 tint = WandColors.permission,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(16.dp),
             )
             Text(
-                "需要授权",
+                scopeTitle,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = WandColors.permission,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(modifier = Modifier.weight(1f))
             StatusDot("permission")
         }
-        Text(
-            scopeTitle,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = WandColors.textPrimary,
-        )
         if (detail.isNotEmpty() && detail != scopeTitle) {
             Text(
                 detail,
                 fontSize = 13.sp,
-                lineHeight = 19.sp,
+                lineHeight = 18.sp,
                 color = WandColors.textSecondary,
-                maxLines = 4,
+                maxLines = if (expanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -3154,7 +3163,7 @@ fun PermissionCard(
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
                 color = WandColors.textSecondary,
-                maxLines = 2,
+                maxLines = if (expanded) Int.MAX_VALUE else 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3163,27 +3172,44 @@ fun PermissionCard(
                     .padding(horizontal = 8.dp, vertical = 5.dp),
             )
         }
+        if (canExpand) {
+            Text(
+                if (expanded) "收起详情" else "展开详情",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = WandColors.brand,
+                modifier = Modifier
+                    .clickableWithoutRipple { expanded = !expanded }
+                    .padding(vertical = 4.dp),
+            )
+        }
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
         ) {
             WandButton(
                 label = "拒绝",
                 onClick = { onResolve("deny") },
                 variant = WandButtonVariant.DangerText,
+                compact = true,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(modifier = Modifier.weight(1f))
             if (escalation != null) {
                 WandButton(
                     label = "本轮放行",
                     onClick = { onResolve("approve_turn") },
                     variant = WandButtonVariant.Secondary,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
                 )
             }
             WandButton(
                 label = "允许",
                 onClick = { onResolve(if (escalation != null) "approve_once" else "approve") },
                 variant = WandButtonVariant.Success,
+                compact = true,
+                modifier = Modifier.weight(1f),
             )
         }
     }

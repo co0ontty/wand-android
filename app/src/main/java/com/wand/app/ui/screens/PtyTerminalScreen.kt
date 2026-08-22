@@ -31,13 +31,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -66,8 +67,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -262,6 +264,11 @@ fun PtyTerminalScreen(
                     .background(TerminalBackground),
             ) {
                 if (snapshotResolved) {
+                    if (snapshot == null) {
+                        PtyConnectionBanner(
+                            message = "未能加载会话状态，终端仍可继续使用。",
+                        )
+                    }
                     PtyTerminalWebView(
                         serverUrl = api.baseUrl,
                         token = api.token,
@@ -383,10 +390,23 @@ private fun PtyTopBar(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            GitChangesButton(quickCommit) { onOpenQuickCommit() }
+            GitChangesButton(quickCommit, compact = true) { onOpenQuickCommit() }
         }
-        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
     }
+}
+
+@Composable
+private fun PtyConnectionBanner(message: String) {
+    Text(
+        message,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        color = Color.White.copy(alpha = 0.86f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.42f))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    )
 }
 
 @Composable
@@ -439,10 +459,9 @@ private fun PtyBottomBar(
                 onMicDown = onMicDown,
             )
         }
-        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.72f))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(60.dp)
@@ -469,16 +488,14 @@ private fun PtyBottomBar(
 private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
     val targetColor = if (open) WandColors.brand else WandColors.textPrimary
     val background = if (open) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.76f)
-    val borderColor = if (open) WandColors.brand.copy(alpha = 0.24f) else WandColors.borderStrong
     val shape = RoundedCornerShape(11.dp)
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .height(40.dp)
-            .widthIn(min = 52.dp)
+            .height(44.dp)
+            .widthIn(min = 72.dp)
             .clip(shape)
             .background(background)
-            .border(0.6.dp, borderColor, shape)
             .clickable(
                 onClickLabel = if (open) "收起输入框" else "展开输入框",
                 role = Role.Button,
@@ -486,12 +503,15 @@ private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
             )
             .padding(horizontal = 10.dp)
             .pointerInput(open) {
+                var accumulated = 0f
                 detectVerticalDragGestures(
-                    onDragEnd = {},
+                    onDragStart = { accumulated = 0f },
+                    onDragEnd = {
+                        if (accumulated < -12f && !open) onClick()
+                        else if (accumulated > 12f && open) onClick()
+                    },
                 ) { _, dragAmount ->
-                    // 向上拖动（负值）展开，向下拖动（正值）收起。
-                    if (dragAmount < -6f && !open) onClick()
-                    else if (dragAmount > 6f && open) onClick()
+                    accumulated += dragAmount
                 }
             },
     ) {
@@ -504,6 +524,12 @@ private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
                 contentDescription = null,
                 tint = targetColor,
                 modifier = Modifier.size(16.dp),
+            )
+            Text(
+                if (open) "收起" else "输入",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = targetColor,
             )
             Icon(
                 if (open) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
@@ -532,7 +558,7 @@ private fun PtyInputDrawer(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+            .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -547,7 +573,14 @@ private fun PtyInputDrawer(
             cursorBrush = SolidColor(WandColors.brand),
             minLines = 1,
             maxLines = 5,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.None,
+                autoCorrectEnabled = false,
+                imeAction = ImeAction.Send,
+            ),
+            keyboardActions = KeyboardActions(
+                onSend = { if (canSend) onSend() },
+            ),
             decorationBox = { innerTextField ->
                 Box(
                     contentAlignment = Alignment.CenterStart,
@@ -556,7 +589,6 @@ private fun PtyInputDrawer(
                         .heightIn(min = 40.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(WandColors.surfaceSoft.copy(alpha = 0.7f))
-                        .border(0.6.dp, WandColors.borderStrong, RoundedCornerShape(16.dp))
                         .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
                 ) {
                     if (draft.isEmpty()) {
@@ -592,7 +624,7 @@ private fun PtyDrawerSendButton(enabled: Boolean, onClick: () -> Unit) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(40.dp)
+            .size(44.dp)
             .clip(CircleShape)
             .background(background)
             .clickable(
@@ -621,17 +653,12 @@ private fun TerminalShortcutKey(
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .height(40.dp)
-            .widthIn(min = if (compact) 42.dp else 52.dp)
+            .height(44.dp)
+            .widthIn(min = if (compact) 44.dp else 52.dp)
             .clip(RoundedCornerShape(11.dp))
             .background(
                 if (emphasized) WandColors.brandSoft
                 else WandColors.surfaceSoft.copy(alpha = 0.76f),
-            )
-            .border(
-                0.6.dp,
-                if (emphasized) WandColors.brand.copy(alpha = 0.24f) else WandColors.borderStrong,
-                RoundedCornerShape(11.dp),
             )
             .clickable(
                 onClickLabel = shortcut.accessibilityLabel,
@@ -678,16 +705,11 @@ private fun PtyTerminalWebView(
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     lifecycleResumed = true
-                    preparationAttempt += 1
+                    activeWebView.get()?.onResume()
                 }
-                Lifecycle.Event.ON_PAUSE,
-                Lifecycle.Event.ON_STOP,
-                -> {
+                Lifecycle.Event.ON_PAUSE -> {
                     lifecycleResumed = false
-                    prepared = false
-                    latestOnReadyChange(false)
-                    activeWebView.getAndSet(null)?.let(::disposePtyWebView)
-                    WandWebSession.release(webSessionOwnerId)
+                    activeWebView.get()?.onPause()
                 }
                 else -> Unit
             }
@@ -810,7 +832,16 @@ private fun PtyTerminalWebView(
         }
     }
 
-    AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())
+    AndroidView(
+        factory = { webView },
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged {
+                if (lifecycleResumed) {
+                    webView.evaluateJavascript(RefitTerminalScript, null)
+                }
+            },
+    )
 }
 
 private fun disposePtyWebView(webView: WebView) {
@@ -863,6 +894,13 @@ private val NativeTerminalSetupScript =
         requestAnimationFrame(fit);
         setTimeout(fit, 180);
       } catch (e) {}
+    })();
+    """.trimIndent()
+
+private val RefitTerminalScript =
+    """
+    (function() {
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}
     })();
     """.trimIndent()
 

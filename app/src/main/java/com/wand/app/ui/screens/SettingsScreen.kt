@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -122,7 +123,7 @@ fun SettingsScreen(
     var volume by remember { mutableFloatStateOf(settings.getNotificationVolume().toFloat()) }
     var hapticEnabled by remember { mutableStateOf(settings.isHapticEnabled()) }
     var appIcon by remember { mutableStateOf(settings.getAppIcon()) }
-    var keepAlive by remember { mutableStateOf(false) }
+    var keepAlive by remember { mutableStateOf(settings.isKeepAlive()) }
     var betaChannel by remember { mutableStateOf(settings.isBetaChannel()) }
     var appearanceMode by remember { mutableStateOf(settings.getAppearanceMode()) }
     val motionEnabled = rememberSettingsMotionEnabled()
@@ -180,6 +181,7 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
+                    .statusBarsPadding()
                     .padding(top = 56.dp),
             ) {
                 SettingsOverview(
@@ -333,7 +335,7 @@ private fun SettingsContentLayout(
                 .align(Alignment.TopCenter)
                 .padding(horizontal = horizontalPadding)
                 .padding(top = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             content()
         }
@@ -408,7 +410,6 @@ private fun SettingsStatePill(label: String, tint: Color, modifier: Modifier = M
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(tint.copy(alpha = 0.08f))
-            .border(0.55.dp, tint.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
             .padding(horizontal = 9.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -535,7 +536,7 @@ private fun SettingsChapterHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 14.dp, bottom = 5.dp, start = 2.dp),
+            .padding(top = 14.dp, bottom = 8.dp, start = 2.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(
@@ -698,6 +699,7 @@ private fun UpdateControlDeck(
                 checked = keepAlive,
                 icon = WandIcons.keepAlive,
                 iconTint = WandColors.success,
+                description = "在通知栏保留前台服务，减少系统在后台回收连接。",
                 onChange = onKeepAliveChange,
             )
             RowDivider()
@@ -706,6 +708,7 @@ private fun UpdateControlDeck(
                 checked = betaChannel,
                 icon = WandIcons.beta,
                 iconTint = WandColors.warning,
+                description = "接收带调试后缀的开发构建，版本号会高于正式版。",
                 onChange = onBetaChannelChange,
             )
         }
@@ -730,6 +733,7 @@ private fun SettingsSheetHeader(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
                 .height(56.dp)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -750,7 +754,6 @@ private fun SettingsSheetHeader(
             )
             Spacer(modifier = Modifier.size(44.dp))
         }
-        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
     }
 }
 
@@ -935,6 +938,7 @@ private fun CompactConnectionAction(
 private fun SttModelSection() {
     val context = LocalContext.current
     var selectedId by remember { mutableStateOf(SttModelManager.selectedModel(context).id) }
+    var pendingDownload by remember { mutableStateOf<SttModelManager.SttModel?>(null) }
     // 触发各行就绪状态重算的信号：下载状态变化时 +1。
     val sttState = SttModelManager.state
     val downloadingId = SttModelManager.downloadingModelId
@@ -972,7 +976,7 @@ private fun SttModelSection() {
                         if (SttModelManager.isReady(context, model)) {
                             SherpaSpeechEngine.warmUp(context)
                         } else {
-                            SttModelManager.startDownload(context, model)
+                            pendingDownload = model
                         }
                     }
                     .padding(horizontal = 14.dp, vertical = 11.dp),
@@ -1034,6 +1038,27 @@ private fun SttModelSection() {
             }
         }
     }
+    pendingDownload?.let { model ->
+        WandDialog(
+            title = "下载语音模型？",
+            onDismissRequest = { pendingDownload = null },
+            icon = WandIcons.update,
+            confirm = WandDialogAction(
+                label = "开始下载",
+                onClick = {
+                    pendingDownload = null
+                    SttModelManager.startDownload(context, model)
+                },
+            ),
+            dismiss = WandDialogAction("取消", { pendingDownload = null }),
+        ) {
+            Text(
+                "将下载「${model.label}」（约 ${model.sizeLabel}）。建议在 Wi‑Fi 下进行，下载完成后识别完全在本机离线运行。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+        }
+    }
 }
 
 @Composable
@@ -1067,8 +1092,7 @@ private fun SettingsIconBadge(
         modifier = Modifier
             .size(32.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(tint.copy(alpha = 0.11f))
-            .border(0.55.dp, tint.copy(alpha = 0.14f), RoundedCornerShape(10.dp)),
+            .background(tint.copy(alpha = 0.11f)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
@@ -1085,8 +1109,7 @@ private fun SettingsRowIcon(
         modifier = Modifier
             .size(30.dp)
             .clip(shape)
-            .background(tint.copy(alpha = 0.08f))
-            .border(0.55.dp, tint.copy(alpha = 0.14f), shape),
+            .background(tint.copy(alpha = 0.08f)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
@@ -1146,6 +1169,7 @@ private fun SwitchRow(
     checked: Boolean,
     icon: ImageVector,
     iconTint: Color = WandColors.textMuted,
+    description: String? = null,
     onChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -1158,17 +1182,28 @@ private fun SwitchRow(
                 onValueChange = onChange,
             )
             .heightIn(min = 54.dp)
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         SettingsRowIcon(icon = icon, tint = iconTint)
-        Text(
-            label,
-            style = MaterialTheme.typography.titleSmall,
-            color = WandColors.textPrimary,
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 11.dp, end = 10.dp),
-        )
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.titleSmall,
+                color = WandColors.textPrimary,
+            )
+            if (description != null) {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.textSecondary,
+                )
+            }
+        }
         Switch(
             checked = checked,
             onCheckedChange = null,
@@ -1238,20 +1273,10 @@ private fun AppIconCard(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
-    val dark = isWandDarkTheme()
     Row(
         modifier = modifier
             .clip(shape)
             .background(if (selected) WandColors.brand.copy(alpha = 0.09f) else WandColors.surfaceSoft.copy(alpha = 0.38f))
-            .border(
-                0.7.dp,
-                if (selected) {
-                    WandColors.brand.copy(alpha = 0.38f)
-                } else {
-                    WandColors.borderStrong.copy(alpha = if (dark) 0.24f else 0.16f)
-                },
-                shape,
-            )
             .selectable(
                 selected = selected,
                 role = Role.RadioButton,

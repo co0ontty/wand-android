@@ -67,6 +67,7 @@ fun WandButton(
     loading: Boolean = false,
     icon: ImageVector? = null,
     trailingIcon: ImageVector? = null,
+    compact: Boolean = false,
 ) {
     val content: @Composable RowScope.() -> Unit = {
         if (loading) {
@@ -88,8 +89,8 @@ fun WandButton(
         }
     }
     val resolvedModifier = modifier
-        .heightIn(min = WandSizes.controlHeight)
-        .defaultMinSize(minWidth = 64.dp)
+        .heightIn(min = if (compact) 40.dp else WandSizes.controlHeight)
+        .defaultMinSize(minWidth = if (compact) 0.dp else 64.dp)
 
     when (variant) {
         WandButtonVariant.Primary -> Button(
@@ -205,7 +206,6 @@ fun WandIconButton(
                 .size(touchSize)
                 .clip(CircleShape)
                 .background(WandColors.surface.copy(alpha = 0.62f))
-                .border(0.55.dp, WandColors.border.copy(alpha = 0.54f), CircleShape)
             WandIconButtonVariant.Accent -> Modifier
                 .size(36.dp)
                 .clip(CircleShape)
@@ -424,7 +424,6 @@ fun WandProviderMark(
                     Modifier
                         .clip(WandShapes.sm)
                         .background(background.copy(alpha = 0.72f))
-                        .border(0.55.dp, tint.copy(alpha = 0.14f), WandShapes.sm)
                 } else Modifier
             ),
     ) {

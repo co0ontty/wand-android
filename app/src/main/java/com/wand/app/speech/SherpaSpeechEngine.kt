@@ -98,12 +98,45 @@ class SherpaSpeechEngine(private val context: Context) : SpeechEngine {
         private var loadedDir: String? = null
         private var loadedType: SttModelManager.ModelType? = null
 
+        /** 最后一次真正使用识别器的时刻；空闲回收据此判断能否释放。 */
+        @Volatile
+        private var lastUsedAtMs: Long = 0L
+
+        /** 空闲超过该时长后允许释放常驻识别器（大模型 ~190MB 原生内存）。 */
+        private const val RECLAIM_IDLE_MS = 10 * 60 * 1000L
+
+        /** 录音循环连续读到无效样本的容忍次数，超过即判定麦克风不可用。 */
+        private const val MAX_CONSECUTIVE_READ_FAILURES = 20
+
+        /**
+         * 空闲回收：距上次使用超过 [RECLAIM_IDLE_MS] 时释放常驻识别器。
+         * 由宿主 onTrimMemory(TRIM_MEMORY_RUNNING_LOW+) 调用；下次按住说话会重新加载
+         * （首次 1~3 秒延迟），换取大模型不再把原生堆占满进程生命周期。
+         */
+        @Synchronized
+        fun maybeReclaim() {
+            val recognizer = sharedRecognizer ?: return
+            if (System.currentTimeMillis() - lastUsedAtMs < RECLAIM_IDLE_MS) return
+            try {
+                recognizer.release()
+            } catch (_: Throwable) {
+            }
+            sharedRecognizer = null
+            loadedDir = null
+            loadedType = null
+        }
+
         @Synchronized
         private fun obtainRecognizer(context: Context): OnlineRecognizer {
             val model = SttModelManager.activeModel(context)
                 ?: throw IllegalStateException("语音模型未就绪")
             val dir = SttModelManager.modelDir(context, model)
-            sharedRecognizer?.let { if (loadedDir == dir.absolutePath) return it }
+            sharedRecognizer?.let {
+                if (loadedDir == dir.absolutePath) {
+                    lastUsedAtMs = System.currentTimeMillis()
+                    return it
+                }
+            }
             sharedRecognizer?.release()
             sharedRecognizer = null
             val recognizer = OnlineRecognizer(
@@ -113,6 +146,7 @@ class SherpaSpeechEngine(private val context: Context) : SpeechEngine {
             sharedRecognizer = recognizer
             loadedDir = dir.absolutePath
             loadedType = model.type
+            lastUsedAtMs = System.currentTimeMillis()
             return recognizer
         }
 
@@ -182,12 +216,19 @@ class SherpaSpeechEngine(private val context: Context) : SpeechEngine {
             return UPPER_WORD.replace(text) { it.value.lowercase() }
         }
 
-        /** 预热：模型就绪后后台加载一次，首次按住不卡顿。 */
+        /**
+         * 预热：模型就绪后后台加载一次，首次按住不卡顿。
+         * 只预热小模型（~26MB）：中英大模型 ~190MB 原生内存，进聊天页就常驻
+         * 会加剧低端机后台被杀，改为首次真正按住时才加载（[start] → obtainRecognizer）。
+         */
         fun warmUp(context: Context) {
             val appContext = context.applicationContext
             thread(name = "wand-stt-warmup") {
                 try {
-                    if (SttModelManager.isReady(appContext)) obtainRecognizer(appContext)
+                    val active = SttModelManager.activeModel(appContext)
+                    if (active != null && active.type == SttModelManager.ModelType.ZIPFORMER2_CTC) {
+                        obtainRecognizer(appContext)
+                    }
                 } catch (_: Throwable) {
                 }
             }
@@ -231,9 +272,19 @@ class SherpaSpeechEngine(private val context: Context) : SpeechEngine {
                 record.startRecording()
                 val buffer = ShortArray(SAMPLE_RATE / 10) // 100 ms 一读
                 var lastText = ""
+                // 麦克风被系统抢占 / 权限被运行时吊销时 read() 会持续返回 <=0，
+                // 连续超限即判定致命错误退出，避免无睡眠死自旋烧 CPU。
+                var consecutiveReadFailures = 0
                 while (phase == PHASE_RECORDING) {
                     val n = record.read(buffer, 0, buffer.size)
-                    if (n <= 0) continue
+                    if (n <= 0) {
+                        consecutiveReadFailures++
+                        if (consecutiveReadFailures >= MAX_CONSECUTIVE_READ_FAILURES) {
+                            throw IllegalStateException("麦克风不可用（持续无数据）")
+                        }
+                        continue
+                    }
+                    consecutiveReadFailures = 0
                     val samples = FloatArray(n) { buffer[it] / 32768.0f }
                     stream.acceptWaveform(samples, SAMPLE_RATE)
                     while (recognizer.isReady(stream)) recognizer.decode(stream)

@@ -59,8 +59,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -163,7 +166,6 @@ fun SessionListScreen(
     onOpenSession: (SessionSnapshot) -> Unit,
     onNewSession: (String?) -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit = {},
-    onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
@@ -174,6 +176,7 @@ fun SessionListScreen(
         workspaceName: String,
         taskName: String,
     ) -> Unit,
+    selectedTaskId: String? = null,
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -222,7 +225,7 @@ fun SessionListScreen(
     val entryIndexByKey = remember(visibleEntries) {
         visibleEntries.mapIndexed { index, entry -> entry.key to index }.toMap()
     }
-    val selectableKeys = visibleEntries.map { it.key }.toSet()
+    val selectableKeys = remember(visibleEntries) { visibleEntries.map { it.key }.toSet() }
     LaunchedEffect(selectableKeys, isSelecting) {
         if (isSelecting) selectedIds = selectedIds.intersect(selectableKeys)
         if (isSelecting || revealedEntryKey !in selectableKeys) revealedEntryKey = null
@@ -285,7 +288,7 @@ fun SessionListScreen(
                 onNewSession = { onNewSession(null) },
                 onRefreshWorkspaces = { workspaceRefreshRequest++ },
                 onViewModeChange = onViewModeChange,
-                onOpenMissions = onOpenMissions,
+                onBeginSelection = { isSelecting = true },
                 onExitSelection = { endSelection() },
                 onOpenSettings = {
                     menuOpen = false
@@ -340,6 +343,7 @@ fun SessionListScreen(
                         modifier = Modifier.padding(padding),
                         embedded = true,
                         refreshRequest = workspaceRefreshRequest,
+                        selectedTaskId = selectedTaskId,
                     )
                 }
                 state.loading && visibleEntries.isEmpty() -> {
@@ -395,10 +399,10 @@ fun SessionListScreen(
                             contentPadding = PaddingValues(
                                 start = 12.dp + padding.calculateStartPadding(direction),
                                 end = 12.dp + padding.calculateEndPadding(direction),
-                                top = 6.dp + padding.calculateTopPadding(),
+                                top = 12.dp + padding.calculateTopPadding(),
                                 bottom = 16.dp + padding.calculateBottomPadding(),
                             ),
-                            verticalArrangement = Arrangement.spacedBy(0.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             itemsIndexed(
                                 items = visibleEntries,
@@ -414,22 +418,26 @@ fun SessionListScreen(
                                     if (index > 0) {
                                         SessionListDivider(compact = compactLayout)
                                     }
+                                // 手势检测器不随 10s 轮询换数据实例而重启：entry 与索引映射
+                                // 经 rememberUpdatedState 读最新值，pointerInput 只按稳定 key 重启。
+                                val dragEntry by rememberUpdatedState(entry)
+                                val dragIndexByKey by rememberUpdatedState(entryIndexByKey)
                                 val rowModifier = Modifier
-                                    .pointerInput(entry.key, entryIndexByKey) {
+                                    .pointerInput(dragEntry.key) {
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = {
                                                 if (dragAnchorId == null) {
                                                     isSelecting = true
-                                                    dragAnchorId = entry.key
+                                                    dragAnchorId = dragEntry.key
                                                     dragBaseIds = selectedIds
-                                                    selectedIds = selectedIds + entry.key
+                                                    selectedIds = selectedIds + dragEntry.key
                                                 }
                                             },
                                             onDrag = { change, _ ->
                                                 val anchor = dragAnchorId
                                                     ?: return@detectDragGesturesAfterLongPress
-                                                val anchorIndex = entryIndexByKey[anchor]
-                                                val sourceIndex = entryIndexByKey[entry.key]
+                                                val anchorIndex = dragIndexByKey[anchor]
+                                                val sourceIndex = dragIndexByKey[dragEntry.key]
                                                 val sourceOffset = sourceIndex?.let { index ->
                                                     state.scrollState.layoutInfo.visibleItemsInfo
                                                         .firstOrNull { it.index == index }
@@ -613,7 +621,7 @@ private fun SessionListTopBar(
     onNewSession: () -> Unit,
     onRefreshWorkspaces: () -> Unit,
     onViewModeChange: (SessionListViewMode) -> Unit,
-    onOpenMissions: () -> Unit,
+    onBeginSelection: () -> Unit,
     onExitSelection: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
@@ -650,101 +658,184 @@ private fun SessionListTopBar(
                 )
             }
         } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding(),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = if (compact) 52.dp else contentHeight)
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "$serverDisplayName · $contextLabel",
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 12.dp, end = 6.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = WandColors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+            val overflowMenu: @Composable () -> Unit = {
+                SidebarOverflowMenu(
+                    menuOpen = menuOpen,
+                    onMenuOpenChange = onMenuOpenChange,
+                    serverDisplayName = serverDisplayName,
+                    contextLabel = contextLabel,
+                    viewMode = viewMode,
+                    onBeginSelection = onBeginSelection,
+                    onOpenSettings = onOpenSettings,
+                    onOpenWeb = onOpenWeb,
+                    onSwitchServer = onSwitchServer,
+                )
+            }
+            val trailingActions: @Composable () -> Unit = {
+                if (onCollapseSidebar != null && viewMode == SessionListViewMode.Sessions) {
+                    ToolbarIconButton(
+                        icon = WandIcons.panelCollapse,
+                        contentDescription = "收起侧边栏",
+                        onClick = onCollapseSidebar,
                     )
-                    if (onCollapseSidebar != null) {
-                        ToolbarIconButton(
-                            icon = WandIcons.chevronRight,
-                            contentDescription = "收起会话栏",
-                            onClick = onCollapseSidebar,
-                            modifier = Modifier.graphicsLayer { scaleX = -1f },
-                        )
-                    }
-                    if (viewMode == SessionListViewMode.Sessions) {
-                        TopBarPrimaryAction(onClick = onNewSession)
-                    } else {
-                        WandIconButton(
-                            icon = WandIcons.refresh,
-                            contentDescription = "刷新项目",
-                            onClick = onRefreshWorkspaces,
-                            variant = WandIconButtonVariant.Toolbar,
-                            tint = WandColors.textSecondary,
-                        )
-                    }
-                    Box {
-                        ToolbarIconButton(
-                            icon = WandIcons.more,
-                            contentDescription = "更多选项",
-                            onClick = { onMenuOpenChange(true) },
-                            tint = WandColors.textSecondary,
-                        )
-                        DropdownMenu(
-                            expanded = menuOpen,
-                            onDismissRequest = { onMenuOpenChange(false) },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("并行任务", color = WandColors.textPrimary) },
-                                leadingIcon = {
-                                    Icon(WandIcons.agent, contentDescription = null, tint = WandColors.info)
-                                },
-                                onClick = { onMenuOpenChange(false); onOpenMissions() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("设置", color = WandColors.textPrimary) },
-                                leadingIcon = {
-                                    Icon(WandIcons.settings, contentDescription = null, tint = WandColors.textSecondary)
-                                },
-                                onClick = { onMenuOpenChange(false); onOpenSettings() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("打开网页版", color = WandColors.textPrimary) },
-                                leadingIcon = {
-                                    Icon(WandIcons.web, contentDescription = null, tint = WandColors.textSecondary)
-                                },
-                                onClick = { onMenuOpenChange(false); onOpenWeb() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("切换服务器", color = WandColors.textPrimary) },
-                                leadingIcon = {
-                                    Icon(WandIcons.swapServer, contentDescription = null, tint = WandColors.textSecondary)
-                                },
-                                onClick = { onMenuOpenChange(false); onSwitchServer() },
-                            )
-                        }
-                    }
                 }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
-                ) {
-                    SessionListViewSwitch(
-                        mode = viewMode,
-                        compact = compact,
-                        onChange = onViewModeChange,
+                if (viewMode == SessionListViewMode.Sessions) {
+                    TopBarPrimaryAction(onClick = onNewSession)
+                } else {
+                    WandIconButton(
+                        icon = WandIcons.refresh,
+                        contentDescription = "刷新项目",
+                        onClick = onRefreshWorkspaces,
+                        variant = WandIconButtonVariant.Toolbar,
+                        tint = WandColors.textSecondary,
                     )
                 }
             }
+            if (compact) {
+                // 窄侧边栏（232–360dp）单行塞不下「菜单 + 分段切换 + 收起 + 新建」：
+                // 分段切换独占第二行，标题行只留导航与主动作，任何宽度下都不再挤压；
+                // 服务器名与视图上下文也从隐藏菜单提升为常驻标题。
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        overflowMenu()
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(1.dp),
+                        ) {
+                            Text(
+                                text = serverDisplayName,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WandColors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = contextLabel,
+                                fontSize = 11.sp,
+                                color = WandColors.textMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        trailingActions()
+                    }
+                    SessionListViewSwitch(
+                        mode = viewMode,
+                        compact = true,
+                        onChange = onViewModeChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 10.dp, end = 10.dp)
+                            .padding(bottom = 8.dp),
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = contentHeight)
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        overflowMenu()
+                        SessionListViewSwitch(
+                            mode = viewMode,
+                            compact = true,
+                            onChange = onViewModeChange,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp),
+                        )
+                        trailingActions()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 顶栏溢出菜单：服务器/上下文信息、多选入口和设置等低频操作。 */
+@Composable
+private fun SidebarOverflowMenu(
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
+    serverDisplayName: String,
+    contextLabel: String,
+    viewMode: SessionListViewMode,
+    onBeginSelection: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenWeb: () -> Unit,
+    onSwitchServer: () -> Unit,
+) {
+    Box {
+        ToolbarIconButton(
+            icon = WandIcons.more,
+            contentDescription = "更多选项",
+            onClick = { onMenuOpenChange(true) },
+            tint = WandColors.textSecondary,
+        )
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { onMenuOpenChange(false) },
+        ) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        "$serverDisplayName · $contextLabel",
+                        color = WandColors.textSecondary,
+                    )
+                },
+                enabled = false,
+                onClick = {},
+            )
+            if (viewMode == SessionListViewMode.Sessions) {
+                DropdownMenuItem(
+                    text = { Text("多选会话", color = WandColors.textPrimary) },
+                    leadingIcon = {
+                        Icon(WandIcons.todo, contentDescription = null, tint = WandColors.textSecondary)
+                    },
+                    onClick = { onMenuOpenChange(false); onBeginSelection() },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("设置", color = WandColors.textPrimary) },
+                leadingIcon = {
+                    Icon(WandIcons.settings, contentDescription = null, tint = WandColors.textSecondary)
+                },
+                onClick = { onMenuOpenChange(false); onOpenSettings() },
+            )
+            DropdownMenuItem(
+                text = { Text("打开网页版", color = WandColors.textPrimary) },
+                leadingIcon = {
+                    Icon(WandIcons.web, contentDescription = null, tint = WandColors.textSecondary)
+                },
+                onClick = { onMenuOpenChange(false); onOpenWeb() },
+            )
+            DropdownMenuItem(
+                text = { Text("切换服务器", color = WandColors.textPrimary) },
+                leadingIcon = {
+                    Icon(WandIcons.swapServer, contentDescription = null, tint = WandColors.textSecondary)
+                },
+                onClick = { onMenuOpenChange(false); onSwitchServer() },
+            )
         }
     }
 }
@@ -754,18 +845,21 @@ private fun SessionListViewSwitch(
     mode: SessionListViewMode,
     compact: Boolean,
     onChange: (SessionListViewMode) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(if (compact) 12.dp else 14.dp)
     BoxWithConstraints(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .height(if (compact) 44.dp else 48.dp)
             .clip(shape)
             .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
-            .border(0.6.dp, WandColors.border.copy(alpha = 0.62f), shape)
             .selectableGroup(),
     ) {
         val itemWidth = maxWidth / SessionListViewMode.entries.size
+        // 空间充裕时用「图标 + 文字」；segment 不足以同时容纳两者时降级为纯文字，
+        // 宁可少一层视觉提示也不让内容被裁切。
+        val showIcons = itemWidth >= 76.dp
         val selectedOffset by animateDpAsState(
             targetValue = if (mode == SessionListViewMode.Sessions) 0.dp else itemWidth,
             animationSpec = tween(durationMillis = 180, easing = WandMotion.easing),
@@ -778,12 +872,7 @@ private fun SessionListViewSwitch(
                 .fillMaxHeight()
                 .padding(3.dp)
                 .clip(RoundedCornerShape(11.dp))
-                .background(WandColors.bgElevated.copy(alpha = 0.94f))
-                .border(
-                    width = 0.6.dp,
-                    color = WandColors.borderStrong.copy(alpha = 0.34f),
-                    shape = RoundedCornerShape(11.dp),
-                ),
+                .background(WandColors.bgElevated.copy(alpha = 0.94f)),
         )
         Row(modifier = Modifier.fillMaxSize()) {
             SessionListViewMode.entries.forEach { value ->
@@ -823,13 +912,15 @@ private fun SessionListViewSwitch(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                 ) {
-                    Icon(
-                        imageVector = if (value == SessionListViewMode.Sessions) WandIcons.chat else WandIcons.folder,
-                        contentDescription = null,
-                        tint = if (selected) WandColors.brand else contentColor,
-                        modifier = Modifier.size(if (compact) 16.dp else 17.dp),
-                    )
-                    Spacer(Modifier.width(7.dp))
+                    if (showIcons) {
+                        Icon(
+                            imageVector = if (value == SessionListViewMode.Sessions) WandIcons.chat else WandIcons.folder,
+                            contentDescription = null,
+                            tint = if (selected) WandColors.brand else contentColor,
+                            modifier = Modifier.size(if (compact) 16.dp else 17.dp),
+                        )
+                        Spacer(Modifier.width(7.dp))
+                    }
                     Text(
                         text = if (value == SessionListViewMode.Sessions) "会话" else "项目",
                         style = MaterialTheme.typography.labelMedium,
@@ -959,7 +1050,7 @@ private fun SessionDirectoryTreeContent(
                     top = 6.dp + contentPadding.calculateTopPadding(),
                     bottom = 16.dp + contentPadding.calculateBottomPadding(),
                 ),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 itemsIndexed(
                     items = rows,
@@ -1092,7 +1183,7 @@ private fun SessionDirectoryFolderRow(
             )
             .clip(shape)
             .background(containerColor)
-            .heightIn(min = 46.dp),
+            .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -1150,7 +1241,7 @@ private fun SessionDirectoryFolderRow(
         }
         if (!node.synthetic && node.path.isNotEmpty()) {
             WandIconButton(
-                icon = WandIcons.edit,
+                icon = WandIcons.rename,
                 contentDescription = "重命名工作区 ${node.displayName}，目录 ${node.path}",
                 onClick = onRename,
                 variant = WandIconButtonVariant.Toolbar,
@@ -1207,7 +1298,7 @@ private fun RenameDirectoryDialog(
     WandDialog(
         title = "重命名工作区",
         onDismissRequest = { if (!saving) onDismiss() },
-        icon = WandIcons.edit,
+        icon = WandIcons.rename,
         confirm = WandDialogAction(
             label = if (saving) "保存中…" else "保存",
             onClick = submit,
@@ -1318,7 +1409,7 @@ private fun SelectionBar(
             )
             .navigationBarsPadding(),
     ) {
-        HorizontalDivider(thickness = 1.dp, color = WandColors.border)
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -1387,6 +1478,7 @@ private fun HistorySessionCard(
         provider = history.provider,
         timeLabel = if (restoring) "恢复中" else relativeTimeLabel(history.timestamp),
         status = null,
+        modeLabel = "聊天",
         contextIcon = WandIcons.history,
         contextLabel = "可恢复",
         path = history.cwd,
@@ -1401,12 +1493,9 @@ private fun HistorySessionCard(
 }
 
 /** ISO8601 时间 → 相对时间（单单位：刚刚 / N分钟 / N小时 / N天），解析失败返回空。 */
-private fun relativeTimeLabel(timestamp: String?): String {
+internal fun relativeTimeLabel(timestamp: String?, nowMillis: Long = System.currentTimeMillis()): String {
     val millis = parseIsoMillis(timestamp) ?: return ""
-    return when (val relative = singleUnitDurationLabel(System.currentTimeMillis() - millis)) {
-        "刚刚" -> relative
-        else -> "${relative}前"
-    }
+    return singleUnitDurationLabel(nowMillis - millis)
 }
 
 /**
@@ -1414,7 +1503,7 @@ private fun relativeTimeLabel(timestamp: String?): String {
  * - 刚刚 / N分钟 / N小时 / N天
  * 会话持续时长单独在 sessionDurationLabel 中处理，避免出现“持续 刚刚”。
  */
-private fun singleUnitDurationLabel(deltaMillis: Long): String {
+internal fun singleUnitDurationLabel(deltaMillis: Long): String {
     val minutes = (deltaMillis.coerceAtLeast(0L) / 60_000L)
     if (minutes < 1) return "刚刚"
     val hours = minutes / 60
@@ -1446,7 +1535,14 @@ private fun SwipeRevealRow(
     val revealWidth = buttonWidth + gap * 2
     val revealPx = with(density) { revealWidth.toPx() }
     val offsetX = remember { Animatable(0f) }
-    val revealed = offsetX.value <= -revealPx + 1f
+    // 组合期直接读 Animatable.value 会订阅每一帧：拖动/回弹期间整行（含整张会话卡）
+    // 每帧重组。derivedStateOf 把订阅收敛成布尔值，动画帧只写 layer 属性不触发重组。
+    val revealed by remember {
+        derivedStateOf { offsetX.value <= -revealPx + 1f }
+    }
+    val showActionLayer by remember(revealPx) {
+        derivedStateOf { offsetX.value < -1f }
+    }
     val snapSpec = WandMotion.springSpec<Float>()
 
     LaunchedEffect(expanded, revealPx) {
@@ -1493,7 +1589,7 @@ private fun SwipeRevealRow(
             },
     ) {
         // 操作键和卡片以相同行程从右向左移动，始终保持 8dp 空隙；不会再压在半透明卡片之上。
-        if (offsetX.value < -1f) {
+        if (showActionLayer) {
             Box(
                 // 只裁剪滑入的操作层，保留卡片原有的 1dp 轻投影。
                 modifier = Modifier
@@ -1594,6 +1690,7 @@ private fun SessionCard(
         provider = session.provider,
         timeLabel = sessionListTimeLabel(session, status),
         status = status,
+        modeLabel = if (session.isStructured) "聊天" else "终端",
         contextIcon = null,
         contextLabel = "",
         path = session.cwd.orEmpty(),
@@ -1638,6 +1735,7 @@ private fun SessionListRow(
     provider: String?,
     timeLabel: String,
     status: String?,
+    modeLabel: String?,
     contextIcon: ImageVector?,
     contextLabel: String,
     path: String,
@@ -1695,24 +1793,59 @@ private fun SessionListRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
     ) {
-        if (selecting) {
-            SelectionMark(selected = selected, compact = compact)
-        } else {
-            ProviderMark(provider = provider, compact = compact)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            if (selecting) {
+                SelectionMark(selected = selected, compact = compact)
+            } else {
+                ProviderMark(provider = provider, compact = compact)
+            }
+            if (!modeLabel.isNullOrBlank()) {
+                SessionModeCapsule(label = modeLabel, compact = compact)
+            }
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp),
         ) {
-            Text(
-                title,
-                fontSize = if (compact) 14.sp else 15.5.sp,
-                lineHeight = if (compact) 19.sp else 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    title,
+                    modifier = Modifier.weight(1f),
+                    fontSize = if (compact) 14.sp else 15.5.sp,
+                    lineHeight = if (compact) 19.sp else 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (trailingLoading) {
+                    CircularProgressIndicator(
+                        color = WandColors.brand,
+                        strokeWidth = 1.5.dp,
+                        modifier = Modifier.size(if (compact) 10.dp else 11.dp),
+                    )
+                } else if (timeLabel.isNotBlank()) {
+                    Text(
+                        text = timeLabel,
+                        modifier = Modifier
+                            .clip(WandShapes.full)
+                            .background(WandColors.surfaceSoft.copy(alpha = 0.78f))
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        fontSize = if (compact) 9.5.sp else 10.5.sp,
+                        lineHeight = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (prominentStatus) statusTint.copy(alpha = 0.90f) else WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -1770,32 +1903,22 @@ private fun SessionListRow(
                 }
             }
         }
-        Column(
-            modifier = Modifier.width(if (compact) 42.dp else 48.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.Top,
-        ) {
-            if (trailingLoading) {
-                CircularProgressIndicator(
-                    color = WandColors.brand,
-                    strokeWidth = 1.5.dp,
-                    modifier = Modifier
-                        .padding(end = 4.dp)
-                        .size(if (compact) 10.dp else 11.dp),
-                )
-            }
-            Text(
-                text = timeLabel,
-                modifier = Modifier.padding(top = 1.dp),
-                fontSize = if (compact) 9.5.sp else 10.5.sp,
-                lineHeight = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (prominentStatus) statusTint.copy(alpha = 0.90f) else WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
-            )
-        }
     }
+}
+
+@Composable
+private fun SessionModeCapsule(label: String, compact: Boolean) {
+    Text(
+        text = label,
+        fontSize = if (compact) 9.sp else 10.sp,
+        lineHeight = 12.sp,
+        fontWeight = FontWeight.Medium,
+        color = WandColors.textSecondary,
+        modifier = Modifier
+            .clip(WandShapes.full)
+            .background(WandColors.surfaceSoft.copy(alpha = 0.82f))
+            .padding(horizontal = if (compact) 5.dp else 6.dp, vertical = 3.dp),
+    )
 }
 
 /** 左侧标记是低对比度的身份锚点，不再像嵌套的应用图标。 */
@@ -1899,10 +2022,12 @@ private fun sessionDurationLabel(session: SessionSnapshot): String {
  * 列表左下时间服务于“快速找到那条会话”：活跃会话显示已运行多久，
  * 已结束会话显示最近时间。详情页仍可展示精确起止时间。
  */
-private fun sessionListTimeLabel(session: SessionSnapshot, status: String): String {
+internal fun sessionListTimeLabel(session: SessionSnapshot, status: String): String {
     return when (status.trim().lowercase()) {
-        "running", "thinking", "waiting-input", "waiting_input", "permission", "reconnecting" ->
-            sessionDurationLabel(session)
+        "running", "thinking", "waiting-input", "waiting_input", "permission", "reconnecting" -> {
+            val duration = sessionDurationLabel(session)
+            if (duration.isEmpty() || duration == "不足1分钟") "刚刚" else "已运行 $duration"
+        }
         else -> relativeTimeLabel(session.endedAt ?: session.startedAt)
     }
 }

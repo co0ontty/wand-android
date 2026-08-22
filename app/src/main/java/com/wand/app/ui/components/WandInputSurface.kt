@@ -6,6 +6,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.theme.WandColors
@@ -23,12 +24,15 @@ fun Modifier.wandInputSurface(
     val outlineColor = when {
         invalid -> WandColors.danger
         focused -> WandColors.focusRing
-        else -> WandColors.borderStrong.copy(alpha = 0.72f)
+        else -> Color.Transparent
     }
-    val containerColor = if (focused) WandColors.surface else WandColors.surface.copy(alpha = 0.90f)
+    val containerColor = if (focused) WandColors.surface else WandColors.surfaceSoft.copy(alpha = 0.72f)
 
     return this
-        .shadow(elevation = 1.dp, shape = shape, clip = false)
+        .shadow(elevation = if (focused) 1.dp else 0.dp, shape = shape, clip = false)
         .background(containerColor, shape)
-        .border(if (focused || invalid) 1.5.dp else 1.dp, outlineColor, shape)
+        .then(
+            if (focused || invalid) Modifier.border(1.dp, outlineColor, shape)
+            else Modifier
+        )
 }

@@ -89,7 +89,8 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     private ValueCallback<Uri[]> pendingFileChooserCallback;
     private PermissionRequest pendingWebPermissionRequest;
     private String[] pendingWebPermissionResources;
-    private boolean keepAliveRunning = false;
+    /** 只在主线程读写（JS 桥只负责 post），避免桥线程置位与 onDestroy 判定竞态产生孤儿前台服务。 */
+    private volatile boolean keepAliveRunning = false;
     private long lastBackPressedTime = 0;
     private ExecutorService backgroundExecutor;
     private int webSessionGeneration = 0;
@@ -151,6 +152,8 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         notificationHelper = new NotificationHelper(this);
         backgroundExecutor = Executors.newFixedThreadPool(2);
         updateManager = new UpdateManager(this, serverStore, backgroundExecutor, serverUrl);
+        // 清理语音模型目录里的历史残渣（失败下载/旧模型目录），进程内一次。
+        com.wand.app.speech.SttModelManager.INSTANCE.pruneInvalidArtifacts(this);
         networkMonitor = new NetworkMonitor(this, this);
 
         webView = findViewById(R.id.webView);
@@ -580,7 +583,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
                 transport.setWebView(popup);
                 resultMsg.sendToTarget();
                 popup.postDelayed(() -> {
-                    if (handled[0]) return;
+                    if (handled[0] || isDestroyed()) return;
                     handled[0] = true;
                     destroyPopupWebView(popup);
                 }, 10_000);
@@ -1064,9 +1067,9 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         @JavascriptInterface
         public void startKeepAlive() {
-            if (keepAliveRunning) return;
-            keepAliveRunning = true;
             runOnUiThread(() -> {
+                if (keepAliveRunning) return;
+                keepAliveRunning = true;
                 try {
                     Intent serviceIntent = new Intent(MainActivity.this, WandForegroundService.class);
                     if (serverId != null) {
@@ -1079,9 +1082,9 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
         @JavascriptInterface
         public void stopKeepAlive() {
-            if (!keepAliveRunning) return;
-            keepAliveRunning = false;
             runOnUiThread(() -> {
+                if (!keepAliveRunning) return;
+                keepAliveRunning = false;
                 try {
                     stopService(new Intent(MainActivity.this, WandForegroundService.class));
                 } catch (Exception ignored) {}
@@ -1259,9 +1262,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
             evalJs("if(window.wandTrimCache)window.wandTrimCache(" + level + ");");
         }
-        if (level >= TRIM_MEMORY_UI_HIDDEN) {
-            try { webView.freeMemory(); } catch (Exception ignored) {}
-        }
+        // WebView.freeMemory() 自 API 18 起是 no-op，不再调用。
     }
 
     // ── Error/loading overlay ──

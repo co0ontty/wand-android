@@ -223,6 +223,7 @@ class HomeSettingsActions(
     val setNotificationVolume: (Int) -> Unit,
     val isHapticEnabled: () -> Boolean,
     val setHapticEnabled: (Boolean) -> Unit,
+    val isKeepAlive: () -> Boolean,
     val setKeepAlive: (Boolean) -> Unit,
     val getAppearanceMode: () -> WandAppearanceMode,
     val setAppearanceMode: (WandAppearanceMode) -> Unit,

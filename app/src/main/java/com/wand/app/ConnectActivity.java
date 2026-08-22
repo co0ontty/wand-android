@@ -99,6 +99,9 @@ public class ConnectActivity extends AppCompatActivity {
             stopService(new Intent(this, WandForegroundService.class));
         }
         connectView = new ConnectComposeView(this);
+        // serverStore 必须先于 listener 注册完成：listener 回调（onPickServer 等）
+        // 虽然当前都是用户触发，但不依赖「注册时序」这种隐含假设更稳。
+        serverStore = new ServerStore(this);
         connectView.setListener(new ConnectUiListener() {
             @Override public void onConnect() {
                 if (!redirectToCreationHostIfBusy()) attemptConnect();
@@ -166,7 +169,6 @@ public class ConnectActivity extends AppCompatActivity {
         setContentView(connectView);
         applyLightSystemBars();
 
-        serverStore = new ServerStore(this);
         networkExecutor = Executors.newSingleThreadExecutor();
         if (managementMode) {
             getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -457,7 +459,7 @@ public class ConnectActivity extends AppCompatActivity {
         ServerProfile profile = serverStore.saveServerProfile(result.serverUrl, result.appToken);
         serverStore.setActiveServerId(profile.getId());
         WandHttp.resetClient(profile.getBaseUrl());
-        launchWebView(profile);
+        launchHome(profile);
     }
 
     private void cancelCurrentTask() {
@@ -532,7 +534,7 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     /** 连接成功后进入原生主界面（HomeActivity）；WebView（MainActivity）只作网页版兜底。 */
-    private void launchWebView(ServerProfile profile) {
+    private void launchHome(ServerProfile profile) {
         SessionWatcher.INSTANCE.stop();
         stopService(new Intent(this, WandForegroundService.class));
         Intent intent = new Intent(this, HomeActivity.class);

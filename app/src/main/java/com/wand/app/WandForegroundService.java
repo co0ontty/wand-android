@@ -26,7 +26,8 @@ public class WandForegroundService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         // 通知上的"停止"按钮: 用户可直接从通知抽屉停掉后台保活, 不必进 App 找开关。
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            stopForeground(true);
+            androidx.core.app.ServiceCompat.stopForeground(this,
+                    androidx.core.app.ServiceCompat.STOP_FOREGROUND_REMOVE);
             stopSelf();
             return START_NOT_STICKY;
         }

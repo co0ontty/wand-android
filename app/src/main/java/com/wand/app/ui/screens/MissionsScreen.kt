@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -139,14 +141,15 @@ fun MissionsScreen(
                         .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = onBack) { Text("返回", color = WandColors.brand) }
+                    IconButton(onClick = onBack) {
+                        Icon(WandIcons.close, contentDescription = "返回", tint = WandColors.textSecondary)
+                    }
                     Column(modifier = Modifier.weight(1f)) {
                         Text("并行任务", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
                         Text("多 Agent 并行尝试与 Diff 审查", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
                     }
                     WandButton(label = "新任务", onClick = { showCreate = true }, variant = WandButtonVariant.Secondary)
                 }
-                HorizontalDivider(color = WandColors.border)
             }
         },
     ) { padding ->
@@ -288,7 +291,7 @@ private fun MissionCard(
             }
             StatePill(mission.status)
             Box {
-                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(30.dp)) {
+                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(40.dp)) {
                     Icon(
                         WandIcons.more,
                         contentDescription = "任务操作",
@@ -317,7 +320,7 @@ private fun MissionCard(
         }
         Text(mission.prompt, color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 10.dp))
         mission.attempts.forEach { attempt ->
-            HorizontalDivider(color = WandColors.border.copy(alpha = 0.55f))
+            HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.55f))
             Row(modifier = Modifier.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     painter = BrandLogos.painterForProvider(attempt.provider),
@@ -332,6 +335,7 @@ private fun MissionCard(
                     Text(attempt.summary ?: attempt.error ?: attempt.branch ?: "准备 worktree…", color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 TextButton(enabled = attempt.sessionId != null, onClick = { attempt.sessionId?.let(onOpenSession) }) { Text("会话") }
+                Spacer(Modifier.width(4.dp))
                 TextButton(enabled = attempt.worktreePath != null, onClick = { onOpenDiff(mission, attempt) }) { Text("Diff") }
             }
         }
@@ -446,7 +450,7 @@ private fun MissionDiffDialog(
                     }
                     if (pending > 0) WandButton(label = "发送 $pending 条", onClick = onSendReview)
                 }
-                HorizontalDivider(color = WandColors.border)
+                HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
                 if (diff == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = WandColors.brand) }
                 } else {

@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -143,10 +144,10 @@ fun WorkspaceTaskScreen(
                 contentDescription = "返回",
                 tint = WandColors.textSecondary,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(44.dp)
                     .graphicsLayerRotate180()
                     .clickable(onClick = onBack)
-                    .padding(8.dp),
+                    .padding(10.dp),
             )
             Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
                 Text(
@@ -170,9 +171,9 @@ fun WorkspaceTaskScreen(
                 contentDescription = "刷新任务",
                 tint = WandColors.textSecondary,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(44.dp)
                     .clickable { workflow.loadTask(taskId) }
-                    .padding(8.dp),
+                    .padding(10.dp),
             )
         }
 
@@ -295,7 +296,7 @@ private fun EmptyTaskWelcome(
                     .clip(RoundedCornerShape(8.dp))
                     .background(WandColors.surfaceSoft.copy(alpha = 0.5f))
                     .clickable(onClick = onCopyCwd)
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
                     .semantics { contentDescription = "任务目录 $cwd，点击复制" },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -384,6 +385,7 @@ private fun SessionSummaryRow(
             .heightIn(min = 56.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(background)
+            .border(0.5.dp, borderColor, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
             .semantics { contentDescription = workspaceSessionLabel(session, index) },

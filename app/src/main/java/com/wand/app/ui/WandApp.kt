@@ -40,10 +40,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -74,7 +72,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wand.app.SessionCreationCoordinator
@@ -85,10 +82,8 @@ import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
 import com.wand.app.data.providerDisplayName
 import com.wand.app.ui.components.BrandLogos
-import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
-import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
@@ -299,7 +294,6 @@ private fun ReadyContent(
             },
         )
     }
-    val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // 会话同步跟随 ReadyContent 生命周期，而不是跟随“完整列表是否正在组合”。
@@ -316,10 +310,7 @@ private fun ReadyContent(
         )
     }
     fun dismissSettings() {
-        scope.launch {
-            runCatching { settingsSheetState.hide() }
-            showSettings = false
-        }
+        showSettings = false
     }
 
     // 认证就绪后消费一次长按图标快捷操作（对称 iOS consume）。
@@ -393,7 +384,9 @@ private fun ReadyContent(
                 )
                 .apply()
         }
-        val openMissions = { openDetail(Screen.Missions) }
+        // 并行任务入口收进「新建会话」的多选开关里；新建页分派完成后，
+        // 用 Missions 替换栈顶的新建页（返回直接回主页，不再回到表单）。
+        val openMissionsFromNewSession = { nav.setDetail(Screen.Missions) }
         val openWorkspaceTask: (String, String, String, String) -> Unit = { workspaceId, taskId, workspaceName, taskName ->
             openDetail(Screen.WorkspaceTask(workspaceId, taskId, workspaceName, taskName))
         }
@@ -412,7 +405,7 @@ private fun ReadyContent(
                 onOpenSession = openSession,
                 onOpenHistory = openHistory,
                 onNewSession = openNewSession,
-                onOpenMissions = openMissions,
+                onOpenMissions = openMissionsFromNewSession,
                 onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                 onViewModeChange = changeSessionListView,
@@ -429,7 +422,7 @@ private fun ReadyContent(
                 viewMode = sessionListViewMode,
                 onOpenSession = openSession,
                 onNewSession = openNewSession,
-                onOpenMissions = openMissions,
+                onOpenMissions = openMissionsFromNewSession,
                 onOpenSettings = { if (!sessionCreationInFlight) showSettings = true },
                 onViewModeChange = changeSessionListView,
                 onOpenWorkspaceTask = openWorkspaceTask,
@@ -442,30 +435,14 @@ private fun ReadyContent(
     }
 
     if (showSettings) {
-        WandBottomSheet(
-            onDismissRequest = { showSettings = false },
-            sheetState = settingsSheetState,
-            // 设置页本身是长列表。关闭 sheet 拖拽后，纵向手势只交给内部 verticalScroll，
-            // 避免列表到达边界时与 ModalBottomSheet 的嵌套滚动反复争抢位移而抖动。
-            gesturesEnabled = false,
-            transparent = true,
-            showDragHandle = false,
-        ) {
-            NoOverscroll {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.86f),
-                ) {
-                    SettingsScreen(
-                        api = api,
-                        connection = actions.connection,
-                        navigation = actions.navigation,
-                        settings = actions.settings,
-                        onBack = { dismissSettings() },
-                    )
-                }
-            }
+        Box(modifier = Modifier.fillMaxSize()) {
+            SettingsScreen(
+                api = api,
+                connection = actions.connection,
+                navigation = actions.navigation,
+                settings = actions.settings,
+                onBack = { dismissSettings() },
+            )
         }
     }
 }
@@ -493,19 +470,19 @@ private fun SinglePaneContent(
             serverDisplayName = actions.connection.serverDisplayName,
             interactionEnabled = !sessionCreationInFlight,
             viewMode = viewMode,
-            onOpenSession = onOpenSession,
-            onNewSession = onNewSession,
-            onViewModeChange = onViewModeChange,
-            onOpenMissions = onOpenMissions,
-            onOpenSettings = onOpenSettings,
-            onOpenWeb = {
-                if (!sessionCreationInFlight) actions.navigation.openWeb()
-            },
-            onSwitchServer = {
-                if (!sessionCreationInFlight) actions.navigation.switchServer()
-            },
-            onCollapseSidebar = null,
+                onOpenSession = onOpenSession,
+                onNewSession = onNewSession,
+                onViewModeChange = onViewModeChange,
+                onOpenSettings = onOpenSettings,
+                onOpenWeb = {
+                    if (!sessionCreationInFlight) actions.navigation.openWeb()
+                },
+                onSwitchServer = {
+                    if (!sessionCreationInFlight) actions.navigation.switchServer()
+                },
+                onCollapseSidebar = null,
             onOpenWorkspaceTask = onOpenWorkspaceTask,
+            selectedTaskId = (nav.current as? Screen.WorkspaceTask)?.taskId,
         )
         is Screen.Chat -> ChatScreen(
             api = api,
@@ -533,6 +510,7 @@ private fun SinglePaneContent(
             initialCwd = screen.initialCwd,
             creating = sessionCreationInFlight,
             onReconnectServer = actions.navigation.reconnectServer,
+            onOpenMissions = onOpenMissions,
             onBack = { nav.pop() },
         )
         is Screen.Missions -> MissionsScreen(
@@ -645,7 +623,6 @@ private fun WideReadyContent(
                                 onOpenSession = onOpenSession,
                                 onOpenHistory = onOpenHistory,
                                 onNewSession = onNewSession,
-                                onOpenMissions = onOpenMissions,
                                 onExpandSidebar = onToggleSidebarCollapsed,
                             )
                         } else {
@@ -662,7 +639,6 @@ private fun WideReadyContent(
                                 onOpenSession = onOpenSession,
                                 onNewSession = onNewSession,
                                 onViewModeChange = onViewModeChange,
-                                onOpenMissions = onOpenMissions,
                                 onOpenSettings = onOpenSettings,
                                 onOpenWeb = {
                                     if (!sessionCreationInFlight) actions.navigation.openWeb()
@@ -672,6 +648,7 @@ private fun WideReadyContent(
                                 },
                                 onCollapseSidebar = onToggleSidebarCollapsed,
                                 onOpenWorkspaceTask = onOpenWorkspaceTask,
+                                selectedTaskId = (nav.current as? Screen.WorkspaceTask)?.taskId,
                             )
                         }
                     }
@@ -696,7 +673,10 @@ private fun WideReadyContent(
                 .fillMaxHeight(),
         ) {
             when (val screen = nav.current) {
-                is Screen.SessionList -> DetailPlaceholder { onNewSession(null) }
+                is Screen.SessionList -> DetailPlaceholder(
+                    viewMode = viewMode,
+                    onNewSession = { onNewSession(null) },
+                )
                 is Screen.Chat -> ChatScreen(
                     api = api,
                     sessionId = screen.sessionId,
@@ -723,6 +703,7 @@ private fun WideReadyContent(
                     initialCwd = screen.initialCwd,
                     creating = sessionCreationInFlight,
                     onReconnectServer = actions.navigation.reconnectServer,
+                    onOpenMissions = onOpenMissions,
                     onBack = { nav.pop() },
                 )
                 is Screen.Missions -> MissionsScreen(
@@ -757,10 +738,10 @@ private fun WideReadyContent(
                     taskName = screen.taskName,
                     onBack = { nav.pop() },
                     onOpenSession = { sessionId ->
-                        nav.setDetail(Screen.Chat(sessionId, screen.workspaceName, screen.taskName))
+                        nav.push(Screen.Chat(sessionId, screen.workspaceName, screen.taskName))
                     },
                     onOpenPty = { sessionId ->
-                        nav.setDetail(Screen.PtyTerminal(sessionId, screen.workspaceName, screen.taskName))
+                        nav.push(Screen.PtyTerminal(sessionId, screen.workspaceName, screen.taskName))
                     },
                 )
             }
@@ -856,7 +837,6 @@ private fun CollapsedSessionRail(
     onOpenSession: (SessionSnapshot) -> Unit,
     onOpenHistory: (HistorySession) -> Unit,
     onNewSession: (String?) -> Unit,
-    onOpenMissions: () -> Unit,
     onExpandSidebar: () -> Unit,
 ) {
     val entries = listState.entries
@@ -870,14 +850,16 @@ private fun CollapsedSessionRail(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val showingSessions = viewMode == SessionListViewMode.Sessions
+        // 汉堡图标 =「展开面板」的通用语义；此前用会话/项目品牌色图标，看起来像
+        // 选中的 Tab，实际功能却是展开侧边栏，语义混淆。
         CollapsedRailTile(
-            icon = rememberVectorPainter(if (showingSessions) WandIcons.chat else WandIcons.folder),
-            iconTint = WandColors.brand,
+            icon = rememberVectorPainter(WandIcons.panelExpand),
+            iconTint = WandColors.textSecondary,
             accentTint = WandColors.brand,
-            selected = true,
-            selectionStateEnabled = true,
-            contentDescription = if (showingSessions) "当前为会话视图" else "当前为项目视图",
-            onClickLabel = if (showingSessions) "展开会话栏" else "展开项目栏",
+            selected = false,
+            selectionStateEnabled = false,
+            contentDescription = if (showingSessions) "展开会话列表栏" else "展开项目栏",
+            onClickLabel = "展开侧边栏",
             outlined = true,
             onClick = onExpandSidebar,
         )
@@ -934,33 +916,30 @@ private fun CollapsedSessionRail(
                 }
             }
         } else {
+            // 项目视图的折叠占位此前只是一块不可点击的图标+文字，点了没反应；
+            // 改成与顶部一致的「展开」tile，保持 rail 上所有元素都可操作。
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
                 contentAlignment = Alignment.Center,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = WandIcons.folder,
-                        contentDescription = null,
-                        tint = WandColors.brand,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        text = "项目",
-                        fontSize = 9.sp,
-                        color = WandColors.textMuted,
-                    )
-                }
+                CollapsedRailTile(
+                    icon = rememberVectorPainter(WandIcons.folder),
+                    iconTint = WandColors.textSecondary,
+                    accentTint = WandColors.brand,
+                    selected = false,
+                    contentDescription = "展开项目列表",
+                    onClickLabel = "展开侧边栏",
+                    outlined = true,
+                    onClick = onExpandSidebar,
+                )
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
         CollapsedRailDivider()
         Spacer(modifier = Modifier.height(8.dp))
         CollapsedNewSessionTile(onClick = { onNewSession(null) })
-        Spacer(modifier = Modifier.height(4.dp))
-        CollapsedMissionsTile(onClick = onOpenMissions)
     }
 }
 
@@ -1038,19 +1017,6 @@ private fun CollapsedNewSessionTile(onClick: () -> Unit) {
         contentDescription = "新建会话",
         onClickLabel = "新建会话",
         emphasized = true,
-        onClick = onClick,
-    )
-}
-
-@Composable
-private fun CollapsedMissionsTile(onClick: () -> Unit) {
-    CollapsedRailTile(
-        icon = rememberVectorPainter(WandIcons.agent),
-        iconTint = WandColors.info,
-        selected = false,
-        contentDescription = "并行任务",
-        onClickLabel = "打开并行任务",
-        outlined = true,
         onClick = onClick,
     )
 }
@@ -1176,7 +1142,11 @@ private fun CollapsedRailTile(
 }
 
 @Composable
-private fun DetailPlaceholder(onNewSession: () -> Unit) {
+private fun DetailPlaceholder(
+    viewMode: SessionListViewMode,
+    onNewSession: () -> Unit,
+) {
+    val selectingTasks = viewMode == SessionListViewMode.Workspaces
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1187,23 +1157,25 @@ private fun DetailPlaceholder(onNewSession: () -> Unit) {
     ) {
         WandBrandMark(size = 58)
         Text(
-            "选择会话",
+            if (selectingTasks) "选择一个任务" else "选择一个会话",
             style = MaterialTheme.typography.titleMedium,
             color = WandColors.textPrimary,
             modifier = Modifier.padding(top = 18.dp),
         )
         Text(
-            "继续现有对话，或开始新的工作。",
+            if (selectingTasks) "从左侧打开一个项目任务，继续工作。" else "继续现有对话，或开始新的工作。",
             style = MaterialTheme.typography.bodyMedium,
             color = WandColors.textSecondary,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
         )
-        WandButton(
-            label = "新建会话",
-            onClick = onNewSession,
-            modifier = Modifier.padding(top = 18.dp),
-        )
+        if (!selectingTasks) {
+            WandButton(
+                label = "新建会话",
+                onClick = onNewSession,
+                modifier = Modifier.padding(top = 18.dp),
+            )
+        }
     }
 }
 

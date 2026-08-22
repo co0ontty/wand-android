@@ -342,7 +342,6 @@ private fun AskUserOptionRow(
         chosen -> WandColors.brand.copy(alpha = 0.16f)
         else -> WandColors.surface
     }
-    val border = if (chosen) tint else WandColors.border
     Row(
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -350,7 +349,6 @@ private fun AskUserOptionRow(
             .fillMaxWidth()
             .clip(WandShapes.sm)
             .background(fill)
-            .border(if (chosen) 1.dp else 0.55.dp, border.copy(alpha = if (chosen) 0.72f else 0.58f), WandShapes.sm)
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .graphicsLayer { alpha = if (isAnswered && !chosen) 0.55f else 1f }
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -387,7 +385,7 @@ private fun AskUserOptionRow(
                 }
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 option.label,
                 fontSize = 13.sp,
@@ -498,7 +496,7 @@ fun DiffCard(
                 modifier = Modifier
                     .clip(WandShapes.full)
                     .background(statusColor.copy(alpha = 0.12f))
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
             )
             ExpandChevron(
                 expanded = expanded,
@@ -526,7 +524,7 @@ fun DiffCard(
                     UnifiedDiffBlock(unifiedDiff)
                 }
                 if (movePath.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("移动到", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = WandColors.textMuted)
                         SelectionContainer {
                             Text(
@@ -573,20 +571,29 @@ private fun UnifiedDiffBlock(diff: String) {
         if (diff.length > 16_000) diff.take(16_000) + "\n…（差异已截断）" else diff
     }
     val lines = remember(clipped) { clipped.lines() }
-    val annotated = buildAnnotatedString {
-        lines.forEachIndexed { index, line ->
-            val color = when {
-                line.startsWith("@@") -> WandColors.info
-                line.startsWith("+++") || line.startsWith("---") -> WandColors.textMuted
-                line.startsWith("+") -> WandColors.success
-                line.startsWith("-") -> WandColors.danger
-                else -> WandColors.textSecondary
+    // 大 diff 展开状态下每次重组都重建整段 AnnotatedString 代价高，按内容缓存。
+    // WandColors 是 @Composable 读取，先在组合期取值再进 remember。
+    val cInfo = WandColors.info
+    val cMuted = WandColors.textMuted
+    val cSuccess = WandColors.success
+    val cDanger = WandColors.danger
+    val cSecondary = WandColors.textSecondary
+    val annotated = remember(clipped, cInfo, cMuted, cSuccess, cDanger, cSecondary) {
+        buildAnnotatedString {
+            lines.forEachIndexed { index, line ->
+                val color = when {
+                    line.startsWith("@@") -> cInfo
+                    line.startsWith("+++") || line.startsWith("---") -> cMuted
+                    line.startsWith("+") -> cSuccess
+                    line.startsWith("-") -> cDanger
+                    else -> cSecondary
+                }
+                withStyle(SpanStyle(color = color)) { append(line) }
+                if (index < lines.lastIndex) append('\n')
             }
-            withStyle(SpanStyle(color = color)) { append(line) }
-            if (index < lines.lastIndex) append('\n')
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             "统一差异",
             fontSize = 10.sp,
@@ -615,7 +622,7 @@ private fun UnifiedDiffBlock(diff: String) {
 
 @Composable
 private fun DiffColumn(label: String, text: String, prefix: String, tint: Color) {
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (label.isNotEmpty()) {
             Text(
                 label,
@@ -632,9 +639,12 @@ private fun DiffColumn(label: String, text: String, prefix: String, tint: Color)
                 .horizontalScroll(rememberScrollState())
                 .padding(8.dp),
         ) {
+            val clippedText = remember(text) {
+                if (text.length > 2000) text.take(2000) + "\n…（已截断）" else text
+            }
             SelectionContainer {
                 Text(
-                    prefix + if (text.length > 2000) text.take(2000) + "\n…（已截断）" else text,
+                    prefix + clippedText,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     fontFamily = FontFamily.Monospace,
@@ -690,7 +700,6 @@ fun TerminalCard(
             .fillMaxWidth()
             .clip(WandShapes.md)
             .background(TermBg)
-            .border(0.55.dp, Color.White.copy(alpha = 0.09f), WandShapes.md)
             .animateContentSize(WandMotion.tweenNormal()),
     ) {
         Row(

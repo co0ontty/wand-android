@@ -208,6 +208,49 @@ object SttModelManager {
         cancelRequested = true
     }
 
+    /** 进程内只清扫一次，避免每次进设置页/会话页都扫盘。 */
+    @Volatile
+    private var prunedOnce = false
+
+    /**
+     * 清理 ASR 目录里的无效产物（历史遗留照清）：
+     * - 不在注册表里的模型目录：旧版本改过 dirName 或下架的模型，永远不会被再用；
+     * - 缺 .complete 或文件不全的目录：下载失败/中断的残骸（正在下载的模型跳过）；
+     * - 就绪目录里的 *.part：取消/失败的重试残留。
+     * 不动「已就绪但未选中」的模型——那是用户主动下载的数据，删除意味着几百 MB
+     * 的重新下载，只能由用户在设置页主动处理。
+     */
+    fun pruneInvalidArtifacts(context: Context) {
+        if (prunedOnce) return
+        prunedOnce = true
+        val appContext = context.applicationContext
+        scope.launch {
+            try {
+                val asrRoot = File(appContext.filesDir, "asr")
+                if (!asrRoot.isDirectory) return@launch
+                val knownDirs = MODELS.map { it.dirName }.toSet()
+                asrRoot.listFiles { file -> file.isDirectory }?.forEach { dir ->
+                    val model = MODELS.firstOrNull { it.dirName == dir.name }
+                    when {
+                        dir.name !in knownDirs || model == null ->
+                            dir.deleteRecursively()
+                        // 实时复查 downloadingModelId：prune 扫描期间用户可能刚点了下载，
+                        // 快照里没有但目录正在被写入，误删会让 rename 失败报「写入模型文件失败」。
+                        downloadingModelId?.let { id -> modelById(id).dirName } == dir.name -> Unit
+                        !isReady(appContext, model) ->
+                            dir.deleteRecursively()
+                        else ->
+                            dir.listFiles { f -> f.isFile && f.name.endsWith(".part") }
+                                ?.forEach { it.delete() }
+                    }
+                }
+            } catch (_: Exception) {
+                // 扫描失败下次启动再试。
+                prunedOnce = false
+            }
+        }
+    }
+
     private fun downloadFrom(context: Context, model: SttModel, base: String) {
         val dir = modelDir(context, model)
         if (!dir.exists() && !dir.mkdirs()) throw IOException("无法创建模型目录")

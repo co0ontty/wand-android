@@ -52,8 +52,8 @@ private object LightTokens {
     val textMuted = Color(0xFF8B8279)
     val brand = Color(0xFFC5653D)
     val brandSoft = Color(0xFFC5653D).copy(alpha = 0.12f)
-    val border = Color(0xFF967655).copy(alpha = 0.12f)
-    val borderStrong = Color(0xFF7D5B39).copy(alpha = 0.25f)
+    val border = Color(0xFF967655).copy(alpha = 0.07f)
+    val borderStrong = Color(0xFF7D5B39).copy(alpha = 0.14f)
     val focusRing = Color(0xFFC5653D).copy(alpha = 0.50f)
 
     // 语义色
@@ -82,8 +82,8 @@ private object DarkTokens {
     val textMuted = Color(0xFF958B81)
     val brand = Color(0xFFD47550)
     val brandSoft = Color(0xFFD47550).copy(alpha = 0.16f)
-    val border = Color(0xFFEDE2D5).copy(alpha = 0.12f)
-    val borderStrong = Color(0xFFEDE2D5).copy(alpha = 0.24f)
+    val border = Color(0xFFEDE2D5).copy(alpha = 0.07f)
+    val borderStrong = Color(0xFFEDE2D5).copy(alpha = 0.14f)
     val focusRing = Color(0xFFD47550).copy(alpha = 0.46f)
 
     // 语义色

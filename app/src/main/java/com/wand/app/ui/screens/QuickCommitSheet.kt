@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -456,7 +457,7 @@ fun QuickCommitSheet(
         // ModalBottomSheet 是独立 window，采样不到 app 的 backdrop 层。
         // 由内部 Liquid 容器走高对比降级样式，保证输入和主操作仍有清晰层次。
         transparent = true,
-        showDragHandle = false,
+        showDragHandle = true,
     ) {
         val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
         Box(
@@ -476,12 +477,11 @@ fun QuickCommitSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 18.dp, vertical = 10.dp)
+                        .padding(horizontal = 18.dp, vertical = 12.dp)
                         .navigationBarsPadding()
                         .imePadding()
                         .padding(bottom = 20.dp),
                 ) {
-                    QuickCommitSheetHandle()
                     SheetHeader(qc, onDismiss)
                     if (qc.result != null) {
                         ResultPanel(qc, onDismiss)
@@ -541,7 +541,7 @@ private fun SheetHeader(qc: QuickCommitStore, onDismiss: () -> Unit) {
         }
         IconButton(
             onClick = onDismiss,
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(44.dp),
         ) {
             Icon(
                 WandIcons.close,
@@ -550,19 +550,6 @@ private fun SheetHeader(qc: QuickCommitStore, onDismiss: () -> Unit) {
                 modifier = Modifier.size(18.dp),
             )
         }
-    }
-}
-
-@Composable
-private fun QuickCommitSheetHandle() {
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Box(
-            modifier = Modifier
-                .width(36.dp)
-                .height(4.dp)
-                .clip(CircleShape)
-                .background(WandColors.textMuted.copy(alpha = 0.30f)),
-        )
     }
 }
 
@@ -596,8 +583,8 @@ private fun FormPanel(
         OutlinedButton(
             onClick = { qc.generateAI() },
             enabled = !qc.generating && !qc.submitting && hasChanges,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            modifier = Modifier.height(32.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.heightIn(min = 36.dp),
         ) {
             if (qc.generating) {
                 CircularProgressIndicator(
@@ -618,7 +605,7 @@ private fun FormPanel(
     }
 
     // Commit：上一笔 → 新 message
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         PairOldLine(
             label = "Commit",
             old = listOfNotNull(
@@ -641,7 +628,7 @@ private fun FormPanel(
     }
 
     // Tag：最新 tag → 新 tag
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         PairOldLine(label = "Tag", old = s?.latestTag ?: "无 tag")
         WandTextField(
             value = qc.tagDraft,
@@ -763,7 +750,7 @@ private fun CommitWorkspaceLens(
                 modifier = Modifier.size(18.dp),
             )
         }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 branch ?: "未识别分支",
                 fontSize = 13.sp,
@@ -983,7 +970,7 @@ private fun MagneticDock(
     val pickupRPx = with(density) { 58.dp.toPx() }
     val gapPx = with(density) { 5.dp.toPx() }
     val stackStepPx = with(density) { 24.dp.toPx() }
-    val clusterPadPx = with(density) { 7.dp.toPx() }
+    val clusterPadPx = with(density) { 12.dp.toPx() }
     val defaultChipWPx = with(density) { 86.dp.toPx() }
     val defaultChipHPx = with(density) { 38.dp.toPx() }
 
@@ -1134,7 +1121,7 @@ private fun MagneticDock(
                             CircleShape,
                         )
                         .border(
-                            1.2.dp,
+                            1.dp,
                             color.copy(alpha = if (active) 0.7f else 0.32f),
                             CircleShape,
                         )
@@ -1155,7 +1142,7 @@ private fun MagneticDock(
             }
         }
 
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(12.dp))
 
         // —— 发射区 ——
         // 始终走 glassCard，与左侧力场同源浮起（rim 带 launchTone）；热区（拖入命中）

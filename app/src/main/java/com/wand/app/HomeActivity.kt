@@ -136,6 +136,8 @@ class HomeActivity : AppCompatActivity() {
         updateExecutor = Executors.newSingleThreadExecutor()
         val manager = UpdateManager(this, serverStore, updateExecutor, serverUrl)
         updateManager = manager
+        // 清理语音模型目录里的历史残渣（失败下载/旧模型目录），进程内一次。
+        com.wand.app.speech.SttModelManager.pruneInvalidArtifacts(this)
         var updatePresentation by mutableStateOf<UpdatePresentation>(UpdatePresentation.Hidden)
         var activeDownload: UpdateManager.DownloadRequest? = null
 
@@ -148,6 +150,7 @@ class HomeActivity : AppCompatActivity() {
             source: String,
             releaseNotes: String,
             channel: String,
+            sha256: String,
         ) = AppUpdateInfo(
             currentVersion = currentVersion,
             latestVersion = latestVersion,
@@ -157,6 +160,7 @@ class HomeActivity : AppCompatActivity() {
             source = source,
             releaseNotes = releaseNotes,
             channel = channel,
+            sha256 = sha256,
         )
 
         fun startDownload(update: AppUpdateInfo) {
@@ -166,6 +170,7 @@ class HomeActivity : AppCompatActivity() {
                 update.fileName,
                 update.latestVersion,
                 update.channel,
+                update.sha256,
                 object : UpdateManager.DownloadListener {
                     override fun onProgress(downloadedBytes: Long, totalBytes: Long, bytesPerSecond: Long) {
                         updatePresentation = UpdatePresentation.Downloading(
@@ -197,9 +202,9 @@ class HomeActivity : AppCompatActivity() {
         fun checkUpdate(manual: Boolean) {
             if (manual) updatePresentation = UpdatePresentation.Checking
             val found = UpdateManager.UpdateFoundCallback { current, latest, url, file, size,
-                                                            source, notes, channel ->
+                                                            source, notes, channel, sha256 ->
                 updatePresentation = UpdatePresentation.Available(
-                    asUpdateInfo(current, latest, url, file, size, source, notes, channel),
+                    asUpdateInfo(current, latest, url, file, size, source, notes, channel, sha256),
                 )
             }
             if (manual) {
@@ -277,7 +282,11 @@ class HomeActivity : AppCompatActivity() {
                 setNotificationVolume = { serverStore.notificationVolume = it },
                 isHapticEnabled = { serverStore.isHapticEnabled },
                 setHapticEnabled = { serverStore.setHapticEnabled(it) },
-                setKeepAlive = { enabled -> setKeepAlive(enabled, serverProfile.id) },
+                isKeepAlive = { serverStore.isKeepAliveEnabled },
+                setKeepAlive = { enabled ->
+                    serverStore.setKeepAliveEnabled(enabled)
+                    setKeepAlive(enabled, serverProfile.id)
+                },
                 getAppearanceMode = { appearanceMode },
                 setAppearanceMode = { mode ->
                     appearanceMode = mode
@@ -316,6 +325,10 @@ class HomeActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+
+        if (serverStore.isKeepAliveEnabled) {
+            setKeepAlive(true, serverProfile.id)
         }
 
         applyEdgeToEdge(appearanceMode == WandAppearanceMode.Dark)
@@ -390,6 +403,15 @@ class HomeActivity : AppCompatActivity() {
         super.onDestroy()
         updateExecutor?.shutdownNow()
         updateExecutor = null
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // 系统内存吃紧时回收空闲的常驻语音识别器（中英大模型 ~190MB 原生内存）；
+        // 距上次使用不足 10 分钟不回收，下次按住说话会自动重新加载。
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            com.wand.app.speech.SherpaSpeechEngine.maybeReclaim()
+        }
     }
 
     override fun onResume() {

@@ -199,23 +199,25 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     )
 
     private fun applyRealtimeState(next: ChatSessionEventState) {
-        messages = next.messages
-        loadedOffset = next.loadedOffset
-        messageTotal = next.messageTotal
-        status = next.status
-        isResponding = next.isResponding
-        queuedMessages = next.queuedMessages
-        pendingEscalation = next.pendingEscalation
-        legacyPermissionPrompt = next.legacyPermissionPrompt
-        permissionBlocked = next.permissionBlocked
-        currentTaskTitle = next.currentTaskTitle
-        snapshot = next.snapshot
-        selectedModel = next.selectedModel
-        thinkingEffort = next.thinkingEffort
-        mode = next.mode
-        confirmedModel = next.confirmedModel
-        confirmedThinkingEffort = next.confirmedThinkingEffort
-        confirmedMode = next.confirmedMode
+        // 逐字段相等短路：WS 事件很密（服务端 16ms debounce），无变化的字段
+        // 不回写 Compose state，避免下游 remember(store.xxx) 因引用变化被反复击穿。
+        if (messages !== next.messages) messages = next.messages
+        if (loadedOffset != next.loadedOffset) loadedOffset = next.loadedOffset
+        if (messageTotal != next.messageTotal) messageTotal = next.messageTotal
+        if (status != next.status) status = next.status
+        if (isResponding != next.isResponding) isResponding = next.isResponding
+        if (queuedMessages !== next.queuedMessages) queuedMessages = next.queuedMessages
+        if (pendingEscalation != next.pendingEscalation) pendingEscalation = next.pendingEscalation
+        if (legacyPermissionPrompt != next.legacyPermissionPrompt) legacyPermissionPrompt = next.legacyPermissionPrompt
+        if (permissionBlocked != next.permissionBlocked) permissionBlocked = next.permissionBlocked
+        if (currentTaskTitle != next.currentTaskTitle) currentTaskTitle = next.currentTaskTitle
+        if (snapshot != next.snapshot) snapshot = next.snapshot
+        if (selectedModel != next.selectedModel) selectedModel = next.selectedModel
+        if (thinkingEffort != next.thinkingEffort) thinkingEffort = next.thinkingEffort
+        if (mode != next.mode) mode = next.mode
+        if (confirmedModel != next.confirmedModel) confirmedModel = next.confirmedModel
+        if (confirmedThinkingEffort != next.confirmedThinkingEffort) confirmedThinkingEffort = next.confirmedThinkingEffort
+        if (confirmedMode != next.confirmedMode) confirmedMode = next.confirmedMode
         next.errorMessage?.let { toast = it }
         if (next.initialized) loading = false
     }

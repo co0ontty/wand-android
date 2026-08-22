@@ -1,5 +1,6 @@
 package com.wand.app.data
 
+import androidx.compose.runtime.Immutable
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -8,6 +9,10 @@ import org.json.JSONObject
  * 字段名与服务端 src/types.ts 一一对应；全部可空 + 逐字段容错，
  * 服务端新增字段或个别字段形状变化时客户端不至于整体解析失败。
  * 对称 iOS 端 WandModels.swift 的「全字段 optional Codable」策略。
+ *
+ * 消息模型标注 [Immutable]：parse 之后 UI 只读不写（JSONObject 字段约定不再变更）。
+ * 不标的话 Compose 把它们当不稳定类型，聊天列表所有卡片不可跳过 —— 输入框每敲一个字、
+ * 流式每个 chunk 都会重组全部可见消息卡。
  */
 
 // MARK: - org.json 容错取值辅助
@@ -95,6 +100,7 @@ private fun structuredContentText(value: Any?): String = when (value) {
 
 // MARK: - 会话消息块
 
+@Immutable
 data class SubagentMeta(
     val taskId: String?,
     val agentType: String?,
@@ -108,8 +114,10 @@ data class SubagentMeta(
     }
 }
 
+@Immutable
 data class SemanticQuestionOption(val label: String, val description: String?)
 
+@Immutable
 data class SemanticQuestion(
     val question: String,
     val header: String?,
@@ -117,6 +125,7 @@ data class SemanticQuestion(
     val options: List<SemanticQuestionOption>,
 )
 
+@Immutable
 data class SemanticTaskItem(
     val id: String,
     val content: String,
@@ -124,9 +133,12 @@ data class SemanticTaskItem(
     val activeForm: String?,
 )
 
+@Immutable
 sealed class ToolUseSemantic {
-    data class QuestionRequest(val questions: List<SemanticQuestion>) : ToolUseSemantic()
-    data class TaskList(val items: List<SemanticTaskItem>) : ToolUseSemantic()
+    @Immutable
+data class QuestionRequest(val questions: List<SemanticQuestion>) : ToolUseSemantic()
+    @Immutable
+data class TaskList(val items: List<SemanticTaskItem>) : ToolUseSemantic()
 
     companion object {
         fun parse(o: JSONObject?): ToolUseSemantic? {
@@ -167,10 +179,14 @@ sealed class ToolUseSemantic {
 }
 
 /** ConversationTurn.content 里的一个块。types.ts: ContentBlock 四种变体 + 容错。 */
+@Immutable
 sealed class ContentBlock {
-    data class Text(val text: String, val subagent: SubagentMeta?) : ContentBlock()
-    data class Thinking(val thinking: String, val subagent: SubagentMeta?) : ContentBlock()
-    data class ToolUse(
+    @Immutable
+data class Text(val text: String, val subagent: SubagentMeta?) : ContentBlock()
+    @Immutable
+data class Thinking(val thinking: String, val subagent: SubagentMeta?) : ContentBlock()
+    @Immutable
+data class ToolUse(
         val id: String,
         val name: String,
         val description: String?,
@@ -178,7 +194,8 @@ sealed class ContentBlock {
         val subagent: SubagentMeta?,
         val semantic: ToolUseSemantic? = null,
     ) : ContentBlock()
-    data class ToolResult(
+    @Immutable
+data class ToolResult(
         val toolUseId: String,
         val text: String,
         val isError: Boolean,
@@ -186,7 +203,8 @@ sealed class ContentBlock {
         val subagent: SubagentMeta?,
     ) : ContentBlock()
     /** 协议升级兜底：保留类型与原始载荷，UI 可明确提示而不是整块消失。 */
-    data class Unknown(val type: String, val payload: String) : ContentBlock()
+    @Immutable
+data class Unknown(val type: String, val payload: String) : ContentBlock()
 
     companion object {
         fun parse(o: JSONObject): ContentBlock {
@@ -222,6 +240,7 @@ sealed class ContentBlock {
 }
 
 /** 单轮 assistant 用量；兼容服务端 camelCase 与上游 snake_case。 */
+@Immutable
 data class TurnUsage(
     val inputTokens: Int?,
     val outputTokens: Int?,
@@ -258,6 +277,7 @@ data class TurnUsage(
     }
 }
 
+@Immutable
 data class ConversationTurn(
     val role: String,
     val content: List<ContentBlock>,

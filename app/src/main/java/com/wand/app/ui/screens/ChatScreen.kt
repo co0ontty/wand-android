@@ -38,12 +38,14 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -112,6 +114,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -221,7 +224,8 @@ fun ChatScreen(
         enabled = shouldRefreshQuickCommitStatus(store.loading, store.isResponding),
     )
 
-    val draft = drafts[sessionId]
+    // 草稿读取下沉到 BottomBar 内部：在这里读会把整个 ChatScreen（含消息列表）
+    // 订阅到输入框的每个按键，打字时全部可见消息卡跟着重组。
     // 发送后跟随列表底部；用户手动浏览时暂停跟随。
     var scrollMode by rememberSaveable(sessionId) { mutableStateOf(ChatScrollMode.StickToBottom) }
     val listState = key(sessionId) { rememberLazyListState() }
@@ -233,7 +237,7 @@ fun ChatScreen(
     val voiceInput = rememberVoiceInputHandle(
         isHapticEnabled = isHapticEnabled,
         onToast = { store.toast = it },
-        onCommit = { text -> drafts[sessionId] = appendVoiceText(draft, text) },
+        onCommit = { text -> drafts[sessionId] = appendVoiceText(drafts[sessionId], text) },
     )
     val voice = voiceInput.voice
     val onMicDown = voiceInput.onMicDown
@@ -250,6 +254,10 @@ fun ChatScreen(
         collectSubagentActivities(store.messages, store.isResponding)
     }
     val showActivityDock = store.isStructured && (store.isResponding || subagentActivities.isNotEmpty())
+    // 顶栏用量：避免 ChatScreen 每次重组都对全部消息线性扫描。
+    val lastAssistantUsage = remember(store.messages) {
+        store.messages.lastOrNull { it.role == "assistant" }?.usage
+    }
     var activityDockExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
     LaunchedEffect(showActivityDock) {
         if (!showActivityDock) activityDockExpanded = false
@@ -306,10 +314,20 @@ fun ChatScreen(
     // 输入栏聚焦后会从单行胶囊变成双行卡片，IME 弹出/收起也会改变列表视口。
     // 贴底模式必须把这些尺寸变化视作一次新的定位请求，否则最后一行会落到
     // 变高的输入栏之后；手动浏览模式则保持用户当前阅读位置，不主动跳转。
+    //
+    // 拆成两个 effect：流式期间 messages 每个事件都换新引用，若把「等布局稳定的
+    // 重试链」也挂在它上面，链会在每个 chunk 到来时被取消重启、永远走不完，
+    // 还会每个 chunk 触发多次 scrollToItem。内容变化只做一次即时贴底；
+    // 重试链只挂在模式/视口/回合切换这类低频 key 上。
+    LaunchedEffect(store.messages, store.loading) {
+        if (!store.loading && scrollMode != ChatScrollMode.Manual) {
+            listState.scrollToItem(
+                maxOf(bottomIndex, listState.layoutInfo.totalItemsCount - 1, 0)
+            )
+        }
+    }
     LaunchedEffect(
-        store.messages,
         store.isResponding,
-        store.loading,
         bottomIndex,
         scrollMode,
         listViewportHeightPx,
@@ -445,8 +463,8 @@ fun ChatScreen(
         bottomBar = { BottomBar(
             backdrop = glassBackdrop,
             store = store,
-            draft = draft,
-            onDraftChange = { drafts[sessionId] = it },
+            drafts = drafts,
+            sessionId = sessionId,
             voice = voice,
             onMicDown = onMicDown,
             uploading = uploadingAttachments,
@@ -461,7 +479,7 @@ fun ChatScreen(
         ) {
             // 发送回调（带触感反馈）；新输入出现后，上一条回复会自动转为历史折叠态。
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            val text = buildAttachmentPrompt(pendingAttachments, draft)
+            val text = buildAttachmentPrompt(pendingAttachments, drafts[sessionId])
             drafts[sessionId] = ""
             pendingAttachments = emptyList()
             scrollMode = ChatScrollMode.StickToBottom
@@ -501,17 +519,21 @@ fun ChatScreen(
                     ) {
                     LazyColumn(
                         state = listState,
+                        // 超宽详情区限宽居中：wrapContentWidth 在外层占满可点击/滚动区域，
+                        // 内容列收窄到 ChatReadableMaxWidth，手机上无任何变化。
                         modifier = Modifier
+                            .wrapContentWidth(Alignment.CenterHorizontally)
+                            .widthIn(max = ChatReadableMaxWidth)
                             .fillMaxSize()
                             .onSizeChanged { listViewportHeightPx = it.height }
                             .nestedScroll(followPauseConnection),
                         contentPadding = PaddingValues(
                             start = 14.dp,
                             end = 14.dp,
-                            top = 8.dp,
+                            top = 12.dp,
                             bottom = activityDockListPadding,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         // 显式分页控件常驻在已加载内容顶部，保证更早消息始终可达。
                         if (showLoadEarlierSentinel) {
@@ -558,6 +580,9 @@ fun ChatScreen(
                                         messageItemTurnIndex(item) < lastUserTurnIndex,
                                 )
                             },
+                            // 列表混排 user 气泡 / assistant turn / 探索聚合卡三种形态，
+                            // 提供 contentType 提高槽位复用命中率。
+                            contentType = { _, item -> item::class },
                         ) { _, item ->
                             Box(modifier = Modifier.animateItem()) {
                                 when (item) {
@@ -631,7 +656,7 @@ fun ChatScreen(
                     SubagentActivityDock(
                         backdrop = glassBackdrop,
                         activities = subagentActivities,
-                        usage = store.messages.lastOrNull { it.role == "assistant" }?.usage,
+                        usage = lastAssistantUsage,
                         taskTitle = store.currentTaskTitle,
                         sessionRunning = store.isResponding,
                         onExpandedChange = { activityDockExpanded = it },
@@ -1227,6 +1252,12 @@ private val SESSION_MODES = listOf(
     "native" to "原生",
 )
 
+/**
+ * 平板横屏等超宽详情区：消息流与输入栏限宽居中，保证可读行长。
+ * 手机宽度不受影响；终端页（PtyTerminalScreen）刻意保持全宽，不套用此值。
+ */
+private val ChatReadableMaxWidth = 760.dp
+
 private fun modeLabel(id: String): String =
     SESSION_MODES.firstOrNull { it.first == id }?.second ?: "标准"
 
@@ -1297,7 +1328,7 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop) {
         modifier = Modifier
             .padding(horizontal = 12.dp, vertical = 4.dp)
             .glassSurface(backdrop, RoundedCornerShape(14.dp), WandGlass.clear)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // 标题行：图标 + 计数 + 展开/收起；整行可点。
@@ -1308,7 +1339,7 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop) {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
                 .clickableWithoutRipple { expanded = !expanded }
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+                .padding(horizontal = 6.dp, vertical = 4.dp),
         ) {
             Icon(
                 WandIcons.history,
@@ -1480,8 +1511,8 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
 private fun BottomBar(
     backdrop: GlassBackdrop,
     store: ChatStore,
-    draft: String,
-    onDraftChange: (String) -> Unit,
+    drafts: SessionDraftStore,
+    sessionId: String,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
     uploading: Boolean,
@@ -1493,8 +1524,15 @@ private fun BottomBar(
     onExpandedChange: (Boolean) -> Unit,
     onSend: () -> Unit,
 ) {
+    // 草稿订阅收敛在这里：打字只重组底部栏，不再波及消息列表。
+    val draft = drafts[sessionId]
+    val onDraftChange: (String) -> Unit = { drafts[sessionId] = it }
     Column(
         modifier = Modifier
+            .fillMaxWidth()
+            // 与消息流同一限宽：平板横屏上输入栏不再横跨整面墙，手机无变化。
+            .wrapContentWidth(Alignment.CenterHorizontally)
+            .widthIn(max = ChatReadableMaxWidth)
             .fillMaxWidth()
             // 玻璃化：容器本身透明（消息从输入药丸的缝隙间滚过），
             // 各子元素自带玻璃表面。
@@ -1520,9 +1558,13 @@ private fun BottomBar(
         val hasPermission = store.pendingEscalation != null || store.legacyPermissionPrompt != null
         var cachedEscalation by remember { mutableStateOf<EscalationRequest?>(null) }
         var cachedLegacy by remember { mutableStateOf<PermissionRequestInfo?>(null) }
+        val focusManager = LocalFocusManager.current
         LaunchedEffect(store.pendingEscalation, store.legacyPermissionPrompt) {
             if (store.pendingEscalation != null) cachedEscalation = store.pendingEscalation
             if (store.legacyPermissionPrompt != null) cachedLegacy = store.legacyPermissionPrompt
+        }
+        LaunchedEffect(hasPermission) {
+            if (hasPermission) focusManager.clearFocus()
         }
         AnimatedVisibility(
             visible = hasPermission,
@@ -1644,6 +1686,15 @@ private fun InputBar(
                         },
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences,
+                            imeAction = ImeAction.Send,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                if (canSend) {
+                                    onSend()
+                                    refocusAfterSend = true
+                                }
+                            },
                         ),
                         decorationBox = { innerTextField ->
                             Box(
@@ -1768,29 +1819,25 @@ private fun TrailingSendStop(
 ) {
     if (store.isResponding && !canSend) {
         voiceAction()
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(ComposerActionTouchSize)
-                .clip(CircleShape)
-                .semantics {
-                    contentDescription = "停止任务"
-                    role = Role.Button
-                }
-                .clickable(role = Role.Button, onClick = onStop),
+        FilledComposerAction(
+            enabled = true,
+            fillColor = WandColors.textPrimary,
+            contentDescription = "停止任务",
+            onClick = onStop,
         ) {
             Icon(
                 WandIcons.stop,
                 contentDescription = null,
-                tint = WandColors.danger,
+                tint = WandColors.surface,
                 modifier = Modifier.size(ComposerActionIconSize),
             )
         }
         return
     }
     if (store.isResponding) {
-        ComposerIconButton(
+        FilledComposerAction(
             enabled = true,
+            fillColor = WandColors.dangerSoft,
             contentDescription = "停止任务",
             onClick = onStop,
         ) {
@@ -1803,15 +1850,16 @@ private fun TrailingSendStop(
         }
     }
     voiceAction()
-    ComposerIconButton(
+    FilledComposerAction(
         enabled = canSend,
+        fillColor = if (canSend) WandColors.brand else WandColors.textSecondary.copy(alpha = 0.16f),
         contentDescription = if (canSend) "发送消息" else "当前没有可发送内容",
         onClick = onSend,
     ) {
         Icon(
             WandIcons.arrowUp,
             contentDescription = null,
-            tint = if (canSend) WandColors.textPrimary else WandColors.textMuted.copy(alpha = 0.45f),
+            tint = if (canSend) Color.White else WandColors.textMuted.copy(alpha = 0.45f),
             modifier = Modifier.size(ComposerActionIconSize),
         )
     }
@@ -1970,7 +2018,7 @@ private fun ModelThinkingChip(
                     open = false
                 }
             }
-            HorizontalDivider(color = WandColors.border)
+            HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
             MenuSectionHeader("思考深度")
             thinkingLevels(store).forEach { level ->
                 SettingsMenuOption(level.menuLabel, selected = store.thinkingEffort == level.id) {
@@ -2323,7 +2371,7 @@ internal fun VoiceTranscriptBubble(backdrop: GlassBackdrop, voice: VoiceInputCon
                     modifier = Modifier
                         .clip(RoundedCornerShape(5.dp))
                         .background(WandColors.brand.copy(alpha = 0.12f))
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
                 )
                 Text(
                     "松开填入输入框 · 上滑取消",
@@ -2408,7 +2456,55 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
     }
 }
 
-private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
+private fun formatMb(bytes: Long): String =
+    String.format(java.util.Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+
+@Composable
+private fun FilledComposerAction(
+    enabled: Boolean,
+    fillColor: Color,
+    contentDescription: String,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.92f else 1f,
+        WandMotion.tweenFast(),
+        label = "filledComposerScale",
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(ComposerActionTouchSize)
+            .semantics {
+                this.contentDescription = contentDescription
+                role = Role.Button
+            }
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            ),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(ComposerActionVisualSize)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .clip(CircleShape)
+                .background(fillColor),
+        ) {
+            content()
+        }
+    }
+}
 
 /** 输入栏图标按钮：缩小视觉和排布槽位，保留清晰的圆形按压反馈。 */
 @Composable

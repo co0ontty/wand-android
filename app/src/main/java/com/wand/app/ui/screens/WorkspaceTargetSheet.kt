@@ -155,15 +155,13 @@ private fun WorkspaceTargetOption(
     } else {
         BrandLogos.tintForProvider(target.raw, WandColors.brand)
     }
-    val borderColor = if (isSelected) WandColors.brand else WandColors.border.copy(alpha = 0.5f)
-    val background = if (isSelected) WandColors.brand.copy(alpha = 0.08f) else Color.Transparent
+    val background = if (isSelected) WandColors.brand.copy(alpha = 0.08f) else WandColors.surfaceSoft.copy(alpha = 0.42f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(background)
-            .border(1.dp, borderColor, RoundedCornerShape(14.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
             .semantics {

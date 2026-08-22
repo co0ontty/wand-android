@@ -58,10 +58,8 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.bevelRimBrush
 import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.layeredShadow
-import com.wand.app.ui.theme.surfaceSheenBrush
 import com.wand.app.ui.theme.glassCard
 
 /**
@@ -284,11 +282,6 @@ fun <T> WandChoiceStrip(
             .heightIn(min = minHeight)
             .clip(containerShape)
             .background(WandColors.surfaceSoft.copy(alpha = if (flat) 0.34f else 0.48f))
-            .border(
-                0.55.dp,
-                WandColors.borderStrong.copy(alpha = if (flat) 0.18f else 0.26f),
-                containerShape,
-            )
             .padding(if (flat) 0.dp else 3.dp),
         horizontalArrangement = Arrangement.spacedBy(if (flat) 0.dp else 3.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -309,11 +302,6 @@ fun <T> WandChoiceStrip(
                 WandMotion.tweenFast(),
                 label = "choiceStripBg",
             )
-            val itemBorder by animateColorAsState(
-                if (active) WandColors.borderStrong.copy(alpha = 0.24f) else Color.Transparent,
-                WandMotion.tweenFast(),
-                label = "choiceStripBorder",
-            )
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -325,7 +313,6 @@ fun <T> WandChoiceStrip(
                             Modifier
                                 .clip(WandShapes.full)
                                 .background(itemBackground)
-                                .border(1.dp, itemBorder, WandShapes.full)
                         },
                     )
                     .selectable(
@@ -362,10 +349,10 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * 统一卡片容器（玻璃质感版）：半透明底 + 对角 rim 渐变描边 + 极轻软阴影。
+ * 统一卡片容器：平面色底 + 极轻软阴影，选中用品牌弱底，不再套描边。
  * - onClick 非空时整卡可点（带 ripple）。
- * - selected = true 时过渡到品牌弱底 + 品牌 rim（mode-card 选中态），带过渡动画。
- * - containerColor 可覆盖底色（语义弱底卡片走旧的纯色平面路径，保证语义色不被玻璃冲淡）。
+ * - selected = true 时过渡到品牌弱底。
+ * - containerColor 可覆盖底色（语义弱底卡片走纯色平面路径）。
  * - 内容是 ColumnScope，内边距用 contentPadding 控制（规范建议 12-14dp）。
  */
 @Composable
@@ -392,23 +379,13 @@ fun WandCard(
     if (containerColor != null) {
         // 语义色覆盖：保留纯色底配方（semantic soft 底依赖确定底色，不叠表面微光以免冲淡语义色），
         // 但补一层轻投影，让语义弱底卡也微微浮起、不再贴平。
-        val targetBorder = if (selected) WandColors.brand else WandColors.border
         val bg by animateColorAsState(containerColor, WandMotion.tweenFast(), label = "cardBg")
-        val borderColor by animateColorAsState(targetBorder, WandMotion.tweenFast(), label = "cardBorder")
-        // WandColors.border 自带主题 alpha；未选中态必须保留该 alpha，不能用 copy 覆盖成 54%。
-        // 选中态的 brand 是不透明色，再单独降到清晰但克制的 72%。
-        val renderedBorderColor = if (selected) {
-            borderColor.copy(alpha = 0.72f)
-        } else {
-            borderColor
-        }
         Column(
             modifier = modifier
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .layeredShadow(shape, 1.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
                 .clip(shape)
                 .background(bg)
-                .border(if (selected) 0.8.dp else 0.55.dp, renderedBorderColor, shape)
                 .then(
                     if (onClick != null) {
                         Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
@@ -424,16 +401,12 @@ fun WandCard(
     val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
     val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.2f, t) * (1f - 0.5f * pressDepth)
     val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.10f), t)
-    val rimLight = lerp(style.rimLight, brand.copy(alpha = 0.42f), t)
-    val rimShade = lerp(style.rimShade, brand.copy(alpha = 0.28f), t)
     Column(
         modifier = modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .layeredShadow(shape, elevation, keyShadow, ambientShadow)
             .clip(shape)
             .background(bg)
-            .background(surfaceSheenBrush(highlightScale = 0.32f), shape)
-            .border(lerpDp(0.45.dp, 0.8.dp, t), bevelRimBrush(rimLight, rimShade), shape)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)

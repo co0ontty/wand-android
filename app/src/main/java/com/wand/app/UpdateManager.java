@@ -1,6 +1,7 @@
 package com.wand.app;
 
 import android.annotation.SuppressLint;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.Settings;
@@ -46,12 +47,17 @@ final class UpdateManager {
         this.serverStore = serverStore;
         this.executor = executor;
         this.serverUrl = serverUrl;
+        // 启动即清扫历史更新包：旧版本下载安装后从不清理，长期使用的设备上
+        // 会堆积数 GB 的过期 APK（这是历史遗留问题，见 sweepOnLaunch）。
+        if (executor != null) {
+            executor.execute(() -> sweepOnLaunch(activity));
+        }
     }
 
     interface UpdateFoundCallback {
         void onUpdateFound(String currentVersion, String latestVersion,
                            String downloadUrl, String fileName, long size,
-                           String source, String releaseNotes, String channel);
+                           String source, String releaseNotes, String channel, String sha256);
     }
 
     interface NoUpdateCallback {
@@ -147,6 +153,8 @@ final class UpdateManager {
                 long size = data.optLong("size", 0);
                 String source = data.optString("source", "");
                 String releaseNotes = data.optString("releaseNotes", "");
+                // 服务端对本地分发的 APK 计算 SHA-256（旧服务端没有该字段 → 跳过校验）。
+                String sha256 = data.optString("sha256", "");
 
                 if (latestVersion.isEmpty() || downloadUrl.isEmpty()) {
                     notifyNoUpdate(noUpdateCallback, "没有可用的更新包。");
@@ -159,7 +167,7 @@ final class UpdateManager {
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
                     callback.onUpdateFound(currentVersion, latestVersion,
-                            downloadUrl, fileName, size, source, releaseNotes, channel);
+                            downloadUrl, fileName, size, source, releaseNotes, channel, sha256);
                 });
 
             } catch (Exception e) {
@@ -180,7 +188,7 @@ final class UpdateManager {
     @SuppressLint("DefaultLocale")
     void showUpdateDialog(String currentVer, String latestVer,
                           String downloadUrl, String fileName, long size,
-                          String source, String releaseNotes, String channel) {
+                          String source, String releaseNotes, String channel, String sha256) {
         String sizeText = size > 0 ? "\n文件大小: " + formatSize(size) : "";
         String sourceText = "github".equals(source) ? "\n来源: GitHub Release" : "";
         String channelText = "beta".equals(channel) ? "\n通道: Beta" : "\n通道: Stable";
@@ -192,7 +200,7 @@ final class UpdateManager {
                 .setMessage("当前版本: " + currentVer + "\n最新版本: " + latestVer
                         + channelText + sizeText + sourceText + notesText)
                 .setPositiveButton(R.string.update_now, (dialog, which) ->
-                        downloadAndInstall(downloadUrl, fileName, source, latestVer, channel))
+                        downloadAndInstall(downloadUrl, fileName, source, latestVer, channel, sha256))
                 .setNegativeButton(R.string.remind_later, null)
                 .setNeutralButton(R.string.skip_version, (dialog, which) ->
                         serverStore.setSkippedVersion(latestVer, channel))
@@ -203,11 +211,16 @@ final class UpdateManager {
     void downloadAndInstall(String downloadUrl, String fileName,
                             String source, String latestVersion) {
         downloadAndInstall(downloadUrl, fileName, source, latestVersion,
-                serverStore.isBetaChannel() ? "beta" : "stable");
+                serverStore.isBetaChannel() ? "beta" : "stable", null);
     }
 
     void downloadAndInstall(String downloadUrl, String fileName,
                             String source, String latestVersion, String channel) {
+        downloadAndInstall(downloadUrl, fileName, source, latestVersion, channel, null);
+    }
+
+    void downloadAndInstall(String downloadUrl, String fileName,
+                            String source, String latestVersion, String channel, String sha256) {
         if (downloadUrl == null || downloadUrl.isEmpty()) {
             Toast.makeText(activity, "下载地址为空", Toast.LENGTH_LONG).show();
             return;
@@ -238,6 +251,7 @@ final class UpdateManager {
                 safeFileName,
                 latestVersion,
                 channel,
+                sha256,
                 new DownloadListener() {
                     @Override public void onProgress(long downloaded, long total, long bytesPerSecond) {
                         String speedText = "  " + formatSize(bytesPerSecond) + "/s";
@@ -270,7 +284,7 @@ final class UpdateManager {
                             .setTitle("下载失败")
                             .setMessage(message)
                             .setPositiveButton("重试", (d, w) ->
-                                    downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel))
+                                    downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel, sha256))
                             .setNegativeButton(android.R.string.cancel, null)
                             .show();
                     }
@@ -281,9 +295,22 @@ final class UpdateManager {
     /**
      * 只下载，不直接弹窗或安装。HomeActivity 的 Compose 更新面板以此驱动进度状态；
      * MainActivity 仍通过上面的兼容入口使用相同的网络和落盘逻辑。
+     *
+     * 安全语义：
+     * - 关闭自动重定向，手工逐跳处理；每跳用 [NetUtils#openConnection] 的 origin
+     *   限定版本打开——只有 wand server 同源的跳信任自签名证书，GitHub 等跨源
+     *   跳走系统默认校验，Cookie 也只发给同源跳。
+     * - 先写 {@code <fileName>.part} 临时文件，完整 + 哈希校验通过后才 rename 成
+     *   最终文件名，进程被杀不会留下可被当作「待安装更新」的截断 APK。
      */
     DownloadRequest download(String downloadUrl, String fileName,
                              String latestVersion, String channel,
+                             DownloadListener listener) {
+        return download(downloadUrl, fileName, latestVersion, channel, null, listener);
+    }
+
+    DownloadRequest download(String downloadUrl, String fileName,
+                             String latestVersion, String channel, String expectedSha256,
                              DownloadListener listener) {
         final DownloadRequest request = new DownloadRequest();
         if (downloadUrl == null || downloadUrl.isEmpty()) {
@@ -299,41 +326,57 @@ final class UpdateManager {
         executor.execute(() -> {
             HttpURLConnection conn = null;
             File outputFile = null;
+            File partFile = null;
             try {
-                String fullUrl = downloadUrl.startsWith("http")
+                // 下载新包前先清掉目录里的历史 APK / 残留 .part：既释放本次下载需要的空间，
+                // 也保证外部目录里任意时刻最多只有一个安装包在堆积。
+                purgeStaleApks(activity, pendingInstallFile);
+                String currentUrl = downloadUrl.startsWith("http")
                         ? downloadUrl : serverUrl + downloadUrl;
-                conn = NetUtils.openConnection(fullUrl,
-                        NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS);
-                if (!downloadUrl.startsWith("http")) {
-                    String cookie = WandHttp.cookieHeaderFor(serverUrl);
-                    if (cookie != null) conn.setRequestProperty("Cookie", cookie);
-                }
-                conn.setInstanceFollowRedirects(true);
-                int responseCode = conn.getResponseCode();
-                if (responseCode == 302 || responseCode == 301) {
-                    String redirectUrl = conn.getHeaderField("Location");
-                    conn.disconnect();
-                    if (redirectUrl != null) {
-                        conn = NetUtils.openConnection(redirectUrl,
-                                NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS);
-                        conn.setInstanceFollowRedirects(true);
-                        responseCode = conn.getResponseCode();
+                int responseCode = 0;
+                for (int hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+                    conn = NetUtils.openConnection(currentUrl,
+                            NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS,
+                            serverUrl);
+                    conn.setInstanceFollowRedirects(false);
+                    if (NetUtils.isSameOrigin(new java.net.URL(currentUrl), serverUrl)) {
+                        String cookie = WandHttp.cookieHeaderFor(serverUrl);
+                        if (cookie != null) conn.setRequestProperty("Cookie", cookie);
                     }
+                    responseCode = conn.getResponseCode();
+                    if (responseCode == 301 || responseCode == 302 || responseCode == 303
+                            || responseCode == 307 || responseCode == 308) {
+                        String location = conn.getHeaderField("Location");
+                        conn.disconnect();
+                        conn = null;
+                        if (location == null || location.isEmpty()) {
+                            throw new Exception("服务器重定向缺少目标地址");
+                        }
+                        currentUrl = new java.net.URL(new java.net.URL(currentUrl), location).toString();
+                        continue;
+                    }
+                    break;
                 }
+                if (conn == null) throw new Exception("重定向次数过多，已中止下载");
                 if (responseCode != 200) throw new Exception("服务器返回 " + responseCode);
 
                 int fileLength = conn.getContentLength();
-                outputFile = new File(activity.getExternalFilesDir(null), safeFileName);
+                File dir = activity.getExternalFilesDir(null);
+                outputFile = new File(dir, safeFileName);
+                partFile = new File(dir, safeFileName + ".part");
                 if (fileLength > 0) {
-                    File dir = outputFile.getParentFile();
                     long usable = dir != null ? dir.getUsableSpace() : Long.MAX_VALUE;
                     if (usable < (long) fileLength + 5 * 1024 * 1024) {
                         throw new Exception("存储空间不足，需要约 " + formatSize(fileLength) + "，请清理后重试");
                     }
                 }
 
+                final java.security.MessageDigest digest =
+                        (expectedSha256 != null && !expectedSha256.isEmpty())
+                                ? java.security.MessageDigest.getInstance("SHA-256")
+                                : null;
                 try (InputStream in = conn.getInputStream();
-                     FileOutputStream out = new FileOutputStream(outputFile)) {
+                     FileOutputStream out = new FileOutputStream(partFile)) {
                     byte[] buffer = new byte[8192];
                     long total = 0;
                     int count;
@@ -343,6 +386,7 @@ final class UpdateManager {
                         if (request.isCancelled()) break;
                         total += count;
                         out.write(buffer, 0, count);
+                        if (digest != null) digest.update(buffer, 0, count);
                         long now = System.currentTimeMillis();
                         if (now - lastUiUpdate > 50 || total == fileLength) {
                             lastUiUpdate = now;
@@ -353,15 +397,27 @@ final class UpdateManager {
                 }
 
                 if (request.isCancelled()) {
-                    if (outputFile.exists()) {
-                        try { outputFile.delete(); } catch (Exception ignored) {}
-                    }
+                    try { partFile.delete(); } catch (Exception ignored) {}
                     postDownloadCancelled(listener);
                     return;
                 }
-                if (!outputFile.exists() || outputFile.length() == 0) {
+                if (!partFile.exists() || partFile.length() == 0) {
                     throw new Exception("下载文件为空");
                 }
+                if (digest != null) {
+                    String actual = toHex(digest.digest());
+                    if (!actual.equalsIgnoreCase(expectedSha256)) {
+                        throw new Exception("安装包完整性校验失败，已丢弃本次下载");
+                    }
+                }
+                // 完整且（可选）哈希匹配后才占用最终文件名。
+                if (outputFile.exists()) {
+                    try { outputFile.delete(); } catch (Exception ignored) {}
+                }
+                if (!partFile.renameTo(outputFile)) {
+                    throw new Exception("安装包落盘失败");
+                }
+                partFile = null;
                 String versionToRecord = latestVersion != null
                         ? latestVersion : extractVersionFromFileName(safeFileName);
                 if (versionToRecord != null) {
@@ -369,10 +425,10 @@ final class UpdateManager {
                 }
                 postDownloadCompleted(listener, outputFile);
             } catch (Exception e) {
+                if (partFile != null && partFile.exists()) {
+                    try { partFile.delete(); } catch (Exception ignored) {}
+                }
                 if (request.isCancelled()) {
-                    if (outputFile != null && outputFile.exists()) {
-                        try { outputFile.delete(); } catch (Exception ignored) {}
-                    }
                     postDownloadCancelled(listener);
                 } else {
                     postDownloadFailure(listener, NetworkErrorHelper.describeError(e, "download"));
@@ -384,6 +440,17 @@ final class UpdateManager {
             }
         });
         return request;
+    }
+
+    private static final int MAX_REDIRECT_HOPS = 5;
+
+    private static String toHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+            sb.append(Character.forDigit(b & 0xF, 16));
+        }
+        return sb.toString();
     }
 
     private void postDownloadProgress(DownloadListener listener, long downloaded,
@@ -475,9 +542,104 @@ final class UpdateManager {
 
     static String extractVersionFromFileName(String fileName) {
         if (fileName == null) return null;
+        // 锚到结尾并让 .apk 后缀可选：否则 [A-Za-z0-9.-]+ 会把 ".apk" 一起吞进
+        // 版本串（4.42.1-debug.08150708.apk），污染 setDownloadedApkVersion 的记录。
         java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("(\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+)?)").matcher(fileName);
+                .compile("(\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+?)?)(?:\\.apk)?$")
+                .matcher(fileName);
         return m.find() ? m.group(1) : null;
+    }
+
+    /**
+     * 删除外部私有目录里的全部更新 APK 与下载残留（.part），保留 keep（可为 null，
+     * 如正要安装的 pendingInstallFile）。返回释放的字节数。文件名带版本号
+     * （wand-v4.42.1-….apk），每个版本的包都是独立文件，装完即失效，删掉不会影响任何功能。
+     */
+    static long purgeStaleApks(Context context, File keep) {
+        File dir = context.getExternalFilesDir(null);
+        if (dir == null) return 0;
+        File[] apks = dir.listFiles((d, name) -> {
+            String lower = name.toLowerCase(Locale.ROOT);
+            return lower.endsWith(".apk") || lower.endsWith(".part");
+        });
+        if (apks == null) return 0;
+        long freed = 0;
+        for (File apk : apks) {
+            if (keep != null && apk.getAbsolutePath().equals(keep.getAbsolutePath())) continue;
+            long len = apk.length();
+            if (apk.delete()) freed += len;
+        }
+        return freed;
+    }
+
+    /**
+     * 启动清扫：修复前下载的更新包从不删除，长期使用会堆积到数 GB。最多保留
+     * 一个「主版本号确实比当前已装版本更新」的最新 APK（可能是用户已下载还没
+     * 安装的更新），其余全部删除。幂等，清完后再跑释放 0 字节。
+     *
+     * .part 是中断下载的截断残留（旧版本直写最终文件名时甚至会被误当成待安装
+     * 更新保护起来），一律无条件删除。
+     */
+    static void sweepOnLaunch(Context context) {
+        try {
+            File dir = context.getExternalFilesDir(null);
+            if (dir == null) return;
+            File[] parts = dir.listFiles((d, name) ->
+                    name.toLowerCase(Locale.ROOT).endsWith(".part"));
+            if (parts != null) {
+                for (File part : parts) {
+                    try { part.delete(); } catch (Exception ignored) {}
+                }
+            }
+            File[] apks = dir.listFiles((d, name) -> name.toLowerCase(Locale.ROOT).endsWith(".apk"));
+            if (apks == null || apks.length == 0) return;
+            String installed = null;
+            try {
+                installed = context.getPackageManager()
+                        .getPackageInfo(context.getPackageName(), 0).versionName;
+            } catch (Exception ignored) {
+            }
+            File keep = null;
+            for (File apk : apks) {
+                if (!isNewerCoreVersion(extractVersionFromFileName(apk.getName()), installed)) continue;
+                if (keep == null || apk.lastModified() > keep.lastModified()) keep = apk;
+            }
+            purgeStaleApks(context, keep);
+        } catch (Exception ignored) {
+            // 清理是尽力而为，失败不影响启动。
+        }
+    }
+
+    /**
+     * 按 major.minor.patch 比较 candidate 是否严格更新。忽略 -debug.时间戳 / +构建号
+     * 后缀：4.42.1-debug.08150708 与已装的 4.42.1-debug.08132148 主版本相同，
+     * 是已消费过的包而不是待安装更新。
+     */
+    static boolean isNewerCoreVersion(String candidate, String installed) {
+        int[] a = coreVersion(candidate);
+        int[] b = coreVersion(installed);
+        if (a == null || b == null) return false;
+        for (int i = 0; i < 3; i++) {
+            if (a[i] != b[i]) return a[i] > b[i];
+        }
+        return false;
+    }
+
+    /** 提取主版本三元组；解析不出返回 null。 */
+    private static int[] coreVersion(String version) {
+        if (version == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("(\\d+)\\.(\\d+)\\.(\\d+)").matcher(version);
+        if (!m.find()) return null;
+        try {
+            return new int[]{
+                    Integer.parseInt(m.group(1)),
+                    Integer.parseInt(m.group(2)),
+                    Integer.parseInt(m.group(3)),
+            };
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     static String formatSize(long bytes) {
@@ -485,6 +647,9 @@ final class UpdateManager {
         if (bytes < 1024 * 1024) {
             return String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0);
         }
-        return String.format(Locale.getDefault(), "%.1f MB", bytes / (1024.0 * 1024.0));
+        if (bytes < 1024L * 1024 * 1024) {
+            return String.format(Locale.getDefault(), "%.1f MB", bytes / (1024.0 * 1024.0));
+        }
+        return String.format(Locale.getDefault(), "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 }

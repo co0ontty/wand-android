@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -243,6 +244,7 @@ private fun ConnectScreen(
                 .verticalScroll(rememberScrollState())
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = WandSpacing.lg, vertical = WandSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -302,7 +304,7 @@ private fun ConnectScreen(
                             onInputValueChange(it.text)
                         },
                         label = "连接码或服务器地址",
-                        placeholder = "https://your-server.example",
+                        placeholder = "https://your-server.example 或粘贴连接码",
                         singleLine = true,
                         enabled = !connecting,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

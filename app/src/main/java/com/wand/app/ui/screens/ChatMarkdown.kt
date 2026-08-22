@@ -153,7 +153,7 @@ private sealed class MarkdownBlock {
 fun MarkdownText(text: String) {
     val blocks = remember(text) { parseMarkdownBlocks(text) }
     val subtleInset = WandColors.textPrimary.copy(alpha = 0.045f)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         blocks.forEach { block ->
             when (block) {
                 is MarkdownBlock.Paragraph -> SelectionContainer {
@@ -182,7 +182,7 @@ fun MarkdownText(text: String) {
                         fontWeight = FontWeight.SemiBold,
                         color = WandColors.textPrimary,
                         textAlign = TextAlign.Start,
-                        modifier = Modifier.padding(top = if (block.level <= 2) 3.dp else 1.dp),
+                        modifier = Modifier.padding(top = if (block.level <= 2) 8.dp else 6.dp),
                     )
                 }
                 is MarkdownBlock.ListItem -> Row(
@@ -245,9 +245,9 @@ fun MarkdownText(text: String) {
                 is MarkdownBlock.Code -> MarkdownCodeBlock(block, subtleInset)
                 is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows)
                 MarkdownBlock.Divider -> HorizontalDivider(
-                    thickness = 1.dp,
+                    thickness = 0.5.dp,
                     color = WandColors.border,
-                    modifier = Modifier.padding(vertical = 3.dp),
+                    modifier = Modifier.padding(vertical = 4.dp),
                 )
             }
         }
@@ -290,7 +290,7 @@ private fun MarkdownCodeBlock(block: MarkdownBlock.Code, background: Color) {
                 Text("复制", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
         }
-        HorizontalDivider(thickness = 1.dp, color = WandColors.border.copy(alpha = 0.65f))
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.65f))
         Box(
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())
@@ -323,7 +323,7 @@ private fun MarkdownTable(headers: List<String>, rows: List<List<String>>) {
         ) {
             MarkdownTableRow(headers, header = true, background = WandColors.brand.copy(alpha = 0.09f))
             rows.forEachIndexed { index, row ->
-                HorizontalDivider(thickness = 1.dp, color = WandColors.border)
+                HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
                 MarkdownTableRow(
                     normalizedTableRow(row, headers.size),
                     header = false,
@@ -361,7 +361,7 @@ private fun MarkdownTableRow(cells: List<String>, header: Boolean, background: C
             }
             if (index < cells.lastIndex) {
                 VerticalDivider(
-                    thickness = 1.dp,
+                    thickness = 0.5.dp,
                     color = WandColors.border,
                     modifier = Modifier.fillMaxHeight(),
                 )
@@ -518,7 +518,10 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
     val baseUrl = LocalServerBaseUrl.current
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
-    return buildAnnotatedString {
+    // 字符级解析循环不便宜；重组但文本未变时直接复用上一次的 AnnotatedString。
+    // 流式输出期间每个 chunk 只在文本真正变化时重建一次，而不是每次重组都重建。
+    return remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler) {
+        buildAnnotatedString {
         var i = 0
         while (i < raw.length) {
             when {
@@ -635,6 +638,7 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                     i = next
                 }
             }
+        }
         }
     }
 }

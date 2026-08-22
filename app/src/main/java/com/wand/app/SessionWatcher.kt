@@ -12,6 +12,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.MessageUpdate
+import com.wand.app.data.SemanticTaskItem
 import com.wand.app.data.SessionChanges
 import com.wand.app.data.SessionEvent
 import com.wand.app.data.arrayField
@@ -130,6 +131,12 @@ object SessionWatcher {
         serverId = ""
         serverUrl = ""
         appToken = null
+        // 断开后不再持有上一台服务器的凭据与运行时引用（单例进程级存活，
+        // 不清会一直留在内存里）。ProcessLifecycleObserver 是有意的进程级注册，
+        // 只置 processInForeground 标志、不持有服务器数据，无需移除。
+        api = null
+        helper = null
+        serverStore = null
     }
 
     private fun registerForegroundTracking() {
@@ -273,9 +280,18 @@ object SessionWatcher {
 
     // MARK: - 消息扫描（latest texts + TodoWrite todos）
 
+    /**
+     * 尾部扫描窗口：进度通知只关心最近内容（最新用户/助手文本 + 最近一次
+     * TodoWrite），全量消息到达时不必扫整段历史 —— 长会话高频 output 事件
+     * 在主线程逐事件执行，O(全部 turns) 会累积出可感知卡顿。
+     */
+    private const val SCAN_TAIL_WINDOW = 30
+
     /** 从尾往前扫一段对话，更新进度通知用的最新用户/助手文本与 todos。 */
     private fun scanTurns(w: Watched, turns: List<ConversationTurn>) {
+        val windowStart = maxOf(0, turns.size - SCAN_TAIL_WINDOW)
         for (i in turns.indices.reversed()) {
+            if (i < windowStart) break
             val turn = turns[i]
             if (turn.role == "user") {
                 val text = firstText(turn)
@@ -296,18 +312,16 @@ object SessionWatcher {
         // 全量列表时单独再扫一遍 todos（最近一次 TodoWrite 可能不在末条）。
         if (turns.size > 1) {
             outer@ for (i in turns.indices.reversed()) {
+                if (i < windowStart) break@outer
                 for (block in turns[i].content.reversed()) {
                     if (block is ContentBlock.ToolUse) {
                         val semantic = block.semantic as? ToolUseSemantic.TaskList
                         if (semantic != null) {
-                            w.todos = JSONArray(semantic.items.map { item ->
-                                JSONObject().put("content", item.content).put("status", item.status)
-                                    .put("activeForm", item.activeForm)
-                            })
+                            setTodos(w, semantic.items)
                             break@outer
                         }
                         if (block.name == "TodoWrite") {
-                            block.input.arrayField("todos")?.let { w.todos = it }
+                            block.input.arrayField("todos")?.let { setTodosRaw(w, it) }
                             break@outer
                         }
                     }
@@ -321,18 +335,28 @@ object SessionWatcher {
             if (block is ContentBlock.ToolUse) {
                 val semantic = block.semantic as? ToolUseSemantic.TaskList
                 if (semantic != null) {
-                    w.todos = JSONArray(semantic.items.map { item ->
-                        JSONObject().put("content", item.content).put("status", item.status)
-                            .put("activeForm", item.activeForm)
-                    })
+                    setTodos(w, semantic.items)
                     return
                 }
                 if (block.name == "TodoWrite") {
-                    block.input.arrayField("todos")?.let { w.todos = it }
+                    block.input.arrayField("todos")?.let { setTodosRaw(w, it) }
                     return
                 }
             }
         }
+    }
+
+    /** 内容没变化就不替换：避免每个 output 事件都重建 JSONArray 触发下游重序列化。 */
+    private fun setTodos(w: Watched, items: List<SemanticTaskItem>) {
+        setTodosRaw(w, JSONArray(items.map { item ->
+            JSONObject().put("content", item.content).put("status", item.status)
+                .put("activeForm", item.activeForm)
+        }))
+    }
+
+    private fun setTodosRaw(w: Watched, next: JSONArray) {
+        val current = w.todos ?: return run { w.todos = next }
+        if (current.toString() != next.toString()) w.todos = next
     }
 
     private fun firstText(turn: ConversationTurn): String {

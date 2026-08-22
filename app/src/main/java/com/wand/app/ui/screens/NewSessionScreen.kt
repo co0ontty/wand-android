@@ -22,14 +22,20 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowUpward
@@ -45,6 +51,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -64,6 +71,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
@@ -100,6 +109,7 @@ import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
+import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.wandInputSurface
 import com.wand.app.ui.thinkingEffortOptions
 import com.wand.app.ui.theme.WandColors
@@ -117,7 +127,7 @@ import kotlinx.coroutines.launch
  * 空白终端是与 AI Provider 并列的工具，不是每个 Provider 下的会话形式。
  * 每次切换服务器都会重新 bootstrap，避免跨机器复用模型、默认值或工作目录。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NewSessionScreen(
     api: WandApi,
@@ -126,6 +136,7 @@ fun NewSessionScreen(
     initialCwd: String? = null,
     creating: Boolean,
     onReconnectServer: (serverId: String) -> Unit,
+    onOpenMissions: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -181,6 +192,11 @@ fun NewSessionScreen(
     var bootstrapAuthFailure by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
+    // 多 Agent 并行：开关打开后工具选择变为多选，创建按钮改为分派并行任务（mission）。
+    var parallelRun by remember { mutableStateOf(false) }
+    var parallelProviders by remember { mutableStateOf(setOf<String>()) }
+    var missionPrompt by remember { mutableStateOf("") }
+    var dispatching by remember { mutableStateOf(false) }
 
     val providerModels = modelsResponse?.let { response ->
         modelsForProvider(
@@ -283,7 +299,12 @@ fun NewSessionScreen(
         return
     }
 
-    val canCreate = cwd.trim().isNotEmpty() && !creating && !bootstrapping && bootstrapError == null
+    val baseReady = cwd.trim().isNotEmpty() && !creating && !dispatching && !bootstrapping && bootstrapError == null
+    val canCreate = if (parallelRun) {
+        baseReady && parallelProviders.isNotEmpty() && missionPrompt.trim().isNotEmpty()
+    } else {
+        baseReady
+    }
 
     // 持久化到服务端偏好；失败仅提示，不打断当前页面上的选择。
     fun persistDefaults(
@@ -364,7 +385,57 @@ fun NewSessionScreen(
         }
     }
 
+    fun dispatchMission() {
+        if (!canCreate || dispatching) return
+        val requestApi = selectedApi
+        val requestPrompt = missionPrompt.trim()
+        val requestCwd = cwd.trim()
+        val requestProviders = AGENT_OPTIONS.map { it.first }.filter { it in parallelProviders }
+        val requestServerId = selectedServer.serverId
+        val requestGeneration = serverSelectionGeneration
+        dispatching = true
+        errorMessage = null
+        scope.launch {
+            try {
+                requestApi.createMission(
+                    title = null,
+                    prompt = requestPrompt,
+                    cwd = requestCwd,
+                    providers = requestProviders,
+                    baseRef = null,
+                    sharedDirectories = emptyList(),
+                    copyPaths = emptyList(),
+                )
+                if (selectedServerId != requestServerId ||
+                    serverSelectionGeneration != requestGeneration
+                ) {
+                    return@launch
+                }
+                dispatching = false
+                missionPrompt = ""
+                Toast.makeText(
+                    context,
+                    "已分派给 ${requestProviders.size} 个 Agent 并行执行",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                onOpenMissions()
+            } catch (e: Exception) {
+                if (selectedServerId != requestServerId ||
+                    serverSelectionGeneration != requestGeneration
+                ) {
+                    return@launch
+                }
+                dispatching = false
+                errorMessage = e.message ?: "并行任务分派失败"
+            }
+        }
+    }
+
     fun create() {
+        if (parallelRun) {
+            dispatchMission()
+            return
+        }
         if (!canCreate) return
         val requestServer = selectedServer
         val requestWorkflow = workflow
@@ -402,6 +473,7 @@ fun NewSessionScreen(
     }
     val glassBackdrop = rememberGlassBackdrop()
     val creationBlockerInteraction = remember { MutableInteractionSource() }
+    val imeVisible = WindowInsets.isImeVisible
     Scaffold(
         containerColor = Color.Transparent,
         modifier = Modifier
@@ -433,7 +505,7 @@ fun NewSessionScreen(
             )
         },
         bottomBar = {
-            Column(
+            if (!imeVisible) Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .glassSurface(
@@ -455,14 +527,22 @@ fun NewSessionScreen(
                             bootstrapping -> "正在读取 ${selectedServer.displayName} 的配置…"
                             bootstrapError != null -> "所选服务器暂时不可用"
                             canCreate -> {
-                                val sessionSummary = when (sessionKind) {
-                                    NewSessionKind.Structured -> "${providerDisplayName(provider)} · 聊天 · ${modeLabel(mode)}"
-                                    NewSessionKind.Pty -> "${providerDisplayName(provider)} · CLI 终端 · ${modeLabel(mode)}"
-                                    NewSessionKind.Shell -> "空白终端 · Shell"
+                                val sessionSummary = if (parallelRun) {
+                                    "并行 · ${parallelProviders.size} 个 Agent · 独立 worktree"
+                                } else {
+                                    when (sessionKind) {
+                                        NewSessionKind.Structured -> "${providerDisplayName(provider)} · 聊天 · ${modeLabel(mode)}"
+                                        NewSessionKind.Pty -> "${providerDisplayName(provider)} · CLI 终端 · ${modeLabel(mode)}"
+                                        NewSessionKind.Shell -> "空白终端 · Shell"
+                                    }
                                 }
                                 "${selectedServer.displayName} · $sessionSummary"
                             }
-                            else -> "选择工作目录后即可创建"
+                            else -> if (parallelRun) {
+                                "选择 Agent 并填写任务目标后即可分派"
+                            } else {
+                                "选择工作目录后即可创建"
+                            }
                         },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
@@ -474,8 +554,10 @@ fun NewSessionScreen(
                     PrimaryCreateButton(
                         onClick = ::create,
                         enabled = canCreate,
-                        creating = creating,
-                        label = if (sessionKind == NewSessionKind.Shell) {
+                        creating = creating || dispatching,
+                        label = if (parallelRun) {
+                            if (dispatching) "分派中…" else "分派给 ${parallelProviders.size} 个 Agent"
+                        } else if (sessionKind == NewSessionKind.Shell) {
                             "创建空白终端"
                         } else {
                             "创建 ${providerDisplayName(provider)} 会话"
@@ -490,13 +572,21 @@ fun NewSessionScreen(
                 .fillMaxSize()
                 .glassBackdropSource(glassBackdrop),
         ) {
-            Column(
+            // 滚动视口保持全宽（边缘也能拖动滚动），表单内容限宽居中，
+            // 平板横屏上不再被拉成整面墙的宽输入框。
+            Box(
                 modifier = Modifier
                     .padding(padding)
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
+                    .verticalScroll(rememberScrollState()),
+                contentAlignment = Alignment.TopCenter,
             ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = NewSessionFormMaxWidth)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                ) {
                 PageIntro()
 
                 SetupSectionHeader(
@@ -543,24 +633,78 @@ fun NewSessionScreen(
                 SetupSectionHeader(
                     number = "02",
                     title = "选择工具",
-                    description = "选择 AI 助手，或直接启动一个空白终端。",
+                    description = if (parallelRun) {
+                        "点选多个 Agent，它们将在各自独立的 worktree 中并行执行同一任务。"
+                    } else {
+                        "选择 AI 助手，或直接启动一个空白终端。"
+                    },
                 )
-                ToolPicker(
-                    options = TOOL_OPTIONS,
-                    selected = if (sessionKind == NewSessionKind.Shell) SHELL_TOOL_ID else provider,
-                    onSelect = { toolId ->
-                        if (toolId == SHELL_TOOL_ID) {
-                            sessionKind = NewSessionKind.Shell
-                        } else {
-                            provider = toolId
+                if (!parallelRun) {
+                    ToolPicker(
+                        options = TOOL_OPTIONS,
+                        selected = if (sessionKind == NewSessionKind.Shell) SHELL_TOOL_ID else provider,
+                        onSelect = { toolId ->
+                            if (toolId == SHELL_TOOL_ID) {
+                                sessionKind = NewSessionKind.Shell
+                            } else {
+                                provider = toolId
+                                sessionKind = assistantSessionKind
+                                persistDefaults(defaultProvider = toolId)
+                                mode = workflow.clampMode(mode, toolId)
+                                selectedModel = ""
+                                normalizeThinkingEffort(toolId, "")
+                            }
+                        },
+                    )
+                }
+                ParallelRunCard(
+                    enabled = !creating && !dispatching,
+                    checked = parallelRun,
+                    onCheckedChange = { enabled ->
+                        parallelRun = enabled
+                        if (enabled) {
+                            if (parallelProviders.isEmpty()) {
+                                parallelProviders = setOf(if (provider == SHELL_TOOL_ID) "claude" else provider)
+                            }
+                        } else if (parallelProviders.isNotEmpty() && provider !in parallelProviders) {
+                            // 关闭多选时回到多选里最先勾选的 Agent，避免工具区显示落选状态。
+                            val restore = parallelProviders.firstOrNull() ?: provider
+                            provider = restore
                             sessionKind = assistantSessionKind
-                            persistDefaults(defaultProvider = toolId)
-                            mode = workflow.clampMode(mode, toolId)
+                            persistDefaults(defaultProvider = restore)
+                            mode = workflow.clampMode(mode, restore)
                             selectedModel = ""
-                            normalizeThinkingEffort(toolId, "")
+                            normalizeThinkingEffort(restore, "")
                         }
                     },
                 )
+                if (parallelRun) {
+                    MultiAgentPicker(
+                        options = AGENT_OPTIONS,
+                        selected = parallelProviders,
+                        enabled = !creating && !dispatching,
+                        onToggle = { agentId ->
+                            parallelProviders = if (agentId in parallelProviders) {
+                                parallelProviders - agentId
+                            } else {
+                                parallelProviders + agentId
+                            }
+                        },
+                    )
+                    TextButton(
+                        onClick = onOpenMissions,
+                        enabled = !creating && !dispatching,
+                        modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                    ) {
+                        Text("查看已有并行任务", fontSize = 12.sp, color = WandColors.brand)
+                        Icon(
+                            WandIcons.chevronRight,
+                            contentDescription = null,
+                            tint = WandColors.brand,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
 
                 SetupSectionHeader(
                     number = "03",
@@ -575,7 +719,21 @@ fun NewSessionScreen(
                     onPickRecent = { cwd = it },
                 )
 
-                if (sessionKind != NewSessionKind.Shell) {
+                if (parallelRun) {
+                    SetupSectionHeader(
+                        number = "04",
+                        title = "任务目标",
+                        description = "同一段目标会分别交给所选的每个 Agent 执行。",
+                    )
+                    WandTextField(
+                        value = missionPrompt,
+                        onValueChange = { missionPrompt = it },
+                        label = "想让 Agent 做什么",
+                        minLines = 4,
+                        enabled = !creating && !dispatching,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else if (sessionKind != NewSessionKind.Shell) {
                     SetupSectionHeader(
                         number = "04",
                         title = "选择会话形式",
@@ -592,16 +750,17 @@ fun NewSessionScreen(
                     InlineHint(sessionKindHint(provider, sessionKind))
                 }
 
-                SetupSectionHeader(
-                    number = if (sessionKind == NewSessionKind.Shell) "04" else "05",
-                    title = if (sessionKind == NewSessionKind.Shell) "确认终端环境" else "配置运行方式",
-                    description = if (sessionKind == NewSessionKind.Shell) {
-                        "将使用服务端配置的登录 Shell，不加载任何 AI CLI。"
-                    } else {
-                        "默认设置已经适合多数任务，需要时再调整。"
-                    },
-                )
-                if (sessionKind != NewSessionKind.Shell) {
+                if (!parallelRun) {
+                    SetupSectionHeader(
+                        number = if (sessionKind == NewSessionKind.Shell) "04" else "05",
+                        title = if (sessionKind == NewSessionKind.Shell) "确认终端环境" else "配置运行方式",
+                        description = if (sessionKind == NewSessionKind.Shell) {
+                            "将使用服务端配置的登录 Shell，不加载任何 AI CLI。"
+                        } else {
+                            "默认设置已经适合多数任务，需要时再调整。"
+                        },
+                    )
+                    if (sessionKind != NewSessionKind.Shell) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OptionMenuCard(
                         title = "模型",
@@ -670,7 +829,7 @@ fun NewSessionScreen(
                         modifier = Modifier.padding(top = 16.dp, bottom = 7.dp),
                     )
                     ModePicker(
-                        modes = SESSION_MODES,
+                        modes = SESSION_MODES.filter { it.id in supportedModes },
                         supportedModes = supportedModes,
                         providerName = providerDisplayName(provider),
                         selected = mode,
@@ -680,8 +839,9 @@ fun NewSessionScreen(
                         },
                     )
                     InlineHint(modeHint(provider, mode))
-                } else {
-                    InlineHint("创建后会直接进入可输入命令的空白终端，工作目录保持为上方所选项目。")
+                    } else {
+                        InlineHint("创建后会直接进入可输入命令的空白终端，工作目录保持为上方所选项目。")
+                    }
                 }
 
                 if (errorMessage != null) {
@@ -690,6 +850,7 @@ fun NewSessionScreen(
                 }
 
                 Spacer(modifier = Modifier.size(32.dp))
+                }
             }
             if (creating) {
                 Box(
@@ -813,6 +974,148 @@ private fun PrimaryCreateButton(
     )
 }
 
+/** 「多 Agent 并行」开关卡：打开后工具区切换为多选。 */
+@Composable
+private fun ParallelRunCard(
+    enabled: Boolean,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(WandColors.surfaceSoft.copy(alpha = 0.46f))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .heightIn(min = 60.dp),
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Text(
+                "多 Agent 并行",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+            )
+            Text(
+                "打开后可同时勾选多个 Agent，一起执行同一任务",
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                color = WandColors.textSecondary,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = if (enabled) onCheckedChange else null,
+        )
+    }
+}
+
+/** 并行模式的 Agent 多选区：与 ToolPicker 同风格，点击切换勾选，选中显示对勾徽标。 */
+@Composable
+private fun MultiAgentPicker(
+    options: List<Pair<String, String>>,
+    selected: Set<String>,
+    enabled: Boolean,
+    onToggle: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(WandColors.surfaceSoft.copy(alpha = 0.46f))
+            .padding(4.dp),
+    ) {
+        options.chunked(3).forEach { rowOptions ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                rowOptions.forEach { (value, label) ->
+                    val active = value in selected
+                    val iconColor by animateColorAsState(
+                        if (active) WandColors.brand else WandColors.textSecondary,
+                        WandMotion.tweenFast(),
+                        label = "multiAgentIconColor",
+                    )
+                    val itemBackground by animateColorAsState(
+                        if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
+                        WandMotion.tweenFast(),
+                        label = "multiAgentItemBg",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 64.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(itemBackground)
+                            .semantics {
+                                contentDescription = label
+                                stateDescription = if (active) "已选择" else "未选择"
+                            }
+                            .selectable(
+                                selected = active,
+                                enabled = enabled,
+                                role = Role.Checkbox,
+                            ) { onToggle(value) },
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.align(Alignment.Center),
+                        ) {
+                            Icon(
+                                painter = BrandLogos.painterForProvider(value),
+                                contentDescription = null,
+                                tint = BrandLogos.tintForProvider(value, iconColor),
+                                modifier = Modifier.size(21.dp * BrandLogos.opticalScale(value)),
+                            )
+                            Text(
+                                label,
+                                fontSize = 10.sp,
+                                lineHeight = 12.sp,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (active) WandColors.brand else WandColors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (active) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(6.dp)
+                                    .size(16.dp)
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(WandColors.brand),
+                            ) {
+                                Icon(
+                                    WandIcons.check,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(11.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                repeat(3 - rowOptions.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ToolPicker(
     options: List<Pair<String, String>>,
@@ -827,10 +1130,9 @@ private fun ToolPicker(
             .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(WandColors.surfaceSoft.copy(alpha = 0.46f))
-            .border(0.55.dp, WandColors.borderStrong.copy(alpha = 0.26f), RoundedCornerShape(18.dp))
             .padding(4.dp),
     ) {
-        options.chunked(4).forEach { rowOptions ->
+        options.chunked(3).forEach { rowOptions ->
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -848,11 +1150,6 @@ private fun ToolPicker(
                         WandMotion.tweenFast(),
                         label = "toolItemBg",
                     )
-                    val itemBorder by animateColorAsState(
-                        if (active) WandColors.borderStrong.copy(alpha = 0.24f) else Color.Transparent,
-                        WandMotion.tweenFast(),
-                        label = "toolItemBorder",
-                    )
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
@@ -860,7 +1157,6 @@ private fun ToolPicker(
                             .heightIn(min = 64.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(itemBackground)
-                            .border(0.8.dp, itemBorder, RoundedCornerShape(14.dp))
                             .semantics {
                                 contentDescription = label
                                 stateDescription = if (active) "已选择" else "未选择"
@@ -889,29 +1185,26 @@ private fun ToolPicker(
                         }
                     }
                 }
+                repeat(3 - rowOptions.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
         }
     }
 }
 
-/** iOS 风格选择卡底：纯色 surface 平面 + 1pt 描边；选中切 brand 软底 + brand 1.5pt 描边。 */
+/** iOS 风格选择卡底：纯色 surface；选中切 brand 软底，不再套描边。 */
 @Composable
 private fun Modifier.selectCard(selected: Boolean): Modifier {
     val shape = RoundedCornerShape(12.dp)
     val bg by animateColorAsState(
-        if (selected) WandColors.brandSoft else WandColors.surface.copy(alpha = 0.94f),
+        if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.72f),
         WandMotion.tweenFast(),
         label = "selectCardBg",
-    )
-    val borderColor by animateColorAsState(
-        if (selected) WandColors.brand.copy(alpha = 0.46f) else WandColors.border.copy(alpha = 0.86f),
-        WandMotion.tweenFast(),
-        label = "selectCardBorder",
     )
     return this
         .clip(shape)
         .background(bg)
-        .border(1.dp, borderColor, shape)
 }
 
 @Composable
@@ -922,7 +1215,7 @@ private fun SessionKindPicker(selected: NewSessionKind, onSelect: (NewSessionKin
     ) {
         SessionKindCard(
             title = "聊天",
-            technicalLabel = "结构化",
+            technicalLabel = "",
             description = "清晰呈现消息与工具调用",
             icon = WandIcons.chat,
             selected = selected == NewSessionKind.Structured,
@@ -933,7 +1226,7 @@ private fun SessionKindPicker(selected: NewSessionKind, onSelect: (NewSessionKin
         )
         SessionKindCard(
             title = "CLI 终端",
-            technicalLabel = "PTY",
+            technicalLabel = "",
             description = "保留 AI CLI 的原始交互",
             icon = WandIcons.terminal,
             selected = selected == NewSessionKind.Pty,
@@ -981,14 +1274,16 @@ private fun SessionKindCard(
                     modifier = Modifier.size(18.dp),
                 )
             }
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                technicalLabel,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (selected) WandColors.brand else WandColors.textMuted,
-            )
+            if (technicalLabel.isNotBlank()) {
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    technicalLabel,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (selected) WandColors.brand else WandColors.textMuted,
+                )
+            }
         }
         Text(
             title,
@@ -1354,7 +1649,7 @@ private fun ModePicker(
                     }
                 }
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
@@ -1408,6 +1703,7 @@ private fun CwdCard(
     onPickRecent: (String) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
     Column(modifier = Modifier.wandInputSurface(focused = focused)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1445,6 +1741,8 @@ private fun CwdCard(
                         color = WandColors.textPrimary,
                     ),
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     cursorBrush = SolidColor(WandColors.brand),
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
@@ -1466,7 +1764,7 @@ private fun CwdCard(
                 )
             }
             WandIconButton(
-                icon = WandIcons.chevronRight,
+                icon = WandIcons.folder,
                 contentDescription = "浏览目录",
                 onClick = onBrowse,
                 variant = WandIconButtonVariant.Chrome,
@@ -1475,7 +1773,11 @@ private fun CwdCard(
             )
         }
         if (recentPaths.isNotEmpty()) {
-            HorizontalDivider(color = WandColors.border, thickness = 0.5.dp)
+            HorizontalDivider(
+                color = WandColors.border,
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
             Text(
                 "最近使用",
                 fontSize = 10.sp,
@@ -1585,6 +1887,9 @@ private data class SessionMode(val id: String, val label: String, val desc: Stri
 
 private const val SHELL_TOOL_ID = "terminal"
 
+/** 平板横屏等超宽详情区：表单限宽居中，保证表单控件与输入框的可读宽度。 */
+private val NewSessionFormMaxWidth = 640.dp
+
 private val TOOL_OPTIONS = listOf(
     "claude" to "Claude",
     "codex" to "Codex",
@@ -1594,6 +1899,9 @@ private val TOOL_OPTIONS = listOf(
     "pi" to "Pi",
     SHELL_TOOL_ID to "空白终端",
 )
+
+/** 多 Agent 并行可选的 Agent（并行模式下不提供空白终端）。 */
+private val AGENT_OPTIONS = TOOL_OPTIONS.filterNot { it.first == SHELL_TOOL_ID }
 
 private val SESSION_MODES = listOf(
     SessionMode("managed", "托管", "全自动完成任务"),
@@ -1611,56 +1919,41 @@ private fun sessionKindHint(provider: String, kind: NewSessionKind): String =
     if (kind == NewSessionKind.Shell) {
         "启动当前工作目录下的交互式登录 Shell，不自动运行任何 CLI 工具。"
     } else if (kind == NewSessionKind.Structured) {
-        when (provider) {
-            "codex" -> "Codex JSONL 结构化聊天界面，支持多轮对话和工具调用展示。"
-            "opencode" -> "OpenCode JSON 结构化聊天界面，支持多轮对话和工具调用展示。"
-            "grok" -> "Grok streaming-json 结构化聊天界面，支持多轮续聊与思考过程展示。"
-            "qoder" -> "Qoder stream-json 结构化聊天界面，支持续聊、思考过程和工具调用展示。"
-            "pi" -> "Pi JSON 结构化聊天界面，支持续聊、思考过程和工具调用展示。"
-            else -> "结构化聊天界面，支持多轮对话、流式输出和工具调用展示。"
-        }
+        "用消息和工具卡片阅读回复，适合协作和查看改动。"
     } else {
-        when (provider) {
-            "codex" -> "Codex PTY 终端会话；terminal 是原始输出，chat 是解析后的阅读视图。"
-            "opencode" -> "OpenCode TUI 终端会话，支持持续交互和终端视图。"
-            "grok" -> "Grok Build TUI 的原始 PTY 终端会话。"
-            "qoder" -> "Qoder CLI TUI 的原始 PTY 终端会话。"
-            "pi" -> "Pi TUI 的原始 PTY 终端会话。"
-            else -> "原始 PTY 终端会话，支持持续交互、终端视图和权限流。"
-        }
+        "保留 ${providerDisplayName(provider)} 命令行的原始交互，适合需要完整终端的任务。"
     }
 
-/** 模式动态说明，文案对齐 Web getToolModeHint。 */
 private fun modeHint(provider: String, mode: String): String {
     if (provider == "codex") {
-        return "Codex 支持 PTY 终端与结构化（JSONL）两种会话，结构化模式按 full-access 启动。"
+        return "Codex 聊天会按全权限启动；需要原始命令行时再选终端。"
     }
     if (provider == "opencode") {
         return if (mode == "full-access" || mode == "managed") {
-            "OpenCode 将自动批准未显式拒绝的权限；支持 TUI 与 JSON 结构化会话。"
+            "OpenCode 将自动批准未显式拒绝的权限。"
         } else {
-            "OpenCode 使用自身权限配置；结构化模式会自动拒绝未批准的权限请求。"
+            "OpenCode 使用自身权限配置，未批准的操作会被拒绝。"
         }
     }
     if (provider == "grok") {
         return if (mode == "full-access" || mode == "managed") {
-            "Grok 将以 always-approve 运行；支持 TUI 与 streaming-json 结构化会话。"
+            "Grok 将自动批准权限请求。"
         } else {
-            "Grok 使用自身权限确认；支持 TUI 与 streaming-json 结构化会话。"
+            "Grok 会在需要时向你确认权限。"
         }
     }
     if (provider == "qoder") {
         return when (mode) {
-            "full-access", "managed" -> "Qoder 将以 bypass_permissions 运行；支持 TUI 与 stream-json 结构化会话。"
+            "full-access", "managed" -> "Qoder 将自动批准权限请求。"
             "auto-edit" -> "Qoder 将自动批准工作区内的安全编辑。"
-            else -> "Qoder 使用自身权限确认；结构化模式下未批准的操作会被拒绝。"
+            else -> "Qoder 会在需要时向你确认权限。"
         }
     }
-    if (provider == "pi") return "Pi 支持标准与托管模式；模型和 thinking 会传给 Pi CLI。"
+    if (provider == "pi") return "Pi 支持标准和托管模式，模型和思考深度会传给 CLI。"
     return when (mode) {
         "full-access" -> "自动确认权限请求与高权限操作，适合你确认环境安全后的连续修改。"
         "auto-edit" -> "保留交互式会话，同时更偏向直接编辑代码。"
-        "native" -> "调用 Claude 原生 API 输出，适合快速问答或一次性生成。"
+        "native" -> "调用 Claude 原生输出，适合快速问答或一次性生成。"
         "managed" -> "AI 自动完成所有工作，无需中途确认，适合有明确目标的任务。"
         else -> "保留标准交互流程，适合手动确认每一步。"
     }
@@ -1698,6 +1991,17 @@ fun DirectoryBrowserScreen(
     }
 
     val directoryBackdrop = rememberGlassBackdrop()
+
+    fun goToParentDirectory(): Boolean {
+        val parent = directoryParentPath(currentPath) ?: return false
+        currentPath = parent
+        loadKey++
+        return true
+    }
+
+    BackHandler {
+        if (!goToParentDirectory()) onCancel()
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -1748,16 +2052,7 @@ fun DirectoryBrowserScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 FilledTonalButton(
-                    onClick = {
-                        val parent = currentPath.trimEnd('/').substringBeforeLast('/')
-                        if (parent.isNotEmpty() && parent != currentPath) {
-                            currentPath = parent
-                            loadKey++
-                        } else if (currentPath != "/") {
-                            currentPath = "/"
-                            loadKey++
-                        }
-                    },
+                    onClick = { goToParentDirectory() },
                     shape = WandShapes.full,
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = WandColors.brandSoft,
@@ -1778,7 +2073,6 @@ fun DirectoryBrowserScreen(
                         .weight(1f)
                         .clip(WandShapes.sm)
                         .background(WandColors.surfaceSoft)
-                        .border(1.dp, WandColors.border, WandShapes.sm)
                         .padding(horizontal = 10.dp, vertical = 7.dp),
                 ) {
                     TailMarqueePathText(
@@ -1862,4 +2156,12 @@ fun DirectoryBrowserScreen(
             }
         }
     }
+}
+
+/** 目录浏览器的上一级路径；已在根目录时返回 null。 */
+internal fun directoryParentPath(path: String): String? {
+    val normalized = path.trim().replace('\\', '/').trimEnd('/')
+    if (normalized.isEmpty() || normalized == "/") return null
+    val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
+    return parent.ifEmpty { "/" }.takeIf { it != normalized }
 }

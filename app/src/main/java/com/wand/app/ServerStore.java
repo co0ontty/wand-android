@@ -33,6 +33,7 @@ public class ServerStore {
     private static final String KEY_NOTIFICATION_VOLUME = "notification_volume";
     private static final String KEY_NOTIFICATION_PERMISSION_REQUESTED = "notification_permission_requested";
     private static final String KEY_HAPTIC_ENABLED = "haptic_enabled";
+    private static final String KEY_KEEP_ALIVE = "keep_alive_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
     private static final int MAX_RECENT = 5;
@@ -352,6 +353,14 @@ public class ServerStore {
 
     public void setHapticEnabled(boolean enabled) {
         prefs.edit().putBoolean(KEY_HAPTIC_ENABLED, enabled).apply();
+    }
+
+    public boolean isKeepAliveEnabled() {
+        return prefs.getBoolean(KEY_KEEP_ALIVE, false);
+    }
+
+    public void setKeepAliveEnabled(boolean enabled) {
+        prefs.edit().putBoolean(KEY_KEEP_ALIVE, enabled).apply();
     }
 
     /** 更新通道：true = beta（接收 -debug 开发构建），false = stable（只提示正式版）。 */

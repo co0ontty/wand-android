@@ -32,7 +32,8 @@ final class NetUtils {
 
     /**
      * 让传入的连接 (若为 HTTPS) 信任任意证书 + 跳过 hostname 校验。
-     * 仅用于本工具自分发场景下连接用户自己的 wand server, 不用于公网请求。
+     * 仅用于目标就是用户自己的 wand server 的请求（调用方保证同源），
+     * 跨源目标（如 GitHub 重定向）必须走 [openConnection] 四参版本按 origin 收紧。
      */
     private static SSLContext trustedSslContext;
 
@@ -57,12 +58,42 @@ final class NetUtils {
     }
 
     static HttpURLConnection openConnection(String urlStr, int connectTimeout, int readTimeout) throws Exception {
+        return openConnection(urlStr, connectTimeout, readTimeout, null);
+    }
+
+    /**
+     * 带 origin 限定的连接打开。[trustOriginBaseUrl] 非空时，仅当目标 URL 与该
+     * wand server 同源（scheme + host + port）才信任自签名证书；跨源目标
+     * （如 APK 下载被重定向到 GitHub）走系统默认证书校验，防止 trust-all
+     * 扩散到公网链路被中间人利用。
+     */
+    static HttpURLConnection openConnection(String urlStr, int connectTimeout, int readTimeout,
+                                            String trustOriginBaseUrl) throws Exception {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        trustSelfSigned(conn);
+        if (trustOriginBaseUrl == null || isSameOrigin(url, trustOriginBaseUrl)) {
+            trustSelfSigned(conn);
+        }
         conn.setConnectTimeout(connectTimeout);
         conn.setReadTimeout(readTimeout);
         return conn;
+    }
+
+    /** 判断 url 与 originBase（wand server 根地址）是否同源；解析失败视为不同源。 */
+    static boolean isSameOrigin(URL url, String originBase) {
+        try {
+            URL origin = new URL(originBase);
+            return url.getProtocol().equalsIgnoreCase(origin.getProtocol())
+                    && url.getHost().equalsIgnoreCase(origin.getHost())
+                    && effectivePort(url) == effectivePort(origin);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static int effectivePort(URL url) {
+        if (url.getPort() != -1) return url.getPort();
+        return "https".equalsIgnoreCase(url.getProtocol()) ? 443 : 80;
     }
 
     /** dp → px（合并 ConnectActivity.dpToPx 与 QrScannerOverlayView.dp）。 */

@@ -240,15 +240,15 @@ fun Modifier.glassBackdropSource(backdrop: GlassBackdrop): Modifier {
  * @param edgeToEdge 全幅贴边栏（顶栏 / 底栏，shape 为 RoundedCornerShape(0.dp)）置 true：
  *   去掉四周的玻璃高光 / rim 描边 —— 这道亮边在贴着屏幕边沿的栏上会描出一条难看的白边。
  *   栏与内容的分隔交给软阴影或发丝分隔线，不靠 rim。
- * @param drawRim 是否绘制玻璃引擎自带的动态高光 / 降级渐变 rim。组件若已有独立的
- *   均匀描边，可关闭它来避免两层边缘叠成不规则光晕。
+ * @param drawRim 是否绘制玻璃引擎自带的动态高光 / 降级渐变 rim。默认关闭，
+ *   避免卡片、栏和控件再套一层描边。
  */
 fun Modifier.glassSurface(
     backdrop: GlassBackdrop?,
     shape: Shape,
     style: GlassStyle,
     edgeToEdge: Boolean = false,
-    drawRim: Boolean = !edgeToEdge,
+    drawRim: Boolean = false,
 ): Modifier {
     val layer = backdrop?.layer
     return if (layer != null) {
@@ -313,11 +313,11 @@ fun GlassPanel(
 }
 
 /**
- * 卡片玻璃速记：半透明底 + 对角 rim 渐变描边 + 极轻阴影。
+ * 卡片表面：实心底 + 极轻阴影，不再套 rim 描边。
  * 卡片平铺在页面背景上、不与滚动内容重叠，所以永远不走 backdrop 采样。
  *
  * @param tint 覆盖底色（语义弱底卡：permissionSoft / thinkingSoft…）。
- * @param rimTint 语义强调色混入 rim（状态卡边缘提色）。
+ * @param rimTint 语义强调色混入底色，不再画边。
  */
 @Composable
 fun Modifier.glassCard(
@@ -332,19 +332,10 @@ fun Modifier.glassCard(
     val bg = tint?.compositeOver(WandColors.bgPrimary)
         ?: style.tint.copy(alpha = style.fallbackAlpha)
     val (keyShadow, ambientShadow) = cardShadowColors()
-    // 近实心卡保留一点受光感；半透明语义卡改用语义色描边，避免白印。
-    val solidity = if (tint != null) 0f else ((bg.alpha - 0.2f) / 0.6f).coerceIn(0f, 1f)
-    val sheen = surfaceSheenBrush(highlightScale = solidity)
-    val rimLight = if (rimTint != null)
-        lerp(rimTint.copy(alpha = 0.55f), style.rimLight, solidity)
-    else
-        style.rimLight.copy(alpha = style.rimLight.alpha * solidity)
     return this
         .layeredShadow(shape, style.shadowElevation, keyShadow, ambientShadow)
         .clip(shape)
         .background(bg)
-        .background(sheen, shape)
-        .border(0.55.dp, bevelRimBrush(rimLight, style.rimShade), shape)
 }
 
 // —— 环境背景 ——
