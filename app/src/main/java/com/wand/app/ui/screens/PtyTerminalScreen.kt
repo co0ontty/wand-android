@@ -8,11 +8,15 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +29,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -54,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -92,10 +98,12 @@ import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.terminal.DefaultTerminalShortcuts
 import com.wand.app.ui.terminal.TerminalKeyBinding
 import com.wand.app.ui.terminal.TerminalModifier
+import com.wand.app.ui.terminal.TerminalSpecialKeys
 import com.wand.app.ui.terminal.TerminalShortcut
 import com.wand.app.ui.terminal.buildTerminalShortcut
 import kotlinx.coroutines.delay
@@ -481,22 +489,26 @@ private fun PtyBottomBar(
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(60.dp)
+                .height(54.dp)
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp),
+                .padding(horizontal = 12.dp),
         ) {
             // 第一个固定项是输入抽屉的拉手：键盘图标 + 上/下箭头，点击或上拉展开输入框。
             InputDrawerHandle(open = inputDrawerOpen, onClick = onToggleInputDrawer)
-            DefaultTerminalShortcuts.forEach { shortcut ->
+            ShortcutGroupDivider()
+            // 分三组展示：编辑控制（Esc/Ctrl+C/Tab）· 方向导航 · 确认（Enter），
+            // 组间用细竖线分隔，扫读时不至于九个按键糊成一排。
+            DefaultTerminalShortcuts.forEachIndexed { index, shortcut ->
                 TerminalShortcutKey(shortcut) {
                     if (isHapticEnabled()) {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
                     onShortcut(shortcut)
                 }
+                if (index == 3 || index == 7) ShortcutGroupDivider()
             }
         }
     }
@@ -504,24 +516,40 @@ private fun PtyBottomBar(
 
 /// 输入抽屉的拉手：快捷键栏的第一个固定项。折叠态显示键盘 + 向上箭头，
 /// 展开态翻转成向下箭头。点击切换；带一个纵向拖动手势，上拉展开、下拉收起。
+/// 快捷键栏的组间分隔线：细竖线，弱存在感，只负责把逻辑分组切开。
+@Composable
+private fun ShortcutGroupDivider() {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .width(1.dp)
+            .height(20.dp)
+            .background(WandColors.border.copy(alpha = 0.9f), RoundedCornerShape(1.dp)),
+    )
+}
+
 @Composable
 private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
     val targetColor = if (open) WandColors.brand else WandColors.textPrimary
-    val background = if (open) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.76f)
-    val shape = RoundedCornerShape(11.dp)
+    val background = if (open) {
+        WandColors.brandSoft
+    } else {
+        WandColors.surfaceSoft.copy(alpha = 0.62f)
+    }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .height(44.dp)
+            .height(40.dp)
             .widthIn(min = 72.dp)
-            .clip(shape)
+            .clip(WandShapes.sm)
             .background(background)
+            .border(0.6.dp, WandColors.border.copy(alpha = 0.85f), WandShapes.sm)
             .clickable(
                 onClickLabel = if (open) "收起输入框" else "展开输入框",
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 10.dp)
+            .padding(horizontal = 12.dp)
             .pointerInput(open) {
                 var accumulated = 0f
                 detectVerticalDragGestures(
@@ -685,39 +713,86 @@ private fun PtyDrawerSendButton(enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
+/// 终端快捷键：所有按键统一高度、圆角、底色与描边，视觉重量只靠字号微调；
+/// 修饰键（Ctrl/Alt/Shift）用弱化色 + 小号渲染，主键保持粗体，形成两级层次。
+/// 按下时轻微缩放 + 底色提亮作为反馈，不再依赖 ripple。
 @Composable
 private fun TerminalShortcutKey(
     shortcut: TerminalShortcut,
     onClick: () -> Unit,
 ) {
-    val compact = shortcut.label.length == 1
-    val emphasized = shortcut.binding.modifiers.isNotEmpty()
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.92f else 1f,
+        label = "shortcutKeyScale",
+    )
+    val background by animateColorAsState(
+        targetValue = if (pressed) WandColors.surfaceSoft else WandColors.surfaceSoft.copy(alpha = 0.62f),
+        label = "shortcutKeyBackground",
+    )
+    val modifiers = TerminalModifier.entries.filter { it in shortcut.binding.modifiers }
+    val keyLabel = TerminalSpecialKeys.firstOrNull { it.id == shortcut.binding.key }?.label
+        ?: shortcut.binding.key.uppercase()
+    val symbolOnly = keyLabel.length == 1
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .height(44.dp)
-            .widthIn(min = if (compact) 44.dp else 52.dp)
-            .clip(RoundedCornerShape(11.dp))
-            .background(
-                if (emphasized) WandColors.brandSoft
-                else WandColors.surfaceSoft.copy(alpha = 0.76f),
-            )
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .height(40.dp)
+            .widthIn(min = 40.dp)
+            .clip(WandShapes.sm)
+            .background(background)
+            .border(0.6.dp, WandColors.border.copy(alpha = 0.85f), WandShapes.sm)
             .clickable(
+                interactionSource = interaction,
+                indication = null,
                 onClickLabel = shortcut.accessibilityLabel,
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = if (compact) 10.dp else 12.dp),
+            .padding(horizontal = if (symbolOnly && modifiers.isEmpty()) 10.dp else 12.dp),
     ) {
-        Text(
-            shortcut.label,
-            color = if (emphasized) WandColors.brand else WandColors.textPrimary,
-            fontFamily = FontFamily.Monospace,
-            fontSize = if (compact) 18.sp else 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            modifiers.forEachIndexed { index, modifierKey ->
+                if (index > 0) ShortcutKeyJoin()
+                Text(
+                    modifierKey.label,
+                    color = WandColors.textMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+            if (modifiers.isNotEmpty()) ShortcutKeyJoin()
+            Text(
+                keyLabel,
+                color = WandColors.textPrimary,
+                fontFamily = FontFamily.Monospace,
+                fontSize = if (symbolOnly) 15.sp else 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
     }
+}
+
+/// 修饰键与主键之间的连接符（"Ctrl+C" 里的 +），刻意缩小、降透明度。
+@Composable
+private fun ShortcutKeyJoin() {
+    Text(
+        "+",
+        color = WandColors.textMuted.copy(alpha = 0.55f),
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Medium,
+    )
 }
 
 @Composable
