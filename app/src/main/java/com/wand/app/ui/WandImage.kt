@@ -166,7 +166,7 @@ fun WandAsyncImage(
  * （对齐 iOS WandImageViewer：缩放 1–5×，缩回 1× 时归位，未放大时单击空白也可关闭）。
  */
 @Composable
-private fun FullscreenImageViewer(
+fun FullscreenImageViewer(
     path: String,
     baseUrl: String,
     onDismiss: () -> Unit,

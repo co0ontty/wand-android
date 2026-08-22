@@ -46,6 +46,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -104,14 +105,19 @@ import com.wand.app.data.int
 import com.wand.app.data.str
 import com.wand.app.data.summaryText
 import com.wand.app.ui.AskUserSelectionState
+import com.wand.app.ui.FullscreenImageViewer
 import com.wand.app.ui.LocalServerBaseUrl
+import com.wand.app.ui.TextPreviewDialog
 import com.wand.app.ui.WandAsyncImage
 import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
 import com.wand.app.ui.WandServerFileLink
+import com.wand.app.ui.WandTextPreview
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.NoOverscroll
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.components.toolIcon
@@ -518,9 +524,11 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
     val baseUrl = LocalServerBaseUrl.current
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
+    var pendingExternalLink by remember { mutableStateOf<String?>(null) }
+    var serverFilePreview by remember { mutableStateOf<String?>(null) }
     // 字符级解析循环不便宜；重组但文本未变时直接复用上一次的 AnnotatedString。
     // 流式输出期间每个 chunk 只在文本真正变化时重建一次，而不是每次重组都重建。
-    return remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler) {
+    val annotated = remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler) {
         buildAnnotatedString {
         var i = 0
         while (i < raw.length) {
@@ -592,20 +600,26 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                                     (link as? LinkAnnotation.Url)?.url?.let { target ->
                                         val serverPath = WandServerFileLink.serverPath(target)
                                         if (serverPath != null && baseUrl.isNotBlank()) {
-                                            Toast.makeText(context, "正在从服务端下载…", Toast.LENGTH_SHORT).show()
-                                            scope.launch {
-                                                runCatching {
-                                                    WandServerFileLink.downloadAndOpen(context, baseUrl, serverPath)
-                                                }.onFailure { error ->
-                                                    Toast.makeText(
-                                                        context,
-                                                        "文件下载失败：${error.message ?: "未知错误"}",
-                                                        Toast.LENGTH_LONG,
-                                                    ).show()
+                                            if (WandImage.isImagePath(serverPath) || WandTextPreview.isPreviewableText(serverPath)) {
+                                                // 图片 / 文本类：应用内预览，不落盘、不跳出去。
+                                                serverFilePreview = serverPath
+                                            } else {
+                                                // 未知二进制类型：保留下载 + 外部打开兑底。
+                                                scope.launch {
+                                                    runCatching {
+                                                        WandServerFileLink.downloadAndOpen(context, baseUrl, serverPath)
+                                                    }.onFailure { error ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            "文件下载失败：${error.message ?: "未知错误"}",
+                                                            Toast.LENGTH_LONG,
+                                                        ).show()
+                                                    }
                                                 }
                                             }
                                         } else {
-                                            runCatching { uriHandler.openUri(target) }
+                                            // 外部链接不直接跳浏览器：先确认，避免误触离开会话。
+                                            pendingExternalLink = target
                                         }
                                     }
                                 },
@@ -641,6 +655,60 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
         }
         }
     }
+
+    if (pendingExternalLink != null) {
+        val target = pendingExternalLink.orEmpty()
+        WandDialog(
+            title = "打开外部链接？",
+            onDismissRequest = { pendingExternalLink = null },
+            confirm = WandDialogAction(
+                label = "打开浏览器",
+                onClick = {
+                    pendingExternalLink = null
+                    if (target.isNotBlank()) runCatching { uriHandler.openUri(target) }
+                },
+            ),
+            dismiss = WandDialogAction("取消", { pendingExternalLink = null }),
+        ) {
+            Text(
+                target,
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textSecondary,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+
+    serverFilePreview?.let { previewPath ->
+        if (WandImage.isImagePath(previewPath)) {
+            FullscreenImageViewer(
+                path = previewPath,
+                baseUrl = baseUrl,
+                onDismiss = { serverFilePreview = null },
+            )
+        } else {
+            TextPreviewDialog(
+                path = previewPath,
+                baseUrl = baseUrl,
+                onDismiss = { serverFilePreview = null },
+                onOpenExternally = {
+                    serverFilePreview = null
+                    scope.launch {
+                        runCatching { WandServerFileLink.downloadAndOpen(context, baseUrl, previewPath) }
+                            .onFailure { error ->
+                                Toast.makeText(
+                                    context,
+                                    "文件下载失败：${error.message ?: "未知错误"}",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                    }
+                },
+            )
+        }
+    }
+    return annotated
 }
 
 /** Finds the closing parenthesis while preserving angle-wrapped paths and parentheses in file names. */
