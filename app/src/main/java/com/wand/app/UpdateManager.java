@@ -302,6 +302,8 @@ final class UpdateManager {
      *   跳走系统默认校验，Cookie 也只发给同源跳。
      * - 先写 {@code <fileName>.part} 临时文件，完整 + 哈希校验通过后才 rename 成
      *   最终文件名，进程被杀不会留下可被当作「待安装更新」的截断 APK。
+     * - GitHub 来源无 SHA-256，另有 Content-Length 比对 + zip magic 兜底；
+     *   失败自动整体重试至多 {@link #MAX_DOWNLOAD_ATTEMPTS} 次。
      */
     DownloadRequest download(String downloadUrl, String fileName,
                              String latestVersion, String channel,
@@ -324,133 +326,198 @@ final class UpdateManager {
         final String safeFileName = (fileName == null || fileName.isEmpty())
                 ? "wand-update.apk" : fileName;
         executor.execute(() -> {
-            HttpURLConnection conn = null;
-            File outputFile = null;
-            File partFile = null;
-            try {
-                // 下载新包前先清掉目录里的历史 APK / 残留 .part：既释放本次下载需要的空间，
-                // 也保证外部目录里任意时刻最多只有一个安装包在堆积。
-                purgeStaleApks(activity, pendingInstallFile);
-                String currentUrl = downloadUrl.startsWith("http")
-                        ? downloadUrl : serverUrl + downloadUrl;
-                int responseCode = 0;
-                for (int hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
-                    conn = NetUtils.openConnection(currentUrl,
-                            NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS,
-                            serverUrl);
-                    conn.setInstanceFollowRedirects(false);
-                    if (NetUtils.isSameOrigin(new java.net.URL(currentUrl), serverUrl)) {
-                        String cookie = WandHttp.cookieHeaderFor(serverUrl);
-                        if (cookie != null) conn.setRequestProperty("Cookie", cookie);
-                    }
-                    responseCode = conn.getResponseCode();
-                    if (responseCode == 301 || responseCode == 302 || responseCode == 303
-                            || responseCode == 307 || responseCode == 308) {
-                        String location = conn.getHeaderField("Location");
-                        conn.disconnect();
-                        conn = null;
-                        if (location == null || location.isEmpty()) {
-                            throw new Exception("服务器重定向缺少目标地址");
-                        }
-                        currentUrl = new java.net.URL(new java.net.URL(currentUrl), location).toString();
-                        continue;
-                    }
-                    break;
-                }
-                if (conn == null) throw new Exception("重定向次数过多，已中止下载");
-                if (responseCode != 200) throw new Exception("服务器返回 " + responseCode);
-
-                // 下载响应头里的 X-APK-Sha256 反映本次实际发送的字节；check 与
-                // 下载之间服务端 APK 若被重新部署，以响应头为准，避免用过期
-                // 快照误报完整性校验失败。旧服务端无此头 → 回退 check 时的值。
-                String headerSha256 = conn.getHeaderField("X-APK-Sha256");
-                final String effectiveSha256 =
-                        (headerSha256 != null && !headerSha256.trim().isEmpty())
-                                ? headerSha256.trim() : expectedSha256;
-
-                int fileLength = conn.getContentLength();
-                File dir = activity.getExternalFilesDir(null);
-                outputFile = new File(dir, safeFileName);
-                partFile = new File(dir, safeFileName + ".part");
-                if (fileLength > 0) {
-                    long usable = dir != null ? dir.getUsableSpace() : Long.MAX_VALUE;
-                    if (usable < (long) fileLength + 5 * 1024 * 1024) {
-                        throw new Exception("存储空间不足，需要约 " + formatSize(fileLength) + "，请清理后重试");
-                    }
-                }
-
-                final java.security.MessageDigest digest =
-                        (effectiveSha256 != null && !effectiveSha256.isEmpty())
-                                ? java.security.MessageDigest.getInstance("SHA-256")
-                                : null;
-                try (InputStream in = conn.getInputStream();
-                     FileOutputStream out = new FileOutputStream(partFile)) {
-                    byte[] buffer = new byte[8192];
-                    long total = 0;
-                    int count;
-                    long lastUiUpdate = 0;
-                    final long startTime = System.currentTimeMillis();
-                    while ((count = in.read(buffer)) != -1) {
-                        if (request.isCancelled()) break;
-                        total += count;
-                        out.write(buffer, 0, count);
-                        if (digest != null) digest.update(buffer, 0, count);
-                        long now = System.currentTimeMillis();
-                        if (now - lastUiUpdate > 50 || total == fileLength) {
-                            lastUiUpdate = now;
-                            long elapsed = Math.max(1, now - startTime);
-                            postDownloadProgress(listener, total, fileLength, total * 1000 / elapsed);
-                        }
-                    }
-                }
-
-                if (request.isCancelled()) {
-                    try { partFile.delete(); } catch (Exception ignored) {}
-                    postDownloadCancelled(listener);
+            // GitHub 直连走 objects.githubusercontent.com，跨境链路经常中途 reset；
+            // 截断的包会被完整性校验拦下，这里对失败自动重试，全部失败才报错。
+            Exception lastFailure = null;
+            for (int attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt++) {
+                try {
+                    downloadAttempt(downloadUrl, safeFileName, expectedSha256,
+                            latestVersion, channel, listener, request);
+                    // 成功与用户取消都已在 downloadAttempt 内回调收尾。
                     return;
-                }
-                if (!partFile.exists() || partFile.length() == 0) {
-                    throw new Exception("下载文件为空");
-                }
-                if (digest != null) {
-                    String actual = toHex(digest.digest());
-                    if (!actual.equalsIgnoreCase(effectiveSha256)) {
-                        throw new Exception("安装包完整性校验失败，已丢弃本次下载");
+                } catch (Exception e) {
+                    lastFailure = e;
+                    if (request.isCancelled()) {
+                        postDownloadCancelled(listener);
+                        return;
                     }
-                }
-                // 完整且（可选）哈希匹配后才占用最终文件名。
-                if (outputFile.exists()) {
-                    try { outputFile.delete(); } catch (Exception ignored) {}
-                }
-                if (!partFile.renameTo(outputFile)) {
-                    throw new Exception("安装包落盘失败");
-                }
-                partFile = null;
-                String versionToRecord = latestVersion != null
-                        ? latestVersion : extractVersionFromFileName(safeFileName);
-                if (versionToRecord != null) {
-                    serverStore.setDownloadedApkVersion(versionToRecord, channel);
-                }
-                postDownloadCompleted(listener, outputFile);
-            } catch (Exception e) {
-                if (partFile != null && partFile.exists()) {
-                    try { partFile.delete(); } catch (Exception ignored) {}
-                }
-                if (request.isCancelled()) {
-                    postDownloadCancelled(listener);
-                } else {
-                    postDownloadFailure(listener, NetworkErrorHelper.describeError(e, "download"));
-                }
-            } finally {
-                if (conn != null) {
-                    try { conn.disconnect(); } catch (Exception ignored) {}
+                    if (attempt < MAX_DOWNLOAD_ATTEMPTS) {
+                        try {
+                            Thread.sleep(DOWNLOAD_RETRY_DELAY_MS * attempt);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            postDownloadCancelled(listener);
+                            return;
+                        }
+                    }
                 }
             }
+            postDownloadFailure(listener, NetworkErrorHelper.describeError(lastFailure, "download"));
         });
         return request;
     }
 
+    /**
+     * 单次下载尝试：成功返回落盘的 APK 并回调 onCompleted；用户取消返回 null
+     * （已回调 onCancelled）；失败抛出异常，由调用方决定是否重试。
+     *
+     * 完整性防线（按序）：
+     * 1. SHA-256（响应头 X-APK-Sha256 优先，回退 check 时的值；仅本地分发提供）；
+     * 2. Content-Length 已知时逐字节比对——GitHub 来源没有哈希可查，断流截断的
+     *    包必须在这里拦下，否则会以「安装包不完整」的形式到达系统安装器；
+     * 3. zip magic（PK\u005cx03\u005cx04）兜底，拦截错误页 HTML 等非 APK 内容。
+     * 全部通过后才把 {@code <fileName>.part} rename 成最终文件名，进程被杀也不会
+     * 留下可被当作「待安装更新」的截断 APK。
+     */
+    private File downloadAttempt(String downloadUrl, String fileName, String expectedSha256,
+                                 String latestVersion, String channel,
+                                 DownloadListener listener, DownloadRequest request) throws Exception {
+        HttpURLConnection conn = null;
+        File partFile = null;
+        try {
+            // 下载新包前先清掉目录里的历史 APK / 残留 .part：既释放本次下载需要的空间，
+            // 也保证外部目录里任意时刻最多只有一个安装包在堆积。
+            purgeStaleApks(activity, pendingInstallFile);
+            String currentUrl = downloadUrl.startsWith("http")
+                    ? downloadUrl : serverUrl + downloadUrl;
+            int responseCode = 0;
+            for (int hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+                conn = NetUtils.openConnection(currentUrl,
+                        NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS,
+                        serverUrl);
+                conn.setInstanceFollowRedirects(false);
+                if (NetUtils.isSameOrigin(new java.net.URL(currentUrl), serverUrl)) {
+                    String cookie = WandHttp.cookieHeaderFor(serverUrl);
+                    if (cookie != null) conn.setRequestProperty("Cookie", cookie);
+                }
+                responseCode = conn.getResponseCode();
+                if (responseCode == 301 || responseCode == 302 || responseCode == 303
+                        || responseCode == 307 || responseCode == 308) {
+                    String location = conn.getHeaderField("Location");
+                    conn.disconnect();
+                    conn = null;
+                    if (location == null || location.isEmpty()) {
+                        throw new Exception("服务器重定向缺少目标地址");
+                    }
+                    currentUrl = new java.net.URL(new java.net.URL(currentUrl), location).toString();
+                    continue;
+                }
+                break;
+            }
+            if (conn == null) throw new Exception("重定向次数过多，已中止下载");
+            if (responseCode != 200) throw new Exception("服务器返回 " + responseCode);
+
+            // 下载响应头里的 X-APK-Sha256 反映本次实际发送的字节；check 与
+            // 下载之间服务端 APK 若被重新部署，以响应头为准，避免用过期
+            // 快照误报完整性校验失败。旧服务端无此头 → 回退 check 时的值。
+            String headerSha256 = conn.getHeaderField("X-APK-Sha256");
+            final String effectiveSha256 =
+                    (headerSha256 != null && !headerSha256.trim().isEmpty())
+                            ? headerSha256.trim() : expectedSha256;
+
+            int fileLength = conn.getContentLength();
+            File dir = activity.getExternalFilesDir(null);
+            File outputFile = new File(dir, fileName);
+            partFile = new File(dir, fileName + ".part");
+            if (fileLength > 0) {
+                long usable = dir != null ? dir.getUsableSpace() : Long.MAX_VALUE;
+                if (usable < (long) fileLength + 5 * 1024 * 1024) {
+                    throw new Exception("存储空间不足，需要约 " + formatSize(fileLength) + "，请清理后重试");
+                }
+            }
+
+            final java.security.MessageDigest digest =
+                    (effectiveSha256 != null && !effectiveSha256.isEmpty())
+                            ? java.security.MessageDigest.getInstance("SHA-256")
+                            : null;
+            try (InputStream in = conn.getInputStream();
+                 FileOutputStream out = new FileOutputStream(partFile)) {
+                byte[] buffer = new byte[8192];
+                long total = 0;
+                int count;
+                long lastUiUpdate = 0;
+                final long startTime = System.currentTimeMillis();
+                while ((count = in.read(buffer)) != -1) {
+                    if (request.isCancelled()) break;
+                    total += count;
+                    out.write(buffer, 0, count);
+                    if (digest != null) digest.update(buffer, 0, count);
+                    long now = System.currentTimeMillis();
+                    if (now - lastUiUpdate > 50 || total == fileLength) {
+                        lastUiUpdate = now;
+                        long elapsed = Math.max(1, now - startTime);
+                        postDownloadProgress(listener, total, fileLength, total * 1000 / elapsed);
+                    }
+                }
+            }
+
+            if (request.isCancelled()) {
+                try { partFile.delete(); } catch (Exception ignored) {}
+                postDownloadCancelled(listener);
+                return null;
+            }
+            if (!partFile.exists() || partFile.length() == 0) {
+                throw new Exception("下载文件为空");
+            }
+            // GitHub 来源没有 SHA-256 可校验，Content-Length 比对是唯一的截断检测手段：
+            // 连接被 reset 时 read() 同样返回 -1，不做此检查截断包会直接进安装器。
+            if (fileLength > 0 && partFile.length() != fileLength) {
+                throw new Exception("下载不完整（已接收 " + formatSize(partFile.length())
+                        + " / " + formatSize(fileLength) + "），连接被中断");
+            }
+            if (!isZipArchive(partFile)) {
+                throw new Exception("下载内容不是有效的安装包，已丢弃");
+            }
+            if (digest != null) {
+                String actual = toHex(digest.digest());
+                if (!actual.equalsIgnoreCase(effectiveSha256)) {
+                    throw new Exception("安装包完整性校验失败，已丢弃本次下载");
+                }
+            }
+            // 完整且（可选）哈希匹配后才占用最终文件名。
+            if (outputFile.exists()) {
+                try { outputFile.delete(); } catch (Exception ignored) {}
+            }
+            if (!partFile.renameTo(outputFile)) {
+                throw new Exception("安装包落盘失败");
+            }
+            partFile = null;
+            String versionToRecord = latestVersion != null
+                    ? latestVersion : extractVersionFromFileName(fileName);
+            if (versionToRecord != null) {
+                serverStore.setDownloadedApkVersion(versionToRecord, channel);
+            }
+            postDownloadCompleted(listener, outputFile);
+            return outputFile;
+        } catch (Exception e) {
+            if (partFile != null && partFile.exists()) {
+                try { partFile.delete(); } catch (Exception ignored) {}
+            }
+            throw e;
+        } finally {
+            if (conn != null) {
+                try { conn.disconnect(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    /** APK 本质是 zip；校验文件头 magic，兜底拦截错误页 HTML 或其他非 APK 内容。 */
+    private static boolean isZipArchive(File file) {
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(file, "r")) {
+            return raf.length() >= 4 && raf.readInt() == 0x504B0304;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static final int MAX_REDIRECT_HOPS = 5;
+
+    /**
+     * 更新包下载失败自动重试次数。GitHub 直连走 objects.githubusercontent.com，
+     * 跨境链路常见中途断流；截断的包由完整性校验拦下后在这里整体重下。
+     */
+    private static final int MAX_DOWNLOAD_ATTEMPTS = 3;
+    private static final long DOWNLOAD_RETRY_DELAY_MS = 1500;
 
     private static String toHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
