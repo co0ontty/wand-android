@@ -360,6 +360,14 @@ final class UpdateManager {
                 if (conn == null) throw new Exception("重定向次数过多，已中止下载");
                 if (responseCode != 200) throw new Exception("服务器返回 " + responseCode);
 
+                // 下载响应头里的 X-APK-Sha256 反映本次实际发送的字节；check 与
+                // 下载之间服务端 APK 若被重新部署，以响应头为准，避免用过期
+                // 快照误报完整性校验失败。旧服务端无此头 → 回退 check 时的值。
+                String headerSha256 = conn.getHeaderField("X-APK-Sha256");
+                final String effectiveSha256 =
+                        (headerSha256 != null && !headerSha256.trim().isEmpty())
+                                ? headerSha256.trim() : expectedSha256;
+
                 int fileLength = conn.getContentLength();
                 File dir = activity.getExternalFilesDir(null);
                 outputFile = new File(dir, safeFileName);
@@ -372,7 +380,7 @@ final class UpdateManager {
                 }
 
                 final java.security.MessageDigest digest =
-                        (expectedSha256 != null && !expectedSha256.isEmpty())
+                        (effectiveSha256 != null && !effectiveSha256.isEmpty())
                                 ? java.security.MessageDigest.getInstance("SHA-256")
                                 : null;
                 try (InputStream in = conn.getInputStream();
@@ -406,7 +414,7 @@ final class UpdateManager {
                 }
                 if (digest != null) {
                     String actual = toHex(digest.digest());
-                    if (!actual.equalsIgnoreCase(expectedSha256)) {
+                    if (!actual.equalsIgnoreCase(effectiveSha256)) {
                         throw new Exception("安装包完整性校验失败，已丢弃本次下载");
                     }
                 }
