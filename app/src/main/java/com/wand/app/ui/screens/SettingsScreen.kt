@@ -43,8 +43,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -52,7 +50,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,7 +63,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
@@ -121,10 +117,7 @@ fun SettingsScreen(
     var serverVersion by remember { mutableStateOf<String?>(null) }
     var showRemoveServerConfirm by remember { mutableStateOf(false) }
 
-    var selectedSound by remember { mutableStateOf(settings.getNotificationSound()) }
-    var volume by remember { mutableFloatStateOf(settings.getNotificationVolume().toFloat()) }
     var hapticEnabled by remember { mutableStateOf(settings.isHapticEnabled()) }
-    var appIcon by remember { mutableStateOf(settings.getAppIcon()) }
     var keepAlive by remember { mutableStateOf(settings.isKeepAlive()) }
     var betaChannel by remember { mutableStateOf(settings.isBetaChannel()) }
     var appearanceMode by remember { mutableStateOf(settings.getAppearanceMode()) }
@@ -207,19 +200,7 @@ fun SettingsScreen(
                         )
                         RowDivider()
                         NotificationFeedbackContent(
-                            selectedSound = selectedSound,
-                            volume = volume,
                             hapticEnabled = hapticEnabled,
-                            onSoundSelected = { id ->
-                                selectedSound = id
-                                settings.setNotificationSound(id)
-                                settings.previewSound(id)
-                            },
-                            onVolumeChange = { volume = it },
-                            onVolumeCommit = {
-                                settings.setNotificationVolume(volume.toInt())
-                                settings.previewSound(selectedSound)
-                            },
                             onHapticChange = {
                                 hapticEnabled = it
                                 settings.setHapticEnabled(it)
@@ -281,22 +262,6 @@ fun SettingsScreen(
                             settings.setBetaChannel(it)
                         },
                     )
-                }
-
-                SettingsSection(
-                    title = "应用图标",
-                    description = "选择显示在桌面上的 Wand 图标。",
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        AppIconPickerContent(
-                            appIcon = appIcon,
-                            motionEnabled = motionEnabled,
-                            onSelect = { icon ->
-                                appIcon = icon
-                                settings.setAppIcon(icon)
-                            },
-                        )
-                    }
                 }
 
                 SettingsSection(
@@ -580,82 +545,9 @@ private fun SettingsChapterHeader(
 
 @Composable
 private fun NotificationFeedbackContent(
-    selectedSound: String,
-    volume: Float,
     hapticEnabled: Boolean,
-    onSoundSelected: (String) -> Unit,
-    onVolumeChange: (Float) -> Unit,
-    onVolumeCommit: () -> Unit,
     onHapticChange: (Boolean) -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        SettingBlockHeader(
-            title = "提示音",
-            icon = WandIcons.notification,
-            tint = WandColors.info,
-        )
-        // 与 NotificationHelper.SOUND_PRESETS 对齐。
-        WandChoiceStrip(
-            options = listOf(
-                "chime" to "叮咚",
-                "bubble" to "气泡",
-                "meow" to "喵~",
-                "bell" to "铃声",
-            ),
-            selected = selectedSound,
-            onSelect = onSoundSelected,
-            minHeight = 44.dp,
-            labelFontSize = 13.sp,
-            activeTextColor = WandColors.textPrimary,
-            flat = true,
-        )
-    }
-    RowDivider()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 58.dp)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        SettingsRowIcon(icon = WandIcons.volume, tint = WandColors.info)
-        Text(
-            "音量",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = WandColors.textPrimary,
-            modifier = Modifier.padding(start = 11.dp),
-        )
-        Slider(
-            value = volume,
-            onValueChange = onVolumeChange,
-            onValueChangeFinished = onVolumeCommit,
-            valueRange = 0f..100f,
-            colors = SliderDefaults.colors(
-                thumbColor = WandColors.brand,
-                activeTrackColor = WandColors.brand,
-                inactiveTrackColor = WandColors.brandSoft,
-            ),
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 8.dp),
-        )
-        Text(
-            "${volume.toInt()}%",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Monospace,
-            color = WandColors.textSecondary,
-            textAlign = TextAlign.End,
-            modifier = Modifier.widthIn(min = 38.dp),
-        )
-    }
-    RowDivider()
     SwitchRow(
         label = "振动反馈",
         checked = hapticEnabled,
@@ -1177,138 +1069,5 @@ private fun SwitchRow(
                 uncheckedTrackColor = WandColors.surfaceSoft,
             ),
         )
-    }
-}
-
-@Composable
-private fun AppIconPickerContent(
-    appIcon: String,
-    motionEnabled: Boolean,
-    onSelect: (String) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        SettingBlockHeader(
-            title = "应用图标",
-            icon = WandIcons.appearance,
-            tint = WandColors.brand,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AppIconCard(
-                name = "赛博虎妞",
-                backgroundRes = R.drawable.ic_launcher_background,
-                foregroundRes = R.drawable.ic_launcher_foreground,
-                selected = appIcon == "shorthair",
-                motionEnabled = motionEnabled,
-                modifier = Modifier.weight(1f),
-            ) { onSelect("shorthair") }
-            AppIconCard(
-                name = "勤劳初二",
-                backgroundRes = R.drawable.ic_launcher_background_garfield,
-                foregroundRes = R.drawable.ic_launcher_foreground_garfield,
-                selected = appIcon == "garfield",
-                motionEnabled = motionEnabled,
-                modifier = Modifier.weight(1f),
-            ) { onSelect("garfield") }
-        }
-    }
-}
-
-/**
- * 应用图标预览卡：launcher 前景/背景矢量按自适应图标安全区放大裁圆，
- * 模拟桌面实际效果；选中态只保留轻量边框和浅背景。
- */
-@Composable
-private fun AppIconCard(
-    name: String,
-    backgroundRes: Int,
-    foregroundRes: Int,
-    selected: Boolean,
-    motionEnabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(12.dp)
-    Row(
-        modifier = modifier
-            .clip(shape)
-            .background(if (selected) WandColors.brand.copy(alpha = 0.09f) else WandColors.surfaceSoft.copy(alpha = 0.38f))
-            .selectable(
-                selected = selected,
-                role = Role.RadioButton,
-                onClick = onClick,
-            )
-            .heightIn(min = 58.dp)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(WandColors.surfaceSoft),
-                contentAlignment = Alignment.Center,
-            ) {
-                // 自适应图标可视区约为画布中央 2/3，放大到 82dp 再裁 54dp 圆角方形，贴近桌面观感。
-                Image(
-                    painterResource(backgroundRes),
-                    contentDescription = null,
-                    modifier = Modifier.requiredSize(66.dp),
-                )
-                Image(
-                    painterResource(foregroundRes),
-                    contentDescription = null,
-                    modifier = Modifier.requiredSize(66.dp),
-                )
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = selected,
-                    enter = fadeIn(
-                        animationSpec = if (motionEnabled) WandMotion.tweenFast() else snap(),
-                    ) + scaleIn(
-                        initialScale = 0.88f,
-                        animationSpec = if (motionEnabled) WandMotion.tweenNormal() else snap(),
-                    ),
-                    exit = fadeOut(
-                        animationSpec = if (motionEnabled) WandMotion.tweenPress() else snap(),
-                    ) + scaleOut(
-                        targetScale = 0.92f,
-                        animationSpec = if (motionEnabled) WandMotion.tweenPress() else snap(),
-                    ),
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(2.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(WandColors.brand),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            WandIcons.check,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(9.dp),
-                        )
-                    }
-                }
-            }
-            Text(
-                name,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = WandColors.textPrimary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp),
-            )
     }
 }
