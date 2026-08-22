@@ -24,9 +24,8 @@ object WandShortcuts {
     const val EXTRA_FORCE_SERVER_RELOAD = "force_server_reload"
 
     const val ACTION_NEW_SESSION = "new-session"
-    const val ACTION_OPEN_WEB = "open-web"
 
-    /** 系统最多展示 4 个：固定「新建会话」「打开网页版」+ 最近 2 个结构化会话。 */
+    /** 系统最多展示 4 个：固定「新建会话」+ 最近 3 个结构化会话。 */
     fun update(context: Context, serverId: String, sessions: List<SessionSnapshot>) {
         val shortcuts = mutableListOf(
             staticShortcut(
@@ -40,23 +39,12 @@ object WandShortcuts {
                 putExtra(EXTRA_SERVER_ID, serverId)
                 putExtra(EXTRA_QUICK_ACTION, ACTION_NEW_SESSION)
             },
-            staticShortcut(
-                context,
-                id = "shortcut-open-web",
-                shortLabel = "打开网页版",
-                longLabel = "打开网页版",
-                iconRes = R.drawable.ic_shortcut_web,
-                rank = 1,
-            ) {
-                putExtra(EXTRA_SERVER_ID, serverId)
-                putExtra(EXTRA_QUICK_ACTION, ACTION_OPEN_WEB)
-            },
         )
 
         // 只取结构化会话：PTY 会话原生不承载（走网页版），快捷直达聊天才有意义。
         sessions.asSequence()
             .filter { (it.archived ?: false) == false && it.isStructured }
-            .take(2)
+            .take(3)
             .forEachIndexed { index, session ->
                 shortcuts += staticShortcut(
                     context,

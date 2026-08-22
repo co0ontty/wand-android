@@ -313,7 +313,6 @@ private fun ReadyContent(
             initialQuickActionConsumed = true
             when (val action = initialQuickAction) {
                 is QuickAction.NewSession -> nav.push(Screen.NewSession())
-                is QuickAction.OpenWeb -> actions.navigation.openWeb()
                 is QuickAction.OpenSession -> nav.push(
                     if (action.isStructured == false) {
                         Screen.PtyTerminal(action.sessionId)
