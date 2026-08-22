@@ -70,7 +70,6 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity implements NetworkMonitor.Listener {
 
-    private static final int NOTIFICATION_PERMISSION_REQUEST = 1001;
     private static final int FILE_CHOOSER_REQUEST = 1002;
     private static final int WEB_MEDIA_PERMISSION_REQUEST = 1004;
 
@@ -897,52 +896,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         }
 
         @JavascriptInterface
-        public String getPermission() {
-            int result = ContextCompat.checkSelfPermission(
-                    MainActivity.this, android.Manifest.permission.POST_NOTIFICATIONS);
-            if (result == PackageManager.PERMISSION_GRANTED) return "granted";
-            if (serverStore.wasNotificationPermissionRequested()
-                    || ActivityCompat.shouldShowRequestPermissionRationale(
-                            MainActivity.this, android.Manifest.permission.POST_NOTIFICATIONS))
-                return "denied";
-            return "default";
-        }
-
-        @JavascriptInterface
-        public void requestPermission() {
-            serverStore.markNotificationPermissionRequested();
-            runOnUiThread(() -> ActivityCompat.requestPermissions(
-                    MainActivity.this,
-                    new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
-                    NOTIFICATION_PERMISSION_REQUEST));
-        }
-
-        @JavascriptInterface
-        public void openNotificationSettings() {
-            runOnUiThread(() -> {
-                try {
-                    Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
-                    startActivity(intent);
-                } catch (Exception ignored) {
-                    Toast.makeText(MainActivity.this,
-                            "无法打开通知设置，请在系统设置中找到 Wand",
-                            Toast.LENGTH_LONG).show();
-                }
-            });
-        }
-
-        @JavascriptInterface
-        public String getAppIcon() {
-            return serverStore.getAppIcon();
-        }
-
-        @JavascriptInterface
-        public void setAppIcon(String iconName) {
-            AppIconSwitcher.setAppIcon(MainActivity.this, serverStore, iconName);
-        }
-
-        @JavascriptInterface
         public String getAppVersion() {
             try {
                 return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
@@ -1092,37 +1045,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         }
 
         @JavascriptInterface
-        public void vibrate(String pattern) {
-            if (!serverStore.isHapticEnabled()) return;
-            android.os.Vibrator vibrator = (android.os.Vibrator)
-                    getSystemService(android.content.Context.VIBRATOR_SERVICE);
-            if (vibrator == null || !vibrator.hasVibrator()) return;
-            try {
-                android.os.VibrationEffect effect;
-                switch (pattern != null ? pattern : "light") {
-                    case "medium":
-                        effect = android.os.VibrationEffect.createOneShot(30,
-                                android.os.VibrationEffect.DEFAULT_AMPLITUDE);
-                        break;
-                    case "success":
-                        effect = android.os.VibrationEffect.createWaveform(
-                                new long[]{0, 10, 80, 10}, -1);
-                        break;
-                    case "error":
-                        effect = android.os.VibrationEffect.createWaveform(
-                                new long[]{0, 30, 60, 30, 60, 30}, -1);
-                        break;
-                    case "light":
-                    default:
-                        effect = android.os.VibrationEffect.createOneShot(10,
-                                android.os.VibrationEffect.DEFAULT_AMPLITUDE);
-                        break;
-                }
-                vibrator.vibrate(effect);
-            } catch (Exception ignored) {}
-        }
-
-        @JavascriptInterface
         public boolean isHapticEnabled() {
             return serverStore.isHapticEnabled();
         }
@@ -1163,14 +1085,6 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
-            String result = (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED)
-                    ? "granted" : "denied";
-            webView.evaluateJavascript(
-                    "if(window._onNativePermissionResult) window._onNativePermissionResult('" + result + "');",
-                    null);
-            return;
-        }
         if (requestCode == WEB_MEDIA_PERMISSION_REQUEST) {
             PermissionRequest request = pendingWebPermissionRequest;
             String[] resources = pendingWebPermissionResources;
