@@ -213,11 +213,13 @@ class WorkspaceModelsTest {
             .put("defaultProvider", "codex")
             .put("createdAt", "2026-01-01T00:00:00Z")
             .put("lastOpenedAt", "2026-02-01T00:00:00Z")
+            .put("worktreeCount", 3)
         val ws = Workspace.parse(o)!!
         assertEquals("ws-1", ws.id)
         assertEquals("My Project", ws.name)
         assertEquals("/home/user/project", ws.cwd)
         assertEquals("codex", ws.defaultProvider)
+        assertEquals(3, ws.worktreeCount)
     }
 
     @Test
@@ -288,6 +290,55 @@ class WorkspaceModelsTest {
         val snap = SessionSnapshot.parse(o)
         assertNull(snap.workspaceId)
         assertNull(snap.workspaceTaskId)
+    }
+
+    @Test
+    fun parseWorktreeOverview_andBuildMergePrompt() {
+        val overview = WorkspaceWorktreeOverview.parse(
+            JSONObject()
+                .put("workspaceId", "ws-1")
+                .put("repoRoot", "/repo")
+                .put("targetBranch", "main")
+                .put(
+                    "worktrees",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("taskId", "task-1")
+                            .put("taskName", "登录流程")
+                            .put("taskStatus", "active")
+                            .put("branch", "wand/task-1")
+                            .put("path", "/repo/.wand-worktrees/task-1")
+                            .put("state", "ready")
+                            .put("actionable", true)
+                            .put("aheadCount", 1)
+                            .put("hasUncommittedChanges", false)
+                            .put("hasConflicts", false)
+                            .put(
+                                "commits",
+                                JSONArray().put(
+                                    JSONObject()
+                                        .put("hash", "abc")
+                                        .put("shortHash", "abc")
+                                        .put("subject", "feat: add login"),
+                                ),
+                            ),
+                    ),
+                ),
+        )!!
+        assertEquals("main", overview.targetBranch)
+        assertEquals("登录流程 · feat: add login", overview.worktrees.single().summary)
+        val workspace = Workspace("ws-1", "Wand", "/repo", "claude", null, null, null, 1)
+        val prompt = buildWorkspaceMergeAgentPrompt(workspace, overview, setOf("task-1"))
+        assertTrue(prompt.contains("唯一目标分支：main"))
+        assertTrue(prompt.contains("wand/task-1"))
+        assertTrue(prompt.contains("feat: add login"))
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun buildMergePrompt_emptySelectionThrows() {
+        val workspace = Workspace("ws-1", "Wand", "/repo", null, null, null, null)
+        val overview = WorkspaceWorktreeOverview("ws-1", "/repo", "main", emptyList())
+        buildWorkspaceMergeAgentPrompt(workspace, overview, emptySet())
     }
 
     // MARK: - 会话排序

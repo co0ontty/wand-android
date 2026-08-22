@@ -17,6 +17,7 @@ import com.wand.app.data.SessionEvent
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
@@ -376,9 +377,11 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 if (isStructured) {
                     // 结构化回复通过事件流持续更新；HTTP 只需确认服务端已接收。
                     // 若等待整轮完成，首轮生成标题与模型回复可能超过 30 秒并被误报为网络超时。
-                    api.sendInput(sessionId, trimmed, respondImmediately = !queueing)
+                    val accepted = api.sendInput(sessionId, trimmed, respondImmediately = !queueing)
+                    apply(accepted)
+                    socket.requestResync()
                 } else {
-                    api.sendInput(sessionId, trimmed + "\n", view = "chat")
+                    sendPtyChatInput(trimmed)
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "发送失败"
@@ -399,6 +402,12 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         if (text.isNotEmpty()) return text
         return lastUser.content.filterIsInstance<com.wand.app.data.ContentBlock.ToolResult>()
             .firstOrNull()?.text?.trim()?.takeIf(String::isNotEmpty)
+    }
+
+    private suspend fun sendPtyChatInput(text: String) {
+        api.sendInput(sessionId, text, view = "chat")
+        delay(30)
+        api.sendInput(sessionId, "\r", view = "chat", shortcutKey = "enter_text")
     }
 
     // MARK: - AskUserQuestion 交互（对齐 Web 端 __askSelect / __askSubmit）
@@ -431,7 +440,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 if (isStructured) {
                     api.sendInput(sessionId, answerText, respondImmediately = true)
                 } else {
-                    api.sendInput(sessionId, answerText + "\n", view = "chat")
+                    sendPtyChatInput(answerText)
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "发送失败"
@@ -523,8 +532,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
     }
 
-    /** 权限决策。结构化 escalation 走 resolve 端点；PTY 旧式提示走 approve/deny。 */
+    /** 权限决策。结构化会话没有运行时批准条；PTY 走 approve/deny。 */
     fun resolvePermission(resolution: String) {
+        if (isStructured) {
+            pendingEscalation = null
+            permissionBlocked = false
+            return
+        }
         val esc = pendingEscalation
         if (esc != null) {
             pendingEscalation = null

@@ -5,6 +5,25 @@ interface WorkspacePort {
     /** GET /api/workspaces —— 列出所有项目（按最近打开排序）。 */
     suspend fun listWorkspaces(): List<Workspace>
 
+    /** POST /api/workspaces —— 创建项目（不自动开会话）。 */
+    suspend fun createWorkspace(name: String, cwd: String): Workspace {
+        throw UnsupportedOperationException("创建项目接口不可用")
+    }
+
+    /** GET /api/workspaces/:id/worktrees —— 任务 worktree 合并概览。 */
+    suspend fun workspaceWorktreeOverview(workspaceId: String): WorkspaceWorktreeOverview {
+        throw UnsupportedOperationException("worktree 概览接口不可用")
+    }
+
+    /** 启动只绑定项目的 Worktree 合并 Agent（POST /api/commands，mode=managed）。 */
+    suspend fun startWorktreeMergeAgent(
+        workspace: Workspace,
+        provider: String,
+        prompt: String,
+    ): SessionSnapshot {
+        throw UnsupportedOperationException("worktree 合并接口不可用")
+    }
+
     /** GET /api/workspaces/:id/tasks —— 列出某项目下的任务。 */
     suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask>
 

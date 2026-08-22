@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspacePort
@@ -71,6 +72,7 @@ fun WorkspaceListScreen(
     selectedTaskId: String? = null,
     onTaskRenamed: (WorkspaceTask) -> Unit = {},
     onTaskDeleted: (String) -> Unit = {},
+    onOpenSession: (SessionSnapshot) -> Unit = {},
 ) {
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -80,6 +82,10 @@ fun WorkspaceListScreen(
     var deleteTarget by remember { mutableStateOf<WorkspaceTask?>(null) }
     var mutationBusy by remember { mutableStateOf(false) }
     var mutationError by remember { mutableStateOf<String?>(null) }
+    var creatingWorkspace by remember { mutableStateOf(false) }
+    var createName by remember { mutableStateOf("") }
+    var createCwd by remember { mutableStateOf("") }
+    var reviewTarget by remember { mutableStateOf<Workspace?>(null) }
     // Compose 可观察缓存：异步任务返回后立即刷新展开区，不依赖其他状态碰巧重组。
     val taskCache = remember { mutableStateMapOf<String, List<WorkspaceTask>>() }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
@@ -238,6 +244,81 @@ fun WorkspaceListScreen(
         }
     }
 
+    if (creatingWorkspace) {
+        val name = createName.trim()
+        val cwd = createCwd.trim()
+        WandDialog(
+            title = "新建项目",
+            onDismissRequest = { if (!mutationBusy) creatingWorkspace = false },
+            icon = WandIcons.add,
+            confirm = WandDialogAction(
+                label = if (mutationBusy) "创建中…" else "创建",
+                enabled = !mutationBusy && name.isNotEmpty() && cwd.isNotEmpty(),
+                onClick = {
+                    if (mutationBusy || name.isEmpty() || cwd.isEmpty()) return@WandDialogAction
+                    scope.launch {
+                        mutationBusy = true
+                        mutationError = null
+                        try {
+                            api.createWorkspace(name, cwd)
+                            creatingWorkspace = false
+                            createName = ""
+                            createCwd = ""
+                            refresh()
+                        } catch (error: Exception) {
+                            mutationError = error.message ?: "创建项目失败"
+                        } finally {
+                            mutationBusy = false
+                        }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction(
+                label = "取消",
+                enabled = !mutationBusy,
+                onClick = { creatingWorkspace = false },
+            ),
+        ) {
+            WandTextField(
+                value = createName,
+                onValueChange = { createName = it; mutationError = null },
+                modifier = Modifier.fillMaxWidth(),
+                label = "项目名称",
+                enabled = !mutationBusy,
+                singleLine = true,
+            )
+            Spacer(Modifier.height(8.dp))
+            WandTextField(
+                value = createCwd,
+                onValueChange = { createCwd = it; mutationError = null },
+                modifier = Modifier.fillMaxWidth(),
+                label = "项目目录",
+                enabled = !mutationBusy,
+                singleLine = true,
+            )
+            mutationError?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.danger,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+    }
+
+    reviewTarget?.let { workspace ->
+        WorkspaceWorktreeReviewSheet(
+            workspace = workspace,
+            api = api,
+            onDismiss = { reviewTarget = null },
+            onMergeAgentStarted = { session ->
+                reviewTarget = null
+                onOpenSession(session)
+            },
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -269,6 +350,15 @@ fun WorkspaceListScreen(
                     color = WandColors.textPrimary,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f).padding(start = 4.dp),
+                )
+                Icon(
+                    WandIcons.add,
+                    contentDescription = "新建项目",
+                    tint = WandColors.textSecondary,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clickable { creatingWorkspace = true; mutationError = null }
+                        .padding(10.dp),
                 )
                 Icon(
                     WandIcons.refresh,
@@ -304,7 +394,7 @@ fun WorkspaceListScreen(
             workspaces.isEmpty() -> {
                 EmptyState(
                     title = "还没有项目",
-                    message = "先在网页版创建项目与任务，这里会同步显示。也可以打开网页版继续。",
+                    message = "点右上角新建项目，或先在网页版创建后这里会同步显示。",
                 )
             }
             else -> {
@@ -344,6 +434,7 @@ fun WorkspaceListScreen(
                                 mutationError = null
                                 deleteTarget = task
                             },
+                            onReviewWorktree = { reviewTarget = workspace },
                         )
                     }
                 }
@@ -364,6 +455,7 @@ private fun WorkspaceCard(
     onOpenTask: (WorkspaceTask) -> Unit,
     onRenameTask: (WorkspaceTask) -> Unit,
     onDeleteTask: (WorkspaceTask) -> Unit,
+    onReviewWorktree: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -406,6 +498,27 @@ private fun WorkspaceCard(
                     color = WandColors.textSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val worktreeCount = workspace.worktreeCount
+                ?: tasks.orEmpty().count { it.worktree != null }
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .clickable(enabled = worktreeCount > 0, onClick = onReviewWorktree)
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                GitBranchIcon(
+                    tint = if (worktreeCount > 0) WandColors.brand else WandColors.textMuted,
+                    modifier = Modifier.size(12.dp),
+                )
+                Text(
+                    "$worktreeCount",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (worktreeCount > 0) WandColors.brand else WandColors.textMuted,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
             Icon(

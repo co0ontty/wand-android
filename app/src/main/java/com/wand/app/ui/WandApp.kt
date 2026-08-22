@@ -527,6 +527,7 @@ private fun SinglePaneContent(
             },
             onTaskRenamed = { updated -> nav.renameWorkspaceTask(updated.id, updated.name) },
             onTaskDeleted = { taskId -> nav.closeWorkspaceTask(taskId) },
+            onOpenSession = { session -> nav.push(session.detailScreen()) },
         )
         is Screen.WorkspaceTask -> WorkspaceTaskScreen(
             api = api,
@@ -714,6 +715,7 @@ private fun WideReadyContent(
                     },
                     onTaskRenamed = { updated -> nav.renameWorkspaceTask(updated.id, updated.name) },
                     onTaskDeleted = { taskId -> nav.closeWorkspaceTask(taskId) },
+                    onOpenSession = { session -> nav.setDetail(session.detailScreen()) },
                 )
                 is Screen.WorkspaceTask -> WorkspaceTaskScreen(
                     api = api,

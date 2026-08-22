@@ -37,6 +37,7 @@ object ChatSessionEventReducer {
         snapshot: SessionSnapshot,
         pending: PendingSessionSettings = PendingSessionSettings(),
     ): ChatSessionEventState {
+        val previousError = current.snapshot?.structuredState?.lastError
         var next = current.copy(snapshot = snapshot)
         snapshot.messages?.let {
             next = applyMessages(
@@ -66,6 +67,10 @@ object ChatSessionEventReducer {
         }
         if (!next.permissionBlocked || snapshot.pendingEscalation != null) {
             next = next.copy(legacyPermissionPrompt = null)
+        }
+        val incomingError = snapshot.structuredState?.lastError?.trim()?.takeIf { it.isNotEmpty() }
+        if (incomingError != null && incomingError != previousError) {
+            next = next.copy(errorMessage = incomingError)
         }
         return next
     }

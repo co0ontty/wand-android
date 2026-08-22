@@ -83,7 +83,8 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
         if (!silent) loading = true
         val refreshLimit = entries.size.coerceIn(PAGE_SIZE, MAX_REFRESH_LIMIT)
         return try {
-            val page = port.fetchSessionList(offset = 0, limit = refreshLimit)
+            val page = port.fetchSessionList(offset = 0, limit = refreshLimit, revision = revision)
+            if (page.unchanged) return true
             publishRefreshedPage(page, refreshLimit)
             true
         } catch (e: Exception) {

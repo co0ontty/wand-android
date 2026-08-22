@@ -486,18 +486,23 @@ data class SessionListPage(
     val offset: Int,
     val total: Int,
     val revision: String? = null,
+    val unchanged: Boolean = false,
 ) {
     companion object {
         fun parse(o: JSONObject): SessionListPage {
+            val unchanged = o.optBoolean("unchanged", false)
+            val offset = o.int("offset") ?: throw IllegalArgumentException("响应缺少 offset")
+            val total = o.int("total") ?: throw IllegalArgumentException("响应缺少 total")
+            val revision = o.str("revision")?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("响应缺少 revision")
+            if (unchanged) {
+                return SessionListPage(emptyList(), offset, total, revision, unchanged = true)
+            }
             val rawEntries = o.arr("entries") ?: throw IllegalArgumentException("响应缺少 entries")
             val entries = SessionListEntry.parseList(rawEntries)
             if (entries.size != rawEntries.length() || entries.map { it.key }.toSet().size != entries.size) {
                 throw IllegalArgumentException("响应包含无效会话条目")
             }
-            val offset = o.int("offset") ?: throw IllegalArgumentException("响应缺少 offset")
-            val total = o.int("total") ?: throw IllegalArgumentException("响应缺少 total")
-            val revision = o.str("revision")?.takeIf { it.isNotBlank() }
-                ?: throw IllegalArgumentException("响应缺少 revision")
             require(offset >= 0 && total >= offset && entries.size <= total - offset) {
                 "响应分页范围无效"
             }

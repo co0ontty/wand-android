@@ -141,8 +141,26 @@ class SessionListStateTest {
         assertTrue(state.load(silent = true))
 
         assertEquals(Triple(0, 20, null), port.pageRequests[0])
-        assertEquals(Triple(0, 20, null), port.pageRequests[1])
+        assertEquals(Triple(0, 20, "revision-a"), port.pageRequests[1])
         assertSame(cachedEntries, state.entries)
+    }
+
+    @Test
+    fun silentRefreshKeepsEntriesWhenServerReportsUnchanged() = runBlocking {
+        val first = managed("first")
+        val port = FakeSessionListPort().apply {
+            pages[0] = page(listOf(first), total = 1, revision = "revision-a")
+        }
+        val state = SessionListState(port)
+        assertTrue(state.load())
+        val cachedEntries = state.entries
+        port.pages[0] = SessionListPage(emptyList(), 0, 1, "revision-a", unchanged = true)
+
+        assertTrue(state.load(silent = true))
+
+        assertSame(cachedEntries, state.entries)
+        assertEquals(1, state.total)
+        assertEquals(Triple(0, 20, "revision-a"), port.pageRequests[1])
     }
 
     @Test
@@ -162,7 +180,7 @@ class SessionListStateTest {
         port.pages[0] = page(firstPage + secondPage, total = 40, revision = "revision-a")
         assertTrue(state.load(silent = true))
 
-        assertEquals(Triple(0, 40, null), port.pageRequests.last())
+        assertEquals(Triple(0, 40, "revision-a"), port.pageRequests.last())
         assertSame(cachedEntries, state.entries)
     }
 

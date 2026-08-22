@@ -343,6 +343,7 @@ fun SessionListScreen(
                         embedded = true,
                         refreshRequest = workspaceRefreshRequest,
                         selectedTaskId = selectedTaskId,
+                        onOpenSession = onOpenSession,
                     )
                 }
                 state.loading && visibleEntries.isEmpty() -> {

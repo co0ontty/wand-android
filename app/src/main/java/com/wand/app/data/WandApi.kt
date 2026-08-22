@@ -428,6 +428,8 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
             "codex" -> body.put("runner", "codex-cli-exec")
             "opencode" -> body.put("runner", "opencode-cli-run")
             "grok" -> body.put("runner", "grok-cli-headless")
+            "qoder" -> body.put("runner", "qoder-cli-print")
+            "pi" -> body.put("runner", "pi-cli-json")
         }
         if (!mode.isNullOrEmpty()) body.put("mode", mode)
         if (!model.isNullOrEmpty()) body.put("model", model)
@@ -639,6 +641,41 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun listWorkspaces(): List<Workspace> =
         Workspace.parseList(requestArray("GET", "/api/workspaces"))
+
+    override suspend fun createWorkspace(name: String, cwd: String): Workspace {
+        val created = Workspace.parse(
+            requestObject(
+                "POST",
+                "/api/workspaces",
+                JSONObject().put("name", name).put("cwd", cwd),
+            ),
+        ) ?: throw WandApiException(500, "创建项目响应无效。")
+        return created
+    }
+
+    override suspend fun workspaceWorktreeOverview(workspaceId: String): WorkspaceWorktreeOverview {
+        val parsed = WorkspaceWorktreeOverview.parse(
+            requestObject("GET", "/api/workspaces/${encode(workspaceId)}/worktrees"),
+        ) ?: throw WandApiException(500, "Worktree 概览响应无效。")
+        return parsed
+    }
+
+    override suspend fun startWorktreeMergeAgent(
+        workspace: Workspace,
+        provider: String,
+        prompt: String,
+    ): SessionSnapshot {
+        val command = if (provider == "qoder") "qodercli" else provider
+        val body = JSONObject()
+            .put("command", command)
+            .put("provider", provider)
+            .put("cwd", workspace.cwd)
+            .put("mode", "managed")
+            .put("initialInput", prompt)
+            .put("sessionSource", "interactive")
+            .put("workspaceId", workspace.id)
+        return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
+    }
 
     override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> =
         WorkspaceTask.parseList(requestArray("GET", "/api/workspaces/${encode(workspaceId)}/tasks"))

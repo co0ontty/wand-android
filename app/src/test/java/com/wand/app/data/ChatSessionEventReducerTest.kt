@@ -209,6 +209,29 @@ class ChatSessionEventReducerTest {
     }
 
     @Test
+    fun applySnapshotToastsNewLastErrorOnce() {
+        val first = ChatSessionEventReducer.applySnapshot(
+            ChatSessionEventState(),
+            snapshot("s1").copy(
+                structuredState = StructuredSessionState(
+                    runner = "claude-cli-print",
+                    model = null,
+                    lastError = "服务重启，上一轮已中断",
+                    inFlight = false,
+                    activeRequestId = null,
+                ),
+            ),
+        )
+        assertEquals("服务重启，上一轮已中断", first.errorMessage)
+
+        val second = ChatSessionEventReducer.applySnapshot(
+            first.copy(errorMessage = null),
+            first.snapshot!!,
+        )
+        assertNull(second.errorMessage)
+    }
+
+    @Test
     fun topicOutputRefreshesSnapshotAndGeneratingState() {
         val initial = ChatSessionEventReducer.applySnapshot(
             ChatSessionEventState(),

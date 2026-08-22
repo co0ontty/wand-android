@@ -321,6 +321,7 @@ data class Workspace(
     val layout: LayoutNode?,
     val createdAt: String?,
     val lastOpenedAt: String?,
+    val worktreeCount: Int? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): Workspace? {
@@ -333,6 +334,7 @@ data class Workspace(
                 layout = LayoutNode.parse(o.opt("layout")),
                 createdAt = o.str("createdAt"),
                 lastOpenedAt = o.str("lastOpenedAt"),
+                worktreeCount = o.int("worktreeCount"),
             )
         }
 
@@ -460,6 +462,170 @@ private data class IndexedSession(
     val index: Int,
     val startedAt: String?,
 )
+
+data class WorkspaceWorktreeCommit(
+    val hash: String,
+    val shortHash: String?,
+    val subject: String,
+) {
+    companion object {
+        fun parse(o: JSONObject): WorkspaceWorktreeCommit? {
+            val hash = o.str("hash")?.takeIf { it.isNotEmpty() } ?: return null
+            val subject = o.str("subject") ?: return null
+            return WorkspaceWorktreeCommit(hash, o.str("shortHash"), subject)
+        }
+
+        fun parseList(arr: JSONArray): List<WorkspaceWorktreeCommit> =
+            arr.parseEach { parse(it) }
+    }
+}
+
+/** `GET /api/workspaces/:id/worktrees` 的任务 worktree 审查项。 */
+data class WorkspaceWorktreeReview(
+    val taskId: String,
+    val taskName: String,
+    val taskStatus: String,
+    val branch: String,
+    val path: String,
+    val baseRef: String?,
+    val state: String,
+    val actionable: Boolean,
+    val reason: String?,
+    val aheadCount: Int,
+    val hasUncommittedChanges: Boolean,
+    val hasConflicts: Boolean,
+    val commits: List<WorkspaceWorktreeCommit>,
+) {
+    val stateLabel: String
+        get() = when (state) {
+            "ready" -> "待合并"
+            "dirty" -> "有未提交改动"
+            "conflict" -> "可能冲突"
+            "empty" -> "已同步"
+            else -> "不可用"
+        }
+
+    val summary: String
+        get() {
+            val commit = commits.firstOrNull()?.subject?.trim().orEmpty()
+            val name = taskName.trim()
+            return when {
+                commit.isNotEmpty() && commit != name -> "$name · $commit"
+                name.isNotEmpty() -> name
+                commit.isNotEmpty() -> commit
+                else -> branch
+            }
+        }
+
+    val details: String
+        get() {
+            val parts = buildList {
+                if (aheadCount > 0) add("$aheadCount commits")
+                if (hasUncommittedChanges) add("工作区有改动")
+                if (hasConflicts) add("需处理冲突")
+            }
+            if (parts.isNotEmpty()) return parts.joinToString(" · ")
+            if (!reason.isNullOrEmpty()) return reason
+            return "没有新的待合并改动"
+        }
+
+    companion object {
+        fun parse(o: JSONObject): WorkspaceWorktreeReview? {
+            val taskId = o.str("taskId")?.takeIf { it.isNotEmpty() } ?: return null
+            return WorkspaceWorktreeReview(
+                taskId = taskId,
+                taskName = o.str("taskName") ?: "",
+                taskStatus = o.str("taskStatus") ?: "",
+                branch = o.str("branch") ?: "",
+                path = o.str("path") ?: "",
+                baseRef = o.str("baseRef"),
+                state = o.str("state") ?: "",
+                actionable = o.bool("actionable") ?: false,
+                reason = o.str("reason"),
+                aheadCount = o.int("aheadCount") ?: 0,
+                hasUncommittedChanges = o.bool("hasUncommittedChanges") ?: false,
+                hasConflicts = o.bool("hasConflicts") ?: false,
+                commits = o.arr("commits")?.let(WorkspaceWorktreeCommit::parseList) ?: emptyList(),
+            )
+        }
+
+        fun parseList(arr: JSONArray): List<WorkspaceWorktreeReview> =
+            arr.parseEach { parse(it) }
+    }
+}
+
+data class WorkspaceWorktreeOverview(
+    val workspaceId: String,
+    val repoRoot: String,
+    val targetBranch: String,
+    val worktrees: List<WorkspaceWorktreeReview>,
+) {
+    val actionableWorktrees: List<WorkspaceWorktreeReview>
+        get() = worktrees.filter { it.actionable }
+
+    companion object {
+        fun parse(o: JSONObject): WorkspaceWorktreeOverview? {
+            val workspaceId = o.str("workspaceId")?.takeIf { it.isNotEmpty() } ?: return null
+            return WorkspaceWorktreeOverview(
+                workspaceId = workspaceId,
+                repoRoot = o.str("repoRoot") ?: "",
+                targetBranch = o.str("targetBranch") ?: "",
+                worktrees = o.arr("worktrees")?.let(WorkspaceWorktreeReview::parseList) ?: emptyList(),
+            )
+        }
+    }
+}
+
+/**
+ * 与 Web `buildWorkspaceMergeAgentPrompt` / iOS 同名函数一致：
+ * Agent 只拿服务端审查结果里的规范路径与 ref。
+ */
+fun buildWorkspaceMergeAgentPrompt(
+    workspace: Workspace,
+    overview: WorkspaceWorktreeOverview,
+    selectedTaskIds: Set<String>,
+): String {
+    val selected = overview.worktrees.filter { it.taskId in selectedTaskIds && it.actionable }
+    if (overview.targetBranch.isEmpty()) {
+        throw IllegalStateException("无法识别项目默认分支。")
+    }
+    if (selected.isEmpty()) {
+        throw IllegalStateException("请至少选择一个有待合并改动的 Worktree。")
+    }
+    val manifest = JSONArray()
+    selected.forEachIndexed { index, worktree ->
+        val subjects = JSONArray()
+        worktree.commits.map { it.subject }.filter { it.isNotEmpty() }.forEach(subjects::put)
+        manifest.put(
+            JSONObject()
+                .put("order", index + 1)
+                .put("task", worktree.taskName)
+                .put("branch", worktree.branch)
+                .put("worktreePath", worktree.path)
+                .put("baseRef", worktree.baseRef ?: JSONObject.NULL)
+                .put("uncommittedChanges", worktree.hasUncommittedChanges)
+                .put("potentialConflict", worktree.hasConflicts)
+                .put("commitsAhead", worktree.aheadCount)
+                .put("commitSubjects", subjects),
+        )
+    }
+    return listOf(
+        "你是 Wand 为项目「${workspace.name}」启动的 Worktree 合并 Agent。",
+        "项目主工作区：${overview.repoRoot.ifEmpty { workspace.cwd }}",
+        "唯一目标分支：${overview.targetBranch}",
+        "",
+        "请按清单顺序审查并合并所选 Worktree：",
+        manifest.toString(2),
+        "",
+        "执行要求：",
+        "1. 先读取项目内适用的 AGENTS.md/agent.md 与仓库约定，再检查主工作区和每个 Worktree 的真实 Git 状态。",
+        "2. 对有未提交改动的 Worktree，先理解改动、完成必要验证，并创建清晰的提交；不得丢弃或覆盖现有用户改动。",
+        "3. 只把清单中的分支合并到 ${overview.targetBranch}，按清单顺序逐个处理；不要改为其他目标分支。",
+        "4. 遇到冲突时理解双方意图后解决并验证；若无法安全判断，停止在可恢复状态并清楚报告，不要强行覆盖。",
+        "5. 合并完成后运行与改动相称的测试。不要 push，也不要删除 Worktree、任务分支或 Wand 的项目任务记录。",
+        "6. 最后汇报每个 Worktree 的提交/合并结果、测试结果，以及任何仍需人工处理的问题。",
+    ).joinToString("\n")
+}
 
 /** 工作区内统一使用的 provider 展示名（对齐 Web workspaceProviderLabel）。 */
 fun workspaceProviderLabel(provider: String?): String = when (provider) {
