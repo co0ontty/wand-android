@@ -405,6 +405,91 @@ data class WorkspaceTask(
     }
 }
 
+/** POST /api/workspaces/:id/tasks 的返回：创建出的任务（含服务端生成的 worktree 信息）。 */
+data class WorkspaceTaskCreation(
+    val id: String,
+    val workspaceId: String,
+    val name: String,
+    val worktree: WorkspaceTaskWorktree?,
+    val status: WorkspaceTaskStatus,
+) {
+    companion object {
+        fun parse(o: JSONObject): WorkspaceTaskCreation? {
+            val id = o.str("id")?.takeIf { it.isNotEmpty() } ?: return null
+            return WorkspaceTaskCreation(
+                id = id,
+                workspaceId = o.str("workspaceId") ?: "",
+                name = o.str("name") ?: "",
+                worktree = WorkspaceTaskWorktree.parse(o.obj("worktree")),
+                status = parseWorkspaceTaskStatus(o.str("status")),
+            )
+        }
+    }
+}
+
+/**
+ * GET /api/tasks 聚合行：任务 + 运行期派生字段；目录信息在 TaskDirectoryGroup 上。
+ * 对齐 web/iOS 同名模型。
+ */
+data class WorkspaceTaskSummary(
+    val task: WorkspaceTask,
+    /** 任务实际运行目录。 */
+    val cwd: String,
+    /** 是否隔离（有独立 worktree）。 */
+    val isolated: Boolean,
+    val worktreeError: String?,
+    val sessions: List<WorkspaceSessionSummary>,
+) {
+    val id: String get() = task.id
+    val isIsolated: Boolean get() = isolated || task.worktree != null
+
+    companion object {
+        fun parse(o: JSONObject): WorkspaceTaskSummary? {
+            val task = WorkspaceTask.parse(o) ?: return null
+            return WorkspaceTaskSummary(
+                task = task,
+                cwd = o.str("cwd") ?: "",
+                isolated = o.bool("isolated") ?: false,
+                worktreeError = o.str("worktreeError"),
+                sessions = o.arr("sessions")?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
+            )
+        }
+    }
+}
+
+/**
+ * 目录组一级容器：任务归属目录；未绑定任务的会话归入 standaloneSessions。
+ * synthetic 表示该目录没有项目实体，仅用于展示。
+ */
+data class TaskDirectoryGroup(
+    val workspaceId: String,
+    val workspaceName: String,
+    val workspaceCwd: String,
+    val synthetic: Boolean,
+    val tasks: List<WorkspaceTaskSummary>,
+    val standaloneSessions: List<WorkspaceSessionSummary>,
+) {
+    val id: String get() = workspaceId
+
+    companion object {
+        fun parse(o: JSONObject): TaskDirectoryGroup? {
+            val workspaceId = o.str("workspaceId")?.takeIf { it.isNotEmpty() } ?: return null
+            return TaskDirectoryGroup(
+                workspaceId = workspaceId,
+                workspaceName = o.str("workspaceName") ?: "",
+                workspaceCwd = o.str("workspaceCwd") ?: "",
+                synthetic = o.bool("synthetic") ?: false,
+                tasks = o.arr("tasks")?.parseEach(WorkspaceTaskSummary::parse) ?: emptyList(),
+                standaloneSessions = o.arr("standaloneSessions")
+                    ?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
+            )
+        }
+
+        fun parseList(arr: JSONArray): List<TaskDirectoryGroup> =
+            arr.parseEach { parse(it) }
+    }
+}
+
 /** GET /api/workspace-tasks/:taskId 的返回：在 WorkspaceTask 基础上带回运行期派生字段。 */
 data class WorkspaceTaskDetail(
     val task: WorkspaceTask,

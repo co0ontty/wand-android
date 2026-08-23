@@ -27,6 +27,25 @@ interface WorkspacePort {
     /** GET /api/workspaces/:id/tasks —— 列出某项目下的任务。 */
     suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask>
 
+    /**
+     * POST /api/workspaces/:id/tasks —— 创建任务。
+     * [worktree] 为 null 时交由服务端默认（git 仓库自动隔离）；
+     * 显式 false 跳过隔离，会话直接跑在项目目录。
+     */
+    suspend fun createWorkspaceTask(
+        workspaceId: String,
+        name: String,
+        baseRef: String? = null,
+        worktree: Boolean? = null,
+    ): WorkspaceTaskCreation {
+        throw UnsupportedOperationException("创建任务接口不可用")
+    }
+
+    /** GET /api/tasks —— 跨目录任务聚合（目录组一级容器）。 */
+    suspend fun listTaskGroups(): List<TaskDirectoryGroup> {
+        throw UnsupportedOperationException("任务聚合接口不可用")
+    }
+
     /** PATCH /api/workspace-tasks/:taskId —— 重命名任务。 */
     suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask
 

@@ -680,6 +680,24 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> =
         WorkspaceTask.parseList(requestArray("GET", "/api/workspaces/${encode(workspaceId)}/tasks"))
 
+    override suspend fun createWorkspaceTask(
+        workspaceId: String,
+        name: String,
+        baseRef: String?,
+        worktree: Boolean?,
+    ): WorkspaceTaskCreation {
+        val body = JSONObject().put("name", name)
+        if (!baseRef.isNullOrBlank()) body.put("baseRef", baseRef)
+        // 仅在显式关掉时传 worktree:false；缺省交由服务端默认。
+        if (worktree == false) body.put("worktree", false)
+        return WorkspaceTaskCreation.parse(
+            requestObject("POST", "/api/workspaces/${encode(workspaceId)}/tasks", body),
+        ) ?: throw WandApiException(500, "任务创建响应无效。")
+    }
+
+    override suspend fun listTaskGroups(): List<TaskDirectoryGroup> =
+        TaskDirectoryGroup.parseList(requestArray("GET", "/api/tasks"))
+
     override suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask {
         val body = JSONObject().put("name", name)
         return WorkspaceTask.parse(

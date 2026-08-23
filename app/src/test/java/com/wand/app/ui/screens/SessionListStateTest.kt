@@ -252,6 +252,8 @@ class SessionListStateTest {
         assertTrue(state.loadMore())
         assertEquals(listOf("session-refreshed"), state.entries.map { it.key })
         assertEquals(Triple(1, 20, "revision-a"), port.pageRequests[1])
+        // 恢复刷新必须丢弃过期 revision（对齐 iOS SessionListStore 契约）。
+        assertEquals(Triple(0, 20, null), port.pageRequests[2])
         assertNull(state.loadError)
     }
 

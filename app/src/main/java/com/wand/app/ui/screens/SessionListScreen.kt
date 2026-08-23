@@ -117,6 +117,7 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.wandStatusPresentation
 import com.wand.app.ui.components.WandStatusTone
@@ -795,6 +796,7 @@ private fun SidebarOverflowMenu(
         DropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { onMenuOpenChange(false) },
+            containerColor = WandColors.bgElevated,
         ) {
             DropdownMenuItem(
                 text = {
@@ -1817,11 +1819,13 @@ private fun SessionListRow(
                 Text(
                     title,
                     modifier = Modifier.weight(1f),
-                    fontSize = if (compact) 14.sp else 15.5.sp,
-                    lineHeight = if (compact) 19.sp else 20.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    style = if (compact) {
+                        MaterialTheme.typography.titleSmall
+                    } else {
+                        MaterialTheme.typography.titleMedium
+                    },
                     color = WandColors.textPrimary,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (trailingLoading) {
@@ -1833,12 +1837,7 @@ private fun SessionListRow(
                 } else if (timeLabel.isNotBlank()) {
                     Text(
                         text = timeLabel,
-                        modifier = Modifier
-                            .clip(WandShapes.full)
-                            .background(WandColors.surfaceSoft.copy(alpha = 0.78f))
-                            .padding(horizontal = 6.dp, vertical = 3.dp),
-                        fontSize = if (compact) 9.5.sp else 10.5.sp,
-                        lineHeight = 14.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Medium,
                         color = if (prominentStatus) statusTint.copy(alpha = 0.90f) else WandColors.textMuted,
                         maxLines = 1,
@@ -1890,15 +1889,13 @@ private fun SessionListRow(
                     }
                 }
                 if (path.isNotBlank()) {
-                    Text(
-                        text = normalizedWorkingPath(path),
+                    TailMarqueePathText(
+                        path = normalizedWorkingPath(path),
                         modifier = Modifier.weight(1f),
-                        fontSize = if (compact) 9.5.sp else 10.5.sp,
-                        lineHeight = 14.sp,
-                        fontFamily = FontFamily.Monospace,
                         color = pathColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        fontSize = if (compact) 10.sp else 11.sp,
+                        revealOnce = true,
+                        initialDelayMillis = 1_800L,
                     )
                 }
             }
@@ -1910,13 +1907,12 @@ private fun SessionListRow(
 private fun SessionModeCapsule(label: String, compact: Boolean) {
     Text(
         text = label,
-        fontSize = if (compact) 9.sp else 10.sp,
-        lineHeight = 12.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Medium,
-        color = WandColors.textSecondary,
+        color = WandColors.textMuted,
         modifier = Modifier
             .clip(WandShapes.full)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.82f))
+            .background(WandColors.surfaceSoft.copy(alpha = 0.42f))
             .padding(horizontal = if (compact) 5.dp else 6.dp, vertical = 3.dp),
     )
 }

@@ -24,6 +24,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -85,6 +86,10 @@ fun WorkspaceListScreen(
     var creatingWorkspace by remember { mutableStateOf(false) }
     var createName by remember { mutableStateOf("") }
     var createCwd by remember { mutableStateOf("") }
+    // 新建任务（对齐 web/iOS：名称 + 目录预填 + worktree 隔离开关）
+    var creatingTaskFor by remember { mutableStateOf<Workspace?>(null) }
+    var taskNameDraft by remember { mutableStateOf("") }
+    var taskWorktreeEnabled by remember { mutableStateOf(true) }
     var reviewTarget by remember { mutableStateOf<Workspace?>(null) }
     // Compose 可观察缓存：异步任务返回后立即刷新展开区，不依赖其他状态碰巧重组。
     val taskCache = remember { mutableStateMapOf<String, List<WorkspaceTask>>() }
@@ -307,6 +312,89 @@ fun WorkspaceListScreen(
         }
     }
 
+    creatingTaskFor?.let { targetWorkspace ->
+        val trimmedTaskName = taskNameDraft.trim()
+        WandDialog(
+            title = "新任务",
+            onDismissRequest = { if (!mutationBusy) creatingTaskFor = null },
+            icon = WandIcons.add,
+            confirm = WandDialogAction(
+                label = if (mutationBusy) "创建中…" else "创建",
+                enabled = !mutationBusy && trimmedTaskName.isNotEmpty(),
+                onClick = {
+                    if (mutationBusy || trimmedTaskName.isEmpty()) return@WandDialogAction
+                    scope.launch {
+                        mutationBusy = true
+                        mutationError = null
+                        try {
+                            val creation = api.createWorkspaceTask(
+                                workspaceId = targetWorkspace.id,
+                                name = trimmedTaskName,
+                                baseRef = null,
+                                // 开 → 交由服务端默认；关 → 显式跳过隔离。
+                                worktree = if (taskWorktreeEnabled) null else false,
+                            )
+                            creatingTaskFor = null
+                            taskNameDraft = ""
+                            loadWorkspaceTasks(targetWorkspace, force = true)
+                            onOpenTask(targetWorkspace.id, creation.id, targetWorkspace.name, creation.name)
+                        } catch (error: Exception) {
+                            mutationError = error.message ?: "创建任务失败"
+                        } finally {
+                            mutationBusy = false
+                        }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction(
+                label = "取消",
+                enabled = !mutationBusy,
+                onClick = { creatingTaskFor = null },
+            ),
+        ) {
+            WandTextField(
+                value = taskNameDraft,
+                onValueChange = { taskNameDraft = it; mutationError = null },
+                modifier = Modifier.fillMaxWidth(),
+                label = "任务名称",
+                enabled = !mutationBusy,
+                singleLine = true,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "独立 worktree 隔离",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = WandColors.textPrimary,
+                    )
+                    Text(
+                        if (taskWorktreeEnabled) "为任务创建独立分支与工作树，可审查后合并。"
+                        else "会话直接运行在项目目录；非 git 目录自动用这种模式。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WandColors.textMuted,
+                    )
+                }
+                Switch(
+                    checked = taskWorktreeEnabled,
+                    onCheckedChange = { taskWorktreeEnabled = it },
+                    enabled = !mutationBusy,
+                )
+            }
+            mutationError?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.danger,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+    }
+
     reviewTarget?.let { workspace ->
         WorkspaceWorktreeReviewSheet(
             workspace = workspace,
@@ -435,6 +523,12 @@ fun WorkspaceListScreen(
                                 deleteTarget = task
                             },
                             onReviewWorktree = { reviewTarget = workspace },
+                            onCreateTask = {
+                                mutationError = null
+                                taskNameDraft = ""
+                                taskWorktreeEnabled = true
+                                creatingTaskFor = workspace
+                            },
                         )
                     }
                 }
@@ -456,6 +550,7 @@ private fun WorkspaceCard(
     onRenameTask: (WorkspaceTask) -> Unit,
     onDeleteTask: (WorkspaceTask) -> Unit,
     onReviewWorktree: () -> Unit,
+    onCreateTask: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -500,6 +595,15 @@ private fun WorkspaceCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            Icon(
+                WandIcons.add,
+                contentDescription = "在 ${workspace.name} 新建任务",
+                tint = WandColors.textSecondary,
+                modifier = Modifier
+                    .size(30.dp)
+                    .clickable(onClick = onCreateTask)
+                    .padding(6.dp),
+            )
             val worktreeCount = workspace.worktreeCount
                 ?: tasks.orEmpty().count { it.worktree != null }
             Row(
@@ -629,6 +733,7 @@ private fun TaskRow(
             DropdownMenu(
                 expanded = menuExpanded,
                 onDismissRequest = { menuExpanded = false },
+                containerColor = WandColors.bgElevated,
             ) {
                 DropdownMenuItem(
                     text = { Text("重命名") },

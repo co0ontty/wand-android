@@ -113,7 +113,12 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
             publish(updatedEntries, page.total, page.offset + page.entries.size, page.revision)
             true
         } catch (e: WandApiException) {
-            if (e.status == 409) loadUnlocked(silent = true) else {
+            if (e.status == 409) {
+                // 409 = 服务端目录版本已前进，本地 revision 已过期；恢复刷新必须
+                // 丢弃旧 revision，否则带旧值的首页刷新会再次 409 或被误判 unchanged。
+                revision = null
+                loadUnlocked(silent = true)
+            } else {
                 loadError = e.message ?: "加载更多失败"
                 false
             }
