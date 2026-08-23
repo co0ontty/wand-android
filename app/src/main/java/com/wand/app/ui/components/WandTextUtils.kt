@@ -1,6 +1,5 @@
 package com.wand.app.ui.components
 
-import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -19,7 +18,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -33,6 +31,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlin.math.roundToInt
 
 /**
@@ -81,7 +80,7 @@ fun TailMarqueePathText(
         }
     }
     val density = LocalDensity.current
-    val motionEnabled = rememberSystemMotionEnabled()
+    val motionEnabled = !reduceMotionEnabled()
     var containerWidthPx by remember { mutableIntStateOf(0) }
     var textWidthPx by remember { mutableIntStateOf(0) }
     val overflowPx = if (containerWidthPx > 0) {
@@ -179,18 +178,3 @@ fun TailMarqueePathText(
     }
 }
 
-@Composable
-private fun rememberSystemMotionEnabled(): Boolean {
-    val context = LocalContext.current
-    return remember(context) {
-        try {
-            Settings.Global.getFloat(
-                context.contentResolver,
-                Settings.Global.ANIMATOR_DURATION_SCALE,
-                1f,
-            ) > 0f
-        } catch (_: Exception) {
-            true
-        }
-    }
-}

@@ -156,14 +156,14 @@ private val LightGlassCard = GlassStyle(
 
 // —— 暗色玻璃 ——
 private val DarkGlassRegular = GlassStyle(
-    tint = Color(0xFF1C1916), tintAlpha = 0.50f, fallbackAlpha = 0.90f,
+    tint = Color(0xFF1D1A17), tintAlpha = 0.50f, fallbackAlpha = 0.90f,
     blurRadius = 18.dp, refractionHeight = 0.75.dp, refractionAmount = 2.25.dp,
     rimLight = Color.White.copy(alpha = 0.11f),
     rimShade = Color.Black.copy(alpha = 0.20f),
     shadowElevation = 0.8.dp, shadowColor = Color.Black.copy(alpha = 0.22f),
 )
 private val DarkGlassClear = GlassStyle(
-    tint = Color(0xFF242017), tintAlpha = 0.40f, fallbackAlpha = 0.86f,
+    tint = Color(0xFF211E1A), tintAlpha = 0.40f, fallbackAlpha = 0.86f,
     blurRadius = 14.dp, refractionHeight = 0.5.dp, refractionAmount = 1.5.dp,
     rimLight = Color.White.copy(alpha = 0.10f),
     rimShade = Color.Black.copy(alpha = 0.18f),
@@ -177,7 +177,7 @@ private val DarkGlassAccent = GlassStyle(
     shadowElevation = 1.2.dp, shadowColor = Color.Black.copy(alpha = 0.22f),
 )
 private val DarkGlassCard = GlassStyle(
-    tint = Color(0xFF242017), tintAlpha = 0.58f, fallbackAlpha = 0.88f,
+    tint = Color(0xFF211E1A), tintAlpha = 0.58f, fallbackAlpha = 0.88f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
     rimLight = Color.White.copy(alpha = 0.085f),
     rimShade = Color.Black.copy(alpha = 0.16f),
@@ -356,11 +356,11 @@ fun AmbientBackground(modifier: Modifier = Modifier) {
 fun Modifier.ambientBackground(): Modifier {
     val dark = isWandDarkTheme()
     val base = WandColors.bgPrimary
-    val topWash = WandColors.brand.copy(alpha = if (dark) 0.048f else 0.046f)
+    val topWash = WandColors.brand.copy(alpha = 0.034f)
     val sideWash = if (dark) {
-        Color(0xFF8A705D).copy(alpha = 0.030f)
+        Color(0xFF8A705D).copy(alpha = 0.024f)
     } else {
-        Color(0xFFB49B86).copy(alpha = 0.036f)
+        Color(0xFFB49B86).copy(alpha = 0.024f)
     }
     return this.then(
         Modifier.drawBehind {

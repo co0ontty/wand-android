@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -15,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.isWandDarkTheme
 
@@ -36,7 +36,7 @@ fun NativeComposerSurface(
     expandedControls: @Composable RowScope.(controlsCompact: Boolean) -> Unit = {},
 ) {
     // 输入底栏只保留低对比度玻璃底，不再叠加聚焦描边和宽外边距。
-    val composerShape = RoundedCornerShape(18.dp)
+    val composerShape = WandShapes.lg
     val darkGlass = isWandDarkTheme()
     val composerGlass = WandGlass.regular.copy(
         tintAlpha = if (darkGlass) 0.68f else 0.80f,

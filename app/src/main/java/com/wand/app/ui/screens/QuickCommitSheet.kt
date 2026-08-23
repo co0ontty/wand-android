@@ -72,6 +72,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -121,11 +122,6 @@ import kotlin.math.roundToInt
  * 途经其他气泡会被磁吸进队伍；丢进右侧发射区执行组合动作（commit 永远隐含），
  * 松手在别处则全员弹回原位；单击气泡直接执行该气泡自己的动作。
  */
-
-// 网页版 qc-chip 配色（commit 用主题 accent，其余固定色）。
-private val TagBlue = Color(0xFF4A6FA5)
-private val PushGreen = Color(0xFF4F7A58)
-private val SubTeal = Color(0xFF3A8A8F)
 
 // MARK: - TopBar 入口徽标
 
@@ -719,7 +715,7 @@ private fun CommitWorkspaceLens(
 ) {
     val tone = when {
         hasChanges -> WandColors.brand
-        ahead > 0 -> PushGreen
+        ahead > 0 -> WandColors.success
         else -> WandColors.success
     }
     val status = when {
@@ -768,10 +764,10 @@ private fun CommitWorkspaceLens(
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Medium,
-                color = PushGreen,
+                color = WandColors.success,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(PushGreen.copy(alpha = 0.12f))
+                    .background(WandColors.successSoft)
                     .padding(horizontal = 8.dp, vertical = 5.dp),
             )
         }
@@ -950,9 +946,12 @@ private fun MagneticDock(
     val allIds = remember(hasSubmodule) {
         if (hasSubmodule) ACTION_ORDER + "sub" else ACTION_ORDER
     }
-    val commitColor = MaterialTheme.colorScheme.primary
-    val chipColors = remember(commitColor) {
-        mapOf("commit" to commitColor, "tag" to TagBlue, "push" to PushGreen, "sub" to SubTeal)
+    val commitColor = WandColors.brand
+    val tagColor = WandColors.info
+    val pushColor = WandColors.success
+    val subColor = lerp(WandColors.info, WandColors.success, 0.45f)
+    val chipColors = remember(commitColor, tagColor, pushColor, subColor) {
+        mapOf("commit" to commitColor, "tag" to tagColor, "push" to pushColor, "sub" to subColor)
     }
     val chipLabels = mapOf("commit" to "Commit", "tag" to "Tag", "push" to "Push", "sub" to "Sub")
 
@@ -1020,9 +1019,9 @@ private fun MagneticDock(
     val enabled = hasChanges
     val composedAction = dragMembers?.let { composeAction(it) } ?: "commit"
     val launchTone = when (composedAction) {
-        "commit-tag" -> TagBlue
-        "commit-push" -> PushGreen
-        "commit-tag-push" -> SubTeal
+        "commit-tag" -> tagColor
+        "commit-push" -> pushColor
+        "commit-tag-push" -> subColor
         else -> commitColor
     }
 

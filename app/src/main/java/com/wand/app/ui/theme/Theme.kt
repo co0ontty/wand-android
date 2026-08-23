@@ -1,5 +1,7 @@
 package com.wand.app.ui.theme
 
+import android.provider.Settings
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -24,7 +26,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -49,8 +54,8 @@ private object LightTokens {
     val surface = Color(0xFFFFFDF9)
     val surfaceSoft = Color(0xFFECE8E1)
     val textPrimary = Color(0xFF28231F)
-    val textSecondary = Color(0xFF5C544D)
-    val textMuted = Color(0xFF7A7168)
+    val textSecondary = Color(0xFF625A53)
+    val textMuted = Color(0xFF8B8279)
     val brand = Color(0xFFC5653D)
     val brandSoft = Color(0xFFC5653D).copy(alpha = 0.14f)
     // 对齐 Web --border-default / --border-strong：旧 7% 描边在米色底上几乎看不见。
@@ -75,17 +80,17 @@ private object LightTokens {
 
 // —— 暗色 Token ——
 private object DarkTokens {
-    val bgPrimary = Color(0xFF12100E)
-    val bgElevated = Color(0xFF1C1916)
-    val surface = Color(0xFF242017)
-    val surfaceSoft = Color(0xFF2F2A24)
-    val textPrimary = Color(0xFFF4EFE8)
-    val textSecondary = Color(0xFFB4AAA0)
-    val textMuted = Color(0xFF8C8278)
+    val bgPrimary = Color(0xFF13110F)
+    val bgElevated = Color(0xFF1D1A17)
+    val surface = Color(0xFF211E1A)
+    val surfaceSoft = Color(0xFF2A2621)
+    val textPrimary = Color(0xFFF3EEE7)
+    val textSecondary = Color(0xFFC7BEB4)
+    val textMuted = Color(0xFF958B81)
     val brand = Color(0xFFD47550)
     val brandSoft = Color(0xFFD47550).copy(alpha = 0.18f)
-    val border = Color(0xFFEDE2D5).copy(alpha = 0.14f)
-    val borderStrong = Color(0xFFEDE2D5).copy(alpha = 0.24f)
+    val border = Color(0xFF3D3730)
+    val borderStrong = Color(0xFF5C534A)
     val focusRing = Color(0xFFD47550).copy(alpha = 0.50f)
 
     // 语义色
@@ -282,6 +287,64 @@ object WandColors {
 }
 
 /**
+ * 终端 / diff / 代码输出的固定暖深色表面。
+ * 不跟随亮暗主题，PTY 黑窗、工具终端卡、审查 diff 共用这一套。
+ */
+object WandTerminal {
+    val background = Color(0xFF17120F)
+    val text = Color(0xFFD9D9D4)
+    val muted = Color(0xFFC9D1D9)
+    val error = Color(0xFFF28C82)
+    val added = Color(0xFF91D39D)
+    val removed = Color(0xFFF29B94)
+    val backgroundArgb: Int = 0xFF17120F.toInt()
+}
+
+val LocalReduceMotion = staticCompositionLocalOf { false }
+
+@Composable
+@ReadOnlyComposable
+fun reduceMotionEnabled(): Boolean = LocalReduceMotion.current
+
+@Composable
+private fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        try {
+            val resolver = context.contentResolver
+            val animator = Settings.Global.getFloat(
+                resolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            )
+            val transition = Settings.Global.getFloat(
+                resolver,
+                Settings.Global.TRANSITION_ANIMATION_SCALE,
+                1f,
+            )
+            animator == 0f || transition == 0f
+        } catch (_: Exception) {
+            false
+        }
+    }
+}
+
+fun WandAppearanceMode.toNightMode(): Int = when (this) {
+    WandAppearanceMode.Light -> AppCompatDelegate.MODE_NIGHT_NO
+    WandAppearanceMode.Dark -> AppCompatDelegate.MODE_NIGHT_YES
+    WandAppearanceMode.System -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+}
+
+object WandAppearance {
+    fun apply(mode: WandAppearanceMode) {
+        val nightMode = mode.toNightMode()
+        if (AppCompatDelegate.getDefaultNightMode() != nightMode) {
+            AppCompatDelegate.setDefaultNightMode(nightMode)
+        }
+    }
+}
+
+/**
  * 统一动效规格（规范 1.5）。
  * 用法：tween(WandMotion.normal, easing = WandMotion.easing)，或直接用 tweenNormal() 等快捷函数。
  */
@@ -471,7 +534,11 @@ fun WandTheme(
         WandAppearanceMode.Dark -> true
         WandAppearanceMode.System -> systemDark
     }
-    CompositionLocalProvider(LocalWandDark provides dark) {
+    val reduceMotion = rememberReduceMotion()
+    CompositionLocalProvider(
+        LocalWandDark provides dark,
+        LocalReduceMotion provides reduceMotion,
+    ) {
         MaterialTheme(
             colorScheme = if (dark) DarkScheme else LightScheme,
             typography = WandTypography,

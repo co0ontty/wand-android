@@ -1,6 +1,7 @@
 package com.wand.app
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.widget.Toast
@@ -34,6 +35,7 @@ import com.wand.app.ui.WandApp
 import com.wand.app.ui.screens.AppUpdateInfo
 import com.wand.app.ui.screens.UpdatePresentation
 import com.wand.app.ui.screens.UpdateSheet
+import com.wand.app.ui.theme.WandAppearance
 import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.WandTheme
 import java.util.concurrent.ExecutorService
@@ -281,6 +283,7 @@ class HomeActivity : AppCompatActivity() {
                 setAppearanceMode = { mode ->
                     appearanceMode = mode
                     serverStore.appearanceMode = mode.storageValue
+                    WandAppearance.apply(mode)
                 },
             ),
         )
@@ -321,7 +324,7 @@ class HomeActivity : AppCompatActivity() {
             setKeepAlive(true, serverProfile.id)
         }
 
-        applyEdgeToEdge(appearanceMode == WandAppearanceMode.Dark)
+        applyEdgeToEdge(isConfigurationNight())
         setContent {
             val systemDark = isSystemInDarkTheme()
             val resolvedDark = when (appearanceMode) {
@@ -373,6 +376,10 @@ class HomeActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun isConfigurationNight(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
 
     private fun applyEdgeToEdge(dark: Boolean) {
         val transparent = Color.TRANSPARENT

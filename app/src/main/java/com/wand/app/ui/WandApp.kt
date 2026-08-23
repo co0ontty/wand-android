@@ -2,9 +2,13 @@ package com.wand.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -89,6 +93,7 @@ import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.NewSessionScreen
 import com.wand.app.ui.screens.MissionsScreen
@@ -456,7 +461,34 @@ private fun SinglePaneContent(
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     sessionCreationInFlight: Boolean,
 ) {
-    when (val screen = nav.current) {
+    val reduceMotion = reduceMotionEnabled()
+    val frame = SinglePaneFrame(nav.current, nav.stack.size)
+    AnimatedContent(
+        targetState = frame,
+        modifier = Modifier.fillMaxSize(),
+        contentKey = { it.screen.transitionKey() },
+        transitionSpec = {
+            val spec = if (reduceMotion) {
+                fadeIn(snap()) togetherWith fadeOut(snap())
+            } else {
+                val forward = targetState.depth >= initialState.depth
+                if (forward) {
+                    (slideInHorizontally(WandMotion.tweenEnter()) { it / 5 } +
+                        fadeIn(WandMotion.tweenEnter())) togetherWith
+                        (slideOutHorizontally(WandMotion.tweenExit()) { -it / 8 } +
+                            fadeOut(WandMotion.tweenExit()))
+                } else {
+                    (slideInHorizontally(WandMotion.tweenEnter()) { -it / 5 } +
+                        fadeIn(WandMotion.tweenEnter())) togetherWith
+                        (slideOutHorizontally(WandMotion.tweenExit()) { it / 8 } +
+                            fadeOut(WandMotion.tweenExit()))
+                }
+            }
+            spec.using(SizeTransform(clip = false) { _, _ -> snap() })
+        },
+        label = "singlePaneNav",
+    ) { currentFrame ->
+    when (val screen = currentFrame.screen) {
         is Screen.SessionList -> SessionListScreen(
             state = listState,
             workspaceApi = api,
@@ -544,6 +576,7 @@ private fun SinglePaneContent(
             },
         )
     }
+    }
 }
 
 @Composable
@@ -586,11 +619,16 @@ private fun WideReadyContent(
                 .fillMaxHeight(),
         ) {
             WideSidebarPanel(modifier = Modifier.fillMaxSize()) {
+                val reduceMotion = reduceMotionEnabled()
                 AnimatedContent(
                     targetState = sidebarCollapsed,
                     modifier = Modifier.fillMaxSize(),
                     transitionSpec = {
-                        fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
+                        if (reduceMotion) {
+                            fadeIn(snap()) togetherWith fadeOut(snap())
+                        } else {
+                            fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
+                        }
                     },
                     label = "wideSidebarContent",
                 ) { collapsed ->
@@ -655,7 +693,22 @@ private fun WideReadyContent(
                 .weight(1f)
                 .fillMaxHeight(),
         ) {
-            when (val screen = nav.current) {
+            val reduceMotion = reduceMotionEnabled()
+            AnimatedContent(
+                targetState = nav.current,
+                modifier = Modifier.fillMaxSize(),
+                contentKey = { it.transitionKey() },
+                transitionSpec = {
+                    val spec = if (reduceMotion) {
+                        fadeIn(snap()) togetherWith fadeOut(snap())
+                    } else {
+                        fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
+                    }
+                    spec.using(SizeTransform(clip = false) { _, _ -> snap() })
+                },
+                label = "wideDetailNav",
+            ) { screen ->
+            when (screen) {
                 is Screen.SessionList -> DetailPlaceholder(
                     viewMode = viewMode,
                     onNewSession = { onNewSession(null) },
@@ -731,6 +784,7 @@ private fun WideReadyContent(
                         nav.push(Screen.PtyTerminal(sessionId, screen.workspaceName, screen.taskName))
                     },
                 )
+            }
             }
         }
     }
@@ -1174,6 +1228,19 @@ private fun DetailPlaceholder(
             }
         }
     }
+}
+
+private data class SinglePaneFrame(val screen: Screen, val depth: Int)
+
+private fun Screen.transitionKey(): String = when (this) {
+    Screen.SessionList -> "session-list"
+    is Screen.Chat -> "chat:$sessionId"
+    is Screen.PtyTerminal -> "pty:$sessionId"
+    is Screen.NewSession -> "new-session"
+    Screen.Missions -> "missions"
+    Screen.Settings -> "settings"
+    Screen.Workspaces -> "workspaces"
+    is Screen.WorkspaceTask -> "workspace-task:$taskId"
 }
 
 private fun SessionSnapshot.detailScreen(): Screen =

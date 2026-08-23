@@ -38,6 +38,9 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +80,6 @@ import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandCard
-import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
@@ -393,7 +395,7 @@ private fun SettingsOverview(
 private fun SettingsStatePill(label: String, tint: Color, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(WandShapes.sm)
             .background(tint.copy(alpha = 0.08f))
             .padding(horizontal = 9.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -417,6 +419,7 @@ private fun WandAppearanceMode.settingsLabel(): String = when (this) {
     WandAppearanceMode.System -> "跟随系统"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppearanceModePicker(
     selected: WandAppearanceMode,
@@ -433,19 +436,28 @@ private fun AppearanceModePicker(
             icon = WandIcons.appearance,
             tint = WandColors.brand,
         )
-        WandChoiceStrip(
-            options = listOf(
-                WandAppearanceMode.Light to "明亮",
-                WandAppearanceMode.Dark to "黑暗",
-                WandAppearanceMode.System to "跟随系统",
-            ),
-            selected = selected,
-            onSelect = onSelected,
-            minHeight = 44.dp,
-            labelFontSize = 13.sp,
-            activeTextColor = WandColors.textPrimary,
-            flat = true,
+        val options = listOf(
+            WandAppearanceMode.Light to "明亮",
+            WandAppearanceMode.Dark to "黑暗",
+            WandAppearanceMode.System to "跟随系统",
         )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, (mode, label) ->
+                SegmentedButton(
+                    selected = selected == mode,
+                    onClick = { onSelected(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = WandColors.brandSoft,
+                        activeContentColor = WandColors.textPrimary,
+                        inactiveContainerColor = Color.Transparent,
+                        inactiveContentColor = WandColors.textSecondary,
+                    ),
+                ) {
+                    Text(label, maxLines = 1)
+                }
+            }
+        }
     }
 }
 

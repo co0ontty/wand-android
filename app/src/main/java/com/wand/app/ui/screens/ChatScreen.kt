@@ -158,6 +158,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.theme.glassSurface
@@ -745,7 +746,10 @@ private fun SessionStatusIsland(
     queuedCount: Int,
     modifier: Modifier = Modifier,
 ) {
-    val tint = if (permissionRequired) Color(0xFFE9A23B) else WandColors.brand
+    val tint = if (permissionRequired) WandColors.permission else WandColors.brand
+    val islandBg = WandColors.bgElevated
+    val islandBorder = WandColors.borderStrong.copy(alpha = 0.55f)
+    val titleColor = WandColors.textPrimary
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(WandMotion.tweenFast()) +
@@ -759,10 +763,10 @@ private fun SessionStatusIsland(
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             modifier = Modifier
                 .widthIn(max = 360.dp)
-                .shadow(14.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.22f))
+                .shadow(8.dp, CircleShape, ambientColor = WandColors.brand.copy(alpha = 0.10f))
                 .clip(CircleShape)
-                .background(Color(0xED111214))
-                .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                .background(islandBg)
+                .border(1.dp, islandBorder, CircleShape)
                 .semantics {
                     liveRegion = LiveRegionMode.Polite
                     stateDescription = if (permissionRequired) "等待授权" else "回复中"
@@ -793,7 +797,7 @@ private fun SessionStatusIsland(
             }
             Text(
                 text = title,
-                color = Color.White.copy(alpha = 0.92f),
+                color = titleColor,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -814,7 +818,7 @@ private fun SessionStatusIsland(
 
 @Composable
 private fun ChatTopicTitle(text: String, generating: Boolean) {
-    if (!generating) {
+    if (!generating || reduceMotionEnabled()) {
         Text(
             text,
             style = MaterialTheme.typography.titleMedium,
@@ -1970,7 +1974,7 @@ private fun ModelThinkingChip(
 ) {
     var open by remember { mutableStateOf(false) }
     val tint = when (store.thinkingEffort) {
-        "standard" -> Color(0xFF5D8A66)
+        "standard" -> WandColors.success
         "deep" -> WandColors.warning
         "max" -> WandColors.danger
         else -> WandColors.brand

@@ -60,9 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -103,6 +101,8 @@ import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.WandTerminal
+import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.terminal.DefaultTerminalShortcuts
 import com.wand.app.ui.terminal.TerminalKeyBinding
@@ -117,8 +117,8 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
-private const val TERMINAL_BACKGROUND_ARGB = 0xFF17120F.toInt()
-private val TerminalBackground = Color(TERMINAL_BACKGROUND_ARGB)
+private val TerminalBackground = WandTerminal.background
+private val TerminalBackgroundArgb = WandTerminal.backgroundArgb
 
 /**
  * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
@@ -466,14 +466,19 @@ private fun PtyBottomBar(
     val haptic = LocalHapticFeedback.current
     val shortcutScroll = rememberScrollState()
     Column(modifier = Modifier.fillMaxWidth()) {
-        // 顶缘渐隐阴影：让底栏从终端画面上轻轻浮起来，替代生硬的明暗分界。
+        // 顶缘渐隐：暗色用轻黑，浅色用页面底色，避免米色 chrome 上出现脏黑带。
+        val fadeTop = if (isWandDarkTheme()) {
+            Color.Black.copy(alpha = 0.18f)
+        } else {
+            WandColors.bgPrimary.copy(alpha = 0.55f)
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(12.dp)
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color.Black.copy(alpha = 0.20f), Color.Transparent),
+                        listOf(fadeTop, Color.Transparent),
                     ),
                 ),
         )
@@ -511,38 +516,35 @@ private fun PtyBottomBar(
                     onMicDown = onMicDown,
                 )
             }
+            val edgeFade = WandColors.bgElevated.copy(alpha = 0.96f)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(58.dp)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawWithContent {
                         drawContent()
-                        // 滚动两端的渐隐遮罩：还有内容被截断的一侧才出现，
-                        // 避免按键在栏边缘被生硬切掉。
+                        // 滚动两端用主题色叠一层渐隐，避免 Offscreen+DstIn 在浅色玻璃上发灰。
                         val fadeWidth = 26.dp.toPx()
                         if (shortcutScroll.value > 0) {
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    0f to Color.Transparent,
-                                    1f to Color.Black,
+                                    0f to edgeFade,
+                                    1f to Color.Transparent,
                                     startX = 0f,
                                     endX = fadeWidth,
                                 ),
-                                blendMode = BlendMode.DstIn,
                             )
                         }
                         if (shortcutScroll.value < shortcutScroll.maxValue) {
                             drawRect(
                                 brush = Brush.horizontalGradient(
-                                    0f to Color.Black,
-                                    1f to Color.Transparent,
+                                    0f to Color.Transparent,
+                                    1f to edgeFade,
                                     startX = size.width - fadeWidth,
                                     endX = size.width,
                                 ),
-                                blendMode = BlendMode.DstIn,
                             )
                         }
                     }
@@ -952,7 +954,7 @@ private fun PtyTerminalWebView(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
         )
-        view.setBackgroundColor(TERMINAL_BACKGROUND_ARGB)
+        view.setBackgroundColor(TerminalBackgroundArgb)
         view.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true

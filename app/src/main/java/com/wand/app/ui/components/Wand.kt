@@ -57,6 +57,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.layeredShadow
 import com.wand.app.ui.theme.glassCard
@@ -109,7 +110,7 @@ private fun statusColor(status: String): Color = when (wandStatusPresentation(st
 @Composable
 fun StatusDot(status: String, modifier: Modifier = Modifier) {
     val color = statusColor(status)
-    if (wandStatusPresentation(status).breathing) {
+    if (wandStatusPresentation(status).breathing && !reduceMotionEnabled()) {
         val transition = rememberInfiniteTransition(label = "statusDot")
         val alpha by transition.animateFloat(
             initialValue = 1f,

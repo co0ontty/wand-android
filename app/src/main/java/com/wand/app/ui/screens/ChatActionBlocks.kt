@@ -120,6 +120,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.WandTerminal
 import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.tinted
@@ -658,9 +659,9 @@ private fun DiffColumn(label: String, text: String, prefix: String, tint: Color)
 // MARK: - 终端卡片（Bash，对齐 Web 端 inline-terminal）
 
 /** 终端卡固定深色，亮暗主题一致（对齐 Web）。 */
-private val TermBg = Color(0xFF1E1E1E)
-private val TermText = Color(0xFFD9D9D4)
-private val TermErrorText = Color(0xFFF28C82)
+private val TermBg = WandTerminal.background
+private val TermText = WandTerminal.text
+private val TermErrorText = WandTerminal.error
 
 @Composable
 fun TerminalCard(

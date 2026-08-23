@@ -67,6 +67,7 @@ import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandTerminal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -299,6 +300,7 @@ private fun MissionCard(
                 DropdownMenu(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
+                    containerColor = WandColors.bgElevated,
                 ) {
                     DropdownMenuItem(
                         text = { Text("归档任务", color = WandColors.danger) },
@@ -451,14 +453,14 @@ private fun MissionDiffDialog(
                 if (diff == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = WandColors.brand) }
                 } else {
-                    LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().background(Color(0xFF101214))) {
+                    LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().background(WandTerminal.background)) {
                         items(lines) { line ->
                             Text(
                                 line.text.ifEmpty { " " },
                                 color = when {
-                                    line.text.startsWith("+") && !line.text.startsWith("+++") -> Color(0xFF91D39D)
-                                    line.text.startsWith("-") && !line.text.startsWith("---") -> Color(0xFFF29B94)
-                                    else -> Color(0xFFC9D1D9)
+                                    line.text.startsWith("+") && !line.text.startsWith("+++") -> WandTerminal.added
+                                    line.text.startsWith("-") && !line.text.startsWith("---") -> WandTerminal.removed
+                                    else -> WandTerminal.muted
                                 },
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
