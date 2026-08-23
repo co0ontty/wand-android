@@ -58,7 +58,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -460,55 +464,105 @@ private fun PtyBottomBar(
     onMicDown: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(
-                backdrop,
-                RoundedCornerShape(0.dp),
-                WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
-                edgeToEdge = true,
-            )
-            .imePadding()
-            .navigationBarsPadding(),
-    ) {
-        AnimatedVisibility(visible = inputDrawerOpen) {
-            PtyInputDrawer(
-                draft = draft,
-                onDraftChange = onDraftChange,
-                onSend = onSend,
-                uploading = uploadingAttachments,
-                pendingAttachments = pendingAttachments,
-                baseUrl = baseUrl,
-                onRemoveAttachment = onRemoveAttachment,
-                onPickPhoto = onPickPhoto,
-                onPickFile = onPickFile,
-                voice = voice,
-                onMicDown = onMicDown,
-            )
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+    val shortcutScroll = rememberScrollState()
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // 顶缘渐隐阴影：让底栏从终端画面上轻轻浮起来，替代生硬的明暗分界。
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp)
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp),
+                .height(12.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Black.copy(alpha = 0.20f), Color.Transparent),
+                    ),
+                ),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassSurface(
+                    backdrop,
+                    RoundedCornerShape(0.dp),
+                    WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
+                    edgeToEdge = true,
+                )
+                .imePadding()
+                .navigationBarsPadding(),
         ) {
-            // 第一个固定项是输入抽屉的拉手：键盘图标 + 上/下箭头，点击或上拉展开输入框。
-            InputDrawerHandle(open = inputDrawerOpen, onClick = onToggleInputDrawer)
-            ShortcutGroupDivider()
-            // 分三组展示：编辑控制（Esc/Ctrl+C/Tab）· 方向导航 · 确认（Enter），
-            // 组间用细竖线分隔，扫读时不至于九个按键糊成一排。
-            DefaultTerminalShortcuts.forEachIndexed { index, shortcut ->
-                TerminalShortcutKey(shortcut) {
-                    if (isHapticEnabled()) {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            // 玻璃底色之上的发丝分隔线：亮暗主题下都保持清晰但不刺眼的边界。
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.6.dp)
+                    .background(WandColors.border.copy(alpha = 0.55f)),
+            )
+            AnimatedVisibility(visible = inputDrawerOpen) {
+                PtyInputDrawer(
+                    draft = draft,
+                    onDraftChange = onDraftChange,
+                    onSend = onSend,
+                    uploading = uploadingAttachments,
+                    pendingAttachments = pendingAttachments,
+                    baseUrl = baseUrl,
+                    onRemoveAttachment = onRemoveAttachment,
+                    onPickPhoto = onPickPhoto,
+                    onPickFile = onPickFile,
+                    voice = voice,
+                    onMicDown = onMicDown,
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp)
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        // 滚动两端的渐隐遮罩：还有内容被截断的一侧才出现，
+                        // 避免按键在栏边缘被生硬切掉。
+                        val fadeWidth = 26.dp.toPx()
+                        if (shortcutScroll.value > 0) {
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    0f to Color.Transparent,
+                                    1f to Color.Black,
+                                    startX = 0f,
+                                    endX = fadeWidth,
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
+                        if (shortcutScroll.value < shortcutScroll.maxValue) {
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    0f to Color.Black,
+                                    1f to Color.Transparent,
+                                    startX = size.width - fadeWidth,
+                                    endX = size.width,
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
                     }
-                    onShortcut(shortcut)
+                    .horizontalScroll(shortcutScroll)
+                    .padding(horizontal = 12.dp),
+            ) {
+                // 第一个固定项是输入抽屉的拉手：键盘图标 + 上/下箭头，点击或上拉展开输入框。
+                InputDrawerHandle(open = inputDrawerOpen, onClick = onToggleInputDrawer)
+                ShortcutGroupDivider()
+                // 按使用热度分三组：高频执行（Enter/↑/Tab）· 中断控制（Esc/Ctrl+C/Shift+Tab）
+                // · 光标导航（←/→/↓），组间用细竖线分隔，最常用的永远在最顺手的位置。
+                DefaultTerminalShortcuts.forEachIndexed { index, shortcut ->
+                    TerminalShortcutKey(shortcut) {
+                        if (isHapticEnabled()) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        onShortcut(shortcut)
+                    }
+                    if (index == 2 || index == 5) ShortcutGroupDivider()
                 }
-                if (index == 3 || index == 7) ShortcutGroupDivider()
             }
         }
     }
@@ -521,10 +575,10 @@ private fun PtyBottomBar(
 private fun ShortcutGroupDivider() {
     Box(
         modifier = Modifier
-            .padding(horizontal = 2.dp)
+            .padding(horizontal = 3.dp)
             .width(1.dp)
-            .height(20.dp)
-            .background(WandColors.border.copy(alpha = 0.9f), RoundedCornerShape(1.dp)),
+            .height(22.dp)
+            .background(WandColors.border.copy(alpha = 0.5f), RoundedCornerShape(1.dp)),
     )
 }
 
@@ -728,7 +782,7 @@ private fun TerminalShortcutKey(
         label = "shortcutKeyScale",
     )
     val background by animateColorAsState(
-        targetValue = if (pressed) WandColors.surfaceSoft else WandColors.surfaceSoft.copy(alpha = 0.62f),
+        targetValue = if (pressed) WandColors.surfaceSoft else WandColors.surfaceSoft.copy(alpha = 0.70f),
         label = "shortcutKeyBackground",
     )
     val modifiers = TerminalModifier.entries.filter { it in shortcut.binding.modifiers }
@@ -744,10 +798,10 @@ private fun TerminalShortcutKey(
                 scaleY = scale
             }
             .height(40.dp)
-            .widthIn(min = 40.dp)
+            .widthIn(min = 44.dp)
             .clip(WandShapes.sm)
             .background(background)
-            .border(0.6.dp, WandColors.border.copy(alpha = 0.85f), WandShapes.sm)
+            .border(0.6.dp, WandColors.border.copy(alpha = 0.6f), WandShapes.sm)
             .clickable(
                 interactionSource = interaction,
                 indication = null,

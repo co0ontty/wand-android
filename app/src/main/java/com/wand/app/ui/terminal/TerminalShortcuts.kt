@@ -52,7 +52,34 @@ val TerminalSpecialKeys = listOf(
     TerminalSpecialKey("space", "Space", "空格"),
 )
 
+/**
+ * 默认快捷键栏，按使用热度从高到低排列：
+ *
+ * 1. 高频执行组 Enter / ↑ / Tab —— 每次交互都要确认执行；↑ 调历史命令是
+ *    CLI 里最高频的方向键；Tab 补全路径与参数。
+ * 2. 中断控制组 Esc / Ctrl+C / Shift+Tab —— 打断 AI 输出与取消当前行、
+ *    强制中断进程、切换 Claude Code 权限模式。
+ * 3. 光标导航组 ← / → / ↓ —— 行内编辑移动光标，↓ 翻下一条历史，频率最低。
+ */
 val DefaultTerminalShortcuts: List<TerminalShortcut> = listOfNotNull(
+    buildTerminalShortcut(
+        TerminalKeyBinding("enter"),
+        id = "enter",
+        builtIn = true,
+        accessibilityLabel = "Enter",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("arrowUp"),
+        id = "arrow-up",
+        builtIn = true,
+        accessibilityLabel = "上方向键",
+    ),
+    buildTerminalShortcut(
+        TerminalKeyBinding("tab"),
+        id = "tab",
+        builtIn = true,
+        accessibilityLabel = "Tab",
+    ),
     buildTerminalShortcut(
         TerminalKeyBinding("escape"),
         id = "escape",
@@ -64,12 +91,6 @@ val DefaultTerminalShortcuts: List<TerminalShortcut> = listOfNotNull(
         id = "ctrl-c",
         builtIn = true,
         accessibilityLabel = "Control C",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("tab"),
-        id = "tab",
-        builtIn = true,
-        accessibilityLabel = "Tab",
     ),
     buildTerminalShortcut(
         TerminalKeyBinding("tab", setOf(TerminalModifier.Shift)),
@@ -84,28 +105,16 @@ val DefaultTerminalShortcuts: List<TerminalShortcut> = listOfNotNull(
         accessibilityLabel = "左方向键",
     ),
     buildTerminalShortcut(
-        TerminalKeyBinding("arrowUp"),
-        id = "arrow-up",
-        builtIn = true,
-        accessibilityLabel = "上方向键",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("arrowDown"),
-        id = "arrow-down",
-        builtIn = true,
-        accessibilityLabel = "下方向键",
-    ),
-    buildTerminalShortcut(
         TerminalKeyBinding("arrowRight"),
         id = "arrow-right",
         builtIn = true,
         accessibilityLabel = "右方向键",
     ),
     buildTerminalShortcut(
-        TerminalKeyBinding("enter"),
-        id = "enter",
+        TerminalKeyBinding("arrowDown"),
+        id = "arrow-down",
         builtIn = true,
-        accessibilityLabel = "Enter",
+        accessibilityLabel = "下方向键",
     ),
 )
 

@@ -56,7 +56,7 @@ class TerminalShortcutsTest {
     @Test
     fun defaultShortcutBarCoversPtyNavigationWithoutAmbiguousBindings() {
         assertEquals(
-            listOf("escape", "ctrl-c", "tab", "shift-tab", "arrow-left", "arrow-up", "arrow-down", "arrow-right", "enter"),
+            listOf("enter", "arrow-up", "tab", "escape", "ctrl-c", "shift-tab", "arrow-left", "arrow-right", "arrow-down"),
             DefaultTerminalShortcuts.map { it.id },
         )
         assertEquals(DefaultTerminalShortcuts.size, DefaultTerminalShortcuts.map { it.bytes }.distinct().size)
