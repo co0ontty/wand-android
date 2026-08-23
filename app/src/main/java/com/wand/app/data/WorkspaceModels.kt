@@ -441,6 +441,9 @@ data class WorkspaceTaskSummary(
     val sessions: List<WorkspaceSessionSummary>,
 ) {
     val id: String get() = task.id
+    val name: String get() = task.name
+    val status: WorkspaceTaskStatus get() = task.status
+    val worktree: WorkspaceTaskWorktree? get() = task.worktree
     val isIsolated: Boolean get() = isolated || task.worktree != null
 
     companion object {

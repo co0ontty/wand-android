@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.TaskDirectoryGroup
+import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspacePort
@@ -90,6 +92,11 @@ fun WorkspaceListScreen(
     var creatingTaskFor by remember { mutableStateOf<Workspace?>(null) }
     var taskNameDraft by remember { mutableStateOf("") }
     var taskWorktreeEnabled by remember { mutableStateOf(true) }
+    // 任务一级视图（GET /api/tasks 聚合）与项目树的显示切换
+    var displayMode by remember { mutableStateOf("tasks") }
+    var taskGroups by remember { mutableStateOf<List<TaskDirectoryGroup>>(emptyList()) }
+    var taskGroupsError by remember { mutableStateOf<String?>(null) }
+    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
     var reviewTarget by remember { mutableStateOf<Workspace?>(null) }
     // Compose 可观察缓存：异步任务返回后立即刷新展开区，不依赖其他状态碰巧重组。
     val taskCache = remember { mutableStateMapOf<String, List<WorkspaceTask>>() }
@@ -127,6 +134,13 @@ fun WorkspaceListScreen(
             error = e.message ?: "无法加载项目列表"
         } finally {
             loading = false
+        }
+        // 聚合失败不阻塞项目树：保留旧数据，仅记错误。
+        try {
+            taskGroups = api.listTaskGroups()
+            taskGroupsError = null
+        } catch (_: Exception) {
+            if (taskGroups.isEmpty()) taskGroupsError = "无法加载任务聚合"
         }
     }
 
@@ -460,7 +474,48 @@ fun WorkspaceListScreen(
             }
         }
 
+        if (!embedded && workspaces.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                WorkspaceModeChip(label = "任务", selected = displayMode == "tasks", onClick = { displayMode = "tasks" })
+                WorkspaceModeChip(label = "项目", selected = displayMode == "projects", onClick = { displayMode = "projects" })
+            }
+        }
+
         when {
+            displayMode == "tasks" && !embedded -> {
+                TaskGroupsContent(
+                    groups = taskGroups,
+                    error = taskGroupsError,
+                    expanded = expandedGroups,
+                    selectedTaskId = selectedTaskId,
+                    onToggle = { groupId ->
+                        expandedGroups[groupId] = expandedGroups[groupId] != true
+                    },
+                    onOpenTask = { group, summary ->
+                        onOpenTask(group.workspaceId, summary.id, group.workspaceName, summary.name)
+                    },
+                    onCreateTask = { group ->
+                        mutationError = null
+                        taskNameDraft = ""
+                        taskWorktreeEnabled = true
+                        creatingTaskFor = Workspace(
+                            id = group.workspaceId,
+                            name = group.workspaceName,
+                            cwd = group.workspaceCwd,
+                            defaultProvider = null,
+                            layout = null,
+                            createdAt = "",
+                            lastOpenedAt = null,
+                        )
+                    },
+                    onRetry = { scope.launch { refresh() } },
+                )
+            }
             loading && workspaces.isEmpty() -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -768,6 +823,224 @@ private fun TaskRow(
                 modifier = Modifier.size(16.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun WorkspaceModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (selected) WandColors.brand else WandColors.textSecondary,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (selected) WandColors.brandSoft else WandColors.bgElevated.copy(alpha = 0.6f),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+    )
+}
+
+/** 任务一级视图：GET /api/tasks 聚合，目录组为一级容器，未分组会话不丢失。 */
+@Composable
+private fun TaskGroupsContent(
+    groups: List<TaskDirectoryGroup>,
+    error: String?,
+    expanded: MutableMap<String, Boolean>,
+    selectedTaskId: String?,
+    onToggle: (String) -> Unit,
+    onOpenTask: (TaskDirectoryGroup, WorkspaceTaskSummary) -> Unit,
+    onCreateTask: (TaskDirectoryGroup) -> Unit,
+    onRetry: () -> Unit,
+) {
+    val visible = groups.filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
+    when {
+        visible.isEmpty() && error == null -> {
+            EmptyState(
+                title = "还没有任务",
+                message = "新建任务时选目录，之后在任务里建会话无需再选目录。",
+            )
+        }
+        visible.isEmpty() && error != null -> {
+            ErrorState(message = error, onRetry = onRetry)
+        }
+        else -> {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 12.dp,
+                    vertical = 4.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(items = visible, key = { it.id }) { group ->
+                    val isExpanded = expanded[group.id] != false
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(WandColors.bgElevated.copy(alpha = 0.6f)),
+                    ) {
+                        // 目录组头：名称 + 路径 + 计数 + ＋ 新任务
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                WandIcons.expand,
+                                contentDescription = if (isExpanded) "收起" else "展开",
+                                tint = WandColors.textSecondary,
+                                modifier = Modifier
+                                    .graphicsLayerRotate(if (isExpanded) 180f else 0f)
+                                    .size(20.dp)
+                                    .clickable { onToggle(group.id) },
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onToggle(group.id) },
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        group.workspaceName,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = WandColors.textPrimary,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (group.synthetic) {
+                                        Text(
+                                            "未归档",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = WandColors.textMuted,
+                                            modifier = Modifier.padding(start = 6.dp),
+                                        )
+                                    }
+                                }
+                                Text(
+                                    group.workspaceCwd,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = WandColors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            val sessionTotal = group.tasks.sumOf { it.sessions.size } +
+                                group.standaloneSessions.size
+                            Text(
+                                "${group.tasks.size}任务 · $sessionTotal 会话",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = WandColors.textMuted,
+                            )
+                            if (!group.synthetic) {
+                                Icon(
+                                    WandIcons.add,
+                                    contentDescription = "在 ${group.workspaceName} 新建任务",
+                                    tint = WandColors.textSecondary,
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .clickable { onCreateTask(group) }
+                                        .padding(6.dp),
+                                )
+                            }
+                        }
+                        if (isExpanded) {
+                            group.tasks.forEach { summary ->
+                                TaskSummaryRow(
+                                    summary = summary,
+                                    selected = summary.id == selectedTaskId,
+                                    onClick = { onOpenTask(group, summary) },
+                                )
+                            }
+                            if (group.tasks.isEmpty()) {
+                                Text(
+                                    "这个目录还没有任务。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = WandColors.textSecondary,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                                )
+                            }
+                            if (group.standaloneSessions.isNotEmpty()) {
+                                Text(
+                                    "未分组会话（${group.standaloneSessions.size}）",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = WandColors.textMuted,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskSummaryRow(
+    summary: WorkspaceTaskSummary,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .background(if (selected) WandColors.brandSoft else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(start = 20.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (summary.status.raw() == "done") {
+            Icon(
+                WandIcons.statusDone,
+                contentDescription = null,
+                tint = WandColors.success,
+                modifier = Modifier.size(16.dp),
+            )
+        } else {
+            GitBranchIcon(
+                tint = WandColors.textSecondary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                summary.name.ifEmpty { "未命名任务" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                if (summary.isIsolated) (summary.worktree?.branch ?: "独立 worktree") else "共享目录",
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (summary.sessions.isNotEmpty()) {
+            Text(
+                "${summary.sessions.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
+            )
+        }
+        Icon(
+            WandIcons.chevronRight,
+            contentDescription = "打开任务",
+            tint = WandColors.textMuted,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
