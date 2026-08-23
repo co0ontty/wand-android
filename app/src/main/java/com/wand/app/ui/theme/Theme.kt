@@ -58,6 +58,8 @@ private object LightTokens {
     val textMuted = Color(0xFF8B8279)
     val brand = Color(0xFFC5653D)
     val brandSoft = Color(0xFFC5653D).copy(alpha = 0.14f)
+    // 选中软底略浓于 brandSoft：单独 14% 叠在米色上几乎等于 surfaceSoft。
+    val selectedFill = Color(0xFFC5653D).copy(alpha = 0.16f)
     // 对齐 Web --border-default / --border-strong：旧 7% 描边在米色底上几乎看不见。
     val border = Color(0xFFD9D2C9)
     val borderStrong = Color(0xFF6D5848).copy(alpha = 0.28f)
@@ -89,6 +91,7 @@ private object DarkTokens {
     val textMuted = Color(0xFF958B81)
     val brand = Color(0xFFD47550)
     val brandSoft = Color(0xFFD47550).copy(alpha = 0.18f)
+    val selectedFill = Color(0xFFD47550).copy(alpha = 0.24f)
     val border = Color(0xFF3D3730)
     val borderStrong = Color(0xFF5C534A)
     val focusRing = Color(0xFFD47550).copy(alpha = 0.50f)
@@ -219,9 +222,13 @@ object WandColors {
     val brand: Color
         @Composable @ReadOnlyComposable get() = pick(LightTokens.brand, DarkTokens.brand)
 
-    /** 主色弱底（选中态背景）。 */
+    /** 主色弱底（图标芯片 / 徽章，不是选中态主信号）。 */
     val brandSoft: Color
         @Composable @ReadOnlyComposable get() = pick(LightTokens.brandSoft, DarkTokens.brandSoft)
+
+    /** 选中态填充。必须配合品牌描边或左侧条，单独使用仍然偏弱。 */
+    val selectedFill: Color
+        @Composable @ReadOnlyComposable get() = pick(LightTokens.selectedFill, DarkTokens.selectedFill)
 
     // —— 边框 / 聚焦 ——
     val border: Color

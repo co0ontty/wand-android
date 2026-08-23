@@ -61,6 +61,7 @@ import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.cardShadowColors
 import com.wand.app.ui.theme.layeredShadow
 import com.wand.app.ui.theme.glassCard
+import com.wand.app.ui.theme.wandSelectedSurface
 
 /**
  * 公共基础组件（重设计规范 v1 第 2.1 节）：
@@ -293,27 +294,15 @@ fun <T> WandChoiceStrip(
                 WandMotion.tweenFast(),
                 label = "choiceStripText",
             )
-            val itemBackground by animateColorAsState(
-                if (active) {
-                    if (flat) WandColors.brandSoft else WandColors.surface.copy(alpha = 0.96f)
-                } else {
-                    Color.Transparent
-                },
-                WandMotion.tweenFast(),
-                label = "choiceStripBg",
-            )
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = if (flat) minHeight else minHeight - 6.dp)
-                    .then(
-                        if (flat) {
-                            Modifier.background(itemBackground)
-                        } else {
-                            Modifier
-                                .clip(WandShapes.full)
-                                .background(itemBackground)
-                        },
+                    .wandSelectedSurface(
+                        selected = active,
+                        shape = if (flat) RoundedCornerShape(0.dp) else WandShapes.full,
+                        unselectedFill = Color.Transparent,
+                        showUnselectedBorder = false,
                     )
                     .selectable(
                         selected = active,
@@ -349,9 +338,9 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * 统一卡片容器：平面色底 + 极轻软阴影，选中用品牌弱底，不再套描边。
+ * 统一卡片容器：平面色底 + 极轻软阴影。
  * - onClick 非空时整卡可点（带 ripple）。
- * - selected = true 时过渡到品牌弱底。
+ * - selected = true 时用品牌软底 + 品牌描边，避免只靠弱底分不清选中。
  * - containerColor 可覆盖底色（语义弱底卡片走纯色平面路径）。
  * - 内容是 ColumnScope，内边距用 contentPadding 控制（规范建议 12-14dp）。
  */
@@ -400,13 +389,15 @@ fun WandCard(
     val brand = WandColors.brand
     val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
     val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.2f, t) * (1f - 0.5f * pressDepth)
-    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), brand.copy(alpha = 0.10f), t)
+    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), WandColors.selectedFill, t)
+    val stroke = lerp(Color.Transparent, brand, t)
     Column(
         modifier = modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .layeredShadow(shape, elevation, keyShadow, ambientShadow)
             .clip(shape)
             .background(bg)
+            .then(if (selected) Modifier.border(1.5.dp, stroke, shape) else Modifier)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)

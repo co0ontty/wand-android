@@ -448,10 +448,12 @@ private fun AppearanceModePicker(
                     onClick = { onSelected(mode) },
                     shape = SegmentedButtonDefaults.itemShape(index, options.size),
                     colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = WandColors.brandSoft,
-                        activeContentColor = WandColors.textPrimary,
+                        activeContainerColor = WandColors.selectedFill,
+                        activeContentColor = WandColors.brand,
+                        activeBorderColor = WandColors.brand,
                         inactiveContainerColor = Color.Transparent,
                         inactiveContentColor = WandColors.textSecondary,
+                        inactiveBorderColor = WandColors.border,
                     ),
                 ) {
                     Text(label, maxLines = 1)

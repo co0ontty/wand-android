@@ -1,8 +1,13 @@
 package com.wand.app;
 
 import android.annotation.SuppressLint;
+import android.app.PendingIntent;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInstaller;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.provider.Settings;
 import android.view.View;
@@ -22,9 +27,11 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
@@ -200,7 +207,7 @@ final class UpdateManager {
                 .setMessage("当前版本: " + currentVer + "\n最新版本: " + latestVer
                         + channelText + sizeText + sourceText + notesText)
                 .setPositiveButton(R.string.update_now, (dialog, which) ->
-                        downloadAndInstall(downloadUrl, fileName, source, latestVer, channel, sha256))
+                        downloadAndInstall(downloadUrl, fileName, source, latestVer, channel, sha256, size))
                 .setNegativeButton(R.string.remind_later, null)
                 .setNeutralButton(R.string.skip_version, (dialog, which) ->
                         serverStore.setSkippedVersion(latestVer, channel))
@@ -221,14 +228,17 @@ final class UpdateManager {
 
     void downloadAndInstall(String downloadUrl, String fileName,
                             String source, String latestVersion, String channel, String sha256) {
+        downloadAndInstall(downloadUrl, fileName, source, latestVersion, channel, sha256, 0);
+    }
+
+    void downloadAndInstall(String downloadUrl, String fileName,
+                            String source, String latestVersion, String channel, String sha256,
+                            long expectedSize) {
         if (downloadUrl == null || downloadUrl.isEmpty()) {
             Toast.makeText(activity, "下载地址为空", Toast.LENGTH_LONG).show();
             return;
         }
-        if (fileName == null || fileName.isEmpty()) {
-            fileName = "wand-update.apk";
-        }
-        final String safeFileName = fileName;
+        final String safeFileName = sanitizeApkFileName(fileName);
 
         View progressView = activity.getLayoutInflater()
                 .inflate(R.layout.dialog_download_progress, null);
@@ -252,6 +262,7 @@ final class UpdateManager {
                 latestVersion,
                 channel,
                 sha256,
+                expectedSize,
                 new DownloadListener() {
                     @Override public void onProgress(long downloaded, long total, long bytesPerSecond) {
                         String speedText = "  " + formatSize(bytesPerSecond) + "/s";
@@ -284,7 +295,7 @@ final class UpdateManager {
                             .setTitle("下载失败")
                             .setMessage(message)
                             .setPositiveButton("重试", (d, w) ->
-                                    downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel, sha256))
+                                    downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel, sha256, expectedSize))
                             .setNegativeButton(android.R.string.cancel, null)
                             .show();
                     }
@@ -302,18 +313,24 @@ final class UpdateManager {
      *   跳走系统默认校验，Cookie 也只发给同源跳。
      * - 先写 {@code <fileName>.part} 临时文件，完整 + 哈希校验通过后才 rename 成
      *   最终文件名，进程被杀不会留下可被当作「待安装更新」的截断 APK。
-     * - GitHub 来源无 SHA-256，另有 Content-Length 比对 + zip magic 兜底；
-     *   失败自动整体重试至多 {@link #MAX_DOWNLOAD_ATTEMPTS} 次。
+     * - GitHub 来源用 Release digest + 检查接口给出的 size；再叠加 Content-Length
+     *   比对和 zip magic。失败自动整体重试至多 {@link #MAX_DOWNLOAD_ATTEMPTS} 次。
      */
     DownloadRequest download(String downloadUrl, String fileName,
                              String latestVersion, String channel,
                              DownloadListener listener) {
-        return download(downloadUrl, fileName, latestVersion, channel, null, listener);
+        return download(downloadUrl, fileName, latestVersion, channel, null, 0, listener);
     }
 
     DownloadRequest download(String downloadUrl, String fileName,
                              String latestVersion, String channel, String expectedSha256,
                              DownloadListener listener) {
+        return download(downloadUrl, fileName, latestVersion, channel, expectedSha256, 0, listener);
+    }
+
+    DownloadRequest download(String downloadUrl, String fileName,
+                             String latestVersion, String channel, String expectedSha256,
+                             long expectedSize, DownloadListener listener) {
         final DownloadRequest request = new DownloadRequest();
         if (downloadUrl == null || downloadUrl.isEmpty()) {
             postDownloadFailure(listener, "下载地址为空");
@@ -323,15 +340,14 @@ final class UpdateManager {
             postDownloadFailure(listener, "下载服务暂不可用，请稍后重试。");
             return request;
         }
-        final String safeFileName = (fileName == null || fileName.isEmpty())
-                ? "wand-update.apk" : fileName;
+        final String safeFileName = sanitizeApkFileName(fileName);
         executor.execute(() -> {
-            // GitHub 直连走 objects.githubusercontent.com，跨境链路经常中途 reset；
-            // 截断的包会被完整性校验拦下，这里对失败自动重试，全部失败才报错。
+            // 旧客户端仍可能直连 GitHub CDN；新服务端会改走 wand 同源代理。
+            // 跨境链路或代理中途 reset 时，截断包由完整性校验拦下后在这里整体重下。
             Exception lastFailure = null;
             for (int attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt++) {
                 try {
-                    downloadAttempt(downloadUrl, safeFileName, expectedSha256,
+                    downloadAttempt(downloadUrl, safeFileName, expectedSha256, expectedSize,
                             latestVersion, channel, listener, request);
                     // 成功与用户取消都已在 downloadAttempt 内回调收尾。
                     return;
@@ -362,15 +378,15 @@ final class UpdateManager {
      * （已回调 onCancelled）；失败抛出异常，由调用方决定是否重试。
      *
      * 完整性防线（按序）：
-     * 1. SHA-256（响应头 X-APK-Sha256 优先，回退 check 时的值；仅本地分发提供）；
-     * 2. Content-Length 已知时逐字节比对——GitHub 来源没有哈希可查，断流截断的
-     *    包必须在这里拦下，否则会以「安装包不完整」的形式到达系统安装器；
+     * 1. SHA-256（响应头 X-APK-Sha256 优先，回退 check 时的值；本地哈希或 GitHub digest）；
+     * 2. Content-Length，缺失时回退检查接口给出的 size——GitHub CDN 经常 chunked
+     *    且不带长度，断流时 read() 同样返回 -1，不做此检查截断包会直接进安装器；
      * 3. zip magic（PK\u005cx03\u005cx04）兜底，拦截错误页 HTML 等非 APK 内容。
      * 全部通过后才把 {@code <fileName>.part} rename 成最终文件名，进程被杀也不会
      * 留下可被当作「待安装更新」的截断 APK。
      */
     private File downloadAttempt(String downloadUrl, String fileName, String expectedSha256,
-                                 String latestVersion, String channel,
+                                 long expectedSize, String latestVersion, String channel,
                                  DownloadListener listener, DownloadRequest request) throws Exception {
         HttpURLConnection conn = null;
         File partFile = null;
@@ -386,6 +402,10 @@ final class UpdateManager {
                         NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS,
                         serverUrl);
                 conn.setInstanceFollowRedirects(false);
+                conn.setRequestProperty("User-Agent", "wand-android");
+                conn.setRequestProperty("Accept", "application/octet-stream");
+                // 禁止透明 gzip，否则 Content-Length 是压缩体积、读到的是解压后字节。
+                conn.setRequestProperty("Accept-Encoding", "identity");
                 if (NetUtils.isSameOrigin(new java.net.URL(currentUrl), serverUrl)) {
                     String cookie = WandHttp.cookieHeaderFor(serverUrl);
                     if (cookie != null) conn.setRequestProperty("Cookie", cookie);
@@ -415,13 +435,15 @@ final class UpdateManager {
                     (headerSha256 != null && !headerSha256.trim().isEmpty())
                             ? headerSha256.trim() : expectedSha256;
 
-            int fileLength = conn.getContentLength();
+            long headerLength = conn.getContentLengthLong();
+            long fileLength = headerLength > 0 ? headerLength : Math.max(0, expectedSize);
             File dir = activity.getExternalFilesDir(null);
+            if (dir == null) throw new Exception("外部存储不可用");
             File outputFile = new File(dir, fileName);
             partFile = new File(dir, fileName + ".part");
             if (fileLength > 0) {
-                long usable = dir != null ? dir.getUsableSpace() : Long.MAX_VALUE;
-                if (usable < (long) fileLength + 5 * 1024 * 1024) {
+                long usable = dir.getUsableSpace();
+                if (usable < fileLength + 5 * 1024 * 1024) {
                     throw new Exception("存储空间不足，需要约 " + formatSize(fileLength) + "，请清理后重试");
                 }
             }
@@ -459,8 +481,8 @@ final class UpdateManager {
             if (!partFile.exists() || partFile.length() == 0) {
                 throw new Exception("下载文件为空");
             }
-            // GitHub 来源没有 SHA-256 可校验，Content-Length 比对是唯一的截断检测手段：
-            // 连接被 reset 时 read() 同样返回 -1，不做此检查截断包会直接进安装器。
+            // 连接被 reset 时 read() 同样返回 -1。优先信响应 Content-Length，
+            // 缺失时用检查接口给出的 GitHub asset.size / 本地 size。
             if (fileLength > 0 && partFile.length() != fileLength) {
                 throw new Exception("下载不完整（已接收 " + formatSize(partFile.length())
                         + " / " + formatSize(fileLength) + "），连接被中断");
@@ -598,21 +620,128 @@ final class UpdateManager {
     }
 
     private void doInstallApk(File apkFile) {
-        try {
-            Uri apkUri = FileProvider.getUriForFile(activity,
-                    activity.getPackageName() + ".fileprovider", apkFile);
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            activity.startActivity(intent);
-        } catch (Exception e) {
-            new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
-                .setTitle("安装失败")
-                .setMessage(e.getMessage())
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+        if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
+            showInstallFailure("安装包不存在或已损坏，请重新下载。");
+            return;
         }
+        if (executor == null || executor.isShutdown()) {
+            try {
+                installWithViewIntent(apkFile);
+            } catch (Exception e) {
+                showInstallFailure(e.getMessage());
+            }
+            return;
+        }
+        Toast.makeText(activity, "正在准备安装…", Toast.LENGTH_SHORT).show();
+        executor.execute(() -> {
+            try {
+                installWithSession(apkFile);
+            } catch (Exception sessionError) {
+                activity.runOnUiThread(() -> {
+                    if (activity.isDestroyed()) return;
+                    try {
+                        installWithViewIntent(apkFile);
+                    } catch (Exception fallback) {
+                        showInstallFailure(fallback.getMessage());
+                    }
+                });
+            }
+        });
+    }
+
+    private void installWithSession(File apkFile) throws Exception {
+        PackageInstaller installer = activity.getPackageManager().getPackageInstaller();
+        PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
+                PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        params.setSize(apkFile.length());
+        params.setAppPackageName(activity.getPackageName());
+        int sessionId = installer.createSession(params);
+        PackageInstaller.Session session = installer.openSession(sessionId);
+        try {
+            try (InputStream in = new FileInputStream(apkFile);
+                 OutputStream out = session.openWrite("wand-update.apk", 0, apkFile.length())) {
+                byte[] buffer = new byte[128 * 1024];
+                int count;
+                while ((count = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, count);
+                }
+                session.fsync(out);
+            }
+            Intent callback = new Intent(activity, UpdateInstallReceiver.class);
+            callback.setAction(UpdateInstallReceiver.ACTION_INSTALL_STATUS);
+            PendingIntent pending = PendingIntent.getBroadcast(
+                    activity,
+                    sessionId,
+                    callback,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+            session.commit(pending.getIntentSender());
+        } catch (Exception e) {
+            try { session.abandon(); } catch (Exception ignored) {}
+            throw e;
+        } finally {
+            try { session.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void installWithViewIntent(File apkFile) {
+        Uri apkUri = FileProvider.getUriForFile(activity,
+                activity.getPackageName() + ".fileprovider", apkFile);
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.setClipData(ClipData.newRawUri("", apkUri));
+        grantInstallUriPermission(apkUri);
+        activity.startActivity(intent);
+    }
+
+    private void grantInstallUriPermission(Uri apkUri) {
+        int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+        Intent probe = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(apkUri, "application/vnd.android.package-archive");
+        java.util.List<ResolveInfo> resolvers = activity.getPackageManager()
+                .queryIntentActivities(probe, PackageManager.MATCH_DEFAULT_ONLY);
+        if (resolvers != null) {
+            for (ResolveInfo info : resolvers) {
+                if (info.activityInfo == null) continue;
+                activity.grantUriPermission(info.activityInfo.packageName, apkUri, flags);
+            }
+        }
+        String[] knownInstallers = {
+                "com.android.packageinstaller",
+                "com.google.android.packageinstaller",
+                "com.samsung.android.packageinstaller",
+                "com.miui.packageinstaller",
+        };
+        for (String pkg : knownInstallers) {
+            try {
+                activity.grantUriPermission(pkg, apkUri, flags);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void showInstallFailure(String message) {
+        if (activity.isDestroyed()) return;
+        new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
+            .setTitle("安装失败")
+            .setMessage(message != null ? message : "无法启动系统安装器")
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+    }
+
+    /**
+     * GitHub Release 文件名带 {@code +} build metadata。content URI / 部分 OEM
+     * 安装器会把 {@code +} 当成空格，下载成功后无法拉起安装。
+     */
+    static String sanitizeApkFileName(String fileName) {
+        if (fileName == null) return "wand-update.apk";
+        String base = fileName.trim();
+        int slash = Math.max(base.lastIndexOf('/'), base.lastIndexOf('\\'));
+        if (slash >= 0) base = base.substring(slash + 1);
+        if (base.isEmpty()) return "wand-update.apk";
+        base = base.replace('+', '-').replaceAll("[^A-Za-z0-9._-]+", "-");
+        if (base.isEmpty()) return "wand-update.apk";
+        if (!base.toLowerCase(Locale.ROOT).endsWith(".apk")) return base + ".apk";
+        return base;
     }
 
     static String extractVersionFromFileName(String fileName) {

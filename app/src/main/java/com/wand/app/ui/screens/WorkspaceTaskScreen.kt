@@ -1,7 +1,6 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,6 +63,7 @@ import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.wandSelectedSurface
 import com.wand.app.ui.workspaces.WorkspaceTargetState
 import com.wand.app.ui.workspaces.WorkspaceTaskState
 import com.wand.app.ui.workspaces.WorkspaceWorkflow
@@ -434,15 +434,15 @@ private fun SessionSummaryRow(
     val icon = BrandLogos.painterForProvider(provider)
     val accent = if (provider == "codex") WandColors.info else WandColors.brand
     val iconTint = BrandLogos.tintForProvider(provider, accent)
-    val borderColor = if (isSelected) accent else WandColors.border.copy(alpha = 0.5f)
-    val background = if (isSelected) accent.copy(alpha = 0.08f) else WandColors.bgElevated.copy(alpha = 0.5f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(background)
-            .border(0.5.dp, borderColor, RoundedCornerShape(14.dp))
+            .wandSelectedSurface(
+                selected = isSelected,
+                shape = RoundedCornerShape(14.dp),
+                unselectedFill = WandColors.bgElevated.copy(alpha = 0.5f),
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
             .semantics { contentDescription = listSessionLabel(session, index) },

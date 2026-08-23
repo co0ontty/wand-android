@@ -37,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -70,6 +69,8 @@ import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.wandSelectedRow
+import com.wand.app.ui.theme.wandSelectedSurface
 import kotlinx.coroutines.launch
 
 /** Stable route information carried from the task tree into a session detail screen. */
@@ -834,8 +835,12 @@ private fun TaskAggregateRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(if (selected) WandColors.brandSoft else WandColors.bgPrimary.copy(alpha = 0.28f)),
+            .wandSelectedSurface(
+                selected = selected,
+                shape = RoundedCornerShape(9.dp),
+                unselectedFill = WandColors.bgPrimary.copy(alpha = 0.28f),
+                showUnselectedBorder = false,
+            ),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 4.dp, end = 4.dp),
@@ -1000,8 +1005,10 @@ private fun AggregateSessionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) WandColors.brandSoft.copy(alpha = 0.72f) else Color.Transparent)
+            .wandSelectedRow(
+                selected = selected,
+                shape = RoundedCornerShape(8.dp),
+            )
             .padding(start = 22.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),

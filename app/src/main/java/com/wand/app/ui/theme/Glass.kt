@@ -13,9 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -341,10 +339,9 @@ fun Modifier.glassCard(
 // —— 环境背景 ——
 
 /**
- * 页面环境背景：品牌色调的低透明度平面色域（静态绘制，零每帧开销）。
- * 玻璃 chrome 需要背后有「东西」才能体现模糊与折射；
- * API < 31 时它也让半透明降级面板读出层次。
- * 放在 [glassBackdropSource] 的 Box 内部最底层，所有原生 Compose 页面共用。
+ * 页面环境背景：纯色 [WandColors.bgPrimary]。
+ * 曾经用两团低透明圆形色域给玻璃栏提供层次，但半透明侧栏会把圆边透成可见圆弧。
+ * 玻璃采样已经有列表/卡片内容，不再需要装饰圆。
  */
 @Composable
 fun AmbientBackground(modifier: Modifier = Modifier) {
@@ -353,34 +350,7 @@ fun AmbientBackground(modifier: Modifier = Modifier) {
 
 /** [AmbientBackground] 的 Modifier 形态：次级页面直接挂在 Scaffold modifier 上。 */
 @Composable
-fun Modifier.ambientBackground(): Modifier {
-    val dark = isWandDarkTheme()
-    val base = WandColors.bgPrimary
-    val topWash = WandColors.brand.copy(alpha = 0.034f)
-    val sideWash = if (dark) {
-        Color(0xFF8A705D).copy(alpha = 0.024f)
-    } else {
-        Color(0xFFB49B86).copy(alpha = 0.024f)
-    }
-    return this.then(
-        Modifier.drawBehind {
-            drawRect(base)
-            val w = size.width
-            val h = size.height
-            if (w <= 0f || h <= 0f) return@drawBehind
-            drawCircle(
-                color = topWash,
-                radius = maxOf(w, h) * 0.42f,
-                center = Offset(w * 0.08f, -h * 0.04f),
-            )
-            drawCircle(
-                color = sideWash,
-                radius = maxOf(w, h) * 0.30f,
-                center = Offset(w * 1.02f, h * 0.42f),
-            )
-        }
-    )
-}
+fun Modifier.ambientBackground(): Modifier = this.background(WandColors.bgPrimary)
 
 /** 次级页面顶栏的降级玻璃（不叠在滚动内容上，无 backdrop 采样）。 */
 val secondaryBarGlass: GlassStyle

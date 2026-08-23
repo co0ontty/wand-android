@@ -59,7 +59,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.painter.Painter
@@ -857,27 +856,19 @@ private fun WideSidebarPanel(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    val shape = RoundedCornerShape(0.dp)
-    val rimColor = WandColors.borderStrong.copy(alpha = 0.38f)
-    val panelBrush = Brush.verticalGradient(
-        colors = listOf(
-            WandColors.bgElevated.copy(alpha = 0.94f),
-            WandColors.bgElevated.copy(alpha = 0.84f),
-            WandColors.bgPrimary.copy(alpha = 0.90f),
-        ),
-    )
+    val divider = WandColors.border
     Box(
         modifier = modifier
-            .clip(shape)
-            .background(panelBrush)
+            .background(WandColors.bgElevated)
             .drawBehind {
-                val x = size.width - 0.6.dp.toPx()
+                val stroke = 1.dp.toPx()
+                val x = size.width - stroke / 2f
                 drawLine(
-                    color = rimColor,
+                    color = divider,
                     start = Offset(x, 0f),
                     end = Offset(x, size.height),
-                    strokeWidth = 0.8.dp.toPx(),
-                    cap = StrokeCap.Round,
+                    strokeWidth = stroke,
+                    cap = StrokeCap.Butt,
                 )
             },
     ) {

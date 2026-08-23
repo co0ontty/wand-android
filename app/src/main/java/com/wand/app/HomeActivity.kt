@@ -172,6 +172,7 @@ class HomeActivity : AppCompatActivity() {
                 update.latestVersion,
                 update.channel,
                 update.sha256,
+                update.size,
                 object : UpdateManager.DownloadListener {
                     override fun onProgress(downloadedBytes: Long, totalBytes: Long, bytesPerSecond: Long) {
                         updatePresentation = UpdatePresentation.Downloading(
@@ -364,7 +365,6 @@ class HomeActivity : AppCompatActivity() {
                         onDownload = ::startDownload,
                         onCancelDownload = { activeDownload?.cancel() },
                         onInstall = { apkFile ->
-                            updatePresentation = UpdatePresentation.Hidden
                             manager.installApk(apkFile)
                         },
                         onSkipVersion = { update ->

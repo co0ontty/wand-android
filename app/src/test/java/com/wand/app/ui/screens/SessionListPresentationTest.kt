@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import org.junit.Assert.assertEquals
+import com.wand.app.ui.singleUnitDurationLabel
 import org.junit.Assert.assertNull
 import org.junit.Test
 

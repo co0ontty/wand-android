@@ -2,7 +2,6 @@ package com.wand.app
 
 import android.content.Context
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -66,6 +65,7 @@ import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandSpacing
 import com.wand.app.ui.theme.WandTheme
+import com.wand.app.ui.theme.wandSelectedSurface
 
 interface ConnectUiListener {
     fun onConnect()
@@ -411,12 +411,11 @@ private fun SavedServerRow(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 68.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (active) WandColors.brandSoft else androidx.compose.ui.graphics.Color.Transparent)
-            .border(
-                width = 0.5.dp,
-                color = if (active) WandColors.brand.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent,
+            .wandSelectedSurface(
+                selected = active,
                 shape = RoundedCornerShape(12.dp),
+                unselectedFill = androidx.compose.ui.graphics.Color.Transparent,
+                showUnselectedBorder = false,
             )
             .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

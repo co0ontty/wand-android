@@ -45,6 +45,7 @@ import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.wandSelectedSurface
 import kotlinx.coroutines.launch
 
 /**
@@ -276,12 +277,10 @@ private fun WorktreeRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) WandColors.brandSoft else WandColors.surface)
-            .border(
-                1.dp,
-                if (selected) WandColors.brand.copy(alpha = 0.35f) else WandColors.border,
-                RoundedCornerShape(12.dp),
+            .wandSelectedSurface(
+                selected = selected,
+                shape = RoundedCornerShape(12.dp),
+                unselectedFill = WandColors.surface,
             )
             .clickable(enabled = enabled, onClick = onToggle)
             .padding(12.dp),

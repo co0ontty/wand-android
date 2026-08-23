@@ -118,6 +118,8 @@ import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import com.wand.app.ui.theme.secondaryBarGlass
+import com.wand.app.ui.theme.wandSelectedRow
+import com.wand.app.ui.theme.wandSelectedSurface
 import kotlinx.coroutines.launch
 
 /**
@@ -1039,17 +1041,16 @@ private fun MultiAgentPicker(
                         WandMotion.tweenFast(),
                         label = "multiAgentIconColor",
                     )
-                    val itemBackground by animateColorAsState(
-                        if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
-                        WandMotion.tweenFast(),
-                        label = "multiAgentItemBg",
-                    )
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .heightIn(min = 64.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(itemBackground)
+                            .wandSelectedSurface(
+                                selected = active,
+                                shape = RoundedCornerShape(14.dp),
+                                unselectedFill = Color.Transparent,
+                                showUnselectedBorder = false,
+                            )
                             .semantics {
                                 contentDescription = label
                                 stateDescription = if (active) "已选择" else "未选择"
@@ -1138,18 +1139,17 @@ private fun ToolPicker(
                         WandMotion.tweenFast(),
                         label = "toolIconColor",
                     )
-                    val itemBackground by animateColorAsState(
-                        if (active) WandColors.surface.copy(alpha = 0.96f) else Color.Transparent,
-                        WandMotion.tweenFast(),
-                        label = "toolItemBg",
-                    )
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .weight(1f)
                             .heightIn(min = 64.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(itemBackground)
+                            .wandSelectedSurface(
+                                selected = active,
+                                shape = RoundedCornerShape(14.dp),
+                                unselectedFill = Color.Transparent,
+                                showUnselectedBorder = false,
+                            )
                             .semantics {
                                 contentDescription = label
                                 stateDescription = if (active) "已选择" else "未选择"
@@ -1186,19 +1186,14 @@ private fun ToolPicker(
     }
 }
 
-/** iOS 风格选择卡底：纯色 surface；选中切 brand 软底，不再套描边。 */
+/** 选择卡：未选浅底 + 细描边，选中品牌软底 + 品牌描边。对齐 iOS cardBackground。 */
 @Composable
-private fun Modifier.selectCard(selected: Boolean): Modifier {
-    val shape = RoundedCornerShape(12.dp)
-    val bg by animateColorAsState(
-        if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.72f),
-        WandMotion.tweenFast(),
-        label = "selectCardBg",
+private fun Modifier.selectCard(selected: Boolean): Modifier =
+    wandSelectedSurface(
+        selected = selected,
+        shape = RoundedCornerShape(12.dp),
+        unselectedFill = WandColors.surfaceSoft.copy(alpha = 0.72f),
     )
-    return this
-        .clip(shape)
-        .background(bg)
-}
 
 @Composable
 private fun SessionKindPicker(selected: NewSessionKind, onSelect: (NewSessionKind) -> Unit) {
@@ -1398,8 +1393,10 @@ private fun ServerPicker(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 58.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (isSelected) WandColors.brandSoft else Color.Transparent)
+                                .wandSelectedRow(
+                                    selected = isSelected,
+                                    shape = RoundedCornerShape(12.dp),
+                                )
                                 .semantics(mergeDescendants = true) {
                                     stateDescription = if (isSelected) "已选择" else "未选择"
                                 }
@@ -1546,8 +1543,10 @@ private fun OptionMenuCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 48.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSel) WandColors.brandSoft else Color.Transparent)
+                                    .wandSelectedRow(
+                                        selected = isSel,
+                                        shape = RoundedCornerShape(12.dp),
+                                    )
                                     .selectable(
                                         selected = isSel,
                                         role = Role.RadioButton,
@@ -1592,18 +1591,13 @@ private fun ModePicker(
         modes.forEachIndexed { index, mode ->
             val enabled = mode.id in supportedModes
             val active = mode.id == selected
-            val background by animateColorAsState(
-                if (active) WandColors.brandSoft else Color.Transparent,
-                WandMotion.tweenFast(),
-                label = "modeRowBackground",
-            )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(11.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 58.dp)
-                    .background(background)
+                    .wandSelectedRow(selected = active, shape = RoundedCornerShape(0.dp))
                     .semantics(mergeDescendants = true) {
                         stateDescription = when {
                             active -> "已选择"
@@ -1787,7 +1781,7 @@ private fun CwdCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 50.dp)
-                        .background(if (isSelected) WandColors.brandSoft else Color.Transparent)
+                        .wandSelectedRow(selected = isSelected, shape = RoundedCornerShape(0.dp))
                         .clickable(role = Role.Button) { onPickRecent(recent.path) }
                         .padding(horizontal = 13.dp, vertical = 7.dp),
                 ) {

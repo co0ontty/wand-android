@@ -22,6 +22,19 @@ public class UpdateManagerApkCleanupTest {
     }
 
     @Test
+    public void sanitizesGitHubBuildMetadataPlusSigns() {
+        assertEquals("wand-v4.48.0-202608232136.apk",
+                UpdateManager.sanitizeApkFileName("wand-v4.48.0+202608232136.apk"));
+        assertEquals("wand-v4.48.0-202608232136.apk",
+                UpdateManager.sanitizeApkFileName("dir/wand-v4.48.0+202608232136.apk"));
+        assertEquals("wand-update.apk", UpdateManager.sanitizeApkFileName(""));
+        assertEquals("wand-update.apk", UpdateManager.sanitizeApkFileName(null));
+        assertEquals("4.48.0-202608232136",
+                UpdateManager.extractVersionFromFileName(
+                        UpdateManager.sanitizeApkFileName("wand-v4.48.0+202608232136.apk")));
+    }
+
+    @Test
     public void sameCoreVersionWithDifferentDebugStampIsNotNewer() {
         // 已装 4.42.1-debug.08132148，磁盘上留的 4.42.1-debug.08150708 主版本相同：
         // 这是已消费过的包（或同版本重下的），不是待安装更新，清扫时应删除。
