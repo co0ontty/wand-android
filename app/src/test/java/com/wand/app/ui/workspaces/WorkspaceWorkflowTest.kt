@@ -6,6 +6,7 @@ import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskDetail
@@ -260,6 +261,7 @@ class WorkspaceWorkflowTest {
         override suspend fun createWorkspaceTaskWindow(
             target: WorkspaceSessionTarget,
             binding: WorkspaceBinding,
+            kind: WorkspaceSessionKind,
         ): SessionSnapshot {
             createCalls += target to binding
             return SessionSnapshot(

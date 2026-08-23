@@ -41,12 +41,19 @@ class WorkspaceTaskCreationTest {
         val binding = WorkspaceBinding("ws-1", "task-1", "/worktree/path")
 
         for ((target, expectedCommand) in cases) {
-            val body = createWorkspaceTaskWindowRequestBody(target, binding)
-            assertEquals("command for ${target.raw}", expectedCommand, body.getString("command"))
-            assertEquals("provider for ${target.raw}", target.raw, body.getString("provider"))
-            assertEquals("ws-1", body.getString("workspaceId"))
-            assertEquals("task-1", body.getString("workspaceTaskId"))
-            assertEquals("/worktree/path", body.getString("cwd"))
+            val pty = createWorkspaceTaskWindowRequest(target, binding, WorkspaceSessionKind.Pty)
+            assertEquals("/api/commands", pty.path)
+            assertEquals("command for ${target.raw}", expectedCommand, pty.body.getString("command"))
+            assertEquals("provider for ${target.raw}", target.raw, pty.body.getString("provider"))
+            assertEquals("ws-1", pty.body.getString("workspaceId"))
+            assertEquals("task-1", pty.body.getString("workspaceTaskId"))
+            assertEquals("/worktree/path", pty.body.getString("cwd"))
+
+            val structured = createWorkspaceTaskWindowRequest(target, binding, WorkspaceSessionKind.Structured)
+            assertEquals("/api/structured-sessions", structured.path)
+            assertEquals(target.raw, structured.body.getString("provider"))
+            assertEquals(structuredRunnerFor(target.raw), structured.body.getString("runner"))
+            assertTrue(!structured.body.has("command"))
         }
     }
 

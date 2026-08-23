@@ -88,7 +88,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -922,7 +921,7 @@ internal fun shouldCollapseReply(turnIndex: Int, lastUserTurnIndex: Int): Boolea
 @Composable
 private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
     // apple-design §7/§16 Familiarity & Spatial consistency:
-    // 头部品牌标随 provider 切换（Claude/Codex/Grok/OpenCode/Qoder 各自的 logo + 列表同款 accent 色），
+    // 头部品牌标随 provider 切换（Claude/Codex/Grok/OpenCode/Qoder 各自的原生 logo），
     // 让用户从会话列表进入聊天页时视觉连续——之前的 WandBrandMark 对所有 provider 都显示同一星芒标，
     // 与标题文字（如 "Codex"）对不上，是 logo 对应关系的根因。
     val provider = store.snapshot?.provider
@@ -944,8 +943,6 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
             ) {
                 ProviderBrandMark(
                     provider = provider,
-                    accent = accent,
-                    accentSoft = accentSoft,
                     size = 52,
                 )
                 // apple-design §15 Typography：大字号配负 tracking、SemiBold 而非 Bold，
@@ -1011,38 +1008,31 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
 }
 
 /**
- * Provider 品牌标：弱色悬浮圆角方块 + provider 自家 logo。
- * - 单色 provider（claude/codex/grok）用列表同款 accent 色着色，保证跨页面一致；
- * - 多色 provider（opencode/qoder）走 [BrandLogos.tintForProvider] 的 Unspecified 通道，保留官方配色。
+ * Provider 品牌标：中性悬浮圆角方块 + 工具原生 logo。
+ * 不再铺 Wand 橙色底，也不把官方配色改写成 accent。
  * 与 [com.wand.app.ui.components.WandBrandMark] 同尺寸/同圆角比例，但内容随 provider 变化。
- * apple-design §12：弱色表面 + 轻阴影让标记与背景分层，material weight 编码层级。
  */
 @Composable
 private fun ProviderBrandMark(
     provider: String?,
-    accent: Color,
-    accentSoft: Color,
     size: Int = 52,
 ) {
     val corner = RoundedCornerShape((size * 0.26f).dp)
-    // 部分 Android GPU 会把半透明容器中 Icon 的离屏缓冲区以白色显露，
-    // 正好形成一个 logo 尺寸的方块。预先与页面底色合成不透明弱色底可消除该分层瑕疵。
-    val stableBackground = accentSoft.compositeOver(WandColors.bgPrimary)
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(size.dp)
             .shadow(elevation = (size * 0.06f).dp, shape = corner)
             .clip(corner)
-            .background(stableBackground)
-            .border(0.5.dp, accent.copy(alpha = 0.14f), corner),
+            .background(WandColors.surface)
+            .border(0.5.dp, WandColors.border.copy(alpha = 0.55f), corner),
     ) {
         Icon(
             painter = BrandLogos.painterForProvider(provider),
             contentDescription = null,
-            tint = BrandLogos.tintForProvider(provider, accent),
+            tint = BrandLogos.tintForProvider(provider, WandColors.textPrimary),
             modifier = Modifier.size(
-                (size * 0.5f * BrandLogos.opticalScale(provider)).dp,
+                (size * 0.56f * BrandLogos.opticalScale(provider)).dp,
             ),
         )
     }

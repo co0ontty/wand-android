@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.ui.components.BrandLogos
@@ -65,9 +66,11 @@ import com.wand.app.ui.theme.WandColors
 @Composable
 fun WorkspaceTargetSheet(
     selected: WorkspaceSessionTarget,
+    selectedKind: WorkspaceSessionKind,
     creating: Boolean,
     error: String?,
     onSelect: (WorkspaceSessionTarget) -> Unit,
+    onSelectKind: (WorkspaceSessionKind) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -107,6 +110,47 @@ fun WorkspaceTargetSheet(
                         enabled = !creating,
                         onClick = { onSelect(target) },
                     )
+                }
+            }
+            if (!selected.isShell) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "会话类型",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = WandColors.textSecondary,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    WorkspaceSessionKind.entries.forEach { option ->
+                        val active = option == selectedKind
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 56.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (active) WandColors.brand.copy(alpha = 0.08f)
+                                    else WandColors.surfaceSoft.copy(alpha = 0.42f),
+                                )
+                                .clickable(enabled = !creating) { onSelectKind(option) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                        ) {
+                            Text(
+                                option.label,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = WandColors.textPrimary,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                option.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = WandColors.textSecondary,
+                            )
+                        }
+                    }
                 }
             }
             if (error != null) {

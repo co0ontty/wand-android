@@ -6,6 +6,7 @@ import com.wand.app.data.TaskWindowLayout
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskCreation
@@ -242,6 +243,7 @@ class TaskListStateTest {
         override suspend fun createWorkspaceTaskWindow(
             target: WorkspaceSessionTarget,
             binding: WorkspaceBinding,
+            kind: WorkspaceSessionKind,
         ): SessionSnapshot {
             createdWindowBindings += binding
             return SessionSnapshot.parse(JSONObject().put("id", "created-session"))

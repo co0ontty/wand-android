@@ -4,6 +4,7 @@ import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskWindowLayout
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTaskDetail
 import com.wand.app.data.activeWorkWindowTab
@@ -154,6 +155,7 @@ class WorkspaceWorkflow(
         workspaceId: String,
         taskId: String,
         cwd: String,
+        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
         onCreated: (SessionSnapshot) -> Unit,
     ) {
         if (_targetState.value is WorkspaceTargetState.Creating) return
@@ -166,6 +168,7 @@ class WorkspaceWorkflow(
                 val session = port.createWorkspaceTaskWindow(
                     target = target,
                     binding = WorkspaceBinding(workspaceId, requestTaskId, cwd),
+                    kind = kind,
                 )
                 // 切任务丢弃延迟响应。
                 if (requestTaskId != currentTaskId() || requestGeneration != taskGeneration) return@launch
@@ -213,5 +216,26 @@ class WorkspaceWorkflow(
         is WorkspaceTaskState.Content -> s.detail.workspaceId
         is WorkspaceTaskState.EmptySessions -> s.detail.workspaceId
         else -> null
+    }
+
+    fun deleteSession(sessionId: String, onDeleted: () -> Unit = {}) {
+        val content = _taskState.value as? WorkspaceTaskState.Content ?: return
+        val taskId = content.detail.id
+        val generation = taskGeneration
+        scope.launch {
+            try {
+                port.deleteWorkspaceSessions(listOf(sessionId))
+                if (generation != taskGeneration) return@launch
+                val detail = port.workspaceTask(taskId)
+                if (generation != taskGeneration) return@launch
+                applyTaskDetail(
+                    detail,
+                    preferredSessionId = content.selectedSessionId?.takeIf { it != sessionId },
+                )
+                onDeleted()
+            } catch (_: Exception) {
+                if (generation != taskGeneration) return@launch
+            }
+        }
     }
 }

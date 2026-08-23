@@ -470,6 +470,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         thinkingEffort: String?,
         defaultProvider: String?,
         defaultSessionKind: String?,
+        defaultTaskWorktree: Boolean?,
     ) {
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
@@ -504,6 +505,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         if (thinkingEffort != null) body.put("defaultThinkingEffort", thinkingEffort)
         if (defaultProvider != null) body.put("defaultProvider", defaultProvider)
         if (defaultSessionKind != null) body.put("defaultSessionKind", defaultSessionKind)
+        if (defaultTaskWorktree != null) body.put("defaultTaskWorktree", defaultTaskWorktree)
         requestData("POST", "/api/settings/config", body)
     }
 
@@ -716,11 +718,16 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
         val sessionIds = workspaceTask(taskId).sessions.map { it.id }.distinct()
-        if (sessionIds.isEmpty()) return 0
+        return deleteWorkspaceSessions(sessionIds)
+    }
+
+    override suspend fun deleteWorkspaceSessions(sessionIds: List<String>): Int {
+        val ids = sessionIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (ids.isEmpty()) return 0
         val response = requestObject(
             "POST",
             "/api/sessions/batch-delete",
-            JSONObject().put("sessionIds", JSONArray(sessionIds)),
+            JSONObject().put("sessionIds", JSONArray(ids)),
         )
         return response.int("deleted") ?: 0
     }
@@ -742,16 +749,16 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     }
 
     /**
-     * 任务内选择 Agent 走 PTY，而不是结构化会话，也不跳转 NewSessionScreen。
-     * Shell 使用 {shell:true}；Provider 使用 PTY command（qoder → qodercli）。
+     * 任务内选择 Agent：结构化走 /api/structured-sessions，PTY/空白终端走 /api/commands。
      * 绑定 workspaceId/workspaceTaskId 和任务 cwd。不调用 updateNewSessionDefaults。
      */
     override suspend fun createWorkspaceTaskWindow(
         target: WorkspaceSessionTarget,
         binding: WorkspaceBinding,
+        kind: WorkspaceSessionKind,
     ): SessionSnapshot {
-        val body = createWorkspaceTaskWindowRequestBody(target, binding)
-        return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
+        val request = createWorkspaceTaskWindowRequest(target, binding, kind)
+        return SessionSnapshot.parse(requestObject("POST", request.path, request.body))
     }
 
     // MARK: - 目录与配置
@@ -764,4 +771,16 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun serverConfig(): ServerConfigInfo =
         ServerConfigInfo.parse(requestObject("GET", "/api/config"))
+
+    override suspend fun updateCreationDefaults(
+        defaultProvider: String?,
+        defaultSessionKind: String?,
+        defaultTaskWorktree: Boolean?,
+    ) {
+        updateNewSessionDefaults(
+            defaultProvider = defaultProvider,
+            defaultSessionKind = defaultSessionKind,
+            defaultTaskWorktree = defaultTaskWorktree,
+        )
+    }
 }

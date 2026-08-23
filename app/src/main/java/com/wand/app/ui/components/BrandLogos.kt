@@ -1,6 +1,7 @@
 package com.wand.app.ui.components
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
@@ -11,18 +12,22 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.wand.app.R
+import com.wand.app.ui.theme.isWandDarkTheme
 
 /**
  * Provider 矢量图标（Claude / Codex 路径来自 simple-icons，CC0；24x24 viewBox）。
  * OpenCode 图标来自其官方仓库 packages/identity/mark.svg（MIT），Pi 来自 pi.dev/logo-auto.svg。
  * path 字符串保持单行原样——SVG path 里空格是数字分隔符，断行拼接容易吞掉语义。
- * 单色 Logo 以黑色定义，显示色由 Icon(tint) 覆盖；OpenCode 与 Qoder 保留官方配色，
+ * 尽量保留各工具原生配色：Claude 用官方橙、OpenCode/Qoder 用官方多色资源，
+ * Codex / Grok / Pi 按官方单色标在浅色用黑、深色用白，不再套 Wand 橙色。
  * 调用方需通过 tintForProvider 避免 ColorFilter 覆盖品牌色。
  * 用于会话列表 ProviderMark 与新建会话 Provider 选择卡。
  */
 object BrandLogos {
-    /** Claude（Anthropic 星芒）。 */
-    val claude: ImageVector by lazy { brandIcon("BrandClaude", CLAUDE_PATH) }
+    /** Claude（Anthropic 星芒，官方 brand orange）。 */
+    val claude: ImageVector by lazy {
+        brandIcon("BrandClaude", CLAUDE_PATH, fill = CLAUDE_BRAND_COLOR)
+    }
 
     /** Codex（OpenAI 六角结）。 */
     val codex: ImageVector by lazy { brandIcon("BrandCodex", CODEX_PATH) }
@@ -59,9 +64,21 @@ object BrandLogos {
             rememberVectorPainter(vectorForProvider(provider))
         }
 
-    /** OpenCode 与 Qoder 官方标志包含品牌配色，不应用 Compose Icon 的单色 tint。 */
+    /**
+     * 原生 logo 不套用调用方传入的品牌色。
+     * OpenCode / Qoder / Claude 颜色已经画在资源里；Codex / Grok / Pi 按官方单色标跟随主题。
+     */
+    @Composable
+    @ReadOnlyComposable
     fun tintForProvider(provider: String?, tint: Color): Color =
-        if (provider == "opencode" || provider == "qoder") Color.Unspecified else tint
+        resolveTint(provider, tint, onDark = isWandDarkTheme())
+
+    fun resolveTint(provider: String?, tint: Color, onDark: Boolean = false): Color =
+        when (provider) {
+            "opencode", "qoder", "claude" -> Color.Unspecified
+            "codex", "grok", "pi" -> if (onDark) Color.White else Color.Black
+            else -> tint
+        }
 
     /**
      * 多色方形品牌标需要略大于线性图标，才能在 15-20dp 的列表尺寸下保持可辨识。
@@ -75,11 +92,15 @@ object BrandLogos {
         if (tint == Color.Unspecified) Color.Unspecified else tint.copy(alpha = alpha)
 }
 
+/** Anthropic / Claude 官方 brand orange，见 Claude design system。 */
+private val CLAUDE_BRAND_COLOR = Color(0xFFD97757)
+
 private fun brandIcon(
     name: String,
     pathData: String,
     viewportWidth: Float = 24f,
     viewportHeight: Float = 24f,
+    fill: Color = Color.Black,
 ): ImageVector =
     ImageVector.Builder(
         name = name,
@@ -89,7 +110,7 @@ private fun brandIcon(
         viewportHeight = viewportHeight,
     ).addPath(
         pathData = addPathNodes(pathData),
-        fill = SolidColor(Color.Black),
+        fill = SolidColor(fill),
     ).build()
 
 private fun openCodeIcon(): ImageVector =

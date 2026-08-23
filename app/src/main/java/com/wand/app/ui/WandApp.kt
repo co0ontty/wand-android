@@ -475,6 +475,7 @@ private fun SinglePaneContent(
             onOpenRestoredSession = onOpenRestoredSession,
             onTaskRenamed = nav::renameWorkspaceTask,
             onTaskClosed = nav::closeWorkspaceTask,
+            onSessionClosed = nav::closeSession,
             onOpenSettings = onOpenSettings,
             onOpenWeb = {
                 if (!sessionCreationInFlight) actions.navigation.openWeb()
@@ -652,6 +653,7 @@ private fun WideReadyContent(
                                 onOpenRestoredSession = onOpenRestoredSession,
                                 onTaskRenamed = nav::renameWorkspaceTask,
                                 onTaskClosed = nav::closeWorkspaceTask,
+                                onSessionClosed = nav::closeSession,
                                 onOpenSettings = onOpenSettings,
                                 onOpenWeb = {
                                     if (!sessionCreationInFlight) actions.navigation.openWeb()

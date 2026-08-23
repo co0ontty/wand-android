@@ -10,6 +10,7 @@ import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskCreation
@@ -37,6 +38,12 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
     var defaultCwd by mutableStateOf<String?>(null)
         private set
     var recentPaths by mutableStateOf<List<RecentPath>>(emptyList())
+        private set
+    var defaultProvider by mutableStateOf("claude")
+        private set
+    var defaultSessionKind by mutableStateOf(WorkspaceSessionKind.Structured)
+        private set
+    var defaultTaskWorktree by mutableStateOf(true)
         private set
     var creationDefaultsLoading by mutableStateOf(false)
         private set
@@ -98,6 +105,15 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
             recentPaths = port.recentTaskPaths()
                 .filter { it.path.isNotBlank() }
                 .distinctBy { normalizeWorkspacePath(it.path) }
+            runCatching { port.serverConfig() }.getOrNull()?.let { config ->
+                defaultProvider = config.defaultProvider?.takeIf { it.isNotBlank() } ?: defaultProvider
+                defaultSessionKind = if (config.defaultSessionKind == "pty") {
+                    WorkspaceSessionKind.Pty
+                } else {
+                    WorkspaceSessionKind.Structured
+                }
+                defaultTaskWorktree = config.defaultTaskWorktree != false
+            }
             true
         } catch (error: Exception) {
             if (error is CancellationException) throw error
@@ -183,6 +199,7 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
     suspend fun createTaskWindow(
         taskId: String,
         target: WorkspaceSessionTarget,
+        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
     ): SessionSnapshot? = mutationMutex.withLock {
         mutationBusy = true
         mutationError = null
@@ -191,6 +208,7 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
             val session = port.createWorkspaceTaskWindow(
                 target,
                 WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd),
+                kind,
             )
             val reconciled = reconcileTaskWindowLayout(
                 detail.task.layout,
@@ -225,7 +243,42 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
         }
     }
 
+    suspend fun deleteSessions(sessionIds: List<String>): Int? = mutationMutex.withLock {
+        mutationBusy = true
+        mutationError = null
+        try {
+            val deleted = port.deleteWorkspaceSessions(sessionIds)
+            load(silent = true)
+            deleted
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            mutationError = error.message ?: "删除终端失败"
+            null
+        } finally {
+            mutationBusy = false
+        }
+    }
+
     suspend fun refreshAfterMutation(): Boolean = load(silent = true)
+
+    fun rememberCreationChoice(
+        defaultProvider: String? = null,
+        defaultSessionKind: WorkspaceSessionKind? = null,
+        defaultTaskWorktree: Boolean? = null,
+    ) {
+        if (defaultProvider != null) this.defaultProvider = defaultProvider
+        if (defaultSessionKind != null) this.defaultSessionKind = defaultSessionKind
+        if (defaultTaskWorktree != null) this.defaultTaskWorktree = defaultTaskWorktree
+        scope.launch {
+            runCatching {
+                port.updateCreationDefaults(
+                    defaultProvider = defaultProvider,
+                    defaultSessionKind = defaultSessionKind?.raw,
+                    defaultTaskWorktree = defaultTaskWorktree,
+                )
+            }
+        }
+    }
 
     fun clearLoadError(message: String) {
         if (loadError == message) loadError = null

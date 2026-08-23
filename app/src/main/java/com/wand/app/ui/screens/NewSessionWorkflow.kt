@@ -74,6 +74,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         thinkingEffort: String? = null,
         defaultProvider: String? = null,
         defaultSessionKind: String? = null,
+        defaultTaskWorktree: Boolean? = null,
     ) = defaultsMutex.withLock {
         persistDefaultsUnlocked(
             mode = mode,
@@ -82,6 +83,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
             thinkingEffort = thinkingEffort,
             defaultProvider = defaultProvider,
             defaultSessionKind = defaultSessionKind,
+            defaultTaskWorktree = defaultTaskWorktree,
         )
     }
 
@@ -92,6 +94,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         thinkingEffort: String?,
         defaultProvider: String?,
         defaultSessionKind: String?,
+        defaultTaskWorktree: Boolean? = null,
     ) = port.updateNewSessionDefaults(
         mode = mode,
         model = model,
@@ -99,6 +102,7 @@ class NewSessionWorkflow(private val port: NewSessionPort) {
         thinkingEffort = thinkingEffort,
         defaultProvider = defaultProvider,
         defaultSessionKind = defaultSessionKind,
+        defaultTaskWorktree = defaultTaskWorktree,
     )
 
     suspend fun create(draft: NewSessionDraft): SessionSnapshot = defaultsMutex.withLock {

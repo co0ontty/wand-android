@@ -12,6 +12,7 @@ interface NewSessionPort {
         thinkingEffort: String? = null,
         defaultProvider: String? = null,
         defaultSessionKind: String? = null,
+        defaultTaskWorktree: Boolean? = null,
     )
     suspend fun createStructuredSession(
         cwd: String,

@@ -47,10 +47,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.WorkspacePort
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.workspaceProviderLabel
-import com.wand.app.data.workspaceSessionLabel
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandButton
@@ -59,6 +59,10 @@ import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandDialogAction
+import com.wand.app.ui.components.WandIconButton
+import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.workspaces.WorkspaceTargetState
 import com.wand.app.ui.workspaces.WorkspaceTaskState
@@ -89,6 +93,8 @@ fun WorkspaceTaskScreen(
     val taskState by workflow.taskState.collectAsState()
     val targetState by workflow.targetState.collectAsState()
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
+    var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
+    var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboard = LocalClipboardManager.current
 
@@ -101,7 +107,17 @@ fun WorkspaceTaskScreen(
 
     fun openSheet() {
         workflow.openTargetSheet()
-        scope.launch { sheetState.show() }
+        scope.launch {
+            runCatching { api.serverConfig() }.getOrNull()?.let { config ->
+                WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
+                selectedKind = if (config.defaultSessionKind == "pty") {
+                    WorkspaceSessionKind.Pty
+                } else {
+                    WorkspaceSessionKind.Structured
+                }
+            }
+            sheetState.show()
+        }
     }
 
     fun dismissSheet() {
@@ -118,6 +134,7 @@ fun WorkspaceTaskScreen(
             workspaceId = wsId,
             taskId = taskId,
             cwd = cwd,
+            kind = selectedKind,
         ) { session ->
             scope.launch { runCatching { sheetState.hide() } }
             onTaskChanged()
@@ -131,6 +148,32 @@ fun WorkspaceTaskScreen(
     }
 
     val missionCwd = workflow.currentTaskCwd()
+
+    deleteSessionTarget?.let { session ->
+        val label = listSessionLabel(session, 0)
+        WandDialog(
+            title = "删除终端？",
+            onDismissRequest = { deleteSessionTarget = null },
+            icon = WandIcons.delete,
+            confirm = WandDialogAction(
+                label = "删除",
+                destructive = true,
+                onClick = {
+                    workflow.deleteSession(session.id) {
+                        onTaskChanged()
+                        deleteSessionTarget = null
+                    }
+                },
+            ),
+            dismiss = WandDialogAction("取消", onClick = { deleteSessionTarget = null }),
+        ) {
+            Text(
+                "终端「$label」会结束并被删除，此操作无法撤销。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -202,6 +245,7 @@ fun WorkspaceTaskScreen(
                             onOpenPty(session.id)
                         }
                     },
+                    onDeleteSession = { deleteSessionTarget = it },
                     onAddWindow = { openSheet() },
                 )
             }
@@ -219,9 +263,23 @@ fun WorkspaceTaskScreen(
         ) {
             WorkspaceTargetSheet(
                 selected = selectedTarget,
+                selectedKind = selectedKind,
                 creating = creating,
                 error = sheetError,
-                onSelect = { selectedTarget = it },
+                onSelect = {
+                    selectedTarget = it
+                    if (!it.isShell) {
+                        scope.launch {
+                            runCatching { api.updateCreationDefaults(defaultProvider = it.raw) }
+                        }
+                    }
+                },
+                onSelectKind = {
+                    selectedKind = it
+                    scope.launch {
+                        runCatching { api.updateCreationDefaults(defaultSessionKind = it.raw) }
+                    }
+                },
                 onConfirm = { confirmCreate() },
                 onDismiss = { if (!creating) dismissSheet() },
             )
@@ -315,6 +373,7 @@ private fun EmptyTaskWelcome(
 private fun TaskSessionList(
     state: WorkspaceTaskState.Content,
     onSelectSession: (WorkspaceSessionSummary) -> Unit,
+    onDeleteSession: (WorkspaceSessionSummary) -> Unit,
     onAddWindow: () -> Unit,
 ) {
     Box(
@@ -349,6 +408,7 @@ private fun TaskSessionList(
                     index = state.orderedSessions.indexOf(session),
                     isSelected = session.id == state.selectedSessionId,
                     onClick = { onSelectSession(session) },
+                    onDelete = { onDeleteSession(session) },
                 )
             }
         }
@@ -368,6 +428,7 @@ private fun SessionSummaryRow(
     index: Int,
     isSelected: Boolean,
     onClick: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val provider = session.provider
     val icon = BrandLogos.painterForProvider(provider)
@@ -384,7 +445,7 @@ private fun SessionSummaryRow(
             .border(0.5.dp, borderColor, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
-            .semantics { contentDescription = workspaceSessionLabel(session, index) },
+            .semantics { contentDescription = listSessionLabel(session, index) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -396,7 +457,7 @@ private fun SessionSummaryRow(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                workspaceSessionLabel(session, index),
+                listSessionLabel(session, index),
                 style = MaterialTheme.typography.titleSmall,
                 color = WandColors.textPrimary,
                 fontWeight = FontWeight.Medium,
@@ -411,11 +472,11 @@ private fun SessionSummaryRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Icon(
-            WandIcons.chevronRight,
-            contentDescription = "打开",
-            tint = WandColors.textMuted,
-            modifier = Modifier.size(16.dp),
+        WandIconButton(
+            icon = WandIcons.delete,
+            contentDescription = "删除终端",
+            onClick = onDelete,
+            variant = WandIconButtonVariant.Quiet,
         )
     }
 }

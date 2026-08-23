@@ -49,12 +49,12 @@ import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspacePort
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.raw
 import com.wand.app.data.workspaceProviderLabel
-import com.wand.app.data.workspaceSessionLabel
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
@@ -102,6 +102,7 @@ fun TaskListScreen(
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onTaskRenamed: (taskId: String, taskName: String) -> Unit = { _, _ -> },
     onTaskClosed: (taskId: String) -> Unit = {},
+    onSessionClosed: (sessionId: String) -> Unit = {},
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
@@ -119,12 +120,14 @@ fun TaskListScreen(
     var taskWorktreeEnabled by remember { mutableStateOf(true) }
     var pendingTarget by remember { mutableStateOf<Pair<TaskDirectoryGroup, WorkspaceTaskSummary>?>(null) }
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
+    var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
     var targetCreating by remember { mutableStateOf(false) }
     var targetError by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var renameDraft by remember { mutableStateOf("") }
     var clearTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
+    var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
     var reviewTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     val targetSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -137,10 +140,11 @@ fun TaskListScreen(
         state.clearMutationError()
         taskNameDraft = ""
         taskCwdDraft = initialCwd.orEmpty()
-        taskWorktreeEnabled = true
+        taskWorktreeEnabled = state.defaultTaskWorktree
         newTaskOpen = true
         scope.launch {
             state.loadCreationDefaults()
+            taskWorktreeEnabled = state.defaultTaskWorktree
             if (taskCwdDraft.isBlank()) {
                 taskCwdDraft = state.defaultCwd
                     ?: state.recentPaths.firstOrNull()?.path
@@ -269,7 +273,10 @@ fun TaskListScreen(
                 }
                 Switch(
                     checked = taskWorktreeEnabled,
-                    onCheckedChange = { taskWorktreeEnabled = it },
+                    onCheckedChange = {
+                        taskWorktreeEnabled = it
+                        state.rememberCreationChoice(defaultTaskWorktree = it)
+                    },
                     enabled = !state.mutationBusy,
                 )
             }
@@ -380,6 +387,38 @@ fun TaskListScreen(
         }
     }
 
+    deleteSessionTarget?.let { session ->
+        val label = listSessionLabel(session, 0)
+        WandDialog(
+            title = "删除终端？",
+            onDismissRequest = { if (!state.mutationBusy) deleteSessionTarget = null },
+            icon = WandIcons.delete,
+            confirm = WandDialogAction(
+                label = if (state.mutationBusy) "删除中…" else "删除",
+                destructive = true,
+                enabled = !state.mutationBusy,
+                onClick = {
+                    scope.launch {
+                        if (state.deleteSessions(listOf(session.id)) != null) {
+                            onSessionClosed(session.id)
+                            deleteSessionTarget = null
+                        }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction("取消", onClick = { deleteSessionTarget = null }),
+        ) {
+            Text(
+                "终端「$label」会结束并被删除，此操作无法撤销。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+            state.mutationError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = WandColors.danger)
+            }
+        }
+    }
+
     reviewTarget?.let { group ->
         WorkspaceWorktreeReviewSheet(
             workspace = group.asWorkspace(),
@@ -405,16 +444,24 @@ fun TaskListScreen(
         ) {
             WorkspaceTargetSheet(
                 selected = selectedTarget,
+                selectedKind = selectedKind,
                 creating = targetCreating,
                 error = targetError,
-                onSelect = { selectedTarget = it },
+                onSelect = {
+                    selectedTarget = it
+                    if (!it.isShell) state.rememberCreationChoice(defaultProvider = it.raw)
+                },
+                onSelectKind = {
+                    selectedKind = it
+                    state.rememberCreationChoice(defaultSessionKind = it)
+                },
                 onConfirm = {
                     if (targetCreating) return@WorkspaceTargetSheet
                     targetCreating = true
                     targetError = null
                     scope.launch {
                         try {
-                            val snapshot = state.createTaskWindow(task.id, selectedTarget)
+                            val snapshot = state.createTaskWindow(task.id, selectedTarget, selectedKind)
                             if (snapshot == null) {
                                 targetError = state.mutationError ?: "创建工作窗口失败"
                                 return@launch
@@ -543,7 +590,7 @@ fun TaskListScreen(
                             group = group,
                             groupExpanded = expandedGroups[group.id] != false,
                             expandedTasks = expandedTasks,
-                            standaloneExpanded = expandedStandalone[group.id] == true,
+                            standaloneExpanded = expandedStandalone[group.id] ?: group.tasks.isEmpty(),
                             selectedTaskId = selectedTaskId,
                             selectedSessionId = selectedSessionId,
                             onToggleGroup = {
@@ -563,10 +610,18 @@ fun TaskListScreen(
                             },
                             onNewTask = { beginNewTask(group.workspaceCwd) },
                             onNewWindow = { task ->
-                                selectedTarget = WorkspaceSessionTarget.Claude
+                                selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
+                                    ?: WorkspaceSessionTarget.Claude
+                                selectedKind = state.defaultSessionKind
                                 targetError = null
                                 pendingTarget = group to task
-                                scope.launch { targetSheetState.show() }
+                                scope.launch {
+                                    state.loadCreationDefaults()
+                                    selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
+                                        ?: selectedTarget
+                                    selectedKind = state.defaultSessionKind
+                                    targetSheetState.show()
+                                }
                             },
                             onRename = { task ->
                                 renameDraft = task.name
@@ -579,6 +634,10 @@ fun TaskListScreen(
                             },
                             onDelete = { task ->
                                 deleteTarget = task
+                                state.clearMutationError()
+                            },
+                            onDeleteSession = { session ->
+                                deleteSessionTarget = session
                                 state.clearMutationError()
                             },
                             onReview = { reviewTarget = group },
@@ -626,33 +685,47 @@ private fun TaskDirectorySection(
     onRename: (WorkspaceTaskSummary) -> Unit,
     onClear: (WorkspaceTaskSummary) -> Unit,
     onDelete: (WorkspaceTaskSummary) -> Unit,
+    onDeleteSession: (WorkspaceSessionSummary) -> Unit,
     onReview: () -> Unit,
 ) {
+    val pathCaption = directoryPathCaption(group.workspaceName, group.workspaceCwd)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(WandColors.bgElevated.copy(alpha = 0.72f)),
+            .clip(RoundedCornerShape(12.dp))
+            .background(WandColors.bgElevated.copy(alpha = 0.55f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).padding(horizontal = 10.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 8.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            WandIconButton(
-                icon = WandIcons.expand,
+            Icon(
+                WandIcons.expand,
                 contentDescription = if (groupExpanded) "收起目录" else "展开目录",
-                onClick = onToggleGroup,
-                variant = WandIconButtonVariant.Quiet,
-                modifier = Modifier.graphicsLayer { rotationZ = if (groupExpanded) 180f else 0f },
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable(onClick = onToggleGroup)
+                    .graphicsLayer { rotationZ = if (groupExpanded) 0f else -90f },
             )
+            Box(
+                modifier = Modifier
+                    .padding(start = 6.dp)
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(WandColors.brandSoft),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(13.dp))
+            }
             Column(
-                modifier = Modifier.weight(1f).clickable(onClick = onToggleGroup).padding(vertical = 8.dp),
+                modifier = Modifier.weight(1f).clickable(onClick = onToggleGroup).padding(start = 8.dp, top = 7.dp, bottom = 7.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         group.workspaceName.ifEmpty { "任务目录" },
-                        style = MaterialTheme.typography.titleSmall,
-                        color = WandColors.textPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = WandColors.textSecondary,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -666,15 +739,22 @@ private fun TaskDirectorySection(
                         )
                     }
                 }
-                Text(
-                    group.workspaceCwd,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (pathCaption != null) {
+                    Text(
+                        pathCaption,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = WandColors.textMuted,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
+            Text(
+                "${group.tasks.size} 任务",
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
+            )
             if (group.tasks.any { it.worktree != null }) {
                 WandIconButton(
                     icon = WandIcons.commit,
@@ -691,38 +771,43 @@ private fun TaskDirectorySection(
             )
         }
         if (groupExpanded) {
-            HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
-            group.tasks.forEach { task ->
-                TaskAggregateRow(
-                    task = task,
-                    expanded = expandedTasks[task.id] == true || task.id == selectedTaskId,
-                    selected = task.id == selectedTaskId,
-                    selectedSessionId = selectedSessionId,
-                    onToggle = { onToggleTask(task.id) },
-                    onOpen = { onOpenTask(task) },
-                    onOpenSession = { onOpenSession(it, task) },
-                    onNewWindow = { onNewWindow(task) },
-                    onRename = { onRename(task) },
-                    onClear = { onClear(task) },
-                    onDelete = { onDelete(task) },
-                )
-            }
-            if (group.tasks.isEmpty()) {
-                Text(
-                    "这个目录还没有任务。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                )
-            }
-            if (group.standaloneSessions.isNotEmpty()) {
-                StandaloneSessionSection(
-                    sessions = group.standaloneSessions,
-                    expanded = standaloneExpanded,
-                    selectedSessionId = selectedSessionId,
-                    onToggle = onToggleStandalone,
-                    onOpen = { onOpenSession(it, null) },
-                )
+            Column(modifier = Modifier.padding(start = 12.dp, end = 6.dp, bottom = 8.dp)) {
+                group.tasks.forEach { task ->
+                    TaskAggregateRow(
+                        task = task,
+                        parentNames = listOf(group.workspaceName),
+                        expanded = expandedTasks[task.id] == true || task.id == selectedTaskId,
+                        selected = task.id == selectedTaskId,
+                        selectedSessionId = selectedSessionId,
+                        onToggle = { onToggleTask(task.id) },
+                        onOpen = { onOpenTask(task) },
+                        onOpenSession = { onOpenSession(it, task) },
+                        onNewWindow = { onNewWindow(task) },
+                        onRename = { onRename(task) },
+                        onClear = { onClear(task) },
+                        onDelete = { onDelete(task) },
+                        onDeleteSession = onDeleteSession,
+                    )
+                }
+                if (group.tasks.isEmpty()) {
+                    Text(
+                        "这个目录还没有任务。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WandColors.textMuted,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                    )
+                }
+                if (group.standaloneSessions.isNotEmpty()) {
+                    StandaloneSessionSection(
+                        sessions = group.standaloneSessions,
+                        parentNames = listOf(group.workspaceName),
+                        expanded = standaloneExpanded,
+                        selectedSessionId = selectedSessionId,
+                        onToggle = onToggleStandalone,
+                        onOpen = { onOpenSession(it, null) },
+                        onDelete = onDeleteSession,
+                    )
+                }
             }
         }
     }
@@ -731,6 +816,7 @@ private fun TaskDirectorySection(
 @Composable
 private fun TaskAggregateRow(
     task: WorkspaceTaskSummary,
+    parentNames: Collection<String>,
     expanded: Boolean,
     selected: Boolean,
     selectedSessionId: String?,
@@ -741,24 +827,31 @@ private fun TaskAggregateRow(
     onRename: () -> Unit,
     onClear: () -> Unit,
     onDelete: () -> Unit,
+    onDeleteSession: (WorkspaceSessionSummary) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier.fillMaxWidth().background(if (selected) WandColors.brandSoft else Color.Transparent),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (selected) WandColors.brandSoft else WandColors.bgPrimary.copy(alpha = 0.28f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).padding(start = 14.dp, end = 6.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 4.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            WandIconButton(
-                icon = WandIcons.expand,
-                contentDescription = if (expanded) "收起任务会话" else "展开任务会话",
-                onClick = onToggle,
-                variant = WandIconButtonVariant.Quiet,
-                modifier = Modifier.graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起终端" else "展开终端",
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable(onClick = onToggle)
+                    .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
             )
             Column(
-                modifier = Modifier.weight(1f).clickable(onClick = onOpen).padding(vertical = 7.dp),
+                modifier = Modifier.weight(1f).clickable(onClick = onOpen).padding(start = 6.dp, top = 7.dp, bottom = 7.dp),
             ) {
                 Text(
                     task.name.ifEmpty { "未命名任务" },
@@ -768,19 +861,20 @@ private fun TaskAggregateRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    if (task.isIsolated) task.worktree?.branch ?: "独立 worktree" else "共享目录",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
             Text(
-                task.totalSessions.toString(),
+                taskIsolationCaption(task.isIsolated, task.worktree?.branch),
                 style = MaterialTheme.typography.labelSmall,
-                color = WandColors.textMuted,
+                color = if (task.isIsolated) WandColors.success else WandColors.textMuted,
             )
+            if (task.totalSessions > 0) {
+                Text(
+                    task.totalSessions.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.textMuted,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
             WandIconButton(
                 icon = WandIcons.add,
                 contentDescription = "在 ${task.name} 新建工作窗口",
@@ -824,9 +918,10 @@ private fun TaskAggregateRow(
             task.sessions.forEachIndexed { index, session ->
                 AggregateSessionRow(
                     session = session,
-                    label = workspaceSessionLabel(session, index),
+                    label = listSessionLabel(session, index, parentNames + task.name),
                     selected = session.id == selectedSessionId,
                     onClick = { onOpenSession(session) },
+                    onDelete = { onDeleteSession(session) },
                 )
             }
             if (task.totalSessions > task.sessions.size) {
@@ -839,43 +934,44 @@ private fun TaskAggregateRow(
                 )
             } else if (task.sessions.isEmpty()) {
                 Text(
-                    "还没有工作窗口。",
+                    "还没有终端。点右侧「＋」新建。",
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
-                    modifier = Modifier.padding(start = 58.dp, end = 12.dp, bottom = 8.dp),
+                    modifier = Modifier.padding(start = 28.dp, end = 12.dp, bottom = 8.dp),
                 )
             }
         }
-        HorizontalDivider(color = WandColors.border.copy(alpha = 0.35f))
     }
 }
 
 @Composable
 private fun StandaloneSessionSection(
     sessions: List<WorkspaceSessionSummary>,
+    parentNames: Collection<String>,
     expanded: Boolean,
     selectedSessionId: String?,
     onToggle: () -> Unit,
     onOpen: (WorkspaceSessionSummary) -> Unit,
+    onDelete: (WorkspaceSessionSummary) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 18.dp, vertical = 10.dp),
+                .padding(horizontal = 6.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 WandIcons.expand,
                 contentDescription = null,
                 tint = WandColors.textMuted,
-                modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+                modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 0f else -90f },
             )
             Text(
-                "未分组会话（${sessions.size}）",
-                style = MaterialTheme.typography.bodySmall,
-                color = WandColors.textSecondary,
+                "${sessions.size} 个未分组终端",
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
                 modifier = Modifier.padding(start = 8.dp),
             )
         }
@@ -883,9 +979,10 @@ private fun StandaloneSessionSection(
             sessions.forEachIndexed { index, session ->
                 AggregateSessionRow(
                     session = session,
-                    label = workspaceSessionLabel(session, index),
+                    label = listSessionLabel(session, index, parentNames),
                     selected = session.id == selectedSessionId,
                     onClick = { onOpen(session) },
+                    onDelete = { onDelete(session) },
                 )
             }
         }
@@ -898,40 +995,50 @@ private fun AggregateSessionRow(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
             .background(if (selected) WandColors.brandSoft.copy(alpha = 0.72f) else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(start = 58.dp, end = 14.dp, top = 9.dp, bottom = 9.dp),
+            .padding(start = 22.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        StatusDot(session.status ?: "idle", modifier = Modifier.size(7.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.bodySmall,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                buildString {
-                    append(workspaceProviderLabel(session.provider))
-                    if (session.sessionKind == "pty") append(" · 终端")
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = WandColors.textMuted,
-                maxLines = 1,
-            )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onClick)
+                .padding(top = 8.dp, bottom = 8.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            StatusDot(session.status ?: "idle", modifier = Modifier.size(7.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    buildString {
+                        append(workspaceProviderLabel(session.provider))
+                        if (session.sessionKind == "pty") append(" · 终端")
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                )
+            }
         }
-        Icon(
-            WandIcons.chevronRight,
-            contentDescription = "打开会话",
-            tint = WandColors.textMuted,
-            modifier = Modifier.size(15.dp),
+        WandIconButton(
+            icon = WandIcons.delete,
+            contentDescription = "删除终端 $label",
+            onClick = onDelete,
+            variant = WandIconButtonVariant.Quiet,
         )
     }
 }

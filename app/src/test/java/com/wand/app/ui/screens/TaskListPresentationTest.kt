@@ -39,6 +39,26 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun directoryPathKeepsLeafAndDropsHomePrefix() {
+        assertEquals("…/vibe_coding/wand", shortenWorkspacePath("/Users/me/Self/vibe_coding/wand"))
+        assertEquals("/tmp/wand", shortenWorkspacePath("/tmp/wand"))
+        assertEquals(null, directoryPathCaption("wand", "wand"))
+        assertEquals("…/vibe_coding/wand", directoryPathCaption("wand", "/Users/me/Self/vibe_coding/wand"))
+    }
+
+    @Test
+    fun taskIsolationNeverSaysSharedDirectory() {
+        assertEquals("共享", taskIsolationCaption(false))
+        assertEquals("隔离", taskIsolationCaption(true, "wand/ui"))
+    }
+
+    @Test
+    fun listSessionLabelAvoidsRepeatingDirectoryName() {
+        val session = session("pty", null).copy(title = "wand", cwd = "/Users/me/wand")
+        assertEquals("Claude 1", listSessionLabel(session, 0, listOf("wand")))
+    }
+
+    @Test
     fun structuredRunnerFallbackRoutesToChat() {
         val route = taskSessionRoute(session(null, "structured"), group(), task())
 

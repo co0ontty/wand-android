@@ -52,6 +52,20 @@ interface WorkspacePort {
     /** 新建任务时展示的最近目录。 */
     suspend fun recentTaskPaths(): List<RecentPath> = emptyList()
 
+    /** 读取服务端偏好（会话类型、独立 worktree 等）。 */
+    suspend fun serverConfig(): ServerConfigInfo {
+        throw UnsupportedOperationException("配置接口不可用")
+    }
+
+    /** 把新建任务/窗口的选择写回服务端，下次默认沿用。 */
+    suspend fun updateCreationDefaults(
+        defaultProvider: String? = null,
+        defaultSessionKind: String? = null,
+        defaultTaskWorktree: Boolean? = null,
+    ) {
+        throw UnsupportedOperationException("配置接口不可用")
+    }
+
     /** PATCH /api/workspace-tasks/:taskId —— 重命名任务。 */
     suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask
 
@@ -61,6 +75,11 @@ interface WorkspacePort {
     /** 删除任务内全部会话，但保留任务与 worktree。 */
     suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
         throw UnsupportedOperationException("清空任务会话接口不可用")
+    }
+
+    /** 结束并删除指定会话（POST /api/sessions/batch-delete）。 */
+    suspend fun deleteWorkspaceSessions(sessionIds: List<String>): Int {
+        throw UnsupportedOperationException("删除会话接口不可用")
     }
 
     /** GET /api/workspace-tasks/:taskId —— 任务详情（含会话列表与派生字段）。 */
@@ -76,7 +95,8 @@ interface WorkspacePort {
      * 在任务 worktree 内创建一个绑定工作窗口。
      *
      * - [WorkspaceSessionTarget.Shell] → POST /api/commands `{shell:true}`
-     * - 其它 target → POST /api/commands PTY，provider 对应 CLI（qoder → qodercli）
+     * - 其它 target + 结构化 → POST /api/structured-sessions
+     * - 其它 target + PTY → POST /api/commands，provider 对应 CLI（qoder → qodercli）
      *
      * 模式、模型、thinking effort 使用服务端默认值；不调用 updateNewSessionDefaults，
      * 避免任务快捷选择器持久化全局新建偏好。
@@ -84,5 +104,6 @@ interface WorkspacePort {
     suspend fun createWorkspaceTaskWindow(
         target: WorkspaceSessionTarget,
         binding: WorkspaceBinding,
+        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
     ): SessionSnapshot
 }

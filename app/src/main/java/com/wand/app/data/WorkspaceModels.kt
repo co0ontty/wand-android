@@ -41,6 +41,12 @@ enum class WorkspaceSessionTarget(val raw: String, val label: String, val descri
     }
 }
 
+/** Agent 窗口的运行形态；空白终端固定为 PTY。 */
+enum class WorkspaceSessionKind(val raw: String, val label: String, val description: String) {
+    Structured("structured", "结构化", "智能对话模式"),
+    Pty("pty", "PTY", "原始 CLI 终端");
+}
+
 /** 创建任务工作窗口时绑定到任务的上下文：保证新会话落在正确的 worktree 并归属任务。 */
 data class WorkspaceBinding(
     val workspaceId: String,

@@ -104,6 +104,18 @@ class NavState {
         }
     }
 
+    fun closeSession(sessionId: String) {
+        val index = stack.indexOfFirst { screen ->
+            when (screen) {
+                is Screen.Chat -> screen.sessionId == sessionId
+                is Screen.PtyTerminal -> screen.sessionId == sessionId
+                else -> false
+            }
+        }
+        if (index < 0) return
+        while (stack.size > index) stack.removeAt(stack.lastIndex)
+    }
+
     fun closeWorkspaceTask(taskId: String) {
         val index = stack.indexOfFirst { screen ->
             when (screen) {

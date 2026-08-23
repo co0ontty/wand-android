@@ -252,7 +252,7 @@ class NewSessionWorkflowTest {
 
         override suspend fun updateNewSessionDefaults(
             mode: String?, model: String?, modelProvider: String, thinkingEffort: String?,
-            defaultProvider: String?, defaultSessionKind: String?,
+            defaultProvider: String?, defaultSessionKind: String?, defaultTaskWorktree: Boolean?,
         ) {
             calls += "persist"
             persistStarted?.complete(Unit)

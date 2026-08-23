@@ -410,27 +410,16 @@ fun WandProviderMark(
     modifier: Modifier = Modifier,
     variant: WandProviderMarkVariant = WandProviderMarkVariant.Plain,
 ) {
-    val isCodex = provider == "codex"
-    val tint = if (isCodex) WandColors.info else WandColors.brand
-    val background = if (isCodex) WandColors.infoSoft else WandColors.brandSoft
     val logoSize = (if (variant == WandProviderMarkVariant.Tinted) 15.dp else 20.dp) *
         BrandLogos.opticalScale(provider)
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier
-            .size(28.dp)
-            .then(
-                if (variant == WandProviderMarkVariant.Tinted) {
-                    Modifier
-                        .clip(WandShapes.sm)
-                        .background(background.copy(alpha = 0.72f))
-                } else Modifier
-            ),
+        modifier = modifier.size(28.dp),
     ) {
         Icon(
             painter = BrandLogos.painterForProvider(provider),
             contentDescription = providerDisplayName(provider),
-            tint = BrandLogos.tintForProvider(provider, tint.copy(alpha = 0.94f)),
+            tint = BrandLogos.tintForProvider(provider, WandColors.textPrimary),
             modifier = Modifier.size(logoSize),
         )
     }

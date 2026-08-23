@@ -14,12 +14,16 @@ class BrandLogosTest {
     }
 
     @Test
-    fun multicolorProviderTintPreservesBrandColors() {
+    fun officialProviderTintPreservesNativeColors() {
         val tint = Color(0xFF25D366)
 
-        assertEquals(Color.Unspecified, BrandLogos.tintForProvider("opencode", tint))
-        assertEquals(Color.Unspecified, BrandLogos.tintForProvider("qoder", tint))
-        assertEquals(tint, BrandLogos.tintForProvider("pi", tint))
+        assertEquals(Color.Unspecified, BrandLogos.resolveTint("opencode", tint))
+        assertEquals(Color.Unspecified, BrandLogos.resolveTint("qoder", tint))
+        assertEquals(Color.Unspecified, BrandLogos.resolveTint("claude", tint))
+        assertEquals(Color.Black, BrandLogos.resolveTint("pi", tint, onDark = false))
+        assertEquals(Color.White, BrandLogos.resolveTint("codex", tint, onDark = true))
+        assertEquals(Color.Black, BrandLogos.resolveTint("grok", tint, onDark = false))
+        assertEquals(tint, BrandLogos.resolveTint("terminal", tint))
     }
 
     @Test
