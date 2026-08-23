@@ -25,14 +25,14 @@ object WandShortcuts {
 
     const val ACTION_NEW_SESSION = "new-session"
 
-    /** 系统最多展示 4 个：固定「新建会话」+ 最近 3 个结构化会话。 */
+    /** 系统最多展示 4 个：固定「新建任务」+ 最近 3 个结构化会话。 */
     fun update(context: Context, serverId: String, sessions: List<SessionSnapshot>) {
         val shortcuts = mutableListOf(
             staticShortcut(
                 context,
                 id = "shortcut-new-session",
-                shortLabel = "新建会话",
-                longLabel = "新建会话",
+                shortLabel = "新建任务",
+                longLabel = "新建任务",
                 iconRes = R.drawable.ic_shortcut_new,
                 rank = 0,
             ) {

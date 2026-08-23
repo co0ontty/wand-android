@@ -2,11 +2,9 @@ package com.wand.app.ui.workspaces
 
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskWindowLayout
-import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionTarget
-import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskDetail
 import com.wand.app.data.activeWorkWindowTab
 import com.wand.app.data.addSessionWindow
@@ -20,15 +18,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-// MARK: - 项目列表状态
-
-sealed class WorkspaceListState {
-    data object Loading : WorkspaceListState()
-    data class Content(val workspaces: List<Workspace>) : WorkspaceListState()
-    data object Empty : WorkspaceListState()
-    data class Error(val message: String) : WorkspaceListState()
-}
 
 // MARK: - 任务详情状态
 
@@ -81,9 +70,6 @@ class WorkspaceWorkflow(
     private val port: WorkspacePort,
     private val scope: CoroutineScope,
 ) {
-    private val _listState = MutableStateFlow<WorkspaceListState>(WorkspaceListState.Loading)
-    val listState: StateFlow<WorkspaceListState> = _listState.asStateFlow()
-
     private val _taskState = MutableStateFlow<WorkspaceTaskState>(WorkspaceTaskState.Loading)
     val taskState: StateFlow<WorkspaceTaskState> = _taskState.asStateFlow()
 
@@ -94,34 +80,6 @@ class WorkspaceWorkflow(
     /** 任务加载的代际：每次 loadTask 递增，回调比较 generation 丢弃过期结果。 */
     private var taskGeneration = 0
     private var createJob: Job? = null
-
-    // ── 项目列表 ──
-
-    fun loadWorkspaces() {
-        scope.launch {
-            _listState.value = WorkspaceListState.Loading
-            try {
-                val workspaces = port.listWorkspaces()
-                _listState.value = if (workspaces.isEmpty()) {
-                    WorkspaceListState.Empty
-                } else {
-                    WorkspaceListState.Content(workspaces)
-                }
-            } catch (e: Exception) {
-                _listState.value = WorkspaceListState.Error(e.message ?: "无法加载项目列表")
-            }
-        }
-    }
-
-    fun listTasksBlocking(workspaceId: String, onResult: (List<WorkspaceTask>) -> Unit) {
-        scope.launch {
-            try {
-                onResult(port.listWorkspaceTasks(workspaceId))
-            } catch (_: Exception) {
-                onResult(emptyList())
-            }
-        }
-    }
 
     // ── 任务详情 ──
 

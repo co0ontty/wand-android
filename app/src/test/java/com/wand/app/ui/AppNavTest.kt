@@ -8,7 +8,7 @@ import org.junit.Test
 
 /**
  * 任务导航保存/恢复测试。覆盖：
- * - Workspaces / WorkspaceTask Screen 的 save/restore 往返
+ * - 旧 Workspaces 根路由迁移与 WorkspaceTask 往返
  * - 任务名中的特殊字符（`:`、换行、Unicode）不破坏恢复
  * - Saver 只序列化 ID 和短显示名，不携带 cwd/layout/凭据
  */
@@ -18,9 +18,8 @@ class AppNavTest {
         NavState.deserializeScreen(NavState.serializeScreen(screen))
 
     @Test
-    fun roundTrip_workspacesScreen() {
-        val restored = roundTrip(Screen.Workspaces)
-        assertEquals(Screen.Workspaces, restored)
+    fun legacyWorkspacesKeyRestoresTaskRoot() {
+        assertEquals(Screen.SessionList, NavState.deserializeScreen("workspaces"))
     }
 
     @Test
@@ -61,9 +60,15 @@ class AppNavTest {
     }
 
     @Test
-    fun roundTrip_chatScreenPreservesWorkspaceHeader() {
-        val restored = roundTrip(Screen.Chat("session-123", "Wand 项目", "修复顶部栏"))
-        assertEquals(Screen.Chat("session-123", "Wand 项目", "修复顶部栏"), restored)
+    fun roundTrip_chatScreenPreservesTaskIdentity() {
+        val expected = Screen.Chat(
+            "session-123",
+            "Wand 项目",
+            "修复顶部栏",
+            "workspace-1",
+            "task-1",
+        )
+        assertEquals(expected, roundTrip(expected))
     }
 
     @Test
@@ -73,15 +78,27 @@ class AppNavTest {
     }
 
     @Test
-    fun roundTrip_ptyScreenPreservesWorkspaceHeader() {
-        val restored = roundTrip(Screen.PtyTerminal("session-456", "Project", "Run checks"))
-        assertEquals(Screen.PtyTerminal("session-456", "Project", "Run checks"), restored)
+    fun roundTrip_ptyScreenPreservesTaskIdentity() {
+        val expected = Screen.PtyTerminal(
+            "session-456",
+            "Project",
+            "Run checks",
+            "workspace-2",
+            "task-2",
+        )
+        assertEquals(expected, roundTrip(expected))
     }
 
     @Test
     fun roundTrip_missionsScreen() {
-        val restored = roundTrip(Screen.Missions)
-        assertEquals(Screen.Missions, restored)
+        val restored = roundTrip(Screen.Missions())
+        assertEquals(Screen.Missions(), restored)
+    }
+
+    @Test
+    fun roundTrip_linkedMissionPreservesTaskContext() {
+        val expected = Screen.Missions("task-1", "/repo/.wand-worktrees/task-1", "Fix")
+        assertEquals(expected, roundTrip(expected))
     }
 
     @Test
@@ -135,7 +152,18 @@ class AppNavTest {
     fun closeWorkspaceTaskPopsNestedSession() {
         val nav = NavState().apply {
             push(Screen.WorkspaceTask("ws-1", "task-1", "Project", "Task"))
-            push(Screen.Chat("session-1", "Project", "Task"))
+            push(Screen.Chat("session-1", "Project", "Task", "ws-1", "task-1"))
+        }
+
+        nav.closeWorkspaceTask("task-1")
+
+        assertEquals(listOf(Screen.SessionList), nav.stack.toList())
+    }
+
+    @Test
+    fun closeWorkspaceTaskPopsInlineTaskSessionWithoutTaskParent() {
+        val nav = NavState().apply {
+            push(Screen.Chat("session-1", "Project", "Task", "ws-1", "task-1"))
         }
 
         nav.closeWorkspaceTask("task-1")
@@ -147,7 +175,7 @@ class AppNavTest {
     fun renameWorkspaceTaskKeepsNestedSession() {
         val nav = NavState().apply {
             push(Screen.WorkspaceTask("ws-1", "task-1", "Project", "Task"))
-            push(Screen.Chat("session-1", "Project", "Task"))
+            push(Screen.Chat("session-1", "Project", "Task", "ws-1", "task-1"))
         }
 
         nav.renameWorkspaceTask("task-1", "Renamed")
@@ -156,7 +184,10 @@ class AppNavTest {
             Screen.WorkspaceTask("ws-1", "task-1", "Project", "Renamed"),
             nav.stack[1],
         )
-        assertEquals(Screen.Chat("session-1", "Project", "Task"), nav.current)
+        assertEquals(
+            Screen.Chat("session-1", "Project", "Renamed", "ws-1", "task-1"),
+            nav.current,
+        )
     }
 
     @Test

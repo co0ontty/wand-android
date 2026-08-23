@@ -401,6 +401,7 @@ fun NewSessionScreen(
                     prompt = requestPrompt,
                     cwd = requestCwd,
                     providers = requestProviders,
+                    taskId = null,
                     baseRef = null,
                     sharedDirectories = emptyList(),
                     copyPaths = emptyList(),

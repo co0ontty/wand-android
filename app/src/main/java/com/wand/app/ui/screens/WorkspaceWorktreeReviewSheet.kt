@@ -77,7 +77,7 @@ fun WorkspaceWorktreeReviewSheet(
             overview = result
             selectedTaskIds = result.worktrees.filter { it.actionable }.map { it.taskId }.toSet()
         } catch (error: Exception) {
-            errorMessage = error.message ?: "无法读取项目 Worktree。"
+            errorMessage = error.message ?: "无法读取目录 Worktree。"
         } finally {
             loading = false
         }
@@ -94,7 +94,7 @@ fun WorkspaceWorktreeReviewSheet(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             Text(
-                "项目 Worktrees",
+                "目录 Worktrees",
                 style = MaterialTheme.typography.titleLarge,
                 color = WandColors.textPrimary,
                 fontWeight = FontWeight.SemiBold,
@@ -126,7 +126,7 @@ fun WorkspaceWorktreeReviewSheet(
                 }
                 overview != null && overview!!.worktrees.isEmpty() -> {
                     Text(
-                        "这个项目还没有独立 Worktree。请先新建任务。",
+                        "这个目录还没有独立 Worktree。请先新建任务。",
                         style = MaterialTheme.typography.bodySmall,
                         color = WandColors.textSecondary,
                         modifier = Modifier.padding(vertical = 20.dp),
@@ -238,7 +238,7 @@ fun WorkspaceWorktreeReviewSheet(
 
 @Composable
 private fun TargetLens(workspace: Workspace, overview: WorkspaceWorktreeOverview?) {
-    val target = overview?.targetBranch?.takeIf { it.isNotEmpty() } ?: "项目默认分支"
+    val target = overview?.targetBranch?.takeIf { it.isNotEmpty() } ?: "仓库默认分支"
     val repoRoot = overview?.repoRoot?.takeIf { it.isNotEmpty() } ?: workspace.cwd
     Row(
         modifier = Modifier

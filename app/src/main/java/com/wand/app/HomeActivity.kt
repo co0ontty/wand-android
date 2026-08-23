@@ -44,7 +44,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /**
- * 原生主界面（Compose）：会话列表 / 聊天 / 新建会话 / 设置。
+ * 原生主界面（Compose）：任务列表 / 聊天或终端 / 任务创建 / 设置。
  * 对称 iOS 端的 NativeRootView；WebView（MainActivity）只作「网页版」兜底入口。
  *
  * 由 ConnectActivity 在连接成功后启动。主路径只传稳定 server_id，URL 与凭据从

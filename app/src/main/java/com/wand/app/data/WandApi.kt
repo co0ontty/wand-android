@@ -523,18 +523,21 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         prompt: String,
         cwd: String,
         providers: List<String>,
+        taskId: String?,
         baseRef: String?,
         sharedDirectories: List<String>,
         copyPaths: List<String>,
     ): MissionInfo {
-        val body = JSONObject()
-            .put("prompt", prompt)
-            .put("cwd", cwd)
-            .put("providers", JSONArray(providers))
-            .put("sharedDirectories", JSONArray(sharedDirectories))
-            .put("copyPaths", JSONArray(copyPaths))
-        if (!title.isNullOrBlank()) body.put("title", title)
-        if (!baseRef.isNullOrBlank()) body.put("baseRef", baseRef)
+        val body = createMissionRequestBody(
+            title = title,
+            prompt = prompt,
+            cwd = cwd,
+            providers = providers,
+            taskId = taskId,
+            baseRef = baseRef,
+            sharedDirectories = sharedDirectories,
+            copyPaths = copyPaths,
+        )
         return MissionInfo.parse(requestObject("POST", "/api/missions", body, timeoutSec = 180))
     }
 
@@ -686,10 +689,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         baseRef: String?,
         worktree: Boolean?,
     ): WorkspaceTaskCreation {
-        val body = JSONObject().put("name", name)
-        if (!baseRef.isNullOrBlank()) body.put("baseRef", baseRef)
-        // 仅在显式关掉时传 worktree:false；缺省交由服务端默认。
-        if (worktree == false) body.put("worktree", false)
+        val body = createWorkspaceTaskRequestBody(name, baseRef, worktree)
         return WorkspaceTaskCreation.parse(
             requestObject("POST", "/api/workspaces/${encode(workspaceId)}/tasks", body),
         ) ?: throw WandApiException(500, "任务创建响应无效。")
@@ -697,6 +697,11 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun listTaskGroups(): List<TaskDirectoryGroup> =
         TaskDirectoryGroup.parseList(requestArray("GET", "/api/tasks"))
+
+    override suspend fun taskDefaultCwd(): String? =
+        requestObject("GET", "/api/config").str("defaultCwd")?.takeIf { it.isNotBlank() }
+
+    override suspend fun recentTaskPaths(): List<RecentPath> = recentPaths()
 
     override suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask {
         val body = JSONObject().put("name", name)
@@ -707,6 +712,17 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun deleteWorkspaceTask(taskId: String) {
         requestData("DELETE", "/api/workspace-tasks/${encode(taskId)}?cascade=1")
+    }
+
+    override suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
+        val sessionIds = workspaceTask(taskId).sessions.map { it.id }.distinct()
+        if (sessionIds.isEmpty()) return 0
+        val response = requestObject(
+            "POST",
+            "/api/sessions/batch-delete",
+            JSONObject().put("sessionIds", JSONArray(sessionIds)),
+        )
+        return response.int("deleted") ?: 0
     }
 
     override suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail {
@@ -734,16 +750,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         target: WorkspaceSessionTarget,
         binding: WorkspaceBinding,
     ): SessionSnapshot {
-        val body = JSONObject().put("cwd", binding.cwd)
-            .put("workspaceId", binding.workspaceId)
-            .put("workspaceTaskId", binding.workspaceTaskId)
-        if (target.isShell) {
-            body.put("shell", true)
-        } else {
-            val provider = target.raw
-            val command = if (provider == "qoder") "qodercli" else provider
-            body.put("command", command).put("provider", provider)
-        }
+        val body = createWorkspaceTaskWindowRequestBody(target, binding)
         return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
     }
 

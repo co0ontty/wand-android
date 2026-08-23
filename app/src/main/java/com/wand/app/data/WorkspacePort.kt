@@ -46,11 +46,22 @@ interface WorkspacePort {
         throw UnsupportedOperationException("任务聚合接口不可用")
     }
 
+    /** 新建任务时使用的服务端默认目录。 */
+    suspend fun taskDefaultCwd(): String? = null
+
+    /** 新建任务时展示的最近目录。 */
+    suspend fun recentTaskPaths(): List<RecentPath> = emptyList()
+
     /** PATCH /api/workspace-tasks/:taskId —— 重命名任务。 */
     suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask
 
     /** DELETE /api/workspace-tasks/:taskId?cascade=1 —— 删除任务、会话和隔离 worktree。 */
     suspend fun deleteWorkspaceTask(taskId: String)
+
+    /** 删除任务内全部会话，但保留任务与 worktree。 */
+    suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
+        throw UnsupportedOperationException("清空任务会话接口不可用")
+    }
 
     /** GET /api/workspace-tasks/:taskId —— 任务详情（含会话列表与派生字段）。 */
     suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail

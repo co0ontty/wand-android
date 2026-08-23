@@ -81,6 +81,8 @@ fun WorkspaceTaskScreen(
     onBack: () -> Unit,
     onOpenSession: (String) -> Unit,
     onOpenPty: (String) -> Unit,
+    onOpenMissions: (String?) -> Unit = {},
+    onTaskChanged: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val workflow = remember(taskId) { WorkspaceWorkflow(api, scope) }
@@ -118,6 +120,7 @@ fun WorkspaceTaskScreen(
             cwd = cwd,
         ) { session ->
             scope.launch { runCatching { sheetState.hide() } }
+            onTaskChanged()
             // 创建成功后路由到对应会话页。
             if (session.isStructured) {
                 onOpenSession(session.id)
@@ -127,12 +130,14 @@ fun WorkspaceTaskScreen(
         }
     }
 
+    val missionCwd = workflow.currentTaskCwd()
+
     Column(
         modifier = Modifier.fillMaxSize(),
     ) {
         WandDetailTopBar(
             title = taskName.ifEmpty { "任务" },
-            subtitle = workspaceName.ifEmpty { "项目" },
+            subtitle = workspaceName.ifEmpty { "任务目录" },
             leading = if (showBack) {
                 {
                     WandDetailBackButton(
@@ -144,6 +149,12 @@ fun WorkspaceTaskScreen(
                 null
             },
             actions = {
+                ToolbarIconButton(
+                    icon = WandIcons.agent,
+                    contentDescription = "并行任务",
+                    enabled = missionCwd != null,
+                    onClick = { onOpenMissions(missionCwd) },
+                )
                 ToolbarIconButton(
                     icon = WandIcons.refresh,
                     contentDescription = "刷新任务",
@@ -243,7 +254,7 @@ private fun EmptyTaskWelcome(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                workspaceName.ifEmpty { "项目" },
+                workspaceName.ifEmpty { "任务目录" },
                 style = MaterialTheme.typography.labelMedium,
                 color = WandColors.textSecondary,
             )

@@ -34,8 +34,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,12 +76,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wand.app.SessionCreationCoordinator
-import com.wand.app.data.HistorySession
-import com.wand.app.data.SessionListEntry
 import com.wand.app.data.WandApi
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
-import com.wand.app.data.providerDisplayName
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
@@ -98,11 +93,11 @@ import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.NewSessionScreen
 import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.PtyTerminalScreen
-import com.wand.app.ui.screens.SessionListScreen
 import com.wand.app.ui.screens.SessionListState
-import com.wand.app.ui.screens.SessionListViewMode
 import com.wand.app.ui.screens.SettingsScreen
-import com.wand.app.ui.screens.WorkspaceListScreen
+import com.wand.app.ui.screens.TaskListScreen
+import com.wand.app.ui.screens.TaskListState
+import com.wand.app.ui.screens.TaskSessionRoute
 import com.wand.app.ui.screens.WorkspaceTaskScreen
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -275,7 +270,8 @@ private fun ReadyContent(
         SessionDraftStore()
     }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
-    // 列表状态提升到这里：进聊天再返回时不丢已加载的会话与滚动位置。
+    // 任务聚合是根导航的数据真源；会话列表仅保留历史恢复、通知和 launcher 快捷方式。
+    val taskState = remember(api) { TaskListState(api) }
     val listState = remember(api) { SessionListState(api) }
     val context = LocalContext.current
     val creationState by SessionCreationCoordinator.state.collectAsStateWithLifecycle(
@@ -283,27 +279,21 @@ private fun ReadyContent(
     )
     val sessionCreationInFlight = creationState !is SessionCreationCoordinator.State.Idle
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
-    val viewPreferences = remember(context) {
-        context.getSharedPreferences(SessionListViewPreferences, android.content.Context.MODE_PRIVATE)
-    }
-    var sessionListViewMode by rememberSaveable {
-        mutableStateOf(
-            if (viewPreferences.getString(SessionListViewPreferenceKey, null) in
-                setOf("workspaces", "directories")
-            ) {
-                SessionListViewMode.Workspaces
-            } else {
-                SessionListViewMode.Sessions
-            },
-        )
-    }
-    val scope = rememberCoroutineScope()
 
-    // 会话同步跟随 ReadyContent 生命周期，而不是跟随“完整列表是否正在组合”。
-    // 宽屏折叠 rail、聊天详情和列表页因此始终共享同一份加载/轮询状态。
-    DisposableEffect(listState) {
+    DisposableEffect(taskState, listState) {
+        taskState.startSync()
         listState.startSync()
-        onDispose { listState.shutdown() }
+        onDispose {
+            taskState.shutdown()
+            listState.shutdown()
+        }
+    }
+    LaunchedEffect(Unit) {
+        // 旧版「会话/项目」偏好不再参与导航，升级后固定进入任务首页。
+        context.getSharedPreferences(SessionListViewPreferences, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
     }
     LaunchedEffect(listState.sessions, actions.connection.serverId) {
         com.wand.app.WandShortcuts.update(
@@ -312,19 +302,25 @@ private fun ReadyContent(
             listState.sessions,
         )
     }
-    // 认证就绪后消费一次长按图标快捷操作（对称 iOS consume）。
+    // 长按图标的旧 ACTION_NEW_SESSION 保持二进制兼容，但语义迁移为「新任务」。
     LaunchedEffect(Unit) {
         if (!initialQuickActionConsumed) {
             initialQuickActionConsumed = true
             when (val action = initialQuickAction) {
-                is QuickAction.NewSession -> nav.push(Screen.NewSession())
-                is QuickAction.OpenSession -> nav.push(
-                    if (action.isStructured == false) {
-                        Screen.PtyTerminal(action.sessionId)
-                    } else {
-                        Screen.Chat(action.sessionId)
-                    },
-                )
+                is QuickAction.NewSession -> {
+                    nav.popToRoot()
+                    taskState.requestNewTask()
+                }
+                is QuickAction.OpenSession -> {
+                    val snapshot = runCatching { api.getSession(action.sessionId) }.getOrNull()
+                    nav.push(
+                        snapshot?.detailScreen() ?: if (action.isStructured == false) {
+                            Screen.PtyTerminal(action.sessionId)
+                        } else {
+                            Screen.Chat(action.sessionId)
+                        },
+                    )
+                }
                 null -> {}
             }
         }
@@ -346,59 +342,41 @@ private fun ReadyContent(
                 if (wideLayout) nav.setDetail(screen) else nav.push(screen)
             }
         }
-        val openSession: (SessionSnapshot) -> Unit = { session ->
+        val openSnapshot: (SessionSnapshot) -> Unit = { session ->
             openDetail(session.detailScreen())
         }
-        val openHistory: (HistorySession) -> Unit = { history ->
-            if (!sessionCreationInFlight && !listState.isRestoringHistory) {
-                scope.launch {
-                    listState.restore(history)?.let { resumed ->
-                        openDetail(resumed.detailScreen())
-                    }
-                }
-            }
-        }
-        val openNewSession: (String?) -> Unit = { cwd ->
-            if (!sessionCreationInFlight) {
-                val screen = Screen.NewSession(cwd)
-                // 新建/设置是临时页：压栈而不是替换详情，取消后才能回到刚才的会话。
-                if (nav.current is Screen.NewSession) nav.replaceTop(screen) else nav.push(screen)
-            }
+        val openTaskSession: (TaskSessionRoute) -> Unit = { route ->
+            openDetail(
+                if (route.structured) {
+                    Screen.Chat(
+                        route.sessionId,
+                        route.workspaceName,
+                        route.taskName,
+                        route.workspaceId,
+                        route.taskId,
+                    )
+                } else {
+                    Screen.PtyTerminal(
+                        route.sessionId,
+                        route.workspaceName,
+                        route.taskName,
+                        route.workspaceId,
+                        route.taskId,
+                    )
+                },
+            )
         }
         val openSettings: () -> Unit = {
             if (!sessionCreationInFlight && nav.current !is Screen.Settings) {
                 nav.push(Screen.Settings)
             }
         }
-        val changeSessionListView: (SessionListViewMode) -> Unit = { mode ->
-            if (sessionListViewMode != mode) {
-                when (mode) {
-                    SessionListViewMode.Workspaces -> if (
-                        nav.stack.any { it is Screen.Chat || it is Screen.PtyTerminal }
-                    ) {
-                        nav.popToRoot()
-                    }
-                    SessionListViewMode.Sessions -> if (
-                        nav.stack.any { it is Screen.Workspaces || it is Screen.WorkspaceTask }
-                    ) {
-                        nav.popToRoot()
-                    }
-                }
+        // 旧新建会话页面只用于恢复已有导航状态；主入口已经迁移为新任务。
+        val openMissionsFromNewSession = { nav.setDetail(Screen.Missions()) }
+        val openWorkspaceTask: (String, String, String, String) -> Unit =
+            { workspaceId, taskId, workspaceName, taskName ->
+                openDetail(Screen.WorkspaceTask(workspaceId, taskId, workspaceName, taskName))
             }
-            sessionListViewMode = mode
-            viewPreferences.edit()
-                .putString(
-                    SessionListViewPreferenceKey,
-                    if (mode == SessionListViewMode.Workspaces) "workspaces" else "sessions",
-                )
-                .apply()
-        }
-        // 并行任务入口收进「新建会话」的多选开关里；新建页分派完成后，
-        // 用 Missions 替换栈顶的新建页（返回直接回主页，不再回到表单）。
-        val openMissionsFromNewSession = { nav.setDetail(Screen.Missions) }
-        val openWorkspaceTask: (String, String, String, String) -> Unit = { workspaceId, taskId, workspaceName, taskName ->
-            openDetail(Screen.WorkspaceTask(workspaceId, taskId, workspaceName, taskName))
-        }
 
         if (wideLayout) {
             WideReadyContent(
@@ -406,18 +384,16 @@ private fun ReadyContent(
                 api = api,
                 actions = actions,
                 sessionDrafts = sessionDrafts,
+                taskState = taskState,
                 listState = listState,
                 listPaneWidth = listPaneWidth,
                 sidebarCollapsed = sidebarCollapsed,
                 selectedSessionId = nav.current.sessionIdOrNull(),
-                viewMode = sessionListViewMode,
-                onOpenSession = openSession,
-                onOpenHistory = openHistory,
-                onNewSession = openNewSession,
+                onOpenSession = openTaskSession,
+                onOpenRestoredSession = openSnapshot,
                 onOpenMissions = openMissionsFromNewSession,
                 onOpenSettings = openSettings,
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
-                onViewModeChange = changeSessionListView,
                 onOpenWorkspaceTask = openWorkspaceTask,
                 sessionCreationInFlight = sessionCreationInFlight,
                 showDetailBack = showDetailBack,
@@ -428,13 +404,12 @@ private fun ReadyContent(
                 api = api,
                 actions = actions,
                 sessionDrafts = sessionDrafts,
+                taskState = taskState,
                 listState = listState,
-                viewMode = sessionListViewMode,
-                onOpenSession = openSession,
-                onNewSession = openNewSession,
+                onOpenSession = openTaskSession,
+                onOpenRestoredSession = openSnapshot,
                 onOpenMissions = openMissionsFromNewSession,
                 onOpenSettings = openSettings,
-                onViewModeChange = changeSessionListView,
                 onOpenWorkspaceTask = openWorkspaceTask,
                 sessionCreationInFlight = sessionCreationInFlight,
             )
@@ -451,16 +426,16 @@ private fun SinglePaneContent(
     api: WandApi,
     actions: HomeActions,
     sessionDrafts: SessionDraftStore,
+    taskState: TaskListState,
     listState: SessionListState,
-    viewMode: SessionListViewMode,
-    onOpenSession: (SessionSnapshot) -> Unit,
-    onNewSession: (String?) -> Unit,
+    onOpenSession: (TaskSessionRoute) -> Unit,
+    onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
-    onViewModeChange: (SessionListViewMode) -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     sessionCreationInFlight: Boolean,
 ) {
+    val scope = rememberCoroutineScope()
     val reduceMotion = reduceMotionEnabled()
     val frame = SinglePaneFrame(nav.current, nav.stack.size)
     AnimatedContent(
@@ -489,25 +464,24 @@ private fun SinglePaneContent(
         label = "singlePaneNav",
     ) { currentFrame ->
     when (val screen = currentFrame.screen) {
-        is Screen.SessionList -> SessionListScreen(
-            state = listState,
-            workspaceApi = api,
+        is Screen.SessionList -> TaskListScreen(
+            state = taskState,
+            historyState = listState,
+            api = api,
             serverDisplayName = actions.connection.serverDisplayName,
             interactionEnabled = !sessionCreationInFlight,
-            viewMode = viewMode,
-                onOpenSession = onOpenSession,
-                onNewSession = onNewSession,
-                onViewModeChange = onViewModeChange,
-                onOpenSettings = onOpenSettings,
-                onOpenWeb = {
-                    if (!sessionCreationInFlight) actions.navigation.openWeb()
-                },
-                onSwitchServer = {
-                    if (!sessionCreationInFlight) actions.navigation.switchServer()
-                },
-                onCollapseSidebar = null,
-            onOpenWorkspaceTask = onOpenWorkspaceTask,
-            selectedTaskId = (nav.current as? Screen.WorkspaceTask)?.taskId,
+            onOpenTask = onOpenWorkspaceTask,
+            onOpenSession = onOpenSession,
+            onOpenRestoredSession = onOpenRestoredSession,
+            onTaskRenamed = nav::renameWorkspaceTask,
+            onTaskClosed = nav::closeWorkspaceTask,
+            onOpenSettings = onOpenSettings,
+            onOpenWeb = {
+                if (!sessionCreationInFlight) actions.navigation.openWeb()
+            },
+            onSwitchServer = {
+                if (!sessionCreationInFlight) actions.navigation.switchServer()
+            },
         )
         is Screen.Chat -> ChatScreen(
             api = api,
@@ -541,7 +515,18 @@ private fun SinglePaneContent(
         is Screen.Missions -> MissionsScreen(
             api = api,
             onBack = { nav.pop() },
-            onOpenSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
+            onOpenSession = { sessionId ->
+                nav.push(
+                    Screen.Chat(
+                        sessionId,
+                        taskName = screen.taskName,
+                        taskId = screen.taskId,
+                    ),
+                )
+            },
+            linkedTaskId = screen.taskId,
+            linkedTaskName = screen.taskName,
+            linkedCwd = screen.cwd,
         )
         is Screen.Settings -> SettingsScreen(
             api = api,
@@ -549,16 +534,6 @@ private fun SinglePaneContent(
             navigation = actions.navigation,
             settings = actions.settings,
             onBack = { nav.pop() },
-        )
-        is Screen.Workspaces -> WorkspaceListScreen(
-            api = api,
-            onBack = { nav.pop() },
-            onOpenTask = { workspaceId, taskId, workspaceName, taskName ->
-                onOpenWorkspaceTask(workspaceId, taskId, workspaceName, taskName)
-            },
-            onTaskRenamed = { updated -> nav.renameWorkspaceTask(updated.id, updated.name) },
-            onTaskDeleted = { taskId -> nav.closeWorkspaceTask(taskId) },
-            onOpenSession = { session -> nav.push(session.detailScreen()) },
         )
         is Screen.WorkspaceTask -> WorkspaceTaskScreen(
             api = api,
@@ -568,12 +543,31 @@ private fun SinglePaneContent(
             taskName = screen.taskName,
             onBack = { nav.pop() },
             onOpenSession = { sessionId ->
-                // 任务内打开会话：保留 WorkspaceTask 作为返回目的地。
-                nav.push(Screen.Chat(sessionId, screen.workspaceName, screen.taskName))
+                nav.push(
+                    Screen.Chat(
+                        sessionId,
+                        screen.workspaceName,
+                        screen.taskName,
+                        screen.workspaceId,
+                        screen.taskId,
+                    ),
+                )
             },
             onOpenPty = { sessionId ->
-                nav.push(Screen.PtyTerminal(sessionId, screen.workspaceName, screen.taskName))
+                nav.push(
+                    Screen.PtyTerminal(
+                        sessionId,
+                        screen.workspaceName,
+                        screen.taskName,
+                        screen.workspaceId,
+                        screen.taskId,
+                    ),
+                )
             },
+            onOpenMissions = { cwd ->
+                nav.push(Screen.Missions(screen.taskId, cwd, screen.taskName))
+            },
+            onTaskChanged = { scope.launch { taskState.refreshAfterMutation() } },
         )
     }
     }
@@ -585,22 +579,21 @@ private fun WideReadyContent(
     api: WandApi,
     actions: HomeActions,
     sessionDrafts: SessionDraftStore,
+    taskState: TaskListState,
     listState: SessionListState,
     listPaneWidth: Dp,
     sidebarCollapsed: Boolean,
     selectedSessionId: String?,
-    viewMode: SessionListViewMode,
-    onOpenSession: (SessionSnapshot) -> Unit,
-    onOpenHistory: (HistorySession) -> Unit,
-    onNewSession: (String?) -> Unit,
+    onOpenSession: (TaskSessionRoute) -> Unit,
+    onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onOpenMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
-    onViewModeChange: (SessionListViewMode) -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     sessionCreationInFlight: Boolean,
     showDetailBack: Boolean,
 ) {
+    val scope = rememberCoroutineScope()
     val lockedSidebarInteraction = remember { MutableInteractionSource() }
     val sidebarContentWidth = if (sidebarCollapsed) 56.dp else listPaneWidth
     val sidebarWidth by animateDpAsState(
@@ -637,29 +630,28 @@ private fun WideReadyContent(
                         contentAlignment = Alignment.TopStart,
                     ) {
                         if (collapsed) {
-                            CollapsedSessionRail(
-                                listState = listState,
-                                selectedSessionId = selectedSessionId,
-                                viewMode = viewMode,
-                                onOpenSession = onOpenSession,
-                                onOpenHistory = onOpenHistory,
-                                onNewSession = onNewSession,
+                            CollapsedTaskRail(
+                                onNewTask = {
+                                    taskState.requestNewTask()
+                                    onToggleSidebarCollapsed()
+                                },
                                 onExpandSidebar = onToggleSidebarCollapsed,
                             )
                         } else {
-                            SessionListScreen(
-                                state = listState,
-                                workspaceApi = api,
+                            TaskListScreen(
+                                state = taskState,
+                                historyState = listState,
+                                api = api,
                                 serverDisplayName = actions.connection.serverDisplayName,
                                 modifier = Modifier.fillMaxSize(),
                                 selectedSessionId = selectedSessionId,
-                                topBarContentHeight = 64.dp,
-                                compactLayout = true,
+                                selectedTaskId = nav.current.taskIdOrNull(),
                                 interactionEnabled = !sessionCreationInFlight,
-                                viewMode = viewMode,
+                                onOpenTask = onOpenWorkspaceTask,
                                 onOpenSession = onOpenSession,
-                                onNewSession = onNewSession,
-                                onViewModeChange = onViewModeChange,
+                                onOpenRestoredSession = onOpenRestoredSession,
+                                onTaskRenamed = nav::renameWorkspaceTask,
+                                onTaskClosed = nav::closeWorkspaceTask,
                                 onOpenSettings = onOpenSettings,
                                 onOpenWeb = {
                                     if (!sessionCreationInFlight) actions.navigation.openWeb()
@@ -668,8 +660,6 @@ private fun WideReadyContent(
                                     if (!sessionCreationInFlight) actions.navigation.switchServer()
                                 },
                                 onCollapseSidebar = onToggleSidebarCollapsed,
-                                onOpenWorkspaceTask = onOpenWorkspaceTask,
-                                selectedTaskId = (nav.current as? Screen.WorkspaceTask)?.taskId,
                             )
                         }
                     }
@@ -710,8 +700,10 @@ private fun WideReadyContent(
             ) { screen ->
             when (screen) {
                 is Screen.SessionList -> DetailPlaceholder(
-                    viewMode = viewMode,
-                    onNewSession = { onNewSession(null) },
+                    onNewTask = {
+                        taskState.requestNewTask()
+                        if (sidebarCollapsed) onToggleSidebarCollapsed()
+                    },
                 )
                 is Screen.Chat -> ChatScreen(
                     api = api,
@@ -748,8 +740,19 @@ private fun WideReadyContent(
                 is Screen.Missions -> MissionsScreen(
                     api = api,
                     onBack = { nav.pop() },
-                    onOpenSession = { sessionId -> nav.setDetail(Screen.Chat(sessionId)) },
+                    onOpenSession = { sessionId ->
+                        nav.setDetail(
+                            Screen.Chat(
+                                sessionId,
+                                taskName = screen.taskName,
+                                taskId = screen.taskId,
+                            ),
+                        )
+                    },
                     embedded = true,
+                    linkedTaskId = screen.taskId,
+                    linkedTaskName = screen.taskName,
+                    linkedCwd = screen.cwd,
                 )
                 is Screen.Settings -> SettingsScreen(
                     api = api,
@@ -758,16 +761,6 @@ private fun WideReadyContent(
                     settings = actions.settings,
                     onBack = { nav.pop() },
                     embedded = true,
-                )
-                is Screen.Workspaces -> WorkspaceListScreen(
-                    api = api,
-                    onBack = { nav.pop() },
-                    onOpenTask = { workspaceId, taskId, workspaceName, taskName ->
-                        onOpenWorkspaceTask(workspaceId, taskId, workspaceName, taskName)
-                    },
-                    onTaskRenamed = { updated -> nav.renameWorkspaceTask(updated.id, updated.name) },
-                    onTaskDeleted = { taskId -> nav.closeWorkspaceTask(taskId) },
-                    onOpenSession = { session -> nav.setDetail(session.detailScreen()) },
                 )
                 is Screen.WorkspaceTask -> WorkspaceTaskScreen(
                     api = api,
@@ -778,11 +771,31 @@ private fun WideReadyContent(
                     showBack = showDetailBack,
                     onBack = { nav.pop() },
                     onOpenSession = { sessionId ->
-                        nav.push(Screen.Chat(sessionId, screen.workspaceName, screen.taskName))
+                        nav.push(
+                            Screen.Chat(
+                                sessionId,
+                                screen.workspaceName,
+                                screen.taskName,
+                                screen.workspaceId,
+                                screen.taskId,
+                            ),
+                        )
                     },
                     onOpenPty = { sessionId ->
-                        nav.push(Screen.PtyTerminal(sessionId, screen.workspaceName, screen.taskName))
+                        nav.push(
+                            Screen.PtyTerminal(
+                                sessionId,
+                                screen.workspaceName,
+                                screen.taskName,
+                                screen.workspaceId,
+                                screen.taskId,
+                            ),
+                        )
                     },
+                    onOpenMissions = { cwd ->
+                        nav.push(Screen.Missions(screen.taskId, cwd, screen.taskName))
+                    },
+                    onTaskChanged = { scope.launch { taskState.refreshAfterMutation() } },
                 )
             }
             }
@@ -871,16 +884,10 @@ private fun WideSidebarPanel(
 }
 
 @Composable
-private fun CollapsedSessionRail(
-    listState: SessionListState,
-    selectedSessionId: String?,
-    viewMode: SessionListViewMode,
-    onOpenSession: (SessionSnapshot) -> Unit,
-    onOpenHistory: (HistorySession) -> Unit,
-    onNewSession: (String?) -> Unit,
+private fun CollapsedTaskRail(
+    onNewTask: () -> Unit,
     onExpandSidebar: () -> Unit,
 ) {
-    val entries = listState.entries
     Column(
         modifier = Modifier
             .width(56.dp)
@@ -890,97 +897,32 @@ private fun CollapsedSessionRail(
             .padding(horizontal = 4.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        val showingSessions = viewMode == SessionListViewMode.Sessions
-        // 汉堡图标 =「展开面板」的通用语义；此前用会话/项目品牌色图标，看起来像
-        // 选中的 Tab，实际功能却是展开侧边栏，语义混淆。
         CollapsedRailTile(
             icon = rememberVectorPainter(WandIcons.panelExpand),
             iconTint = WandColors.textSecondary,
             accentTint = WandColors.brand,
             selected = false,
             selectionStateEnabled = false,
-            contentDescription = if (showingSessions) "展开会话列表栏" else "展开项目栏",
-            onClickLabel = "展开侧边栏",
+            contentDescription = "展开任务侧边栏",
+            onClickLabel = "展开任务侧边栏",
             outlined = true,
             onClick = onExpandSidebar,
         )
         Spacer(modifier = Modifier.height(10.dp))
         CollapsedRailDivider()
         Spacer(modifier = Modifier.height(10.dp))
-        val contentLoading = when (viewMode) {
-            SessionListViewMode.Sessions -> listState.loading && entries.isEmpty()
-            SessionListViewMode.Workspaces -> false
-        }
-        if (contentLoading) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(
-                    color = WandColors.brand,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(22.dp),
-                )
-            }
-        } else if (viewMode == SessionListViewMode.Sessions) {
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                items(
-                    items = entries,
-                    key = { entry -> entry.key },
-                    contentType = { entry ->
-                        when (entry) {
-                            is SessionListEntry.Managed -> "managed"
-                            is SessionListEntry.Recoverable -> "recoverable"
-                        }
-                    },
-                ) { entry ->
-                    when (entry) {
-                        is SessionListEntry.Managed -> CollapsedSessionTile(
-                            session = entry.session,
-                            selected = entry.session.id == selectedSessionId,
-                            onClick = { onOpenSession(entry.session) },
-                        )
-                        is SessionListEntry.Recoverable -> CollapsedRecoverableSessionTile(
-                            history = entry.history,
-                            loading = listState.isRestoring(entry.history),
-                            onClick = { onOpenHistory(entry.history) },
-                        )
-                    }
-                }
-            }
-        } else {
-            // 项目视图的折叠占位此前只是一块不可点击的图标+文字，点了没反应；
-            // 改成与顶部一致的「展开」tile，保持 rail 上所有元素都可操作。
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                CollapsedRailTile(
-                    icon = rememberVectorPainter(WandIcons.folder),
-                    iconTint = WandColors.textSecondary,
-                    accentTint = WandColors.brand,
-                    selected = false,
-                    contentDescription = "展开项目列表",
-                    onClickLabel = "展开侧边栏",
-                    outlined = true,
-                    onClick = onExpandSidebar,
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        CollapsedRailDivider()
-        Spacer(modifier = Modifier.height(8.dp))
-        CollapsedNewSessionTile(onClick = { onNewSession(null) })
+        CollapsedRailTile(
+            icon = rememberVectorPainter(WandIcons.add),
+            iconTint = WandColors.brand,
+            accentTint = WandColors.brand,
+            selected = false,
+            selectionStateEnabled = false,
+            contentDescription = "新建任务",
+            onClickLabel = "新建任务",
+            emphasized = true,
+            onClick = onNewTask,
+        )
+        Spacer(modifier = Modifier.weight(1f))
     }
 }
 
@@ -992,73 +934,6 @@ private fun CollapsedRailDivider() {
             .height(1.dp)
             .clip(RoundedCornerShape(999.dp))
             .background(WandColors.border.copy(alpha = 0.48f)),
-    )
-}
-
-@Composable
-private fun CollapsedSessionTile(
-    session: SessionSnapshot,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val isCodex = session.provider == "codex"
-    val accentTint = if (isCodex) WandColors.info else WandColors.brand
-    val iconTint = BrandLogos.tintForProvider(
-        session.provider,
-        accentTint,
-    )
-    val icon = BrandLogos.painterForProvider(session.provider)
-    CollapsedRailTile(
-        icon = icon,
-        iconTint = iconTint,
-        iconScale = BrandLogos.opticalScale(session.provider),
-        accentTint = accentTint,
-        selected = selected,
-        selectionStateEnabled = true,
-        contentDescription = "${session.providerLabel} ${session.displayTitle}",
-        onClickLabel = "打开会话",
-        onClick = onClick,
-    )
-}
-
-@Composable
-private fun CollapsedRecoverableSessionTile(
-    history: HistorySession,
-    loading: Boolean,
-    onClick: () -> Unit,
-) {
-    val provider = history.apiProvider
-    val tint = if (provider == "codex") WandColors.info else WandColors.brand
-    val iconTint = BrandLogos.tintForProvider(provider, tint)
-    val icon = BrandLogos.painterForProvider(provider)
-    CollapsedRailTile(
-        icon = icon,
-        iconTint = iconTint,
-        iconScale = BrandLogos.opticalScale(provider),
-        selected = false,
-        contentDescription = buildString {
-            append("可恢复的 ")
-            append(providerDisplayName(provider))
-            append(' ')
-            append(history.firstUserMessage.ifEmpty { "会话" })
-        },
-        onClickLabel = "恢复会话",
-        loading = loading,
-        onClick = onClick,
-    )
-}
-
-
-@Composable
-private fun CollapsedNewSessionTile(onClick: () -> Unit) {
-    CollapsedRailTile(
-        icon = rememberVectorPainter(WandIcons.add),
-        iconTint = WandColors.brand,
-        selected = false,
-        contentDescription = "新建会话",
-        onClickLabel = "新建会话",
-        emphasized = true,
-        onClick = onClick,
     )
 }
 
@@ -1184,10 +1059,8 @@ private fun CollapsedRailTile(
 
 @Composable
 private fun DetailPlaceholder(
-    viewMode: SessionListViewMode,
-    onNewSession: () -> Unit,
+    onNewTask: () -> Unit,
 ) {
-    val selectingTasks = viewMode == SessionListViewMode.Workspaces
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1203,29 +1076,23 @@ private fun DetailPlaceholder(
         ) {
             WandBrandMark(size = 44)
             Text(
-                if (selectingTasks) "选择一个任务" else "选择一个会话",
+                "选择一个任务",
                 style = MaterialTheme.typography.titleLarge,
                 color = WandColors.textPrimary,
                 modifier = Modifier.padding(top = 10.dp),
             )
             Text(
-                if (selectingTasks) {
-                    "从左侧打开项目里的任务，右侧会展开工作窗口。"
-                } else {
-                    "从左侧继续现有对话，或在这里开始新的工作。"
-                },
+                "从左侧打开任务，右侧会显示该任务的工作窗口。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
                 textAlign = TextAlign.Center,
             )
-            if (!selectingTasks) {
-                WandButton(
-                    label = "新建会话",
-                    onClick = onNewSession,
-                    compact = true,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
-            }
+            WandButton(
+                label = "新建任务",
+                onClick = onNewTask,
+                compact = true,
+                modifier = Modifier.padding(top = 10.dp),
+            )
         }
     }
 }
@@ -1237,22 +1104,34 @@ private fun Screen.transitionKey(): String = when (this) {
     is Screen.Chat -> "chat:$sessionId"
     is Screen.PtyTerminal -> "pty:$sessionId"
     is Screen.NewSession -> "new-session"
-    Screen.Missions -> "missions"
+    is Screen.Missions -> "missions:${taskId.orEmpty()}"
     Screen.Settings -> "settings"
-    Screen.Workspaces -> "workspaces"
     is Screen.WorkspaceTask -> "workspace-task:$taskId"
 }
 
 private fun SessionSnapshot.detailScreen(): Screen =
-    if (isStructured) Screen.Chat(id) else Screen.PtyTerminal(id)
+    if (isStructured) {
+        Screen.Chat(id, workspaceId = workspaceId, taskId = workspaceTaskId)
+    } else {
+        Screen.PtyTerminal(id, workspaceId = workspaceId, taskId = workspaceTaskId)
+    }
+
+private fun Screen.taskIdOrNull(): String? = when (this) {
+    is Screen.Chat -> taskId
+    is Screen.PtyTerminal -> taskId
+    is Screen.WorkspaceTask -> taskId
+    Screen.SessionList,
+    is Screen.Missions,
+    Screen.Settings,
+    is Screen.NewSession -> null
+}
 
 private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Chat -> sessionId
     is Screen.PtyTerminal -> sessionId
     Screen.SessionList,
-    Screen.Missions,
-    Screen.Settings -> null
+    is Screen.Missions,
+    Screen.Settings,
     is Screen.NewSession -> null
-    Screen.Workspaces -> null
     is Screen.WorkspaceTask -> null
 }

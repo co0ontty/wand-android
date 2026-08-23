@@ -16,8 +16,20 @@ import org.junit.Test
 class WorkspaceTaskCreationTest {
 
     @Test
-    fun allSixProviders_mapToCorrectCommands() {
-        // 对齐 Web startSessionInCwd：command = provider === "qoder" ? "qodercli" : provider
+    fun taskCreationBodyCarriesExplicitWorktreeChoice() {
+        val isolated = createWorkspaceTaskRequestBody("Task", "main", true)
+        val shared = createWorkspaceTaskRequestBody("Task", null, false)
+        val legacyDefault = createWorkspaceTaskRequestBody("Task", null, null)
+
+        assertEquals("Task", isolated.getString("name"))
+        assertEquals("main", isolated.getString("baseRef"))
+        assertTrue(isolated.getBoolean("worktree"))
+        assertEquals(false, shared.getBoolean("worktree"))
+        assertTrue(!legacyDefault.has("worktree"))
+    }
+
+    @Test
+    fun allSixProvidersMapToBoundCommandBodies() {
         val cases = listOf(
             WorkspaceSessionTarget.Claude to "claude",
             WorkspaceSessionTarget.Codex to "codex",
@@ -26,18 +38,31 @@ class WorkspaceTaskCreationTest {
             WorkspaceSessionTarget.Qoder to "qodercli",
             WorkspaceSessionTarget.Pi to "pi",
         )
+        val binding = WorkspaceBinding("ws-1", "task-1", "/worktree/path")
+
         for ((target, expectedCommand) in cases) {
-            val command = if (target.raw == "qoder") "qodercli" else target.raw
-            assertEquals("command for ${target.raw}", expectedCommand, command)
-            assertEquals("provider for ${target.raw}", target.raw, target.provider)
+            val body = createWorkspaceTaskWindowRequestBody(target, binding)
+            assertEquals("command for ${target.raw}", expectedCommand, body.getString("command"))
+            assertEquals("provider for ${target.raw}", target.raw, body.getString("provider"))
+            assertEquals("ws-1", body.getString("workspaceId"))
+            assertEquals("task-1", body.getString("workspaceTaskId"))
+            assertEquals("/worktree/path", body.getString("cwd"))
         }
     }
 
     @Test
-    fun shellTarget_doesNotMapToCommand() {
-        // Shell 使用 {shell:true}，不传 command/provider
-        assertTrue(WorkspaceSessionTarget.Shell.isShell)
-        assertEquals(null, WorkspaceSessionTarget.Shell.provider)
+    fun shellTargetUsesBoundShellBodyWithoutProviderCommand() {
+        val body = createWorkspaceTaskWindowRequestBody(
+            WorkspaceSessionTarget.Shell,
+            WorkspaceBinding("ws-1", "task-1", "/worktree/path"),
+        )
+
+        assertTrue(body.getBoolean("shell"))
+        assertTrue(!body.has("command"))
+        assertTrue(!body.has("provider"))
+        assertEquals("ws-1", body.getString("workspaceId"))
+        assertEquals("task-1", body.getString("workspaceTaskId"))
+        assertEquals("/worktree/path", body.getString("cwd"))
     }
 
     @Test

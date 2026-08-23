@@ -439,6 +439,8 @@ data class WorkspaceTaskSummary(
     val isolated: Boolean,
     val worktreeError: String?,
     val sessions: List<WorkspaceSessionSummary>,
+    /** 服务端未截断前的会话总数。 */
+    val totalSessions: Int,
 ) {
     val id: String get() = task.id
     val name: String get() = task.name
@@ -455,6 +457,9 @@ data class WorkspaceTaskSummary(
                 isolated = o.bool("isolated") ?: false,
                 worktreeError = o.str("worktreeError"),
                 sessions = o.arr("sessions")?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
+                totalSessions = o.int("totalSessions")
+                    ?: o.arr("sessions")?.length()
+                    ?: 0,
             )
         }
     }

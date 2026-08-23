@@ -260,6 +260,65 @@ class WorkspaceModelsTest {
         assertEquals("/dir", detail.cwd)
     }
 
+    @Test
+    fun parseTaskGroupsPreservesSyntheticStandaloneAndTotalSessions() {
+        val response = JSONArray().put(
+            JSONObject()
+                .put("workspaceId", "cwd:/repo")
+                .put("workspaceName", "repo")
+                .put("workspaceCwd", "/repo")
+                .put("synthetic", true)
+                .put(
+                    "tasks",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("id", "task-1")
+                            .put("workspaceId", "ws-1")
+                            .put("name", "Task")
+                            .put("cwd", "/repo/.wand-worktrees/task-1")
+                            .put("isolated", true)
+                            .put("totalSessions", 7)
+                            .put(
+                                "sessions",
+                                JSONArray().put(
+                                    JSONObject().put("id", "session-1").put("sessionKind", "pty"),
+                                ),
+                            ),
+                    ),
+                )
+                .put(
+                    "standaloneSessions",
+                    JSONArray().put(JSONObject().put("id", "legacy-1").put("provider", "codex")),
+                ),
+        )
+
+        val group = TaskDirectoryGroup.parseList(response).single()
+
+        assertTrue(group.synthetic)
+        assertEquals("legacy-1", group.standaloneSessions.single().id)
+        assertEquals(7, group.tasks.single().totalSessions)
+        assertEquals(1, group.tasks.single().sessions.size)
+        assertTrue(group.tasks.single().isIsolated)
+    }
+
+    @Test
+    fun parseTaskSummaryFallsBackToEmbeddedSessionCount() {
+        val summary = WorkspaceTaskSummary.parse(
+            JSONObject()
+                .put("id", "task-1")
+                .put("workspaceId", "ws-1")
+                .put("name", "Task")
+                .put(
+                    "sessions",
+                    JSONArray()
+                        .put(JSONObject().put("id", "session-1"))
+                        .put(JSONObject().put("id", "session-2")),
+                ),
+        )!!
+
+        assertEquals(2, summary.totalSessions)
+    }
+
     // MARK: - SessionSnapshot workspace 字段
 
     @Test

@@ -13,17 +13,23 @@ sealed class Screen {
         val sessionId: String,
         val workspaceName: String? = null,
         val taskName: String? = null,
+        val workspaceId: String? = null,
+        val taskId: String? = null,
     ) : Screen()
     data class PtyTerminal(
         val sessionId: String,
         val workspaceName: String? = null,
         val taskName: String? = null,
+        val workspaceId: String? = null,
+        val taskId: String? = null,
     ) : Screen()
     data class NewSession(val initialCwd: String? = null) : Screen()
-    data object Missions : Screen()
+    data class Missions(
+        val taskId: String? = null,
+        val cwd: String? = null,
+        val taskName: String? = null,
+    ) : Screen()
     data object Settings : Screen()
-    /** 项目 / 任务列表。 */
-    data object Workspaces : Screen()
     /**
      * 任务详情宿主页：导航参数只携带稳定的 workspaceId/taskId 和编码短显示名，
      * 不携带 cwd、layout 或凭据。Saver 用结构化 save record，避免任务名中的
@@ -88,16 +94,25 @@ class NavState {
     }
 
     fun renameWorkspaceTask(taskId: String, taskName: String) {
-        val index = stack.indexOfLast { it is Screen.WorkspaceTask && it.taskId == taskId }
-        if (index < 0) return
-        val current = stack[index] as Screen.WorkspaceTask
-        if (current.taskName != taskName) {
-            stack[index] = current.copy(taskName = taskName)
+        stack.indices.forEach { index ->
+            stack[index] = when (val screen = stack[index]) {
+                is Screen.WorkspaceTask -> if (screen.taskId == taskId) screen.copy(taskName = taskName) else screen
+                is Screen.Chat -> if (screen.taskId == taskId) screen.copy(taskName = taskName) else screen
+                is Screen.PtyTerminal -> if (screen.taskId == taskId) screen.copy(taskName = taskName) else screen
+                else -> screen
+            }
         }
     }
 
     fun closeWorkspaceTask(taskId: String) {
-        val index = stack.indexOfFirst { it is Screen.WorkspaceTask && it.taskId == taskId }
+        val index = stack.indexOfFirst { screen ->
+            when (screen) {
+                is Screen.WorkspaceTask -> screen.taskId == taskId
+                is Screen.Chat -> screen.taskId == taskId
+                is Screen.PtyTerminal -> screen.taskId == taskId
+                else -> false
+            }
+        }
         if (index < 0) return
         while (stack.size > index) stack.removeAt(stack.lastIndex)
     }
@@ -131,17 +146,30 @@ class NavState {
 
         private fun Screen.saveKey(): String = when (this) {
             Screen.SessionList -> SESSION_LIST_KEY
-            is Screen.Chat -> buildSessionDetailKey(CHAT_PREFIX, sessionId, workspaceName, taskName)
+            is Screen.Chat -> buildSessionDetailKey(
+                CHAT_PREFIX,
+                sessionId,
+                workspaceName,
+                taskName,
+                workspaceId,
+                taskId,
+            )
             is Screen.PtyTerminal -> buildSessionDetailKey(
                 PTY_TERMINAL_PREFIX,
                 sessionId,
                 workspaceName,
                 taskName,
+                workspaceId,
+                taskId,
             )
             is Screen.NewSession -> initialCwd?.let { "$NEW_SESSION_PREFIX$it" } ?: NEW_SESSION_KEY
-            Screen.Missions -> MISSIONS_KEY
+            is Screen.Missions -> if (taskId.isNullOrBlank() && cwd.isNullOrBlank() && taskName.isNullOrBlank()) {
+                MISSIONS_KEY
+            } else {
+                MISSIONS_KEY + FIELD_SEP + taskId.orEmpty() + FIELD_SEP + cwd.orEmpty() +
+                    FIELD_SEP + taskName.orEmpty()
+            }
             Screen.Settings -> SETTINGS_KEY
-            Screen.Workspaces -> WORKSPACES_KEY
             // 结构化分隔：用 \u0001 作为不可打印分隔符，避免任务名中的 `:`
             // 或换行破坏恢复（与 Web 不同，这里 ID 不含控制字符）。
             is Screen.WorkspaceTask ->
@@ -152,21 +180,30 @@ class NavState {
             this == SESSION_LIST_KEY -> Screen.SessionList
             startsWith(CHAT_PREFIX) -> restoreSessionDetail(
                 prefix = CHAT_PREFIX,
-                create = { sessionId, workspaceName, taskName ->
-                    Screen.Chat(sessionId, workspaceName, taskName)
+                create = { sessionId, workspaceName, taskName, workspaceId, taskId ->
+                    Screen.Chat(sessionId, workspaceName, taskName, workspaceId, taskId)
                 },
             )
             startsWith(PTY_TERMINAL_PREFIX) -> restoreSessionDetail(
                 prefix = PTY_TERMINAL_PREFIX,
-                create = { sessionId, workspaceName, taskName ->
-                    Screen.PtyTerminal(sessionId, workspaceName, taskName)
+                create = { sessionId, workspaceName, taskName, workspaceId, taskId ->
+                    Screen.PtyTerminal(sessionId, workspaceName, taskName, workspaceId, taskId)
                 },
             )
             this == NEW_SESSION_KEY -> Screen.NewSession()
             startsWith(NEW_SESSION_PREFIX) -> Screen.NewSession(removePrefix(NEW_SESSION_PREFIX))
-            this == MISSIONS_KEY -> Screen.Missions
+            this == MISSIONS_KEY -> Screen.Missions()
+            startsWith(MISSIONS_KEY + FIELD_SEP) -> {
+                val parts = removePrefix(MISSIONS_KEY + FIELD_SEP).split(FIELD_SEP, limit = 3)
+                Screen.Missions(
+                    taskId = parts.getOrNull(0)?.takeIf(String::isNotBlank),
+                    cwd = parts.getOrNull(1)?.takeIf(String::isNotBlank),
+                    taskName = parts.getOrNull(2)?.takeIf(String::isNotBlank),
+                )
+            }
             this == SETTINGS_KEY -> Screen.Settings
-            this == WORKSPACES_KEY -> Screen.Workspaces
+            // 旧版项目根页升级后统一恢复到任务根页。
+            this == WORKSPACES_KEY -> Screen.SessionList
             startsWith(WORKSPACE_TASK_KEY + FIELD_SEP) -> {
                 val parts = removePrefix(WORKSPACE_TASK_KEY + FIELD_SEP).split(FIELD_SEP)
                 if (parts.size >= 4) {
@@ -188,20 +225,29 @@ class NavState {
             sessionId: String,
             workspaceName: String?,
             taskName: String?,
+            workspaceId: String?,
+            taskId: String?,
         ): String {
-            if (workspaceName.isNullOrBlank() && taskName.isNullOrBlank()) return "$prefix$sessionId"
-            return prefix + sessionId + FIELD_SEP + workspaceName.orEmpty() + FIELD_SEP + taskName.orEmpty()
+            if (workspaceName.isNullOrBlank() && taskName.isNullOrBlank() &&
+                workspaceId.isNullOrBlank() && taskId.isNullOrBlank()
+            ) {
+                return "$prefix$sessionId"
+            }
+            return prefix + sessionId + FIELD_SEP + workspaceName.orEmpty() + FIELD_SEP +
+                taskName.orEmpty() + FIELD_SEP + workspaceId.orEmpty() + FIELD_SEP + taskId.orEmpty()
         }
 
         private fun String.restoreSessionDetail(
             prefix: String,
-            create: (String, String?, String?) -> Screen,
+            create: (String, String?, String?, String?, String?) -> Screen,
         ): Screen? {
-            val parts = removePrefix(prefix).split(FIELD_SEP, limit = 3)
+            val parts = removePrefix(prefix).split(FIELD_SEP, limit = 5)
             val sessionId = parts.firstOrNull()?.takeIf(String::isNotBlank) ?: return null
             val workspaceName = parts.getOrNull(1)?.takeIf(String::isNotBlank)
             val taskName = parts.getOrNull(2)?.takeIf(String::isNotBlank)
-            return create(sessionId, workspaceName, taskName)
+            val workspaceId = parts.getOrNull(3)?.takeIf(String::isNotBlank)
+            val taskId = parts.getOrNull(4)?.takeIf(String::isNotBlank)
+            return create(sessionId, workspaceName, taskName, workspaceId, taskId)
         }
 
         // 测试辅助：把一个 Screen 序列化为字符串再恢复回来，验证 Saver 语义。

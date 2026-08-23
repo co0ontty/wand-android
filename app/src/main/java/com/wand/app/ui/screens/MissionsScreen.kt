@@ -98,6 +98,9 @@ fun MissionsScreen(
     onBack: () -> Unit,
     onOpenSession: (String) -> Unit,
     embedded: Boolean = false,
+    linkedTaskId: String? = null,
+    linkedTaskName: String? = null,
+    linkedCwd: String? = null,
 ) {
     val scope = rememberCoroutineScope()
     var missions by remember { mutableStateOf<List<MissionInfo>>(emptyList()) }
@@ -121,8 +124,9 @@ fun MissionsScreen(
         }
     }
 
-    LaunchedEffect(api) {
-        defaultCwd = runCatching { api.defaultMissionCwd() }.getOrDefault("")
+    LaunchedEffect(api, linkedCwd) {
+        defaultCwd = linkedCwd?.takeIf { it.isNotBlank() }
+            ?: runCatching { api.defaultMissionCwd() }.getOrDefault("")
         refresh(showProgress = true)
         while (true) {
             delay(4_000)
@@ -135,7 +139,7 @@ fun MissionsScreen(
         topBar = {
             WandDetailTopBar(
                 title = "并行任务",
-                subtitle = "多 Agent 并行尝试与 Diff 审查",
+                subtitle = linkedTaskName?.let { "关联任务 · $it" } ?: "多 Agent 并行尝试与 Diff 审查",
                 leading = { WandDetailBackButton(onClick = onBack) },
                 actions = {
                     WandButton(
@@ -183,11 +187,21 @@ fun MissionsScreen(
     if (showCreate) {
         CreateMissionDialog(
             defaultCwd = defaultCwd,
+            linkedTaskName = linkedTaskName,
             onDismiss = { showCreate = false },
             onCreate = { title, prompt, cwd, providers, baseRef, shared, copied ->
                 scope.launch {
                     try {
-                        api.createMission(title, prompt, cwd, providers, baseRef, shared, copied)
+                        api.createMission(
+                            title,
+                            prompt,
+                            cwd,
+                            providers,
+                            linkedTaskId,
+                            baseRef,
+                            shared,
+                            copied,
+                        )
                         showCreate = false
                         refresh(showProgress = true)
                     } catch (e: Exception) { error = e.message }
@@ -352,6 +366,7 @@ private fun StatePill(state: String) {
 @Composable
 private fun CreateMissionDialog(
     defaultCwd: String,
+    linkedTaskName: String?,
     onDismiss: () -> Unit,
     onCreate: (String?, String, String, List<String>, String?, List<String>, List<String>) -> Unit,
 ) {
@@ -376,10 +391,15 @@ private fun CreateMissionDialog(
         dismiss = WandDialogAction(label = "取消", onClick = onDismiss),
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("每个 Provider 会获得独立 branch 与 worktree。", color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall)
+            Text(
+                linkedTaskName?.let { "派发的 Agent 会话将关联到任务「$it」。" }
+                    ?: "每个 Provider 会获得独立 branch 与 worktree。",
+                color = WandColors.textSecondary,
+                style = MaterialTheme.typography.bodySmall,
+            )
             WandTextField(title, { title = it }, label = "标题（可选）", singleLine = true, modifier = Modifier.fillMaxWidth())
             WandTextField(prompt, { prompt = it }, label = "任务目标", minLines = 4, modifier = Modifier.fillMaxWidth())
-            WandTextField(cwd, { cwd = it }, label = "项目目录", singleLine = true, modifier = Modifier.fillMaxWidth())
+            WandTextField(cwd, { cwd = it }, label = "任务目录", singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 MissionProviders.forEach { provider ->
                     FilterChip(selected = provider in providers, onClick = {
