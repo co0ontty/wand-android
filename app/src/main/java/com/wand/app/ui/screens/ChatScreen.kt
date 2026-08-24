@@ -125,6 +125,7 @@ import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.providerDisplayName
 import com.wand.app.data.supportedSessionModeIds
 import com.wand.app.speech.SherpaSpeechEngine
@@ -192,6 +193,8 @@ fun ChatScreen(
     serverDisplayName: String,
     workspaceName: String? = null,
     taskName: String? = null,
+    taskId: String? = null,
+    onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
     drafts: SessionDraftStore,
     showBack: Boolean = true,
@@ -395,9 +398,10 @@ fun ChatScreen(
         topBar = {
             // 稳定标题 + 简明会话上下文；避免流式任务名和长路径持续跳动、抢占操作区。
             // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
-            WandDetailTopBar(
-                title = "对话详情",
-                backdrop = glassBackdrop,
+            Column {
+                WandDetailTopBar(
+                    title = "对话详情",
+                    backdrop = glassBackdrop,
                 contentHeight = 56.dp,
                 leading = if (showBack) {
                     {
@@ -443,7 +447,17 @@ fun ChatScreen(
                 actions = {
                     GitChangesButton(quickCommit, compact = true) { quickCommit.openPanel() }
                 },
-            )
+                )
+                // 任务内「其他终端」快捷 Tab（对齐 iOS sessionStrip）：非任务会话不显示。
+                if (taskId != null && onSwitchTaskSession != null) {
+                    TaskSessionTabStrip(
+                        api = api,
+                        taskId = taskId,
+                        currentSessionId = sessionId,
+                        onSelect = onSwitchTaskSession,
+                    )
+                }
+            }
         },
         bottomBar = { BottomBar(
             backdrop = glassBackdrop,

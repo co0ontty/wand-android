@@ -78,6 +78,7 @@ import com.wand.app.SessionCreationCoordinator
 import com.wand.app.data.WandApi
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
@@ -489,6 +490,8 @@ private fun SinglePaneContent(
             serverDisplayName = actions.connection.serverDisplayName,
             workspaceName = screen.workspaceName,
             taskName = screen.taskName,
+            taskId = screen.taskId,
+            onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
             isHapticEnabled = actions.settings.isHapticEnabled,
             drafts = sessionDrafts,
             onBack = { nav.pop() },
@@ -499,6 +502,8 @@ private fun SinglePaneContent(
             serverDisplayName = actions.connection.serverDisplayName,
             workspaceName = screen.workspaceName,
             taskName = screen.taskName,
+            taskId = screen.taskId,
+            onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
             isHapticEnabled = actions.settings.isHapticEnabled,
             onBack = { nav.pop() },
         )
@@ -712,6 +717,8 @@ private fun WideReadyContent(
                     serverDisplayName = actions.connection.serverDisplayName,
                     workspaceName = screen.workspaceName,
                     taskName = screen.taskName,
+                    taskId = screen.taskId,
+                    onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     drafts = sessionDrafts,
                     showBack = showDetailBack,
@@ -723,6 +730,8 @@ private fun WideReadyContent(
                     serverDisplayName = actions.connection.serverDisplayName,
                     workspaceName = screen.workspaceName,
                     taskName = screen.taskName,
+                    taskId = screen.taskId,
+                    onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     showBack = showDetailBack,
                     onBack = { nav.pop() },
@@ -1108,6 +1117,26 @@ private fun SessionSnapshot.detailScreen(): Screen =
     } else {
         Screen.PtyTerminal(id, workspaceId = workspaceId, taskId = workspaceTaskId)
     }
+
+/**
+ * 任务内「其他终端」快捷 Tab 的切换（对齐 iOS sessionStrip）：按 sessionKind 路由到
+ * Chat / PTY 页，并用 replaceTop 替换栈顶 —— 返回键仍回到任务详情，不会堆一层会话页。
+ */
+private fun switchTaskSession(nav: NavState, session: WorkspaceSessionSummary, from: Screen) {
+    val taskId = from.taskIdOrNull() ?: return
+    val (workspaceName, taskName, workspaceId) = when (from) {
+        is Screen.Chat -> Triple(from.workspaceName, from.taskName, from.workspaceId)
+        is Screen.PtyTerminal -> Triple(from.workspaceName, from.taskName, from.workspaceId)
+        else -> return
+    }
+    nav.replaceTop(
+        if (session.sessionKind == "structured") {
+            Screen.Chat(session.id, workspaceName, taskName, workspaceId, taskId)
+        } else {
+            Screen.PtyTerminal(session.id, workspaceName, taskName, workspaceId, taskId)
+        },
+    )
+}
 
 private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.Chat -> taskId

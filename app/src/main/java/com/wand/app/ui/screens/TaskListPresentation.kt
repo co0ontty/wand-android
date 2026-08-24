@@ -22,12 +22,25 @@ internal fun directoryPathCaption(name: String, cwd: String): String? {
     return shortened
 }
 
-/** 任务隔离状态。不要写成「共享目录」，否则会和上层目录分组撞名。 */
-internal fun taskIsolationCaption(isolated: Boolean, branch: String? = null): String {
-    if (!isolated) return "共享"
-    val ref = branch?.trim().orEmpty()
-    return if (ref.isEmpty()) "隔离" else "隔离"
+/** 默认任务不标「共享」——那是常态，占标题栏却没有信息量。隔离才值得露出来。 */
+internal fun taskIsolationCaption(isolated: Boolean, branch: String? = null): String? {
+    if (!isolated) return null
+    return "隔离"
 }
+
+/** 只有多个目录时才显示展开控件；单个目录始终展开，避免空箭头占位。 */
+internal fun showsDirectoryDisclosure(directoryCount: Int): Boolean = directoryCount > 1
+
+/** 任务下没有终端时不显示箭头；空状态直接展示，无需先展开。 */
+internal fun showsTaskSessionDisclosure(sessionCount: Int): Boolean = sessionCount > 0
+
+/** 目录默认展开。单个目录不可收起。 */
+internal fun isDirectoryExpanded(userCollapsed: Boolean, directoryCount: Int): Boolean =
+    !showsDirectoryDisclosure(directoryCount) || !userCollapsed
+
+/** 终端默认展开。无终端时始终展示空提示。 */
+internal fun isTaskSessionsExpanded(userCollapsed: Boolean, sessionCount: Int): Boolean =
+    !showsTaskSessionDisclosure(sessionCount) || !userCollapsed
 
 /** 列表里的终端名：不要把目录名/路径叶子再当标题，避免三层都叫 wand。 */
 internal fun listSessionLabel(

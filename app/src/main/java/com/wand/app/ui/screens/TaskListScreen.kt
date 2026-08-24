@@ -589,19 +589,20 @@ fun TaskListScreen(
                     items(visibleGroups, key = { "group-${it.id}" }) { group ->
                         TaskDirectorySection(
                             group = group,
-                            groupExpanded = expandedGroups[group.id] != false,
+                            directoryCount = visibleGroups.size,
+                            groupCollapsed = expandedGroups[group.id] == false,
                             expandedTasks = expandedTasks,
-                            standaloneExpanded = expandedStandalone[group.id] ?: group.tasks.isEmpty(),
+                            standaloneCollapsed = expandedStandalone[group.id] == false,
                             selectedTaskId = selectedTaskId,
                             selectedSessionId = selectedSessionId,
                             onToggleGroup = {
                                 expandedGroups[group.id] = expandedGroups[group.id] == false
                             },
                             onToggleTask = { taskId ->
-                                expandedTasks[taskId] = expandedTasks[taskId] != true
+                                expandedTasks[taskId] = expandedTasks[taskId] == false
                             },
                             onToggleStandalone = {
-                                expandedStandalone[group.id] = expandedStandalone[group.id] != true
+                                expandedStandalone[group.id] = expandedStandalone[group.id] == false
                             },
                             onOpenTask = { task ->
                                 onOpenTask(group.workspaceId, task.id, group.workspaceName, task.name)
@@ -671,9 +672,10 @@ fun TaskListScreen(
 @Composable
 private fun TaskDirectorySection(
     group: TaskDirectoryGroup,
-    groupExpanded: Boolean,
+    directoryCount: Int,
+    groupCollapsed: Boolean,
     expandedTasks: Map<String, Boolean>,
-    standaloneExpanded: Boolean,
+    standaloneCollapsed: Boolean,
     selectedTaskId: String?,
     selectedSessionId: String?,
     onToggleGroup: () -> Unit,
@@ -690,6 +692,8 @@ private fun TaskDirectorySection(
     onReview: () -> Unit,
 ) {
     val pathCaption = directoryPathCaption(group.workspaceName, group.workspaceCwd)
+    val canCollapseDirectory = showsDirectoryDisclosure(directoryCount)
+    val groupExpanded = isDirectoryExpanded(groupCollapsed, directoryCount)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -697,21 +701,11 @@ private fun TaskDirectorySection(
             .background(WandColors.bgElevated.copy(alpha = 0.55f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 8.dp, end = 6.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 10.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (groupExpanded) "收起目录" else "展开目录",
-                tint = WandColors.textMuted,
-                modifier = Modifier
-                    .size(18.dp)
-                    .clickable(onClick = onToggleGroup)
-                    .graphicsLayer { rotationZ = if (groupExpanded) 0f else -90f },
-            )
             Box(
                 modifier = Modifier
-                    .padding(start = 6.dp)
                     .size(22.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(WandColors.brandSoft),
@@ -720,7 +714,12 @@ private fun TaskDirectorySection(
                 Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(13.dp))
             }
             Column(
-                modifier = Modifier.weight(1f).clickable(onClick = onToggleGroup).padding(start = 8.dp, top = 7.dp, bottom = 7.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (canCollapseDirectory) Modifier.clickable(onClick = onToggleGroup) else Modifier,
+                    )
+                    .padding(start = 8.dp, top = 7.dp, bottom = 7.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -751,6 +750,13 @@ private fun TaskDirectorySection(
                     )
                 }
             }
+            if (canCollapseDirectory) {
+                TreeDisclosureCaret(
+                    expanded = groupExpanded,
+                    contentDescription = if (groupExpanded) "收起目录" else "展开目录",
+                    onClick = onToggleGroup,
+                )
+            }
             Text(
                 "${group.tasks.size} 任务",
                 style = MaterialTheme.typography.labelSmall,
@@ -761,14 +767,14 @@ private fun TaskDirectorySection(
                     icon = WandIcons.commit,
                     contentDescription = "审查 Worktree",
                     onClick = onReview,
-                    variant = WandIconButtonVariant.Quiet,
+                    variant = WandIconButtonVariant.Compact,
                 )
             }
             WandIconButton(
                 icon = WandIcons.add,
                 contentDescription = "在 ${group.workspaceName} 新建任务",
                 onClick = onNewTask,
-                variant = WandIconButtonVariant.Quiet,
+                variant = WandIconButtonVariant.Compact,
             )
         }
         if (groupExpanded) {
@@ -777,7 +783,10 @@ private fun TaskDirectorySection(
                     TaskAggregateRow(
                         task = task,
                         parentNames = listOf(group.workspaceName),
-                        expanded = expandedTasks[task.id] == true || task.id == selectedTaskId,
+                        expanded = isTaskSessionsExpanded(
+                            userCollapsed = expandedTasks[task.id] == false,
+                            sessionCount = task.totalSessions,
+                        ),
                         selected = task.id == selectedTaskId,
                         selectedSessionId = selectedSessionId,
                         onToggle = { onToggleTask(task.id) },
@@ -802,7 +811,7 @@ private fun TaskDirectorySection(
                     StandaloneSessionSection(
                         sessions = group.standaloneSessions,
                         parentNames = listOf(group.workspaceName),
-                        expanded = standaloneExpanded,
+                        expanded = !standaloneCollapsed,
                         selectedSessionId = selectedSessionId,
                         onToggle = onToggleStandalone,
                         onOpen = { onOpenSession(it, null) },
@@ -843,55 +852,49 @@ private fun TaskAggregateRow(
             ),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 4.dp, end = 4.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(start = 8.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起终端" else "展开终端",
-                tint = WandColors.textMuted,
+            Text(
+                task.name.ifEmpty { "未命名任务" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textPrimary,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .size(18.dp)
-                    .clickable(onClick = onToggle)
-                    .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
+                    .weight(1f)
+                    .clickable(onClick = onOpen)
+                    .padding(start = 2.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
             )
-            Column(
-                modifier = Modifier.weight(1f).clickable(onClick = onOpen).padding(start = 6.dp, top = 7.dp, bottom = 7.dp),
-            ) {
-                Text(
-                    task.name.ifEmpty { "未命名任务" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = WandColors.textPrimary,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            if (task.isIsolated) {
+                Icon(
+                    WandIcons.commit,
+                    contentDescription = "隔离 worktree",
+                    tint = WandColors.success,
+                    modifier = Modifier.size(14.dp),
                 )
             }
-            Text(
-                taskIsolationCaption(task.isIsolated, task.worktree?.branch),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (task.isIsolated) WandColors.success else WandColors.textMuted,
-            )
-            if (task.totalSessions > 0) {
-                Text(
-                    task.totalSessions.toString(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(start = 6.dp),
+            if (showsTaskSessionDisclosure(task.totalSessions)) {
+                TreeDisclosureCaret(
+                    expanded = expanded,
+                    contentDescription = if (expanded) "收起终端" else "展开终端",
+                    label = task.totalSessions.toString(),
+                    onClick = onToggle,
                 )
             }
             WandIconButton(
                 icon = WandIcons.add,
                 contentDescription = "在 ${task.name} 新建工作窗口",
                 onClick = onNewWindow,
-                variant = WandIconButtonVariant.Quiet,
+                variant = WandIconButtonVariant.Compact,
             )
             Box {
                 WandIconButton(
                     icon = WandIcons.more,
                     contentDescription = "任务操作",
                     onClick = { menuOpen = true },
-                    variant = WandIconButtonVariant.Quiet,
+                    variant = WandIconButtonVariant.Compact,
                 )
                 DropdownMenu(
                     expanded = menuOpen,
@@ -920,30 +923,38 @@ private fun TaskAggregateRow(
             }
         }
         if (expanded) {
-            task.sessions.forEachIndexed { index, session ->
-                AggregateSessionRow(
-                    session = session,
-                    label = listSessionLabel(session, index, parentNames + task.name),
-                    selected = session.id == selectedSessionId,
-                    onClick = { onOpenSession(session) },
-                    onDelete = { onDeleteSession(session) },
-                )
-            }
-            if (task.totalSessions > task.sessions.size) {
-                Text(
-                    "列表仅显示 ${task.sessions.size}/${task.totalSessions} 个会话，" +
-                        "打开任务可查看全部。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.clickable(onClick = onOpen).padding(start = 58.dp, end = 12.dp, bottom = 8.dp),
-                )
-            } else if (task.sessions.isEmpty()) {
+            if (task.sessions.isEmpty()) {
                 Text(
                     "还没有终端。点右侧「＋」新建。",
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
-                    modifier = Modifier.padding(start = 28.dp, end = 12.dp, bottom = 8.dp),
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
                 )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .padding(start = 10.dp, end = 2.dp, bottom = 4.dp)
+                        .fillMaxWidth(),
+                ) {
+                    task.sessions.forEachIndexed { index, session ->
+                        AggregateSessionRow(
+                            session = session,
+                            label = listSessionLabel(session, index, parentNames + task.name),
+                            selected = session.id == selectedSessionId,
+                            onClick = { onOpenSession(session) },
+                            onDelete = { onDeleteSession(session) },
+                        )
+                    }
+                    if (task.totalSessions > task.sessions.size) {
+                        Text(
+                            "列表仅显示 ${task.sessions.size}/${task.totalSessions} 个会话，" +
+                                "打开任务可查看全部。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = WandColors.textMuted,
+                            modifier = Modifier.clickable(onClick = onOpen).padding(start = 8.dp, end = 12.dp, bottom = 6.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -964,20 +975,19 @@ private fun StandaloneSessionSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 6.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                WandIcons.expand,
-                contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = if (expanded) 0f else -90f },
-            )
             Text(
                 "${sessions.size} 个未分组终端",
                 style = MaterialTheme.typography.labelSmall,
                 color = WandColors.textMuted,
-                modifier = Modifier.padding(start = 8.dp),
+                modifier = Modifier.weight(1f),
+            )
+            TreeDisclosureCaret(
+                expanded = expanded,
+                contentDescription = if (expanded) "收起未分组终端" else "展开未分组终端",
+                onClick = onToggle,
             )
         }
         if (expanded) {
@@ -1008,10 +1018,11 @@ private fun AggregateSessionRow(
             .wandSelectedRow(
                 selected = selected,
                 shape = RoundedCornerShape(8.dp),
+                contentInset = true,
             )
-            .padding(start = 22.dp, end = 2.dp),
+            .padding(end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(
             modifier = Modifier
@@ -1021,7 +1032,12 @@ private fun AggregateSessionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            StatusDot(session.status ?: "idle", modifier = Modifier.size(7.dp))
+            Box(
+                modifier = Modifier.size(16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                StatusDot(session.status ?: "idle", modifier = Modifier.size(7.dp))
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     label,
@@ -1138,6 +1154,38 @@ private fun RecoverableHistorySection(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun TreeDisclosureCaret(
+    expanded: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+    label: String? = null,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (label != null) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
+            )
+        }
+        Icon(
+            WandIcons.expand,
+            contentDescription = contentDescription,
+            tint = WandColors.textMuted,
+            modifier = Modifier
+                .size(16.dp)
+                .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
+        )
     }
 }
 

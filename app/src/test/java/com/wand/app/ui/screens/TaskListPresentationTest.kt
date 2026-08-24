@@ -47,9 +47,24 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun taskIsolationNeverSaysSharedDirectory() {
-        assertEquals("共享", taskIsolationCaption(false))
+    fun taskIsolationOmitsDefaultSharedLabel() {
+        assertNull(taskIsolationCaption(false))
         assertEquals("隔离", taskIsolationCaption(true, "wand/ui"))
+    }
+
+    @Test
+    fun treeDisclosureHidesNeedlessCaretsAndKeepsTerminalsOpen() {
+        assertFalse(showsDirectoryDisclosure(1))
+        assertTrue(showsDirectoryDisclosure(2))
+        assertTrue(isDirectoryExpanded(userCollapsed = true, directoryCount = 1))
+        assertFalse(isDirectoryExpanded(userCollapsed = true, directoryCount = 2))
+        assertTrue(isDirectoryExpanded(userCollapsed = false, directoryCount = 2))
+
+        assertFalse(showsTaskSessionDisclosure(0))
+        assertTrue(showsTaskSessionDisclosure(1))
+        assertTrue(isTaskSessionsExpanded(userCollapsed = true, sessionCount = 0))
+        assertFalse(isTaskSessionsExpanded(userCollapsed = true, sessionCount = 2))
+        assertTrue(isTaskSessionsExpanded(userCollapsed = false, sessionCount = 2))
     }
 
     @Test

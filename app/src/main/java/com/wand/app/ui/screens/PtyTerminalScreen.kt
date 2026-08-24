@@ -85,6 +85,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.UploadedFile
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandWebSession
 import com.wand.app.data.providerDisplayName
@@ -136,6 +137,8 @@ fun PtyTerminalScreen(
     serverDisplayName: String,
     workspaceName: String? = null,
     taskName: String? = null,
+    taskId: String? = null,
+    onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
     showBack: Boolean = true,
     onBack: () -> Unit,
@@ -263,17 +266,28 @@ fun PtyTerminalScreen(
         // 稳定的半透明降级材质，终端本体保持直接合成。
         containerColor = WandColors.bgPrimary,
         topBar = {
-            PtyTopBar(
-                backdrop = null,
-                snapshot = snapshot,
-                serverDisplayName = serverDisplayName,
-                workspaceName = workspaceName,
-                taskName = taskName,
-                quickCommit = quickCommit,
-                showBack = showBack,
-                onBack = onBack,
-                onOpenQuickCommit = { quickCommit.openPanel() },
-            )
+            Column {
+                PtyTopBar(
+                    backdrop = null,
+                    snapshot = snapshot,
+                    serverDisplayName = serverDisplayName,
+                    workspaceName = workspaceName,
+                    taskName = taskName,
+                    quickCommit = quickCommit,
+                    showBack = showBack,
+                    onBack = onBack,
+                    onOpenQuickCommit = { quickCommit.openPanel() },
+                )
+                // 任务内「其他终端」快捷 Tab（对齐 iOS sessionStrip）：非任务会话不显示。
+                if (taskId != null && onSwitchTaskSession != null) {
+                    TaskSessionTabStrip(
+                        api = api,
+                        taskId = taskId,
+                        currentSessionId = sessionId,
+                        onSelect = onSwitchTaskSession,
+                    )
+                }
+            }
         },
         bottomBar = {
             PtyBottomBar(

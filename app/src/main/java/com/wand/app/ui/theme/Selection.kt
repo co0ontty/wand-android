@@ -3,6 +3,7 @@ package com.wand.app.ui.theme
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -14,6 +15,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -53,15 +55,26 @@ fun Modifier.wandSelectedSurface(
         .then(if (width > 0.dp) Modifier.border(width, stroke, shape) else Modifier)
 }
 
+/** 选中条相对行左缘的起点。 */
+val WandSelectedRowBarStart: Dp = 5.dp
+
+/** 选中条宽度。 */
+val WandSelectedRowBarWidth: Dp = 2.dp
+
+/** 行内容必须让出的左槽，避免状态点 / 图标压住选中条。 */
+val WandSelectedRowLeadingInset: Dp = 14.dp
+
 /**
  * 列表行选中态：品牌软底 + 左侧品牌条。
  * 对齐 Web `.session-item.selected::before`，避免每一行再套一圈描边。
+ * [contentInset] 为 true 时始终留出左槽，选中/未选不会左右跳动。
  */
 @Composable
 fun Modifier.wandSelectedRow(
     selected: Boolean,
     shape: Shape = RoundedCornerShape(12.dp),
     unselectedFill: Color = Color.Transparent,
+    contentInset: Boolean = false,
 ): Modifier {
     val fill by animateColorAsState(
         if (selected) WandColors.selectedFill else unselectedFill,
@@ -74,13 +87,16 @@ fun Modifier.wandSelectedRow(
         .background(fill)
         .drawBehind {
             if (!selected) return@drawBehind
-            val barWidth = 3.dp.toPx()
+            val barWidth = WandSelectedRowBarWidth.toPx()
             val inset = size.height * 0.22f
             drawRoundRect(
                 color = accent,
-                topLeft = Offset(4.dp.toPx(), inset),
+                topLeft = Offset(WandSelectedRowBarStart.toPx(), inset),
                 size = Size(barWidth, (size.height - inset * 2).coerceAtLeast(0f)),
                 cornerRadius = CornerRadius(barWidth),
             )
         }
+        .then(
+            if (contentInset) Modifier.padding(start = WandSelectedRowLeadingInset) else Modifier,
+        )
 }

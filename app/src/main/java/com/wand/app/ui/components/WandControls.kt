@@ -169,6 +169,7 @@ enum class WandIconButtonVariant {
     Chrome,
     Quiet,
     Accent,
+    Compact,
 }
 
 /** 所有通用图标按钮的唯一视觉入口。 */
@@ -186,11 +187,13 @@ fun WandIconButton(
         WandIconButtonVariant.Chrome -> 19.dp
         WandIconButtonVariant.Quiet -> 20.dp
         WandIconButtonVariant.Accent -> 20.dp
+        WandIconButtonVariant.Compact -> 16.dp
     },
 ) {
     val touchSize = when (variant) {
         WandIconButtonVariant.Chrome, WandIconButtonVariant.Quiet -> 44.dp
         WandIconButtonVariant.Toolbar, WandIconButtonVariant.Accent -> WandSizes.minTouchTarget
+        WandIconButtonVariant.Compact -> 32.dp
     }
     IconButton(
         onClick = onClick,
@@ -199,7 +202,7 @@ fun WandIconButton(
     ) {
         val visualModifier = when (variant) {
             WandIconButtonVariant.Toolbar -> Modifier.size(touchSize)
-            WandIconButtonVariant.Quiet -> Modifier
+            WandIconButtonVariant.Quiet, WandIconButtonVariant.Compact -> Modifier
                 .size(touchSize)
                 .clip(WandShapes.sm)
             WandIconButtonVariant.Chrome -> Modifier

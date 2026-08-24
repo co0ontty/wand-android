@@ -1,7 +1,9 @@
 package com.wand.app.ui.theme
 
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WandAppearanceTest {
@@ -22,5 +24,11 @@ class WandAppearanceTest {
         assertEquals(WandAppearanceMode.Light, WandAppearanceMode.fromStorageValue("light"))
         assertEquals(WandAppearanceMode.Dark, WandAppearanceMode.fromStorageValue("dark"))
         assertEquals(WandAppearanceMode.System, WandAppearanceMode.fromStorageValue("system"))
+    }
+
+    @Test
+    fun selectedRowLeadingInsetClearsTheAccentBar() {
+        val barEnd = WandSelectedRowBarStart + WandSelectedRowBarWidth
+        assertTrue(WandSelectedRowLeadingInset > barEnd + 4.dp)
     }
 }

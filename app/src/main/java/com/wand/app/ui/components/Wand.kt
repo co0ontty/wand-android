@@ -126,8 +126,9 @@ fun StatusDot(status: String, modifier: Modifier = Modifier) {
             label = "dotScale",
         )
         Box(
-            modifier
+            Modifier
                 .size(8.dp)
+                .then(modifier)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
@@ -137,8 +138,9 @@ fun StatusDot(status: String, modifier: Modifier = Modifier) {
         )
     } else {
         Box(
-            modifier
+            Modifier
                 .size(8.dp)
+                .then(modifier)
                 .background(color, CircleShape),
         )
     }

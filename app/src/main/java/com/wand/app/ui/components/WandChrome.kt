@@ -71,7 +71,7 @@ fun WandDetailTopBar(
                         title,
                         style = MaterialTheme.typography.titleMedium,
                         color = WandColors.textPrimary,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (!subtitle.isNullOrBlank()) {
