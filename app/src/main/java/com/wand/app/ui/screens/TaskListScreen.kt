@@ -1012,6 +1012,7 @@ private fun AggregateSessionRow(
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1057,12 +1058,28 @@ private fun AggregateSessionRow(
                 )
             }
         }
-        WandIconButton(
-            icon = WandIcons.delete,
-            contentDescription = "删除终端 $label",
-            onClick = onDelete,
-            variant = WandIconButtonVariant.Quiet,
-        )
+        Box {
+            WandIconButton(
+                icon = WandIcons.more,
+                contentDescription = "终端操作 $label",
+                onClick = { menuOpen = true },
+                variant = WandIconButtonVariant.Quiet,
+            )
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                containerColor = WandColors.bgElevated,
+            ) {
+                DropdownMenuItem(
+                    text = { Text("打开") },
+                    onClick = { menuOpen = false; onClick() },
+                )
+                DropdownMenuItem(
+                    text = { Text("删除终端", color = WandColors.danger) },
+                    onClick = { menuOpen = false; onDelete() },
+                )
+            }
+        }
     }
 }
 

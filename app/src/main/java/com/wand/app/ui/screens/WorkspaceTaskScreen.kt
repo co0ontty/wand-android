@@ -19,6 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -95,6 +97,8 @@ fun WorkspaceTaskScreen(
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
     var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
+    var deleteSessionError by remember { mutableStateOf<String?>(null) }
+    var deleteSessionBusy by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboard = LocalClipboardManager.current
 
@@ -153,24 +157,41 @@ fun WorkspaceTaskScreen(
         val label = listSessionLabel(session, 0)
         WandDialog(
             title = "删除终端？",
-            onDismissRequest = { deleteSessionTarget = null },
+            onDismissRequest = { if (!deleteSessionBusy) { deleteSessionTarget = null; deleteSessionError = null } },
             icon = WandIcons.delete,
             confirm = WandDialogAction(
-                label = "删除",
+                label = if (deleteSessionBusy) "删除中…" else "删除",
+                enabled = !deleteSessionBusy,
                 destructive = true,
                 onClick = {
-                    workflow.deleteSession(session.id) {
-                        onTaskChanged()
-                        deleteSessionTarget = null
-                    }
+                    if (deleteSessionBusy) return@WandDialogAction
+                    deleteSessionBusy = true
+                    deleteSessionError = null
+                    workflow.deleteSession(
+                        sessionId = session.id,
+                        onDeleted = {
+                            onTaskChanged()
+                            deleteSessionTarget = null
+                            deleteSessionError = null
+                            deleteSessionBusy = false
+                        },
+                        onError = { message ->
+                            deleteSessionError = message
+                            deleteSessionBusy = false
+                        },
+                    )
                 },
             ),
-            dismiss = WandDialogAction("取消", onClick = { deleteSessionTarget = null }),
+            dismiss = WandDialogAction(
+                "取消",
+                enabled = !deleteSessionBusy,
+                onClick = { deleteSessionTarget = null; deleteSessionError = null },
+            ),
         ) {
             Text(
-                "终端「$label」会结束并被删除，此操作无法撤销。",
+                deleteSessionError ?: "终端「$label」会结束并被删除，此操作无法撤销。",
                 style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textSecondary,
+                color = if (deleteSessionError != null) WandColors.danger else WandColors.textSecondary,
             )
         }
     }
@@ -245,7 +266,7 @@ fun WorkspaceTaskScreen(
                             onOpenPty(session.id)
                         }
                     },
-                    onDeleteSession = { deleteSessionTarget = it },
+                    onDeleteSession = { deleteSessionError = null; deleteSessionTarget = it },
                     onAddWindow = { openSheet() },
                 )
             }
@@ -472,12 +493,29 @@ private fun SessionSummaryRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        WandIconButton(
-            icon = WandIcons.delete,
-            contentDescription = "删除终端",
-            onClick = onDelete,
-            variant = WandIconButtonVariant.Quiet,
-        )
+        Box {
+            var menuOpen by remember { mutableStateOf(false) }
+            WandIconButton(
+                icon = WandIcons.more,
+                contentDescription = "终端操作",
+                onClick = { menuOpen = true },
+                variant = WandIconButtonVariant.Quiet,
+            )
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                containerColor = WandColors.bgElevated,
+            ) {
+                DropdownMenuItem(
+                    text = { Text("打开") },
+                    onClick = { menuOpen = false; onClick() },
+                )
+                DropdownMenuItem(
+                    text = { Text("删除终端", color = WandColors.danger) },
+                    onClick = { menuOpen = false; onDelete() },
+                )
+            }
+        }
     }
 }
 

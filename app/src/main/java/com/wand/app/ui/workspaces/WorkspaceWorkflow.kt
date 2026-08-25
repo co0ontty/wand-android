@@ -218,7 +218,11 @@ class WorkspaceWorkflow(
         else -> null
     }
 
-    fun deleteSession(sessionId: String, onDeleted: () -> Unit = {}) {
+    fun deleteSession(
+        sessionId: String,
+        onDeleted: () -> Unit = {},
+        onError: (String) -> Unit = {},
+    ) {
         val content = _taskState.value as? WorkspaceTaskState.Content ?: return
         val taskId = content.detail.id
         val generation = taskGeneration
@@ -233,8 +237,9 @@ class WorkspaceWorkflow(
                     preferredSessionId = content.selectedSessionId?.takeIf { it != sessionId },
                 )
                 onDeleted()
-            } catch (_: Exception) {
+            } catch (error: Exception) {
                 if (generation != taskGeneration) return@launch
+                onError(error.message?.takeIf { it.isNotBlank() } ?: "删除终端失败")
             }
         }
     }

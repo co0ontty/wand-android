@@ -497,6 +497,10 @@ private fun SinglePaneContent(
                 switchTaskSession(nav, session, screen)
             },
             isHapticEnabled = actions.settings.isHapticEnabled,
+            onDeleteTaskSession = { session ->
+                scope.launch { taskState.refreshAfterMutation() }
+                nav.closeSession(session.id)
+            },
             drafts = sessionDrafts,
             onBack = { nav.pop() },
         )
@@ -511,6 +515,10 @@ private fun SinglePaneContent(
             onCreateTaskSession = { session ->
                 scope.launch { taskState.refreshAfterMutation() }
                 switchTaskSession(nav, session, screen)
+            },
+            onDeleteTaskSession = { session ->
+                scope.launch { taskState.refreshAfterMutation() }
+                nav.closeSession(session.id)
             },
             isHapticEnabled = actions.settings.isHapticEnabled,
             onBack = { nav.pop() },
@@ -732,6 +740,10 @@ private fun WideReadyContent(
                         switchTaskSession(nav, session, screen)
                     },
                     isHapticEnabled = actions.settings.isHapticEnabled,
+                    onDeleteTaskSession = { session ->
+                        scope.launch { taskState.refreshAfterMutation() }
+                        nav.closeSession(session.id)
+                    },
                     drafts = sessionDrafts,
                     showBack = showDetailBack,
                     onBack = { nav.pop() },
@@ -747,6 +759,10 @@ private fun WideReadyContent(
                     onCreateTaskSession = { session ->
                         scope.launch { taskState.refreshAfterMutation() }
                         switchTaskSession(nav, session, screen)
+                    },
+                    onDeleteTaskSession = { session ->
+                        scope.launch { taskState.refreshAfterMutation() }
+                        nav.closeSession(session.id)
                     },
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     showBack = showDetailBack,

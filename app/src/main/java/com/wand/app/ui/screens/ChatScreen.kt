@@ -197,6 +197,7 @@ fun ChatScreen(
     taskId: String? = null,
     onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
+    onDeleteTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
     drafts: SessionDraftStore,
     showBack: Boolean = true,
@@ -458,6 +459,7 @@ fun ChatScreen(
                         currentSessionId = sessionId,
                         onSelect = onSwitchTaskSession,
                         onCreated = onCreateTaskSession,
+                        onDeleted = onDeleteTaskSession,
                     )
                 }
             }

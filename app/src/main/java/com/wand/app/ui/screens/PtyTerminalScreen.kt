@@ -140,6 +140,7 @@ fun PtyTerminalScreen(
     taskId: String? = null,
     onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
+    onDeleteTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
     showBack: Boolean = true,
     onBack: () -> Unit,
@@ -287,6 +288,7 @@ fun PtyTerminalScreen(
                         currentSessionId = sessionId,
                         onSelect = onSwitchTaskSession,
                         onCreated = onCreateTaskSession,
+                        onDeleted = onDeleteTaskSession,
                     )
                 }
             }

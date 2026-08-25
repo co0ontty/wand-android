@@ -224,6 +224,26 @@ class WorkspaceWorkflowTest {
         assertEquals(0, fake.saveLayoutCalls.size)
     }
 
+    @Test
+    fun deleteSession_surfacesPortError() = runBlocking {
+        val fake = FakeWorkspacePort().apply {
+            taskDetail = taskDetailWithSessions(sessions = listOf("s1", "s2"))
+            deleteError = IllegalStateException("session busy")
+        }
+        val workflow = WorkspaceWorkflow(fake, testScope())
+        workflow.loadTask("task-1")
+        mainDispatcher.scheduler.advanceUntilIdle()
+
+        var error: String? = null
+        var deleted = false
+        workflow.deleteSession("s1", onDeleted = { deleted = true }, onError = { error = it })
+        mainDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("session busy", error)
+        assertTrue(!deleted)
+        assertEquals("s1", (workflow.taskState.value as WorkspaceTaskState.Content).selectedSessionId)
+    }
+
     // MARK: - currentTaskCwd / currentWorkspaceId
 
     @Test
@@ -247,12 +267,20 @@ class WorkspaceWorkflowTest {
         val createCalls = mutableListOf<Pair<WorkspaceSessionTarget, WorkspaceBinding>>()
         val saveLayoutCalls = mutableListOf<Pair<String, TaskWindowLayout?>>()
         var nextSessionId = "new-1"
+        var deleteError: Throwable? = null
 
         override suspend fun listWorkspaces(): List<Workspace> = emptyList()
         override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> = emptyList()
         override suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask =
             taskDetail.task.copy(name = name)
         override suspend fun deleteWorkspaceTask(taskId: String) = Unit
+        override suspend fun deleteWorkspaceSessions(sessionIds: List<String>): Int {
+            deleteError?.let { throw it }
+            taskDetail = taskDetail.copy(
+                sessions = taskDetail.sessions.filterNot { sessionIds.contains(it.id) },
+            )
+            return sessionIds.size
+        }
         override suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail = taskDetail
         override suspend fun saveWorkspaceTaskLayout(taskId: String, layout: TaskWindowLayout?): TaskWindowLayout? {
             saveLayoutCalls += taskId to layout

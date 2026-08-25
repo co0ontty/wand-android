@@ -42,6 +42,8 @@ import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.workspaces.WorkspaceTargetState
@@ -66,6 +68,7 @@ fun TaskSessionTabStrip(
     currentSessionId: String?,
     onSelect: (WorkspaceSessionSummary) -> Unit,
     onCreated: (SessionSnapshot) -> Unit,
+    onDeleted: ((WorkspaceSessionSummary) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -75,6 +78,9 @@ fun TaskSessionTabStrip(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedTarget by remember(taskId) { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var selectedKind by remember(taskId) { mutableStateOf(WorkspaceSessionKind.Structured) }
+    var deleteTarget by remember(taskId) { mutableStateOf<WorkspaceSessionSummary?>(null) }
+    var deleteError by remember(taskId) { mutableStateOf<String?>(null) }
+    var deleteBusy by remember(taskId) { mutableStateOf(false) }
 
     LaunchedEffect(taskId) {
         workflow.loadTask(taskId)
@@ -141,6 +147,11 @@ fun TaskSessionTabStrip(
                     index = index,
                     isSelected = session.id == currentSessionId,
                     onClick = { onSelect(session) },
+                    onDelete = if (onDeleted != null) {
+                        { deleteError = null; deleteTarget = session }
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -182,6 +193,50 @@ fun TaskSessionTabStrip(
             )
         }
     }
+
+    deleteTarget?.let { session ->
+        val label = listSessionLabel(session, tabs?.indexOf(session)?.coerceAtLeast(0) ?: 0)
+        WandDialog(
+            title = "删除终端？",
+            onDismissRequest = { if (!deleteBusy) { deleteTarget = null; deleteError = null } },
+            icon = WandIcons.delete,
+            confirm = WandDialogAction(
+                label = if (deleteBusy) "删除中…" else "删除",
+                enabled = !deleteBusy,
+                destructive = true,
+                onClick = {
+                    if (deleteBusy) return@WandDialogAction
+                    deleteBusy = true
+                    deleteError = null
+                    workflow.deleteSession(
+                        sessionId = session.id,
+                        onDeleted = {
+                            val deleted = session
+                            deleteTarget = null
+                            deleteError = null
+                            deleteBusy = false
+                            onDeleted?.invoke(deleted)
+                        },
+                        onError = { message ->
+                            deleteError = message
+                            deleteBusy = false
+                        },
+                    )
+                },
+            ),
+            dismiss = WandDialogAction(
+                "取消",
+                enabled = !deleteBusy,
+                onClick = { deleteTarget = null; deleteError = null },
+            ),
+        ) {
+            Text(
+                deleteError ?: "终端「$label」会结束并被删除，此操作无法撤销。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (deleteError != null) WandColors.danger else WandColors.textSecondary,
+            )
+        }
+    }
 }
 
 @Composable
@@ -215,6 +270,7 @@ private fun TaskSessionTab(
     index: Int,
     isSelected: Boolean,
     onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
     val label = listSessionLabel(session, index)
     val accent = if (session.provider == "codex") WandColors.info else WandColors.brand
@@ -232,7 +288,7 @@ private fun TaskSessionTab(
                 shape = shape,
             )
             .clickable(onClick = onClick)
-            .padding(start = 10.dp, end = 8.dp)
+            .padding(start = 10.dp, end = if (isSelected && onDelete != null) 2.dp else 8.dp)
             .semantics { contentDescription = "切换到 $label" },
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -256,6 +312,17 @@ private fun TaskSessionTab(
                 modifier = Modifier
                     .size(6.dp)
                     .background(WandColors.success, CircleShape),
+            )
+        }
+        if (isSelected && onDelete != null) {
+            Icon(
+                imageVector = WandIcons.close,
+                contentDescription = "删除终端 $label",
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .size(22.dp)
+                    .clickable(onClick = onDelete)
+                    .padding(4.dp),
             )
         }
     }
