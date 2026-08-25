@@ -123,6 +123,7 @@ import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
+import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WorkspaceSessionSummary
@@ -195,6 +196,7 @@ fun ChatScreen(
     taskName: String? = null,
     taskId: String? = null,
     onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
+    onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
     drafts: SessionDraftStore,
     showBack: Boolean = true,
@@ -449,12 +451,13 @@ fun ChatScreen(
                 },
                 )
                 // 任务内「其他终端」快捷 Tab（对齐 iOS sessionStrip）：非任务会话不显示。
-                if (taskId != null && onSwitchTaskSession != null) {
+                if (taskId != null && onSwitchTaskSession != null && onCreateTaskSession != null) {
                     TaskSessionTabStrip(
                         api = api,
                         taskId = taskId,
                         currentSessionId = sessionId,
                         onSelect = onSwitchTaskSession,
+                        onCreated = onCreateTaskSession,
                     )
                 }
             }

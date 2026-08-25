@@ -14,14 +14,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,55 +35,177 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WorkspacePort
+import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
-import com.wand.app.data.orderWorkspaceSessions
+import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.ui.components.BrandLogos
+import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.workspaces.WorkspaceTargetState
+import com.wand.app.ui.workspaces.WorkspaceTaskState
+import com.wand.app.ui.workspaces.WorkspaceWorkflow
+import kotlinx.coroutines.launch
 
 /**
  * 任务内「其他终端」快捷切换条（对齐 iOS WorkspaceTaskView 的 sessionStrip）：
  * 横向滚动的 Tab，展示当前任务下的全部工作窗口 —— provider 图标 + 短标签 +
- * 运行状态点；点击直接切到对应会话页，当前会话高亮。
+ * 运行状态点；点击直接切到对应会话页，当前会话高亮。右侧固定的「+」直接打开
+ * 当前任务的工作窗口选择器，创建成功后切换到新会话。
  *
- * 数据来自 GET /api/workspace-tasks/:taskId；加载失败或任务下没有会话时整条
+ * 数据和创建流程由 [WorkspaceWorkflow] 统一管理。加载失败或任务下没有会话时整条
  * 隐藏，不影响原布局。切换由外层导航完成（replaceTop），返回键仍回到任务详情。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TaskSessionTabStrip(
     api: WorkspacePort,
     taskId: String,
     currentSessionId: String?,
     onSelect: (WorkspaceSessionSummary) -> Unit,
+    onCreated: (SessionSnapshot) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var sessions by remember(taskId) { mutableStateOf<List<WorkspaceSessionSummary>?>(null) }
+    val scope = rememberCoroutineScope()
+    val workflow = remember(api, taskId) { WorkspaceWorkflow(api, scope) }
+    val taskState by workflow.taskState.collectAsState()
+    val targetState by workflow.targetState.collectAsState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var selectedTarget by remember(taskId) { mutableStateOf(WorkspaceSessionTarget.Claude) }
+    var selectedKind by remember(taskId) { mutableStateOf(WorkspaceSessionKind.Structured) }
 
-    // 进入页面和每次切换会话都刷新一次：新会话可能刚在任务里创建。
-    LaunchedEffect(taskId, currentSessionId) {
-        runCatching { api.workspaceTask(taskId) }
-            .onSuccess { sessions = orderWorkspaceSessions(it.sessions) }
+    LaunchedEffect(taskId) {
+        workflow.loadTask(taskId)
+    }
+    LaunchedEffect(currentSessionId) {
+        currentSessionId?.let(workflow::selectSession)
     }
 
-    val tabs = sessions
+    fun openTargetSheet() {
+        workflow.openTargetSheet()
+        scope.launch {
+            runCatching { api.serverConfig() }.getOrNull()?.let { config ->
+                WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
+                selectedKind = if (config.defaultSessionKind == "pty") {
+                    WorkspaceSessionKind.Pty
+                } else {
+                    WorkspaceSessionKind.Structured
+                }
+            }
+            sheetState.show()
+        }
+    }
+
+    fun dismissTargetSheet() {
+        workflow.closeTargetSheet()
+        scope.launch { runCatching { sheetState.hide() } }
+    }
+
+    fun confirmCreate() {
+        val cwd = workflow.currentTaskCwd() ?: return
+        val workspaceId = workflow.currentWorkspaceId() ?: return
+        workflow.createTaskWindow(
+            target = selectedTarget,
+            workspaceId = workspaceId,
+            taskId = taskId,
+            cwd = cwd,
+            kind = selectedKind,
+        ) { session ->
+            scope.launch { runCatching { sheetState.hide() } }
+            onCreated(session)
+        }
+    }
+
+    val tabs = (taskState as? WorkspaceTaskState.Content)?.orderedSessions
     if (tabs.isNullOrEmpty()) return
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        tabs.forEachIndexed { index, session ->
-            TaskSessionTab(
-                session = session,
-                index = index,
-                isSelected = session.id == currentSessionId,
-                onClick = { onSelect(session) },
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            tabs.forEachIndexed { index, session ->
+                TaskSessionTab(
+                    session = session,
+                    index = index,
+                    isSelected = session.id == currentSessionId,
+                    onClick = { onSelect(session) },
+                )
+            }
+        }
+        TaskSessionAddButton(
+            enabled = targetState is WorkspaceTargetState.Closed,
+            onClick = { openTargetSheet() },
+        )
+    }
+
+    if (targetState !is WorkspaceTargetState.Closed) {
+        val creating = targetState is WorkspaceTargetState.Creating
+        val error = (targetState as? WorkspaceTargetState.Error)?.message
+        WandBottomSheet(
+            onDismissRequest = { if (!creating) dismissTargetSheet() },
+            sheetState = sheetState,
+            gesturesEnabled = !creating,
+        ) {
+            WorkspaceTargetSheet(
+                selected = selectedTarget,
+                selectedKind = selectedKind,
+                creating = creating,
+                error = error,
+                onSelect = {
+                    selectedTarget = it
+                    if (!it.isShell) {
+                        scope.launch {
+                            runCatching { api.updateCreationDefaults(defaultProvider = it.raw) }
+                        }
+                    }
+                },
+                onSelectKind = {
+                    selectedKind = it
+                    scope.launch {
+                        runCatching { api.updateCreationDefaults(defaultSessionKind = it.raw) }
+                    }
+                },
+                onConfirm = { confirmCreate() },
+                onDismiss = { if (!creating) dismissTargetSheet() },
             )
         }
+    }
+}
+
+@Composable
+private fun TaskSessionAddButton(
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(shape)
+            .background(WandColors.bgElevated.copy(alpha = 0.72f))
+            .border(1.dp, WandColors.border, shape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics { contentDescription = "新建工作窗口" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = WandIcons.add,
+            contentDescription = null,
+            tint = if (enabled) WandColors.brand else WandColors.textMuted,
+            modifier = Modifier.size(17.dp),
+        )
     }
 }
 

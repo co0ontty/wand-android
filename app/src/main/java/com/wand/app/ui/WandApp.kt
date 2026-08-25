@@ -492,6 +492,10 @@ private fun SinglePaneContent(
             taskName = screen.taskName,
             taskId = screen.taskId,
             onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
+            onCreateTaskSession = { session ->
+                scope.launch { taskState.refreshAfterMutation() }
+                switchTaskSession(nav, session, screen)
+            },
             isHapticEnabled = actions.settings.isHapticEnabled,
             drafts = sessionDrafts,
             onBack = { nav.pop() },
@@ -504,6 +508,10 @@ private fun SinglePaneContent(
             taskName = screen.taskName,
             taskId = screen.taskId,
             onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
+            onCreateTaskSession = { session ->
+                scope.launch { taskState.refreshAfterMutation() }
+                switchTaskSession(nav, session, screen)
+            },
             isHapticEnabled = actions.settings.isHapticEnabled,
             onBack = { nav.pop() },
         )
@@ -719,6 +727,10 @@ private fun WideReadyContent(
                     taskName = screen.taskName,
                     taskId = screen.taskId,
                     onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
+                    onCreateTaskSession = { session ->
+                        scope.launch { taskState.refreshAfterMutation() }
+                        switchTaskSession(nav, session, screen)
+                    },
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     drafts = sessionDrafts,
                     showBack = showDetailBack,
@@ -732,6 +744,10 @@ private fun WideReadyContent(
                     taskName = screen.taskName,
                     taskId = screen.taskId,
                     onSwitchTaskSession = { session -> switchTaskSession(nav, session, screen) },
+                    onCreateTaskSession = { session ->
+                        scope.launch { taskState.refreshAfterMutation() }
+                        switchTaskSession(nav, session, screen)
+                    },
                     isHapticEnabled = actions.settings.isHapticEnabled,
                     showBack = showDetailBack,
                     onBack = { nav.pop() },
@@ -1123,6 +1139,19 @@ private fun SessionSnapshot.detailScreen(): Screen =
  * Chat / PTY 页，并用 replaceTop 替换栈顶 —— 返回键仍回到任务详情，不会堆一层会话页。
  */
 private fun switchTaskSession(nav: NavState, session: WorkspaceSessionSummary, from: Screen) {
+    switchTaskSession(nav, session.id, session.sessionKind == "structured", from)
+}
+
+private fun switchTaskSession(nav: NavState, session: SessionSnapshot, from: Screen) {
+    switchTaskSession(nav, session.id, session.isStructured, from)
+}
+
+private fun switchTaskSession(
+    nav: NavState,
+    sessionId: String,
+    isStructured: Boolean,
+    from: Screen,
+) {
     val taskId = from.taskIdOrNull() ?: return
     val (workspaceName, taskName, workspaceId) = when (from) {
         is Screen.Chat -> Triple(from.workspaceName, from.taskName, from.workspaceId)
@@ -1130,10 +1159,10 @@ private fun switchTaskSession(nav: NavState, session: WorkspaceSessionSummary, f
         else -> return
     }
     nav.replaceTop(
-        if (session.sessionKind == "structured") {
-            Screen.Chat(session.id, workspaceName, taskName, workspaceId, taskId)
+        if (isStructured) {
+            Screen.Chat(sessionId, workspaceName, taskName, workspaceId, taskId)
         } else {
-            Screen.PtyTerminal(session.id, workspaceName, taskName, workspaceId, taskId)
+            Screen.PtyTerminal(sessionId, workspaceName, taskName, workspaceId, taskId)
         },
     )
 }

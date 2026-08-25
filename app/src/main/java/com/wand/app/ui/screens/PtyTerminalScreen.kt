@@ -139,6 +139,7 @@ fun PtyTerminalScreen(
     taskName: String? = null,
     taskId: String? = null,
     onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
+    onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
     showBack: Boolean = true,
     onBack: () -> Unit,
@@ -279,12 +280,13 @@ fun PtyTerminalScreen(
                     onOpenQuickCommit = { quickCommit.openPanel() },
                 )
                 // 任务内「其他终端」快捷 Tab（对齐 iOS sessionStrip）：非任务会话不显示。
-                if (taskId != null && onSwitchTaskSession != null) {
+                if (taskId != null && onSwitchTaskSession != null && onCreateTaskSession != null) {
                     TaskSessionTabStrip(
                         api = api,
                         taskId = taskId,
                         currentSessionId = sessionId,
                         onSelect = onSwitchTaskSession,
+                        onCreated = onCreateTaskSession,
                     )
                 }
             }
