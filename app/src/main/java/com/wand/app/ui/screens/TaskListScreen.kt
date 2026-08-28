@@ -1,5 +1,12 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,7 +36,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,6 +75,8 @@ import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.wandSelectedRow
 import com.wand.app.ui.theme.wandSelectedSurface
 import kotlinx.coroutines.launch
@@ -110,10 +118,6 @@ fun TaskListScreen(
     onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
-    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
-    val expandedTasks = remember { mutableStateMapOf<String, Boolean>() }
-    val expandedStandalone = remember { mutableStateMapOf<String, Boolean>() }
-    var historyExpanded by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var newTaskOpen by remember { mutableStateOf(false) }
     var taskNameDraft by remember { mutableStateOf("") }
@@ -157,6 +161,9 @@ fun TaskListScreen(
 
     LaunchedEffect(state.newTaskRequest) {
         if (state.consumeNewTaskRequest()) beginNewTask()
+    }
+    LaunchedEffect(selectedTaskId, selectedSessionId, visibleGroups) {
+        state.expandPathToSelection(selectedTaskId, selectedSessionId)
     }
 
     if (newTaskOpen) {
@@ -590,20 +597,14 @@ fun TaskListScreen(
                         TaskDirectorySection(
                             group = group,
                             directoryCount = visibleGroups.size,
-                            groupCollapsed = expandedGroups[group.id] == false,
-                            expandedTasks = expandedTasks,
-                            standaloneCollapsed = expandedStandalone[group.id] == false,
+                            groupCollapsed = state.isDirectoryCollapsed(group.id),
+                            taskCollapsed = state::isTaskCollapsed,
+                            standaloneCollapsed = state.isStandaloneCollapsed(group.id),
                             selectedTaskId = selectedTaskId,
                             selectedSessionId = selectedSessionId,
-                            onToggleGroup = {
-                                expandedGroups[group.id] = expandedGroups[group.id] == false
-                            },
-                            onToggleTask = { taskId ->
-                                expandedTasks[taskId] = expandedTasks[taskId] == false
-                            },
-                            onToggleStandalone = {
-                                expandedStandalone[group.id] = expandedStandalone[group.id] == false
-                            },
+                            onToggleGroup = { state.toggleDirectory(group.id) },
+                            onToggleTask = state::toggleTask,
+                            onToggleStandalone = { state.toggleStandalone(group.id) },
                             onOpenTask = { task ->
                                 onOpenTask(group.workspaceId, task.id, group.workspaceName, task.name)
                             },
@@ -649,10 +650,10 @@ fun TaskListScreen(
                         item(key = "recoverable-history") {
                             RecoverableHistorySection(
                                 entries = recoverableEntries,
-                                expanded = historyExpanded,
+                                expanded = state.historyExpanded,
                                 canLoadMore = historyState.canLoadMore,
                                 loadingMore = historyState.loadingMore,
-                                onToggle = { historyExpanded = !historyExpanded },
+                                onToggle = state::toggleHistory,
                                 onOpen = { history ->
                                     scope.launch {
                                         historyState.restore(history)?.let(onOpenRestoredSession)
@@ -674,7 +675,7 @@ private fun TaskDirectorySection(
     group: TaskDirectoryGroup,
     directoryCount: Int,
     groupCollapsed: Boolean,
-    expandedTasks: Map<String, Boolean>,
+    taskCollapsed: (String) -> Boolean,
     standaloneCollapsed: Boolean,
     selectedTaskId: String?,
     selectedSessionId: String?,
@@ -694,6 +695,7 @@ private fun TaskDirectorySection(
     val pathCaption = directoryPathCaption(group.workspaceName, group.workspaceCwd)
     val canCollapseDirectory = showsDirectoryDisclosure(directoryCount)
     val groupExpanded = isDirectoryExpanded(groupCollapsed, directoryCount)
+    val reduceMotion = reduceMotionEnabled()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -701,7 +703,13 @@ private fun TaskDirectorySection(
             .background(WandColors.bgElevated.copy(alpha = 0.55f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 10.dp, end = 6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .then(
+                    if (canCollapseDirectory) Modifier.clickable(onClick = onToggleGroup) else Modifier,
+                )
+                .padding(start = 10.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -716,9 +724,6 @@ private fun TaskDirectorySection(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .then(
-                        if (canCollapseDirectory) Modifier.clickable(onClick = onToggleGroup) else Modifier,
-                    )
                     .padding(start = 8.dp, top = 7.dp, bottom = 7.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -777,14 +782,32 @@ private fun TaskDirectorySection(
                 variant = WandIconButtonVariant.Compact,
             )
         }
-        if (groupExpanded) {
+        AnimatedVisibility(
+            visible = groupExpanded,
+            enter = if (reduceMotion) {
+                EnterTransition.None
+            } else {
+                expandVertically(
+                    animationSpec = WandMotion.tweenEnter(),
+                    expandFrom = Alignment.Top,
+                ) + fadeIn(WandMotion.tweenEnter())
+            },
+            exit = if (reduceMotion) {
+                ExitTransition.None
+            } else {
+                shrinkVertically(
+                    animationSpec = WandMotion.tweenExit(),
+                    shrinkTowards = Alignment.Top,
+                ) + fadeOut(WandMotion.tweenExit())
+            },
+        ) {
             Column(modifier = Modifier.padding(start = 12.dp, end = 6.dp, bottom = 8.dp)) {
                 group.tasks.forEach { task ->
                     TaskAggregateRow(
                         task = task,
                         parentNames = listOf(group.workspaceName),
                         expanded = isTaskSessionsExpanded(
-                            userCollapsed = expandedTasks[task.id] == false,
+                            userCollapsed = taskCollapsed(task.id),
                             sessionCount = task.totalSessions,
                         ),
                         selected = task.id == selectedTaskId,
@@ -840,6 +863,7 @@ private fun TaskAggregateRow(
     onDeleteSession: (WorkspaceSessionSummary) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val reduceMotion = reduceMotionEnabled()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -852,7 +876,11 @@ private fun TaskAggregateRow(
             ),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(start = 8.dp, end = 2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 44.dp)
+                .clickable(onClick = onOpen)
+                .padding(start = 8.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -864,7 +892,6 @@ private fun TaskAggregateRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
-                    .clickable(onClick = onOpen)
                     .padding(start = 2.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
             )
             if (task.isIsolated) {
@@ -922,7 +949,25 @@ private fun TaskAggregateRow(
                 }
             }
         }
-        if (expanded) {
+        AnimatedVisibility(
+            visible = expanded,
+            enter = if (reduceMotion) {
+                EnterTransition.None
+            } else {
+                expandVertically(
+                    animationSpec = WandMotion.tweenEnter(),
+                    expandFrom = Alignment.Top,
+                ) + fadeIn(WandMotion.tweenEnter())
+            },
+            exit = if (reduceMotion) {
+                ExitTransition.None
+            } else {
+                shrinkVertically(
+                    animationSpec = WandMotion.tweenExit(),
+                    shrinkTowards = Alignment.Top,
+                ) + fadeOut(WandMotion.tweenExit())
+            },
+        ) {
             if (task.sessions.isEmpty()) {
                 Text(
                     "还没有终端。点右侧「＋」新建。",

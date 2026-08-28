@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wand.app.data.RecentPath
@@ -50,6 +51,12 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
     var newTaskRequest by mutableLongStateOf(0L)
         private set
 
+    private val directoryExpansion = mutableStateMapOf<String, Boolean>()
+    private val taskExpansion = mutableStateMapOf<String, Boolean>()
+    private val standaloneExpansion = mutableStateMapOf<String, Boolean>()
+    var historyExpanded by mutableStateOf(false)
+        private set
+
     private val loadMutex = Mutex()
     private val mutationMutex = Mutex()
     private val creationDefaultsMutex = Mutex()
@@ -76,6 +83,45 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
         if (newTaskRequest <= consumedNewTaskRequest) return false
         consumedNewTaskRequest = newTaskRequest
         return true
+    }
+
+    fun isDirectoryCollapsed(groupId: String): Boolean = directoryExpansion[groupId] == false
+
+    fun toggleDirectory(groupId: String) {
+        directoryExpansion[groupId] = isDirectoryCollapsed(groupId)
+    }
+
+    fun isTaskCollapsed(taskId: String): Boolean = taskExpansion[taskId] == false
+
+    fun toggleTask(taskId: String) {
+        taskExpansion[taskId] = isTaskCollapsed(taskId)
+    }
+
+    fun isStandaloneCollapsed(groupId: String): Boolean = standaloneExpansion[groupId] == false
+
+    fun toggleStandalone(groupId: String) {
+        standaloneExpansion[groupId] = isStandaloneCollapsed(groupId)
+    }
+
+    fun toggleHistory() {
+        historyExpanded = !historyExpanded
+    }
+
+    /** Keep the selected branch visible after returning from a task or session detail. */
+    fun expandPathToSelection(taskId: String?, sessionId: String?) {
+        if (taskId == null && sessionId == null) return
+        groups.forEach { group ->
+            val selectedTask = group.tasks.firstOrNull { task ->
+                task.id == taskId || task.sessions.any { it.id == sessionId }
+            }
+            if (selectedTask != null) {
+                directoryExpansion[group.id] = true
+                taskExpansion[selectedTask.id] = true
+            } else if (group.standaloneSessions.any { it.id == sessionId }) {
+                directoryExpansion[group.id] = true
+                standaloneExpansion[group.id] = true
+            }
+        }
     }
 
     suspend fun load(silent: Boolean = false): Boolean = loadMutex.withLock {

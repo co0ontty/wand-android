@@ -7,11 +7,13 @@ import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskCreation
 import com.wand.app.data.WorkspaceTaskDetail
 import com.wand.app.data.WorkspaceTaskStatus
+import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.layoutSessionIds
 import kotlinx.coroutines.runBlocking
@@ -145,6 +147,73 @@ class TaskListStateTest {
         assertFalse(state.consumeNewTaskRequest())
         state.requestNewTask()
         assertTrue(state.consumeNewTaskRequest())
+    }
+
+    @Test
+    fun treeExpansionSurvivesNavigationAndRevealsSelectedSession() = runBlocking {
+        val selectedSession = WorkspaceSessionSummary(
+            id = "session-1",
+            provider = "claude",
+            sessionKind = "structured",
+            runner = "structured",
+            title = "Selected",
+            status = "idle",
+            cwd = "/repo",
+            startedAt = null,
+        )
+        val selectedTask = WorkspaceTaskSummary(
+            task = task("task-1", "Task"),
+            cwd = "/repo",
+            isolated = false,
+            worktreeError = null,
+            sessions = listOf(selectedSession),
+            totalSessions = 1,
+        )
+        val group = group("ws-1", "/repo").copy(tasks = listOf(selectedTask))
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
+        assertTrue(state.load())
+
+        state.toggleDirectory(group.id)
+        state.toggleTask(selectedTask.id)
+        assertTrue(state.isDirectoryCollapsed(group.id))
+        assertTrue(state.isTaskCollapsed(selectedTask.id))
+
+        state.expandPathToSelection(taskId = selectedTask.id, sessionId = selectedSession.id)
+
+        assertFalse(state.isDirectoryCollapsed(group.id))
+        assertFalse(state.isTaskCollapsed(selectedTask.id))
+        state.toggleDirectory(group.id)
+        assertTrue(state.isDirectoryCollapsed(group.id))
+    }
+
+    @Test
+    fun treeExpansionTracksStandaloneAndHistorySections() = runBlocking {
+        val standalone = WorkspaceSessionSummary(
+            id = "standalone-1",
+            provider = "shell",
+            sessionKind = "pty",
+            runner = "pty",
+            title = null,
+            status = "idle",
+            cwd = "/repo",
+            startedAt = null,
+        )
+        val group = group("ws-1", "/repo").copy(standaloneSessions = listOf(standalone))
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
+        assertTrue(state.load())
+
+        state.toggleDirectory(group.id)
+        state.toggleStandalone(group.id)
+        state.toggleHistory()
+        assertTrue(state.isDirectoryCollapsed(group.id))
+        assertTrue(state.isStandaloneCollapsed(group.id))
+        assertTrue(state.historyExpanded)
+
+        state.expandPathToSelection(taskId = null, sessionId = standalone.id)
+
+        assertFalse(state.isDirectoryCollapsed(group.id))
+        assertFalse(state.isStandaloneCollapsed(group.id))
+        assertTrue(state.historyExpanded)
     }
 
     @Test

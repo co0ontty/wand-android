@@ -1,5 +1,7 @@
 package com.wand.app.ui.screens
 
+import android.widget.Toast
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -99,8 +102,10 @@ fun WorkspaceTaskScreen(
     var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
     var deleteSessionError by remember { mutableStateOf<String?>(null) }
     var deleteSessionBusy by remember { mutableStateOf(false) }
+    var taskMenuOpen by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
 
     // 进入任务立即加载详情；切任务（taskId 变化）自动取消上一请求。
     LaunchedEffect(taskId) { workflow.loadTask(taskId) }
@@ -152,6 +157,12 @@ fun WorkspaceTaskScreen(
     }
 
     val missionCwd = workflow.currentTaskCwd()
+
+    fun copyTaskCwd() {
+        val cwd = workflow.currentTaskCwd() ?: return
+        clipboard.setText(AnnotatedString(cwd))
+        Toast.makeText(context, "工作目录已复制", Toast.LENGTH_SHORT).show()
+    }
 
     deleteSessionTarget?.let { session ->
         val label = listSessionLabel(session, 0)
@@ -214,16 +225,50 @@ fun WorkspaceTaskScreen(
             },
             actions = {
                 ToolbarIconButton(
-                    icon = WandIcons.agent,
-                    contentDescription = "并行任务",
-                    enabled = missionCwd != null,
-                    onClick = { onOpenMissions(missionCwd) },
+                    icon = WandIcons.add,
+                    contentDescription = "新建工作窗口",
+                    enabled = missionCwd != null && targetState is WorkspaceTargetState.Closed,
+                    onClick = { openSheet() },
                 )
-                ToolbarIconButton(
-                    icon = WandIcons.refresh,
-                    contentDescription = "刷新任务",
-                    onClick = { workflow.loadTask(taskId) },
-                )
+                Box {
+                    ToolbarIconButton(
+                        icon = WandIcons.more,
+                        contentDescription = "任务操作",
+                        onClick = { taskMenuOpen = true },
+                    )
+                    DropdownMenu(
+                        expanded = taskMenuOpen,
+                        onDismissRequest = { taskMenuOpen = false },
+                        containerColor = WandColors.bgElevated,
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("并行任务") },
+                            leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
+                            enabled = missionCwd != null,
+                            onClick = {
+                                taskMenuOpen = false
+                                onOpenMissions(missionCwd)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("刷新任务") },
+                            leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
+                            onClick = {
+                                taskMenuOpen = false
+                                workflow.loadTask(taskId)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("复制工作目录") },
+                            leadingIcon = { Icon(WandIcons.copy, contentDescription = null) },
+                            enabled = missionCwd != null,
+                            onClick = {
+                                taskMenuOpen = false
+                                copyTaskCwd()
+                            },
+                        )
+                    }
+                }
             },
         )
 
@@ -251,7 +296,7 @@ fun WorkspaceTaskScreen(
                     workspaceName = workspaceName,
                     taskName = taskName,
                     cwd = state.cwd,
-                    onCopyCwd = { clipboard.setText(AnnotatedString(state.cwd)) },
+                    onCopyCwd = ::copyTaskCwd,
                     onChooseAgent = { openSheet() },
                 )
             }

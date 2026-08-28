@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Commit
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Close
@@ -186,6 +187,9 @@ object WandIcons {
 
     /** 行尾右箭头。 */
     val chevronRight: ImageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight
+
+    /** 复制文本或路径。 */
+    val copy: ImageVector = Icons.Outlined.ContentCopy
 
     /** 删除。 */
     val delete: ImageVector = Icons.Outlined.Delete
