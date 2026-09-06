@@ -46,6 +46,11 @@ interface WorkspacePort {
         throw UnsupportedOperationException("任务聚合接口不可用")
     }
 
+    /** GET /api/tasks?revision= —— 轮询时若未变则 unchanged，避免整表重绘。 */
+    suspend fun listTaskGroupsPage(revision: String? = null): TaskGroupsPage {
+        return TaskGroupsPage(listTaskGroups())
+    }
+
     /** 新建任务时使用的服务端默认目录。 */
     suspend fun taskDefaultCwd(): String? = null
 

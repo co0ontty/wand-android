@@ -196,16 +196,13 @@ object ChatSessionEventReducer {
             }
         }
         changes.providerCliActive?.let { active ->
-            next = next.copy(
-                providerCliActive = active,
-                isResponding = if (active) next.isResponding else false,
-            )
+            next = next.copy(providerCliActive = active)
         }
         changes.providerCliExitCode?.let { next = next.copy(providerCliExitCode = it) }
         changes.currentTaskTitle?.let { next = next.copy(currentTaskTitle = it) }
         if (changes.title != null || changes.description != null || changes.summary != null
             || changes.titleGenerating != null || changes.providerCliActive != null
-            || changes.providerCliExitCode != null
+            || changes.providerCliExitCode != null || changes.ptyBusy != null
         ) {
             next.snapshot?.let { snapshot ->
                 next = next.copy(snapshot = snapshot.copy(
@@ -213,9 +210,15 @@ object ChatSessionEventReducer {
                     description = changes.description ?: snapshot.description,
                     summary = changes.summary ?: snapshot.summary,
                     titleGenerating = changes.titleGenerating ?: snapshot.titleGenerating,
+                    ptyBusy = changes.ptyBusy ?: snapshot.ptyBusy,
                     providerCliActive = changes.providerCliActive ?: snapshot.providerCliActive,
                     providerCliExitCode = changes.providerCliExitCode ?: snapshot.providerCliExitCode,
                 ))
+            }
+        }
+        if (changes.ptyBusy != null || changes.providerCliActive != null) {
+            next.snapshot?.let { snapshot ->
+                next = next.copy(isResponding = snapshot.isResponding)
             }
         }
         changes.selectedModel?.let {

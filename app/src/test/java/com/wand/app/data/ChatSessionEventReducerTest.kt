@@ -256,6 +256,18 @@ class ChatSessionEventReducerTest {
         assertFalse(next.snapshot?.titleGenerating ?: true)
     }
 
+    @Test
+    fun displayTitleDoesNotInventDirectoryOrTaskFallback() {
+        val untitled = snapshot("s1").copy(
+            title = null,
+            summary = "整段用户输入",
+            currentTaskTitle = "修登录",
+            cwd = "/Users/me/wand",
+        )
+        assertEquals("会话", untitled.displayTitle)
+        assertEquals("收紧 resume 时间窗", untitled.copy(title = "收紧 resume 时间窗").displayTitle)
+    }
+
     private fun output(
         messages: MessageUpdate,
         changes: SessionChanges = SessionChanges(),

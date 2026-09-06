@@ -359,6 +359,9 @@ data class WorkspaceSessionSummary(
     val status: String?,
     val cwd: String?,
     val startedAt: String?,
+    val ptyBusy: Boolean? = null,
+    val providerCliActive: Boolean? = null,
+    val inFlight: Boolean? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): WorkspaceSessionSummary? {
@@ -372,6 +375,9 @@ data class WorkspaceSessionSummary(
                 status = o.str("status"),
                 cwd = o.str("cwd"),
                 startedAt = o.str("startedAt"),
+                ptyBusy = o.bool("ptyBusy"),
+                providerCliActive = o.bool("providerCliActive"),
+                inFlight = o.obj("structuredState")?.bool("inFlight") ?: o.bool("inFlight"),
             )
         }
 
@@ -501,6 +507,27 @@ data class TaskDirectoryGroup(
 
         fun parseList(arr: JSONArray): List<TaskDirectoryGroup> =
             arr.parseEach { parse(it) }
+    }
+}
+
+data class TaskGroupsPage(
+    val groups: List<TaskDirectoryGroup>,
+    val revision: String? = null,
+    val unchanged: Boolean = false,
+) {
+    companion object {
+        fun parse(text: String): TaskGroupsPage {
+            val trimmed = text.trim()
+            if (trimmed.startsWith("{")) {
+                val o = JSONObject(trimmed)
+                return TaskGroupsPage(
+                    groups = o.arr("groups")?.let(TaskDirectoryGroup::parseList) ?: emptyList(),
+                    revision = o.str("revision"),
+                    unchanged = o.optBoolean("unchanged", false),
+                )
+            }
+            return TaskGroupsPage(TaskDirectoryGroup.parseList(JSONArray(trimmed)))
+        }
     }
 }
 

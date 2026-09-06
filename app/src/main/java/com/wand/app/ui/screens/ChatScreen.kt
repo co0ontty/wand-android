@@ -136,6 +136,10 @@ import com.wand.app.ui.ChatStore
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.SessionDraftStore
+import com.wand.app.ui.SessionTitleStore
+import com.wand.app.ui.latestUserInputText
+import com.wand.app.ui.sessionChromeTitle
+import com.wand.app.ui.sessionTopicBlocklist
 import com.wand.app.ui.ThinkingEffortOption
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.thinkingEffortOptions
@@ -423,10 +427,21 @@ fun ChatScreen(
                         modifier = Modifier.weight(1f),
                     ) {
                         val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
-                        val workspaceTaskTitle = taskName?.trim().takeUnless { it.isNullOrEmpty() }
+                        val blockedTitles = sessionTopicBlocklist(
+                            taskName = taskName,
+                            workspaceName = workspaceName,
+                            cwd = store.snapshot?.cwd,
+                        )
                         ChatTopicTitle(
-                            text = workspaceTaskTitle ?: store.snapshot?.displayTitle ?: "对话详情",
-                            generating = workspaceTaskTitle == null && store.snapshot?.titleGenerating == true,
+                            text = sessionChromeTitle(
+                                title = store.snapshot?.title,
+                                latestUserInput = latestUserInputText(store.messages),
+                                liveTitle = SessionTitleStore.titleOf(sessionId),
+                                blockedTitles = blockedTitles,
+                                fallback = "对话详情",
+                            ),
+                            generating = store.snapshot?.titleGenerating == true ||
+                                SessionTitleStore.isGenerating(sessionId),
                         )
                         val workingPath = chatWorkingPath(store.snapshot?.cwd)
                         TailMarqueePathText(
@@ -835,7 +850,7 @@ private fun SessionStatusIsland(
 }
 
 @Composable
-private fun ChatTopicTitle(text: String, generating: Boolean) {
+internal fun ChatTopicTitle(text: String, generating: Boolean) {
     if (!generating || reduceMotionEnabled()) {
         Text(
             text,

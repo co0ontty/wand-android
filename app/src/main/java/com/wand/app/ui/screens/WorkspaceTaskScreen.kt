@@ -55,6 +55,7 @@ import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.workspaceProviderLabel
+import com.wand.app.ui.withLiveTitle
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandButton
@@ -165,7 +166,7 @@ fun WorkspaceTaskScreen(
     }
 
     deleteSessionTarget?.let { session ->
-        val label = listSessionLabel(session, 0)
+        val label = listSessionLabel(session.withLiveTitle(), 0, listOf(taskName, workspaceName))
         WandDialog(
             title = "删除终端？",
             onDismissRequest = { if (!deleteSessionBusy) { deleteSessionTarget = null; deleteSessionError = null } },
@@ -473,6 +474,11 @@ private fun TaskSessionList(
                     session = session,
                     index = state.orderedSessions.indexOf(session),
                     isSelected = session.id == state.selectedSessionId,
+                    parentNames = listOfNotNull(
+                        state.detail.name.takeIf { it.isNotBlank() },
+                        state.detail.cwd.replace('\\', '/').trimEnd('/').substringAfterLast('/')
+                            .takeIf { it.isNotEmpty() },
+                    ),
                     onClick = { onSelectSession(session) },
                     onDelete = { onDeleteSession(session) },
                 )
@@ -493,6 +499,7 @@ private fun SessionSummaryRow(
     session: WorkspaceSessionSummary,
     index: Int,
     isSelected: Boolean,
+    parentNames: Collection<String> = emptyList(),
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -500,6 +507,7 @@ private fun SessionSummaryRow(
     val icon = BrandLogos.painterForProvider(provider)
     val accent = if (provider == "codex") WandColors.info else WandColors.brand
     val iconTint = BrandLogos.tintForProvider(provider, accent)
+    val label = listSessionLabel(session.withLiveTitle(), index, parentNames)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -511,7 +519,7 @@ private fun SessionSummaryRow(
             )
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
-            .semantics { contentDescription = listSessionLabel(session, index) },
+            .semantics { contentDescription = label },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -523,7 +531,7 @@ private fun SessionSummaryRow(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                listSessionLabel(session, index),
+                label,
                 style = MaterialTheme.typography.titleSmall,
                 color = WandColors.textPrimary,
                 fontWeight = FontWeight.Medium,

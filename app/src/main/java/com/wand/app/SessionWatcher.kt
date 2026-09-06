@@ -19,6 +19,7 @@ import com.wand.app.data.arrayField
 import com.wand.app.data.ToolUseSemantic
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
+import com.wand.app.ui.SessionTitleStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -162,10 +163,17 @@ object SessionWatcher {
                 val list = currentApi.listSessions()
                 for (snap in list) {
                     val w = sessions.getOrPut(snap.id) { Watched() }
-                    val label = snap.summary?.takeIf { it.isNotEmpty() }
+                    val label = snap.displayTitle.takeIf { it.isNotEmpty() && it != "会话" }
+                        ?: snap.summary?.takeIf { it.isNotEmpty() }
                         ?: snap.command?.takeIf { it.isNotEmpty() }
                         ?: snap.id
                     w.label = label
+                    SessionTitleStore.apply(
+                        snap.id,
+                        title = snap.title,
+                        generating = snap.titleGenerating,
+                        ptyBusy = snap.ptyBusy,
+                    )
                     snap.status?.let { w.status = it }
                     w.archived = snap.archived ?: false
                     w.permissionBlocked = snap.hasPendingPermission
@@ -204,7 +212,7 @@ object SessionWatcher {
 
     private fun handleStatus(sid: String, event: SessionEvent.StatusChanged) {
         val w = watched(sid)
-        applyCommon(w, event.changes)
+        applyCommon(sid, w, event.changes)
 
         // 权限通知：PTY 的 permissionRequest 与结构化的 pendingEscalation 同语义。
         val perm = event.permissionRequest
@@ -228,7 +236,7 @@ object SessionWatcher {
 
     private fun handleOutput(sid: String, event: SessionEvent.Output) {
         val w = watched(sid)
-        applyCommon(w, event.changes)
+        applyCommon(sid, w, event.changes)
         when (val messages = event.messages) {
             is MessageUpdate.Full -> scanTurns(w, messages.messages)
             is MessageUpdate.Incremental -> scanTurns(w, listOf(messages.message))
@@ -240,7 +248,7 @@ object SessionWatcher {
 
     private fun handleEnded(sid: String, event: SessionEvent.Ended) {
         val w = watched(sid)
-        applyCommon(w, event.changes)
+        applyCommon(sid, w, event.changes)
         w.status = event.status
         w.busy = false
         event.messages?.let { scanTurns(w, it.messages) }
@@ -254,10 +262,19 @@ object SessionWatcher {
         helper?.clearSessionProgress(sid)
     }
 
-    private fun applyCommon(w: Watched, changes: SessionChanges) {
+    private fun applyCommon(sid: String, w: Watched, changes: SessionChanges) {
         changes.status?.let { w.status = it }
         changes.archived?.let { w.archived = it }
-        changes.summary?.takeIf { it.isNotEmpty() }?.let { w.label = it }
+        changes.title?.takeIf { it.isNotEmpty() }?.let { w.label = it }
+            ?: changes.summary?.takeIf { it.isNotEmpty() }?.let { w.label = it }
+        if (changes.title != null || changes.titleGenerating != null || changes.ptyBusy != null) {
+            SessionTitleStore.apply(
+                sid,
+                title = changes.title,
+                generating = changes.titleGenerating,
+                ptyBusy = changes.ptyBusy,
+            )
+        }
         changes.permissionBlocked?.let { w.permissionBlocked = it }
     }
 

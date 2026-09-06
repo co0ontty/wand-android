@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -46,8 +48,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionSnapshot
@@ -59,7 +63,9 @@ import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.raw
+import com.wand.app.data.activityStatus
 import com.wand.app.data.workspaceProviderLabel
+import com.wand.app.ui.withLiveTitle
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
@@ -78,7 +84,6 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.wandSelectedRow
-import com.wand.app.ui.theme.wandSelectedSurface
 import kotlinx.coroutines.launch
 
 /** Stable route information carried from the task tree into a session detail screen. */
@@ -396,7 +401,7 @@ fun TaskListScreen(
     }
 
     deleteSessionTarget?.let { session ->
-        val label = listSessionLabel(session, 0)
+        val label = listSessionLabel(session.withLiveTitle(), 0)
         WandDialog(
             title = "删除终端？",
             onDismissRequest = { if (!state.mutationBusy) deleteSessionTarget = null },
@@ -581,12 +586,12 @@ fun TaskListScreen(
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 10.dp,
+                        start = 12.dp,
                         end = 10.dp,
-                        top = 8.dp,
+                        top = 4.dp,
                         bottom = 24.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     state.loadError?.let { message ->
                         item(key = "task-load-error") {
@@ -692,68 +697,52 @@ private fun TaskDirectorySection(
     onDeleteSession: (WorkspaceSessionSummary) -> Unit,
     onReview: () -> Unit,
 ) {
-    val pathCaption = directoryPathCaption(group.workspaceName, group.workspaceCwd)
     val canCollapseDirectory = showsDirectoryDisclosure(directoryCount)
     val groupExpanded = isDirectoryExpanded(groupCollapsed, directoryCount)
     val reduceMotion = reduceMotionEnabled()
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(WandColors.bgElevated.copy(alpha = 0.55f)),
-    ) {
+    val sessionTotal = directoryGroupSessionTotal(group)
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 48.dp)
+                .heightIn(min = 44.dp)
                 .then(
                     if (canCollapseDirectory) Modifier.clickable(onClick = onToggleGroup) else Modifier,
                 )
-                .padding(start = 10.dp, end = 6.dp),
+                .padding(end = 2.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(22.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(WandColors.brandSoft),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(13.dp))
-            }
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 8.dp, top = 7.dp, bottom = 7.dp),
+                    .padding(end = 8.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         group.workspaceName.ifEmpty { "任务目录" },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = WandColors.textSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = WandColors.textPrimary,
                         fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (group.synthetic) {
                         Text(
-                            "未归档",
+                            "未归档目录",
                             style = MaterialTheme.typography.labelSmall,
                             color = WandColors.textMuted,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 10.sp,
                             modifier = Modifier.padding(start = 6.dp),
                         )
                     }
                 }
-                if (pathCaption != null) {
-                    Text(
-                        pathCaption,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = WandColors.textMuted,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                AdaptiveDirectoryPathCaption(
+                    name = group.workspaceName,
+                    cwd = group.workspaceCwd,
+                )
             }
             if (canCollapseDirectory) {
                 TreeDisclosureCaret(
@@ -763,9 +752,11 @@ private fun TaskDirectorySection(
                 )
             }
             Text(
-                "${group.tasks.size} 任务",
+                directoryGroupMetaLabel(group.tasks.size, sessionTotal),
                 style = MaterialTheme.typography.labelSmall,
                 color = WandColors.textMuted,
+                fontSize = 10.sp,
+                maxLines = 1,
             )
             if (group.tasks.any { it.worktree != null }) {
                 WandIconButton(
@@ -775,12 +766,28 @@ private fun TaskDirectorySection(
                     variant = WandIconButtonVariant.Compact,
                 )
             }
-            WandIconButton(
-                icon = WandIcons.add,
-                contentDescription = "在 ${group.workspaceName} 新建任务",
-                onClick = onNewTask,
-                variant = WandIconButtonVariant.Compact,
-            )
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onNewTask),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(WandColors.brandSoft),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        WandIcons.add,
+                        contentDescription = "在 ${group.workspaceName} 新建任务",
+                        tint = WandColors.brand,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
         }
         AnimatedVisibility(
             visible = groupExpanded,
@@ -801,7 +808,7 @@ private fun TaskDirectorySection(
                 ) + fadeOut(WandMotion.tweenExit())
             },
         ) {
-            Column(modifier = Modifier.padding(start = 12.dp, end = 6.dp, bottom = 8.dp)) {
+            Column(modifier = Modifier.padding(end = 2.dp, bottom = 6.dp)) {
                 group.tasks.forEach { task ->
                     TaskAggregateRow(
                         task = task,
@@ -870,20 +877,18 @@ private fun TaskAggregateRow(
             .padding(vertical = 2.dp)
             .graphicsLayer {
                 alpha = if (task.status == com.wand.app.data.WorkspaceTaskStatus.Done) 0.76f else 1f
-            }
-            .wandSelectedSurface(
-                selected = selected,
-                shape = RoundedCornerShape(9.dp),
-                unselectedFill = WandColors.bgPrimary.copy(alpha = 0.28f),
-                showUnselectedBorder = false,
-            ),
+            },
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 44.dp)
+                .wandSelectedRow(
+                    selected = selected,
+                    shape = RoundedCornerShape(8.dp),
+                )
                 .clickable(onClick = onOpen)
-                .padding(start = 8.dp, end = 2.dp),
+                .padding(end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -895,7 +900,7 @@ private fun TaskAggregateRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 2.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
+                    .padding(top = 8.dp, bottom = 8.dp, end = 6.dp),
             )
             Text(
                 if (task.status == com.wand.app.data.WorkspaceTaskStatus.Done) "已完成" else "进行中",
@@ -923,12 +928,6 @@ private fun TaskAggregateRow(
                     onClick = onToggle,
                 )
             }
-            WandIconButton(
-                icon = WandIcons.add,
-                contentDescription = "在 ${task.name} 新建工作窗口",
-                onClick = onNewWindow,
-                variant = WandIconButtonVariant.Compact,
-            )
             Box {
                 WandIconButton(
                     icon = WandIcons.more,
@@ -941,6 +940,11 @@ private fun TaskAggregateRow(
                     onDismissRequest = { menuOpen = false },
                     containerColor = WandColors.bgElevated,
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("新建工作窗口") },
+                        leadingIcon = { Icon(WandIcons.add, contentDescription = null) },
+                        onClick = { menuOpen = false; onNewWindow() },
+                    )
                     DropdownMenuItem(
                         text = { Text("打开任务") },
                         onClick = { menuOpen = false; onOpen() },
@@ -986,7 +990,7 @@ private fun TaskAggregateRow(
                     "还没有终端。点右侧「＋」新建。",
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                    modifier = Modifier.padding(end = 12.dp, bottom = 8.dp),
                 )
             } else {
                 Column(
@@ -997,7 +1001,7 @@ private fun TaskAggregateRow(
                     task.sessions.forEachIndexed { index, session ->
                         AggregateSessionRow(
                             session = session,
-                            label = listSessionLabel(session, index, parentNames + task.name),
+                            label = listSessionLabel(session.withLiveTitle(), index, parentNames + task.name),
                             selected = session.id == selectedSessionId,
                             onClick = { onOpenSession(session) },
                             onDelete = { onDeleteSession(session) },
@@ -1033,7 +1037,7 @@ private fun StandaloneSessionSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -1052,7 +1056,7 @@ private fun StandaloneSessionSection(
             sessions.forEachIndexed { index, session ->
                 AggregateSessionRow(
                     session = session,
-                    label = listSessionLabel(session, index, parentNames),
+                    label = listSessionLabel(session.withLiveTitle(), index, parentNames),
                     selected = session.id == selectedSessionId,
                     onClick = { onOpen(session) },
                     onDelete = { onDelete(session) },
@@ -1077,7 +1081,6 @@ private fun AggregateSessionRow(
             .wandSelectedRow(
                 selected = selected,
                 shape = RoundedCornerShape(8.dp),
-                contentInset = true,
             )
             .padding(end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1095,7 +1098,7 @@ private fun AggregateSessionRow(
                 modifier = Modifier.size(16.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                StatusDot(session.status ?: "idle", modifier = Modifier.size(7.dp))
+                StatusDot(session.withLiveTitle().activityStatus(), modifier = Modifier.size(7.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -1228,6 +1231,47 @@ private fun RecoverableHistorySection(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun AdaptiveDirectoryPathCaption(
+    name: String,
+    cwd: String,
+    modifier: Modifier = Modifier,
+) {
+    val textMeasurer = rememberTextMeasurer()
+    val style = MaterialTheme.typography.labelSmall.copy(
+        color = WandColors.textMuted,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 10.sp,
+    )
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val maxPx = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth.toFloat()
+        } else {
+            Float.POSITIVE_INFINITY
+        }
+        val caption = remember(name, cwd, maxPx, style) {
+            fitDirectoryPathCaption(name, cwd, maxPx) { text ->
+                textMeasurer.measure(
+                    text = text,
+                    style = style,
+                    overflow = TextOverflow.Clip,
+                    softWrap = false,
+                    maxLines = 1,
+                ).size.width.toFloat()
+            }
+        }
+        if (caption != null) {
+            Text(
+                caption,
+                style = style,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                softWrap = false,
+            )
         }
     }
 }

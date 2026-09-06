@@ -62,6 +62,7 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
     private val creationDefaultsMutex = Mutex()
     private var syncing = false
     private var consumedNewTaskRequest = 0L
+    private var groupsRevision: String? = null
 
     fun startSync() {
         if (syncing) return
@@ -131,8 +132,13 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
     private suspend fun loadUnlocked(silent: Boolean): Boolean {
         if (!silent) loading = true
         return try {
-            val loaded = port.listTaskGroups()
-            if (groups != loaded) groups = loaded
+            val page = port.listTaskGroupsPage(groupsRevision)
+            if (page.unchanged) {
+                loadError = null
+                return true
+            }
+            if (groups != page.groups) groups = page.groups
+            groupsRevision = page.revision
             loadError = null
             true
         } catch (error: Exception) {

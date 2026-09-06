@@ -90,6 +90,11 @@ import com.wand.app.data.WandApi
 import com.wand.app.data.WandWebSession
 import com.wand.app.data.providerDisplayName
 import com.wand.app.ui.QuickCommitStore
+import com.wand.app.ui.SessionTitleStore
+import com.wand.app.ui.applyProvisionalSessionTopic
+import com.wand.app.ui.ptyComposerSubmitChunks
+import com.wand.app.ui.sessionChromeTitle
+import com.wand.app.ui.sessionTopicBlocklist
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
@@ -206,7 +211,7 @@ fun PtyTerminalScreen(
     LaunchedEffect(api, sessionId, shortcutQueue) {
         for (shortcut in shortcutQueue) {
             try {
-                api.sendInput(
+                api.sendPtyInputChunk(
                     id = sessionId,
                     input = shortcut.bytes,
                     view = "terminal",
@@ -238,19 +243,29 @@ fun PtyTerminalScreen(
         val restore = draft
         draft = ""
         pendingAttachments = emptyList()
+        val blockedTitles = sessionTopicBlocklist(
+            taskName = taskName,
+            workspaceName = workspaceName,
+            cwd = snapshot?.cwd,
+        )
+        applyProvisionalSessionTopic(sessionId, text, blockedTitles)?.let { title ->
+            snapshot = snapshot?.copy(title = title, titleGenerating = true)
+        }
         scope.launch {
             try {
-                // 对齐 iOS sendPtyInput：先发文本，再发回车（带 enter_text 标记），
+                // 对齐 Web sendTerminalChunks：文本段和单独的 "\r" 都带 enter_text，
+                // 服务端据此把整段提交收成短标题，而不是把回车当成主题。
                 // 两个 input 之间留一点间隔，避免服务端把文本和回车粘成一条。
-                // 附件已先经 /api/sessions/:id/uploads 落盘，正文里只带路径前缀。
-                api.sendInput(id = sessionId, input = text, view = "terminal")
-                delay(30)
-                api.sendInput(
-                    id = sessionId,
-                    input = "\r",
-                    view = "terminal",
-                    shortcutKey = "enter_text",
-                )
+                val chunks = ptyComposerSubmitChunks(text, "terminal")
+                for ((index, chunk) in chunks.withIndex()) {
+                    if (index > 0) delay(30)
+                    api.sendPtyInputChunk(
+                        id = sessionId,
+                        input = chunk.input,
+                        view = chunk.view,
+                        shortcutKey = chunk.shortcutKey,
+                    )
+                }
             } catch (error: Exception) {
                 toast = error.message ?: "终端命令发送失败"
                 if (draft.isEmpty()) {
@@ -270,6 +285,7 @@ fun PtyTerminalScreen(
             Column {
                 PtyTopBar(
                     backdrop = null,
+                    sessionId = sessionId,
                     snapshot = snapshot,
                     serverDisplayName = serverDisplayName,
                     workspaceName = workspaceName,
@@ -391,6 +407,7 @@ internal fun shouldResumePtyTerminal(
 @Composable
 private fun PtyTopBar(
     backdrop: GlassBackdrop?,
+    sessionId: String,
     snapshot: SessionSnapshot?,
     serverDisplayName: String,
     workspaceName: String?,
@@ -417,14 +434,19 @@ private fun PtyTopBar(
         titleContent = {
             PtyProviderBadge(snapshot?.provider)
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    taskName?.trim().takeUnless { it.isNullOrEmpty() }
-                        ?: snapshot?.displayTitle
-                        ?: "终端会话",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = WandColors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                ChatTopicTitle(
+                    text = sessionChromeTitle(
+                        title = snapshot?.title,
+                        liveTitle = SessionTitleStore.titleOf(sessionId),
+                        blockedTitles = sessionTopicBlocklist(
+                            taskName = taskName,
+                            workspaceName = workspaceName,
+                            cwd = snapshot?.cwd,
+                        ),
+                        fallback = "终端会话",
+                    ),
+                    generating = snapshot?.titleGenerating == true ||
+                        SessionTitleStore.isGenerating(sessionId),
                 )
                 val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
                 TailMarqueePathText(

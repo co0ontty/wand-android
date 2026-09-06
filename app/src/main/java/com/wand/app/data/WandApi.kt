@@ -274,6 +274,25 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
         return SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/input", body))
     }
 
+    /**
+     * PTY 写入只需要服务端确认。对齐 iOS `sendPtyInputChunk`：
+     * `responseMode=accepted` 避免每个按键/回车都下载并解码整份会话快照。
+     * 旧服务端会忽略该字段并仍返回 snapshot，requestData 同样当成 2xx。
+     */
+    suspend fun sendPtyInputChunk(
+        id: String,
+        input: String,
+        view: String,
+        shortcutKey: String? = null,
+    ) {
+        val body = JSONObject()
+            .put("input", input)
+            .put("view", view)
+            .put("responseMode", "accepted")
+        if (shortcutKey != null) body.put("shortcutKey", shortcutKey)
+        requestData("POST", "/api/sessions/$id/input", body)
+    }
+
     suspend fun stopSession(id: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/stop"))
 
@@ -698,7 +717,12 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     }
 
     override suspend fun listTaskGroups(): List<TaskDirectoryGroup> =
-        TaskDirectoryGroup.parseList(requestArray("GET", "/api/tasks"))
+        listTaskGroupsPage().groups
+
+    override suspend fun listTaskGroupsPage(revision: String?): TaskGroupsPage {
+        val path = "/api/tasks?revision=${encode(revision ?: "")}"
+        return TaskGroupsPage.parse(requestData("GET", path))
+    }
 
     override suspend fun taskDefaultCwd(): String? =
         requestObject("GET", "/api/config").str("defaultCwd")?.takeIf { it.isNotBlank() }

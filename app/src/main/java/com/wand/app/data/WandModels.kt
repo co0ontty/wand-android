@@ -408,6 +408,7 @@ data class SessionSnapshot(
     val title: String? = null,
     val description: String? = null,
     val titleGenerating: Boolean? = null,
+    val ptyBusy: Boolean? = null,
     val providerCliActive: Boolean? = null,
     val providerCliExitCode: Int? = null,
     /** 工作空间任务绑定：会话由任务内「+」创建并绑定到 workspaceId/workspaceTaskId。 */
@@ -419,20 +420,19 @@ data class SessionSnapshot(
     val providerLabel: String
         get() = providerDisplayName(provider)
 
-    /** 列表标题：模型标题 > 摘要 > 当前任务 > cwd 末段。 */
+    /** 列表标题以服务端 `title` 为准，不再用任务名 / 目录名自行兜底。 */
     val displayTitle: String
-        get() {
-            title?.takeIf { it.isNotEmpty() }?.let { return it }
-            summary?.takeIf { it.isNotEmpty() }?.let { return it }
-            currentTaskTitle?.takeIf { it.isNotEmpty() }?.let { return it }
-            cwd?.takeIf { it.isNotEmpty() }?.let { c ->
-                val name = c.trimEnd('/').substringAfterLast('/')
-                return name.ifEmpty { c }
-            }
-            return "会话"
-        }
+        get() = title?.takeIf { it.isNotEmpty() } ?: "会话"
 
-    val isResponding: Boolean get() = structuredState?.inFlight ?: false
+    val isResponding: Boolean
+        get() = sessionIsResponding(
+            sessionKind = sessionKind,
+            status = status,
+            provider = provider,
+            ptyBusy = ptyBusy,
+            providerCliActive = providerCliActive,
+            inFlight = structuredState?.inFlight,
+        )
 
     val hasPendingPermission: Boolean
         get() = pendingEscalation != null || (permissionBlocked ?: false)
@@ -467,6 +467,7 @@ data class SessionSnapshot(
             title = o.str("title"),
             description = o.str("description"),
             titleGenerating = o.bool("titleGenerating"),
+            ptyBusy = o.bool("ptyBusy"),
             providerCliActive = o.bool("providerCliActive"),
             providerCliExitCode = o.int("providerCliExitCode"),
             workspaceId = o.str("workspaceId")?.takeIf { it.isNotEmpty() },
@@ -869,6 +870,7 @@ internal data class WsData(
     val title: String?,
     val description: String?,
     val titleGenerating: Boolean?,
+    val ptyBusy: Boolean?,
     val currentTaskTitle: String?,
     val selectedModel: String?,
     val thinkingEffort: String?,
@@ -910,6 +912,7 @@ internal data class WsData(
             structuredState = structuredState, pendingEscalation = pendingEscalation,
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
             title = title, description = description, titleGenerating = titleGenerating,
+            ptyBusy = ptyBusy,
             providerCliActive = providerCliActive, providerCliExitCode = providerCliExitCode,
             workspaceId = workspaceId, workspaceTaskId = workspaceTaskId,
         )
@@ -933,6 +936,7 @@ internal data class WsData(
             title = o.str("title"),
             description = o.str("description"),
             titleGenerating = o.bool("titleGenerating"),
+            ptyBusy = o.bool("ptyBusy"),
             currentTaskTitle = o.str("currentTaskTitle"),
             selectedModel = o.str("selectedModel"),
             thinkingEffort = o.str("thinkingEffort"),

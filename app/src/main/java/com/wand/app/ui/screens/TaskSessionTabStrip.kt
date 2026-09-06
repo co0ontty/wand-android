@@ -41,6 +41,8 @@ import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
+import com.wand.app.data.activityStatus
+import com.wand.app.ui.withLiveTitle
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandDialog
@@ -142,11 +144,13 @@ fun TaskSessionTabStrip(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val parentNames = tabStripParentNames(taskState)
             tabs.forEachIndexed { index, session ->
                 TaskSessionTab(
                     session = session,
                     index = index,
                     isSelected = session.id == currentSessionId,
+                    parentNames = parentNames,
                     onClick = { onSelect(session) },
                     onDelete = if (onDeleted != null) {
                         { deleteError = null; deleteTarget = session }
@@ -196,7 +200,12 @@ fun TaskSessionTabStrip(
     }
 
     deleteTarget?.let { session ->
-        val label = listSessionLabel(session, tabs?.indexOf(session)?.coerceAtLeast(0) ?: 0)
+        val parentNames = tabStripParentNames(taskState)
+        val label = listSessionLabel(
+            session.withLiveTitle(),
+            tabs?.indexOf(session)?.coerceAtLeast(0) ?: 0,
+            parentNames,
+        )
         WandDialog(
             title = "删除终端？",
             onDismissRequest = { if (!deleteBusy) { deleteTarget = null; deleteError = null } },
@@ -265,18 +274,30 @@ private fun TaskSessionAddButton(
     }
 }
 
+private fun tabStripParentNames(taskState: WorkspaceTaskState): List<String> = when (taskState) {
+    is WorkspaceTaskState.Content -> listOfNotNull(
+        taskState.detail.name.takeIf { it.isNotBlank() },
+        taskState.detail.cwd.replace('\\', '/').trimEnd('/').substringAfterLast('/').takeIf { it.isNotEmpty() },
+    )
+    is WorkspaceTaskState.EmptySessions -> listOfNotNull(taskState.taskName.takeIf { it.isNotBlank() })
+    else -> emptyList()
+}
+
 @Composable
 private fun TaskSessionTab(
     session: WorkspaceSessionSummary,
     index: Int,
     isSelected: Boolean,
+    parentNames: Collection<String> = emptyList(),
     onClick: () -> Unit,
     onDelete: (() -> Unit)? = null,
 ) {
-    val label = listSessionLabel(session, index)
+    val live = session.withLiveTitle()
+    val label = listSessionLabel(live, index, parentNames)
     val accent = if (session.provider == "codex") WandColors.info else WandColors.brand
     val shape = RoundedCornerShape(8.dp)
-    val isRunning = session.status in RUNNING_STATUSES
+    val activity = live.activityStatus()
+    val isRunning = activity == "running" || activity == "thinking"
     val a11yLabel = if (isSelected) "当前工作窗口 $label" else "切换到 $label"
 
     Row(
@@ -339,5 +360,3 @@ private fun TaskSessionTab(
         }
     }
 }
-
-private val RUNNING_STATUSES = setOf("initializing", "running", "thinking")

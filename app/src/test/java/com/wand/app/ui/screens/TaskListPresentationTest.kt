@@ -47,6 +47,49 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun fitWorkspacePathExpandsWhenSpaceAllowsAndKeepsLastTwo() {
+        val path = "/Users/me/Self/vibe_coding/wand"
+        val measure = { text: String -> text.length.toFloat() }
+
+        assertEquals(path, fitWorkspacePath(path, 1000f, measure))
+        assertEquals(
+            "…/Self/vibe_coding/wand",
+            fitWorkspacePath(path, "…/Self/vibe_coding/wand".length.toFloat(), measure),
+        )
+        assertEquals(
+            "…/vibe_coding/wand",
+            fitWorkspacePath(path, "…/vibe_coding/wand".length.toFloat(), measure),
+        )
+        assertEquals("…/vibe_coding/wand", fitWorkspacePath(path, 1f, measure))
+        assertEquals("/tmp/wand", fitWorkspacePath("/tmp/wand", 1f, measure))
+
+        assertNull(fitDirectoryPathCaption("wand", "wand", 1000f, measure))
+        assertEquals(path, fitDirectoryPathCaption("wand", path, 1000f, measure))
+        assertEquals(
+            "…/vibe_coding/wand",
+            fitDirectoryPathCaption("wand", path, "…/vibe_coding/wand".length.toFloat(), measure),
+        )
+    }
+
+    @Test
+    fun directoryGroupMetaLabelMatchesIosCountFormat() {
+        assertEquals("2 任务 · 5 会话", directoryGroupMetaLabel(2, 5))
+        assertEquals("0 任务 · 0 会话", directoryGroupMetaLabel(0, 0))
+        val grouped = group().copy(
+            tasks = listOf(
+                task().copy(totalSessions = 3),
+                task().copy(
+                    task = task().task.copy(id = "task-2", name = "Review"),
+                    totalSessions = 1,
+                ),
+            ),
+            standaloneSessions = listOf(session("pty", null)),
+        )
+        assertEquals(5, directoryGroupSessionTotal(grouped))
+        assertEquals("2 任务 · 5 会话", directoryGroupMetaLabel(grouped.tasks.size, directoryGroupSessionTotal(grouped)))
+    }
+
+    @Test
     fun taskIsolationOmitsDefaultSharedLabel() {
         assertNull(taskIsolationCaption(false))
         assertEquals("隔离", taskIsolationCaption(true, "wand/ui"))

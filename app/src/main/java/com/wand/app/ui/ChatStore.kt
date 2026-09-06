@@ -212,7 +212,17 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         if (legacyPermissionPrompt != next.legacyPermissionPrompt) legacyPermissionPrompt = next.legacyPermissionPrompt
         if (permissionBlocked != next.permissionBlocked) permissionBlocked = next.permissionBlocked
         if (currentTaskTitle != next.currentTaskTitle) currentTaskTitle = next.currentTaskTitle
-        if (snapshot != next.snapshot) snapshot = next.snapshot
+        if (snapshot != next.snapshot) {
+            snapshot = next.snapshot
+            next.snapshot?.let { snap ->
+                SessionTitleStore.apply(
+                    sessionId,
+                    title = snap.title,
+                    generating = snap.titleGenerating,
+                    ptyBusy = snap.ptyBusy,
+                )
+            }
+        }
         if (selectedModel != next.selectedModel) selectedModel = next.selectedModel
         if (thinkingEffort != next.thinkingEffort) thinkingEffort = next.thinkingEffort
         if (mode != next.mode) mode = next.mode
@@ -358,6 +368,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             toast = "与上一条消息相同，已忽略，不会加入排队。"
             return
         }
+        applyProvisionalTopic(trimmed)
         val previousMessages = messages
         val previousQueue = queuedMessages
         if (isStructured) {
@@ -404,10 +415,26 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             .firstOrNull()?.text?.trim()?.takeIf(String::isNotEmpty)
     }
 
+    private fun applyProvisionalTopic(input: String) {
+        val title = applyProvisionalSessionTopic(
+            sessionId,
+            input,
+            sessionTopicBlocklist(cwd = snapshot?.cwd),
+        ) ?: return
+        val snap = snapshot ?: return
+        snapshot = snap.copy(
+            title = title,
+            description = summarizeSessionDescriptionFromInput(input).ifEmpty { title },
+            titleGenerating = true,
+        )
+    }
+
     private suspend fun sendPtyChatInput(text: String) {
-        api.sendInput(sessionId, text, view = "chat")
-        delay(30)
-        api.sendInput(sessionId, "\r", view = "chat", shortcutKey = "enter_text")
+        val chunks = ptyComposerSubmitChunks(text, "chat")
+        for ((index, chunk) in chunks.withIndex()) {
+            if (index > 0) delay(30)
+            api.sendPtyInputChunk(sessionId, chunk.input, chunk.view, chunk.shortcutKey)
+        }
     }
 
     // MARK: - AskUserQuestion 交互（对齐 Web 端 __askSelect / __askSubmit）
@@ -524,7 +551,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     api.stopSession(sessionId)
                     isResponding = false
                 } else {
-                    api.sendInput(sessionId, "\u001B", view = "chat", shortcutKey = "esc")
+                    api.sendPtyInputChunk(sessionId, "\u001B", "chat", "esc")
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "操作失败"
