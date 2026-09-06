@@ -103,7 +103,6 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.WandTerminal
-import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.terminal.DefaultTerminalShortcuts
 import com.wand.app.ui.terminal.TerminalKeyBinding
@@ -484,22 +483,6 @@ private fun PtyBottomBar(
     val haptic = LocalHapticFeedback.current
     val shortcutScroll = rememberScrollState()
     Column(modifier = Modifier.fillMaxWidth()) {
-        // 顶缘渐隐：暗色用轻黑，浅色用页面底色，避免米色 chrome 上出现脏黑带。
-        val fadeTop = if (isWandDarkTheme()) {
-            Color.Black.copy(alpha = 0.18f)
-        } else {
-            WandColors.bgPrimary.copy(alpha = 0.55f)
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(12.dp)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(fadeTop, Color.Transparent),
-                    ),
-                ),
-        )
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -512,13 +495,6 @@ private fun PtyBottomBar(
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
-            // 玻璃底色之上的发丝分隔线：亮暗主题下都保持清晰但不刺眼的边界。
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(0.6.dp)
-                    .background(WandColors.border.copy(alpha = 0.55f)),
-            )
             AnimatedVisibility(visible = inputDrawerOpen) {
                 PtyInputDrawer(
                     draft = draft,
@@ -534,74 +510,76 @@ private fun PtyBottomBar(
                     onMicDown = onMicDown,
                 )
             }
-            val edgeFade = WandColors.bgElevated.copy(alpha = 0.96f)
+            // 把快捷键收进一个连续的工具托盘：输入入口固定在左侧，只有快捷键区域横向滚动。
+            // 这样在窄屏上滑动查看按键时，输入抽屉不会跟着滚走，也不会显得像一排散落的按钮。
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(58.dp)
-                    .drawWithContent {
-                        drawContent()
-                        // 滚动两端用主题色叠一层渐隐，避免 Offscreen+DstIn 在浅色玻璃上发灰。
-                        val fadeWidth = 26.dp.toPx()
-                        if (shortcutScroll.value > 0) {
-                            drawRect(
-                                brush = Brush.horizontalGradient(
-                                    0f to edgeFade,
-                                    1f to Color.Transparent,
-                                    startX = 0f,
-                                    endX = fadeWidth,
-                                ),
-                            )
-                        }
-                        if (shortcutScroll.value < shortcutScroll.maxValue) {
-                            drawRect(
-                                brush = Brush.horizontalGradient(
-                                    0f to Color.Transparent,
-                                    1f to edgeFade,
-                                    startX = size.width - fadeWidth,
-                                    endX = size.width,
-                                ),
-                            )
-                        }
-                    }
-                    .horizontalScroll(shortcutScroll)
-                    .padding(horizontal = 12.dp),
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(WandColors.bgElevated.copy(alpha = 0.92f))
+                    .border(
+                        0.7.dp,
+                        WandColors.border.copy(alpha = 0.8f),
+                        RoundedCornerShape(18.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 第一个固定项是输入抽屉的拉手：键盘图标 + 上/下箭头，点击或上拉展开输入框。
+                // 输入入口保持固定，避免快捷键滚动后用户找不到发送文本的位置。
                 InputDrawerHandle(open = inputDrawerOpen, onClick = onToggleInputDrawer)
-                ShortcutGroupDivider()
-                // 按使用热度分三组：高频执行（Enter/↑/Tab）· 中断控制（Esc/Ctrl+C/Shift+Tab）
-                // · 光标导航（←/→/↓），组间用细竖线分隔，最常用的永远在最顺手的位置。
-                DefaultTerminalShortcuts.forEachIndexed { index, shortcut ->
-                    TerminalShortcutKey(shortcut) {
-                        if (isHapticEnabled()) {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                val edgeFade = WandColors.bgElevated.copy(alpha = 0.98f)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .drawWithContent {
+                            drawContent()
+                            // 滚动两端用托盘底色渐隐，提示这里还可以横向滑动。
+                            val fadeWidth = 22.dp.toPx()
+                            if (shortcutScroll.value > 0) {
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        0f to edgeFade,
+                                        1f to Color.Transparent,
+                                        startX = 0f,
+                                        endX = fadeWidth,
+                                    ),
+                                )
+                            }
+                            if (shortcutScroll.value < shortcutScroll.maxValue) {
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        0f to Color.Transparent,
+                                        1f to edgeFade,
+                                        startX = size.width - fadeWidth,
+                                        endX = size.width,
+                                    ),
+                                )
+                            }
                         }
-                        onShortcut(shortcut)
+                        .horizontalScroll(shortcutScroll)
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    // 按使用热度分三组：高频执行（Enter/↑/Tab）· 中断控制（Esc/Ctrl+C/Shift+Tab）
+                    // · 光标导航（←/→/↓），组间用细竖线分隔，最常用的永远在最顺手的位置。
+                    DefaultTerminalShortcuts.forEach { shortcut ->
+                        TerminalShortcutKey(shortcut) {
+                            if (isHapticEnabled()) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            onShortcut(shortcut)
+                        }
                     }
-                    if (index == 2 || index == 5) ShortcutGroupDivider()
                 }
             }
         }
     }
 }
 
-/// 输入抽屉的拉手：快捷键栏的第一个固定项。折叠态显示键盘 + 向上箭头，
-/// 展开态翻转成向下箭头。点击切换；带一个纵向拖动手势，上拉展开、下拉收起。
-/// 快捷键栏的组间分隔线：细竖线，弱存在感，只负责把逻辑分组切开。
-@Composable
-private fun ShortcutGroupDivider() {
-    Box(
-        modifier = Modifier
-            .padding(horizontal = 3.dp)
-            .width(1.dp)
-            .height(22.dp)
-            .background(WandColors.border.copy(alpha = 0.5f), RoundedCornerShape(1.dp)),
-    )
-}
-
+/// 输入抽屉的拉手：点击或上下拖动切换输入抽屉。
 @Composable
 private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
     val targetColor = if (open) WandColors.brand else WandColors.textPrimary
@@ -614,7 +592,7 @@ private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .height(40.dp)
-            .widthIn(min = 72.dp)
+            .widthIn(min = 44.dp)
             .clip(WandShapes.sm)
             .background(background)
             .border(0.6.dp, WandColors.border.copy(alpha = 0.85f), WandShapes.sm)
@@ -623,7 +601,7 @@ private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 12.dp)
+            .padding(horizontal = 8.dp)
             .pointerInput(open) {
                 var accumulated = 0f
                 detectVerticalDragGestures(
@@ -639,19 +617,13 @@ private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Icon(
                 WandIcons.keyboard,
                 contentDescription = null,
                 tint = targetColor,
                 modifier = Modifier.size(16.dp),
-            )
-            Text(
-                if (open) "收起" else "输入",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = targetColor,
             )
             Icon(
                 if (open) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,

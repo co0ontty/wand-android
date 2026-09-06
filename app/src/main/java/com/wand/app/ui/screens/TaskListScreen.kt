@@ -868,6 +868,9 @@ private fun TaskAggregateRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
+            .graphicsLayer {
+                alpha = if (task.status == com.wand.app.data.WorkspaceTaskStatus.Done) 0.76f else 1f
+            }
             .wandSelectedSurface(
                 selected = selected,
                 shape = RoundedCornerShape(9.dp),
@@ -893,6 +896,16 @@ private fun TaskAggregateRow(
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 2.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
+            )
+            Text(
+                if (task.status == com.wand.app.data.WorkspaceTaskStatus.Done) "已完成" else "进行中",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (task.status == com.wand.app.data.WorkspaceTaskStatus.Done) {
+                    WandColors.textMuted
+                } else {
+                    WandColors.success
+                },
+                modifier = Modifier.padding(end = 4.dp),
             )
             if (task.isIsolated) {
                 Icon(

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -276,6 +277,7 @@ private fun TaskSessionTab(
     val accent = if (session.provider == "codex") WandColors.info else WandColors.brand
     val shape = RoundedCornerShape(8.dp)
     val isRunning = session.status in RUNNING_STATUSES
+    val a11yLabel = if (isSelected) "当前工作窗口 $label" else "切换到 $label"
 
     Row(
         modifier = Modifier
@@ -288,8 +290,15 @@ private fun TaskSessionTab(
                 shape = shape,
             )
             .clickable(onClick = onClick)
-            .padding(start = 10.dp, end = if (isSelected && onDelete != null) 2.dp else 8.dp)
-            .semantics { contentDescription = "切换到 $label" },
+            .padding(
+                start = if (isSelected) 10.dp else 8.dp,
+                end = when {
+                    isSelected && onDelete != null -> 2.dp
+                    isSelected -> 10.dp
+                    else -> 8.dp
+                },
+            )
+            .semantics { contentDescription = a11yLabel },
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -299,14 +308,17 @@ private fun TaskSessionTab(
             tint = BrandLogos.tintForProvider(session.provider, if (isSelected) accent else WandColors.textSecondary),
             modifier = Modifier.size(14.dp),
         )
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (isSelected) WandColors.textPrimary else WandColors.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (isSelected) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 180.dp),
+            )
+        }
         if (isRunning) {
             Box(
                 modifier = Modifier
