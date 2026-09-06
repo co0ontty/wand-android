@@ -49,10 +49,11 @@ import androidx.compose.ui.unit.sp
 
 // —— 亮色 Token ——
 private object LightTokens {
-    val bgPrimary = Color(0xFFF5F3EE)
-    val bgElevated = Color(0xFFFCFAF6)
-    val surface = Color(0xFFFFFDF9)
-    val surfaceSoft = Color(0xFFECE8E1)
+    // 羊皮纸浅黄色层级：避免纯白大面积铺底，保持文字与控件的对比度。
+    val bgPrimary = Color(0xFFF3E9D2)
+    val bgElevated = Color(0xFFFBF2DE)
+    val surface = Color(0xFFFFF7E6)
+    val surfaceSoft = Color(0xFFE9DDBF)
     val textPrimary = Color(0xFF28231F)
     val textSecondary = Color(0xFF625A53)
     val textMuted = Color(0xFF8B8279)
@@ -61,7 +62,7 @@ private object LightTokens {
     // 选中软底略浓于 brandSoft：单独 14% 叠在米色上几乎等于 surfaceSoft。
     val selectedFill = Color(0xFFC5653D).copy(alpha = 0.16f)
     // 对齐 Web --border-default / --border-strong：旧 7% 描边在米色底上几乎看不见。
-    val border = Color(0xFFD9D2C9)
+    val border = Color(0xFFD8C9A9)
     val borderStrong = Color(0xFF6D5848).copy(alpha = 0.28f)
     val focusRing = Color(0xFFC5653D).copy(alpha = 0.50f)
 

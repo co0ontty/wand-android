@@ -124,14 +124,14 @@ fun bevelRimBrush(rimLight: Color, rimShade: Color): Brush =
 
 // —— 亮色玻璃 ——
 private val LightGlassRegular = GlassStyle(
-    tint = Color(0xFFFFFDF9), tintAlpha = 0.56f, fallbackAlpha = 0.92f,
+    tint = Color(0xFFFFF7E6), tintAlpha = 0.56f, fallbackAlpha = 0.92f,
     blurRadius = 18.dp, refractionHeight = 0.75.dp, refractionAmount = 2.25.dp,
     rimLight = Color.White.copy(alpha = 0.38f),
     rimShade = Color(0xFF6D5848).copy(alpha = 0.075f),
     shadowElevation = 0.8.dp, shadowColor = Color(0xFF493323).copy(alpha = 0.055f),
 )
 private val LightGlassClear = GlassStyle(
-    tint = Color(0xFFFFFDF9), tintAlpha = 0.48f, fallbackAlpha = 0.88f,
+    tint = Color(0xFFFFF7E6), tintAlpha = 0.48f, fallbackAlpha = 0.88f,
     blurRadius = 14.dp, refractionHeight = 0.5.dp, refractionAmount = 1.5.dp,
     rimLight = Color.White.copy(alpha = 0.34f),
     rimShade = Color(0xFF6D5848).copy(alpha = 0.065f),
@@ -145,7 +145,7 @@ private val LightGlassAccent = GlassStyle(
     shadowElevation = 1.2.dp, shadowColor = Color(0xFFC5653D).copy(alpha = 0.12f),
 )
 private val LightGlassCard = GlassStyle(
-    tint = Color(0xFFFFFDF9), tintAlpha = 0.76f, fallbackAlpha = 0.90f,
+    tint = Color(0xFFFFF7E6), tintAlpha = 0.76f, fallbackAlpha = 0.90f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
     rimLight = Color.White.copy(alpha = 0.30f),
     rimShade = Color(0xFF6D5848).copy(alpha = 0.065f),

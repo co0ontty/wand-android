@@ -3,12 +3,12 @@
     <color name="primary">#C5653D</color>
     <color name="primary_dark">#A04E2E</color>
     <color name="accent">#C5653D</color>
-    <color name="background">#F5F3EE</color>
-    <color name="surface">#FFFDF9</color>
+    <color name="background">#F3E9D2</color>
+    <color name="surface">#FFF7E6</color>
     <color name="text_primary">#28231F</color>
     <color name="text_secondary">#625A53</color>
     <color name="text_hint">#8B8279</color>
-    <color name="divider">#D9D2C9</color>
+    <color name="divider">#D8C9A9</color>
     <color name="error">#B24F45</color>
-    <color name="card_bg">#FCFAF6</color>
+    <color name="card_bg">#FBF2DE</color>
 </resources>
