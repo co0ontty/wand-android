@@ -99,6 +99,22 @@ internal fun isDirectoryExpanded(userCollapsed: Boolean, directoryCount: Int): B
 internal fun isTaskSessionsExpanded(userCollapsed: Boolean, sessionCount: Int): Boolean =
     !showsTaskSessionDisclosure(sessionCount) || !userCollapsed
 
+/**
+ * 侧栏任务行只在「当前详情就是这个任务」时高亮。
+ * 已经选中该任务下某个可见会话时，只高亮会话行，避免父子两层各画一个选中矩形。
+ * 选中会话不在当前可见列表里时，任务行继续作为位置提示。
+ */
+internal fun isTaskRowSelected(
+    taskId: String,
+    visibleSessionIds: Collection<String>,
+    selectedTaskId: String?,
+    selectedSessionId: String?,
+): Boolean {
+    if (taskId != selectedTaskId) return false
+    val sessionId = selectedSessionId?.takeIf { it.isNotBlank() } ?: return true
+    return sessionId !in visibleSessionIds
+}
+
 /** 列表里的终端名：不要把目录名/路径叶子再当标题，避免三层都叫 wand。 */
 internal fun listSessionLabel(
     session: WorkspaceSessionSummary,

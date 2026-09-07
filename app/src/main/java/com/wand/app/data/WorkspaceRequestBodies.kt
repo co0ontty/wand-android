@@ -6,10 +6,18 @@ internal fun createWorkspaceTaskRequestBody(
     name: String,
     baseRef: String?,
     worktree: Boolean?,
+    cwd: String? = null,
 ): JSONObject = JSONObject().put("name", name).apply {
     if (!baseRef.isNullOrBlank()) put("baseRef", baseRef)
+    if (!cwd.isNullOrBlank()) put("cwd", cwd)
     if (worktree != null) put("worktree", worktree)
 }
+
+internal fun createStandaloneTaskRequestBody(
+    name: String,
+    cwd: String? = null,
+    worktree: Boolean? = null,
+): JSONObject = createWorkspaceTaskRequestBody(name, null, worktree, cwd)
 
 internal data class WorkspaceTaskWindowRequest(
     val path: String,

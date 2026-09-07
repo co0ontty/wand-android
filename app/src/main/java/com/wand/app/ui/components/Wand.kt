@@ -83,7 +83,11 @@ fun Modifier.clickableWithoutRipple(
         animationSpec = if (pressed) WandMotion.tweenPress() else WandMotion.tweenFast(),
         label = "pressAlpha",
     )
-    return graphicsLayer { alpha = pressAlpha }
+    // 静止态不要强制 graphicsLayer：圆角半透明行一旦离屏合成，部分 GPU 会透出第二块白矩形。
+    return this
+        .then(
+            if (pressAlpha < 1f) Modifier.graphicsLayer { alpha = pressAlpha } else Modifier,
+        )
         .clickable(
             interactionSource = interaction,
             indication = null,

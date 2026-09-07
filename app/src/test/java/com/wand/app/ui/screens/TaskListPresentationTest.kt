@@ -145,6 +145,44 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun taskRowSelectionYieldsToVisibleChildSession() {
+        val visible = listOf("session-1")
+
+        assertTrue(
+            isTaskRowSelected(
+                taskId = "task-1",
+                visibleSessionIds = visible,
+                selectedTaskId = "task-1",
+                selectedSessionId = null,
+            ),
+        )
+        assertFalse(
+            isTaskRowSelected(
+                taskId = "task-1",
+                visibleSessionIds = visible,
+                selectedTaskId = "task-1",
+                selectedSessionId = "session-1",
+            ),
+        )
+        assertTrue(
+            isTaskRowSelected(
+                taskId = "task-1",
+                visibleSessionIds = visible,
+                selectedTaskId = "task-1",
+                selectedSessionId = "session-missing",
+            ),
+        )
+        assertFalse(
+            isTaskRowSelected(
+                taskId = "task-1",
+                visibleSessionIds = visible,
+                selectedTaskId = "task-other",
+                selectedSessionId = null,
+            ),
+        )
+    }
+
+    @Test
     fun treeDisclosureHidesNeedlessCaretsAndKeepsTerminalsOpen() {
         assertFalse(showsDirectoryDisclosure(1))
         assertTrue(showsDirectoryDisclosure(2))

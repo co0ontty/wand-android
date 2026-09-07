@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -64,10 +65,12 @@ val WandSelectedRowBarWidth: Dp = 2.dp
 val WandSelectedRowLeadingInset: Dp = 14.dp
 
 /**
- * 列表行选中态：轻量品牌软底 + 细品牌描边。
+ * 列表行选中态：只铺一层品牌软底。
  *
- * 选中态不再使用左侧竖条。竖条在窄侧边栏里会抢视觉焦点，也容易压住首个图标或文字；
- * 细描边能完整包住行，同时保持列表的层次和点击目标清晰。
+ * 侧栏行不要再叠描边或左侧竖条。软底已经是完整的选中矩形；再加描边/竖条会看起来像
+ * 两个高亮长方形，在窄侧栏里尤其明显。
+ * 选中色必须先合成到页面底上：半透明 brand 叠 graphicsLayer 时，部分 Android GPU
+ * 会把离屏层的白色矩形透出来，看起来像圆角高亮里再套一个长方形。
  * [contentInset] 为 true 时始终留出左槽，选中/未选不会左右跳动。
  */
 @Composable
@@ -78,19 +81,13 @@ fun Modifier.wandSelectedRow(
     contentInset: Boolean = false,
 ): Modifier {
     val fill by animateColorAsState(
-        if (selected) WandColors.selectedFill else unselectedFill,
+        if (selected) WandColors.selectedFill.compositeOver(WandColors.bgPrimary) else unselectedFill,
         WandMotion.tweenFast(),
         label = "wandSelectedRowFill",
-    )
-    val stroke by animateColorAsState(
-        if (selected) WandColors.brand.copy(alpha = 0.46f) else Color.Transparent,
-        WandMotion.tweenFast(),
-        label = "wandSelectedRowStroke",
     )
     return this
         .clip(shape)
         .background(fill)
-        .then(if (selected) Modifier.border(1.dp, stroke, shape) else Modifier)
         .then(
             if (contentInset) Modifier.padding(start = WandSelectedRowLeadingInset) else Modifier,
         )

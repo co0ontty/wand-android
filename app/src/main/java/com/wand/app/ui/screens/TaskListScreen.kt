@@ -79,6 +79,7 @@ import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
+import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -128,6 +129,9 @@ fun TaskListScreen(
     var taskNameDraft by remember { mutableStateOf("") }
     var taskCwdDraft by remember { mutableStateOf("") }
     var taskWorktreeEnabled by remember { mutableStateOf(true) }
+    var newTaskWorkspaceId by remember { mutableStateOf<String?>(null) }
+    var newTaskTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
+    var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
     var pendingTarget by remember { mutableStateOf<Pair<TaskDirectoryGroup, WorkspaceTaskSummary>?>(null) }
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
@@ -145,22 +149,21 @@ fun TaskListScreen(
     val visibleGroups = state.groups.filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
     val hasVisibleContent = visibleGroups.isNotEmpty() || recoverableEntries.isNotEmpty()
 
-    fun beginNewTask(initialCwd: String? = null) {
+    fun beginNewTask(initialCwd: String? = null, workspaceId: String? = null) {
         if (!interactionEnabled) return
         state.clearMutationError()
         taskNameDraft = ""
         taskCwdDraft = initialCwd.orEmpty()
+        newTaskWorkspaceId = workspaceId
         taskWorktreeEnabled = state.defaultTaskWorktree
+        newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: WorkspaceSessionTarget.Claude
+        newTaskKind = state.defaultSessionKind
         newTaskOpen = true
         scope.launch {
             state.loadCreationDefaults()
             taskWorktreeEnabled = state.defaultTaskWorktree
-            if (taskCwdDraft.isBlank()) {
-                taskCwdDraft = state.defaultCwd
-                    ?: state.recentPaths.firstOrNull()?.path
-                    ?: state.groups.firstOrNull { !it.synthetic }?.workspaceCwd
-                    .orEmpty()
-            }
+            newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: newTaskTarget
+            newTaskKind = state.defaultSessionKind
         }
     }
 
@@ -180,19 +183,43 @@ fun TaskListScreen(
             icon = WandIcons.add,
             confirm = WandDialogAction(
                 label = if (state.mutationBusy) "创建中…" else "创建",
-                enabled = !state.mutationBusy && name.isNotEmpty() && cwd.isNotEmpty(),
+                enabled = !state.mutationBusy && name.isNotEmpty(),
                 onClick = {
-                    if (state.mutationBusy || name.isEmpty() || cwd.isEmpty()) return@WandDialogAction
+                    if (state.mutationBusy || name.isEmpty()) return@WandDialogAction
                     scope.launch {
-                        val result = state.createTask(name, cwd, taskWorktreeEnabled)
+                        state.rememberCreationChoice(
+                            defaultProvider = newTaskTarget.raw.takeUnless { newTaskTarget.isShell },
+                            defaultSessionKind = newTaskKind,
+                            defaultTaskWorktree = taskWorktreeEnabled,
+                        )
+                        val result = state.createTask(
+                            name,
+                            cwd,
+                            if (cwd.isEmpty()) false else taskWorktreeEnabled,
+                            workspaceId = newTaskWorkspaceId,
+                        )
                         if (result != null) {
                             newTaskOpen = false
-                            onOpenTask(
-                                result.workspace.id,
-                                result.task.id,
-                                result.workspace.name,
-                                result.task.name,
-                            )
+                            val snapshot = state.createTaskWindow(result.task.id, newTaskTarget, newTaskKind)
+                            if (snapshot != null) {
+                                onOpenSession(
+                                    TaskSessionRoute(
+                                        sessionId = snapshot.id,
+                                        structured = snapshot.isStructured,
+                                        workspaceId = result.workspace.id,
+                                        taskId = result.task.id,
+                                        workspaceName = result.workspace.name,
+                                        taskName = result.task.name,
+                                    ),
+                                )
+                            } else {
+                                onOpenTask(
+                                    result.workspace.id,
+                                    result.task.id,
+                                    result.workspace.name,
+                                    result.task.name,
+                                )
+                            }
                         }
                     }
                 },
@@ -217,8 +244,8 @@ fun TaskListScreen(
                 value = taskCwdDraft,
                 onValueChange = { taskCwdDraft = it; state.clearMutationError() },
                 modifier = Modifier.fillMaxWidth(),
-                label = "任务目录",
-                placeholder = state.defaultCwd ?: "/path/to/project",
+                label = if (newTaskWorkspaceId == null) "工作目录（可选）" else "任务目录",
+                placeholder = if (newTaskWorkspaceId == null) "留空则使用全局临时目录" else (state.defaultCwd ?: "/path/to/project"),
                 enabled = !state.mutationBusy,
                 singleLine = true,
             )
@@ -264,7 +291,57 @@ fun TaskListScreen(
                     }
                 }
             }
-            Row(
+            Text(
+                "CLI 工具",
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
+                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+            )
+            WorkspaceSessionTarget.OPTIONS.forEach { option ->
+                val selected = newTaskTarget == option
+                Text(
+                    option.label,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = !state.mutationBusy) {
+                            newTaskTarget = option
+                            if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
+                        }
+                        .background(if (selected) WandColors.brand.copy(alpha = 0.12f) else WandColors.surfaceSoft.copy(alpha = 0.4f))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) WandColors.brand else WandColors.textPrimary,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            if (!newTaskTarget.isShell) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    WorkspaceSessionKind.entries.forEach { option ->
+                        val selected = newTaskKind == option
+                        Text(
+                            option.label,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = !state.mutationBusy) {
+                                    newTaskKind = option
+                                    state.rememberCreationChoice(defaultSessionKind = option)
+                                }
+                                .background(if (selected) WandColors.brand.copy(alpha = 0.12f) else WandColors.surfaceSoft.copy(alpha = 0.4f))
+                                .padding(vertical = 8.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (selected) WandColors.brand else WandColors.textPrimary,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+            if (cwd.isNotEmpty()) Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -615,7 +692,7 @@ fun TaskListScreen(
                             onOpenSession = { session, task ->
                                 onOpenSession(taskSessionRoute(session, group, task))
                             },
-                            onNewTask = { beginNewTask(group.workspaceCwd) },
+                            onNewTask = { beginNewTask(group.workspaceCwd, group.workspaceId.takeUnless { group.synthetic }) },
                             onNewWindow = { task ->
                                 selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
                                     ?: WorkspaceSessionTarget.Claude
@@ -816,7 +893,12 @@ private fun TaskDirectorySection(
                             userCollapsed = taskCollapsed(task.id),
                             sessionCount = task.totalSessions,
                         ),
-                        selected = task.id == selectedTaskId,
+                        selected = isTaskRowSelected(
+                            taskId = task.id,
+                            visibleSessionIds = task.sessions.map { it.id },
+                            selectedTaskId = selectedTaskId,
+                            selectedSessionId = selectedSessionId,
+                        ),
                         selectedSessionId = selectedSessionId,
                         onToggle = { onToggleTask(task.id) },
                         onOpen = { onOpenTask(task) },
@@ -870,13 +952,12 @@ private fun TaskAggregateRow(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val reduceMotion = reduceMotionEnabled()
+    val done = task.status == com.wand.app.data.WorkspaceTaskStatus.Done
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
-            .graphicsLayer {
-                alpha = if (task.status == com.wand.app.data.WorkspaceTaskStatus.Done) 0.76f else 1f
-            },
+            .then(if (done) Modifier.graphicsLayer { alpha = 0.76f } else Modifier),
     ) {
         Row(
             modifier = Modifier
@@ -886,7 +967,7 @@ private fun TaskAggregateRow(
                     selected = selected,
                     shape = RoundedCornerShape(8.dp),
                 )
-                .clickable(onClick = onOpen)
+                .clickableWithoutRipple(onClick = onOpen)
                 .padding(end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1088,7 +1169,7 @@ private fun AggregateSessionRow(
         Row(
             modifier = Modifier
                 .weight(1f)
-                .clickable(onClick = onClick)
+                .clickableWithoutRipple(onClick = onClick)
                 .padding(top = 8.dp, bottom = 8.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),

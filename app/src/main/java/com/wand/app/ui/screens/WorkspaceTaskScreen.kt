@@ -109,7 +109,17 @@ fun WorkspaceTaskScreen(
     val context = LocalContext.current
 
     // 进入任务立即加载详情；切任务（taskId 变化）自动取消上一请求。
-    LaunchedEffect(taskId) { workflow.loadTask(taskId) }
+    LaunchedEffect(taskId) {
+        workflow.loadTask(taskId)
+        runCatching { api.serverConfig() }.getOrNull()?.let { config ->
+            WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
+            selectedKind = if (config.defaultSessionKind == "pty") {
+                WorkspaceSessionKind.Pty
+            } else {
+                WorkspaceSessionKind.Structured
+            }
+        }
+    }
     // 离开页面时关闭 Sheet。
     DisposableEffect(taskId) {
         onDispose { workflow.closeTargetSheet() }
@@ -297,8 +307,22 @@ fun WorkspaceTaskScreen(
                     workspaceName = workspaceName,
                     taskName = taskName,
                     cwd = state.cwd,
+                    selectedTarget = selectedTarget,
+                    selectedKind = selectedKind,
+                    creating = targetState is WorkspaceTargetState.Creating,
+                    error = (targetState as? WorkspaceTargetState.Error)?.message,
                     onCopyCwd = ::copyTaskCwd,
-                    onChooseAgent = { openSheet() },
+                    onSelectTarget = {
+                        selectedTarget = it
+                        if (!it.isShell) {
+                            scope.launch { runCatching { api.updateCreationDefaults(defaultProvider = it.raw) } }
+                        }
+                    },
+                    onSelectKind = {
+                        selectedKind = it
+                        scope.launch { runCatching { api.updateCreationDefaults(defaultSessionKind = it.raw) } }
+                    },
+                    onConfirm = { confirmCreate() },
                 )
             }
             is WorkspaceTaskState.Content -> {
@@ -361,8 +385,14 @@ private fun EmptyTaskWelcome(
     workspaceName: String,
     taskName: String,
     cwd: String,
+    selectedTarget: WorkspaceSessionTarget,
+    selectedKind: WorkspaceSessionKind,
+    creating: Boolean,
+    error: String?,
     onCopyCwd: () -> Unit,
-    onChooseAgent: () -> Unit,
+    onSelectTarget: (WorkspaceSessionTarget) -> Unit,
+    onSelectKind: (WorkspaceSessionKind) -> Unit,
+    onConfirm: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -391,16 +421,21 @@ private fun EmptyTaskWelcome(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Text(
-                "这个任务还没有工作窗口。选择一个 Agent，或直接打开空白终端。",
+                "选择 CLI 工具，以及结构化或 PTY，开始这个任务。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Spacer(modifier = Modifier.height(8.dp))
-            WandButton(
-                label = "选择 Agent 或空白终端",
-                onClick = onChooseAgent,
-                modifier = Modifier.fillMaxWidth(),
+            WorkspaceTargetSheet(
+                selected = selectedTarget,
+                selectedKind = selectedKind,
+                creating = creating,
+                error = error,
+                onSelect = onSelectTarget,
+                onSelectKind = onSelectKind,
+                onConfirm = onConfirm,
+                onDismiss = {},
             )
             Spacer(modifier = Modifier.height(8.dp))
             // 任务实际 cwd：单行省略，可长按复制。

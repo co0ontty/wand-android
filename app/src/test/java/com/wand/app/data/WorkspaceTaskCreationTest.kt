@@ -29,6 +29,18 @@ class WorkspaceTaskCreationTest {
     }
 
     @Test
+    fun standaloneTaskBodyUsesOptionalDirectory() {
+        val scratch = createStandaloneTaskRequestBody("随口问问", null, false)
+        assertEquals("随口问问", scratch.getString("name"))
+        assertEquals(false, scratch.getBoolean("worktree"))
+        assertTrue(!scratch.has("cwd"))
+
+        val mounted = createStandaloneTaskRequestBody("挂目录", "/tmp/work", true)
+        assertEquals("/tmp/work", mounted.getString("cwd"))
+        assertTrue(mounted.getBoolean("worktree"))
+    }
+
+    @Test
     fun allSixProvidersMapToBoundCommandBodies() {
         val cases = listOf(
             WorkspaceSessionTarget.Claude to "claude",

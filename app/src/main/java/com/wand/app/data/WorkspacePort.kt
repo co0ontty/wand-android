@@ -37,8 +37,18 @@ interface WorkspacePort {
         name: String,
         baseRef: String? = null,
         worktree: Boolean? = null,
+        cwd: String? = null,
     ): WorkspaceTaskCreation {
         throw UnsupportedOperationException("创建任务接口不可用")
+    }
+
+    /** POST /api/tasks —— 不挂项目的独立任务；cwd 为空时使用全局临时目录。 */
+    suspend fun createStandaloneTask(
+        name: String,
+        cwd: String? = null,
+        worktree: Boolean? = null,
+    ): WorkspaceTaskCreation {
+        throw UnsupportedOperationException("创建独立任务接口不可用")
     }
 
     /** GET /api/tasks —— 跨目录任务聚合（目录组一级容器）。 */

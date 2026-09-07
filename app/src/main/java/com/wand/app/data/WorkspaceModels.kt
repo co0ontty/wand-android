@@ -426,6 +426,7 @@ data class WorkspaceTaskCreation(
     val name: String,
     val worktree: WorkspaceTaskWorktree?,
     val status: WorkspaceTaskStatus,
+    val cwd: String = "",
 ) {
     companion object {
         fun parse(o: JSONObject): WorkspaceTaskCreation? {
@@ -436,6 +437,7 @@ data class WorkspaceTaskCreation(
                 name = o.str("name") ?: "",
                 worktree = WorkspaceTaskWorktree.parse(o.obj("worktree")),
                 status = parseWorkspaceTaskStatus(o.str("status")),
+                cwd = o.str("cwd") ?: "",
             )
         }
     }

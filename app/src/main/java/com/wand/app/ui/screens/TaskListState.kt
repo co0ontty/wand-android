@@ -180,6 +180,7 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
         name: String,
         cwd: String,
         worktree: Boolean,
+        workspaceId: String? = null,
     ): TaskCreationResult? = mutationMutex.withLock {
         val normalizedName = name.trim()
         val normalizedCwd = cwd.trim()
@@ -187,19 +188,33 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
             mutationError = if (normalizedName.isEmpty()) "请输入任务名称" else "任务名称无效或过长"
             return@withLock null
         }
-        if (normalizedCwd.isEmpty()) {
-            mutationError = "请选择任务目录"
-            return@withLock null
-        }
         mutationBusy = true
         mutationError = null
         try {
-            val workspace = findOrCreateWorkspace(normalizedCwd)
-            val task = port.createWorkspaceTask(
-                workspaceId = workspace.id,
-                name = normalizedName,
-                worktree = worktree,
-            )
+            val task = if (!workspaceId.isNullOrBlank()) {
+                port.createWorkspaceTask(
+                    workspaceId = workspaceId,
+                    name = normalizedName,
+                    worktree = worktree,
+                    cwd = normalizedCwd.ifEmpty { null },
+                )
+            } else {
+                port.createStandaloneTask(
+                    name = normalizedName,
+                    cwd = normalizedCwd.ifEmpty { null },
+                    worktree = if (normalizedCwd.isEmpty()) false else worktree,
+                )
+            }
+            val workspace = port.listWorkspaces().firstOrNull { it.id == task.workspaceId }
+                ?: Workspace(
+                    id = task.workspaceId,
+                    name = "",
+                    cwd = task.cwd.ifEmpty { normalizedCwd },
+                    defaultProvider = null,
+                    layout = null,
+                    createdAt = null,
+                    lastOpenedAt = null,
+                )
             load(silent = true)
             TaskCreationResult(workspace, task)
         } catch (error: Exception) {
@@ -338,21 +353,6 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
 
     fun clearMutationError() {
         mutationError = null
-    }
-
-    private suspend fun findOrCreateWorkspace(cwd: String): Workspace {
-        val normalized = normalizeWorkspacePath(cwd)
-        val existing = port.listWorkspaces()
-            .firstOrNull { normalizeWorkspacePath(it.cwd) == normalized }
-        if (existing != null) return existing
-        return try {
-            port.createWorkspace(directoryName(normalized), cwd)
-        } catch (creationError: Exception) {
-            if (creationError is CancellationException) throw creationError
-            port.listWorkspaces()
-                .firstOrNull { normalizeWorkspacePath(it.cwd) == normalized }
-                ?: throw creationError
-        }
     }
 
     companion object {

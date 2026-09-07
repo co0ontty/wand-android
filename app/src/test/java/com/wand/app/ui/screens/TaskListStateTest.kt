@@ -44,45 +44,44 @@ class TaskListStateTest {
     }
 
     @Test
-    fun createTaskReusesWorkspaceAfterNormalizingTrailingSlash() = runBlocking {
+    fun createTaskUnderProjectKeepsWorkspaceId() = runBlocking {
         val existing = workspace("ws-existing", "/repo")
         val port = FakeWorkspacePort().apply { workspaces = mutableListOf(existing) }
         val state = TaskListState(port)
 
-        val result = state.createTask("  修复恢复流程  ", "/repo/", worktree = true)
+        val result = state.createTask("  修复恢复流程  ", "/repo/", worktree = true, workspaceId = "ws-existing")
 
         assertSame(existing, result?.workspace)
         assertTrue(port.createdWorkspaces.isEmpty())
-        assertEquals(TaskRequest("ws-existing", "修复恢复流程", true), port.taskRequests.single())
+        assertTrue(port.standaloneRequests.isEmpty())
+        assertEquals(TaskRequest("ws-existing", "修复恢复流程", true, "/repo/"), port.taskRequests.single())
         assertNull(state.mutationError)
     }
 
     @Test
-    fun createTaskCreatesImplicitWorkspaceFromDirectoryName() = runBlocking {
+    fun createTaskWithoutProjectUsesStandaloneEndpoint() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
 
         val result = state.createTask("新任务", "/work/wand", worktree = false)
 
-        assertEquals("wand", port.createdWorkspaces.single().first)
-        assertEquals("/work/wand", port.createdWorkspaces.single().second)
-        assertEquals(port.workspaces.single().id, result?.workspace?.id)
-        assertEquals(false, port.taskRequests.single().worktree)
+        assertTrue(port.createdWorkspaces.isEmpty())
+        assertTrue(port.taskRequests.isEmpty())
+        assertEquals(StandaloneRequest("新任务", "/work/wand", false), port.standaloneRequests.single())
+        assertEquals("wand-global", result?.workspace?.id)
+        assertEquals("/work/wand", result?.task?.cwd)
     }
 
     @Test
-    fun createTaskRecoversConcurrentWorkspaceCreation() = runBlocking {
-        val raced = workspace("ws-raced", "/repo")
-        val port = FakeWorkspacePort().apply {
-            createWorkspaceFailure = IllegalStateException("已存在")
-            workspaceAfterCreateFailure = raced
-        }
+    fun createTaskWithoutDirectoryUsesGlobalScratch() = runBlocking {
+        val port = FakeWorkspacePort()
         val state = TaskListState(port)
 
-        val result = state.createTask("任务", "/repo", worktree = true)
+        val result = state.createTask("随口问问", "", worktree = true)
 
-        assertSame(raced, result?.workspace)
-        assertEquals("ws-raced", port.taskRequests.single().workspaceId)
+        assertEquals(StandaloneRequest("随口问问", null, false), port.standaloneRequests.single())
+        assertEquals("/scratch", result?.task?.cwd)
+        assertNull(state.mutationError)
     }
 
     @Test
@@ -237,6 +236,7 @@ class TaskListStateTest {
         var createWorkspaceFailure: Exception? = null
         var workspaceAfterCreateFailure: Workspace? = null
         val taskRequests = mutableListOf<TaskRequest>()
+        val standaloneRequests = mutableListOf<StandaloneRequest>()
         val renamedTasks = mutableListOf<Pair<String, String>>()
         val clearedTaskIds = mutableListOf<String>()
         val deletedTaskIds = mutableListOf<String>()
@@ -267,14 +267,32 @@ class TaskListStateTest {
             name: String,
             baseRef: String?,
             worktree: Boolean?,
+            cwd: String?,
         ): WorkspaceTaskCreation {
-            taskRequests += TaskRequest(workspaceId, name, worktree)
+            taskRequests += TaskRequest(workspaceId, name, worktree, cwd)
             return WorkspaceTaskCreation(
                 id = "task-${taskRequests.size}",
                 workspaceId = workspaceId,
                 name = name,
                 worktree = null,
                 status = WorkspaceTaskStatus.Active,
+                cwd = cwd.orEmpty().ifEmpty { "/scratch" },
+            )
+        }
+
+        override suspend fun createStandaloneTask(
+            name: String,
+            cwd: String?,
+            worktree: Boolean?,
+        ): WorkspaceTaskCreation {
+            standaloneRequests += StandaloneRequest(name, cwd, worktree)
+            return WorkspaceTaskCreation(
+                id = "task-standalone-${standaloneRequests.size}",
+                workspaceId = "wand-global",
+                name = name,
+                worktree = null,
+                status = WorkspaceTaskStatus.Active,
+                cwd = cwd.orEmpty().ifEmpty { "/scratch" },
             )
         }
 
@@ -322,6 +340,13 @@ class TaskListStateTest {
     private data class TaskRequest(
         val workspaceId: String,
         val name: String,
+        val worktree: Boolean?,
+        val cwd: String? = null,
+    )
+
+    private data class StandaloneRequest(
+        val name: String,
+        val cwd: String?,
         val worktree: Boolean?,
     )
 
