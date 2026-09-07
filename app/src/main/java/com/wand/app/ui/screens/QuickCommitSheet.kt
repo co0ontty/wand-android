@@ -137,47 +137,6 @@ fun QuickCommitStatusRefreshEffect(
     }
 }
 
-/** 会话顶栏的 git 徽标：分支名 + 待提交数（对齐网页 topbar-git-badge）。 */
-@Composable
-fun GitTopBarBadge(qc: QuickCommitStore, onClick: () -> Unit) {
-    val s = qc.status ?: return
-    if (!s.isGit) return
-    val branch = s.branch ?: "?"
-    val count = s.modifiedCount ?: 0
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        modifier = Modifier
-            .padding(end = 10.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(0.55.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.46f), CircleShape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-    ) {
-        GitBranchIcon(tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-        Text(
-            branch,
-            fontSize = 12.sp,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 88.dp),
-        )
-        if (count > 0) {
-            Text(
-                "·$count",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        } else {
-            Text("✓", fontSize = 11.sp, color = WandColors.running)
-        }
-    }
-}
-
 /**
  * Git 变更统计按钮（对齐 iOS gitChangesButton）：~修改 -删除 +新增，
  * 点击打开快速提交面板。

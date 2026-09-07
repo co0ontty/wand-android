@@ -2,19 +2,9 @@ package com.wand.app.ui.screens
 
 import org.junit.Assert.assertEquals
 import com.wand.app.ui.singleUnitDurationLabel
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SessionListPresentationTest {
-    @Test
-    fun directoryBrowserBackGoesToParentThenStopsAtRoot() {
-        assertEquals("/Users/me", directoryParentPath("/Users/me/project"))
-        assertEquals("/Users", directoryParentPath("/Users/me"))
-        assertEquals("/", directoryParentPath("/Users"))
-        assertNull(directoryParentPath("/"))
-        assertNull(directoryParentPath(""))
-    }
-
     @Test
     fun relativeTimeUsesSingleUnitWithoutSuffix() {
         assertEquals("刚刚", singleUnitDurationLabel(30_000L))

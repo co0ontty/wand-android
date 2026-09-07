@@ -8,6 +8,23 @@ private val allSessionModeIds = linkedSetOf(
     "native",
 )
 
+data class SessionModeOption(
+    val id: String,
+    val label: String,
+    val description: String,
+)
+
+val SESSION_MODE_OPTIONS = listOf(
+    SessionModeOption("managed", "托管", "全自动完成任务"),
+    SessionModeOption("full-access", "全权限", "自动确认权限"),
+    SessionModeOption("auto-edit", "自动编辑", "自动确认修改"),
+    SessionModeOption("default", "标准", "逐步确认操作"),
+    SessionModeOption("native", "原生", "原生结构化输出"),
+)
+
+fun sessionModeLabel(id: String): String =
+    SESSION_MODE_OPTIONS.firstOrNull { it.id == id }?.label ?: "标准"
+
 fun providerDisplayName(provider: String?): String = when (provider) {
     null, "terminal" -> "终端"
     "codex" -> "Codex"

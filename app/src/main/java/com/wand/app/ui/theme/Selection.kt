@@ -9,10 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
@@ -55,18 +51,23 @@ fun Modifier.wandSelectedSurface(
         .then(if (width > 0.dp) Modifier.border(width, stroke, shape) else Modifier)
 }
 
-/** 选中条相对行左缘的起点。 */
+/**
+ * Legacy spacing tokens kept for source compatibility with older callers.
+ * Row selection no longer uses a leading accent bar.
+ */
 val WandSelectedRowBarStart: Dp = 5.dp
 
-/** 选中条宽度。 */
+/** @see WandSelectedRowBarStart */
 val WandSelectedRowBarWidth: Dp = 2.dp
 
-/** 行内容必须让出的左槽，避免状态点 / 图标压住选中条。 */
+/** @see WandSelectedRowBarStart */
 val WandSelectedRowLeadingInset: Dp = 14.dp
 
 /**
- * 列表行选中态：品牌软底 + 左侧品牌条。
- * 对齐 Web `.session-item.selected::before`，避免每一行再套一圈描边。
+ * 列表行选中态：轻量品牌软底 + 细品牌描边。
+ *
+ * 选中态不再使用左侧竖条。竖条在窄侧边栏里会抢视觉焦点，也容易压住首个图标或文字；
+ * 细描边能完整包住行，同时保持列表的层次和点击目标清晰。
  * [contentInset] 为 true 时始终留出左槽，选中/未选不会左右跳动。
  */
 @Composable
@@ -81,21 +82,15 @@ fun Modifier.wandSelectedRow(
         WandMotion.tweenFast(),
         label = "wandSelectedRowFill",
     )
-    val accent = WandColors.brand
+    val stroke by animateColorAsState(
+        if (selected) WandColors.brand.copy(alpha = 0.46f) else Color.Transparent,
+        WandMotion.tweenFast(),
+        label = "wandSelectedRowStroke",
+    )
     return this
         .clip(shape)
         .background(fill)
-        .drawBehind {
-            if (!selected) return@drawBehind
-            val barWidth = WandSelectedRowBarWidth.toPx()
-            val inset = size.height * 0.22f
-            drawRoundRect(
-                color = accent,
-                topLeft = Offset(WandSelectedRowBarStart.toPx(), inset),
-                size = Size(barWidth, (size.height - inset * 2).coerceAtLeast(0f)),
-                cornerRadius = CornerRadius(barWidth),
-            )
-        }
+        .then(if (selected) Modifier.border(1.dp, stroke, shape) else Modifier)
         .then(
             if (contentInset) Modifier.padding(start = WandSelectedRowLeadingInset) else Modifier,
         )

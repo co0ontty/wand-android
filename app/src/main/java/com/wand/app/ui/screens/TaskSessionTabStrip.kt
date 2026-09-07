@@ -6,12 +6,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +54,7 @@ import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandTerminal
 import com.wand.app.ui.workspaces.WorkspaceTargetState
 import com.wand.app.ui.workspaces.WorkspaceTaskState
 import com.wand.app.ui.workspaces.WorkspaceWorkflow
@@ -73,6 +79,7 @@ fun TaskSessionTabStrip(
     onCreated: (SessionSnapshot) -> Unit,
     onDeleted: ((WorkspaceSessionSummary) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    terminalChrome: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     val workflow = remember(api, taskId) { WorkspaceWorkflow(api, scope) }
@@ -129,40 +136,55 @@ fun TaskSessionTabStrip(
 
     val tabs = (taskState as? WorkspaceTaskState.Content)?.orderedSessions
     if (tabs.isNullOrEmpty()) return
+    val palette = sessionStripPalette(terminalChrome)
 
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(palette.background),
     ) {
         Row(
             modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val parentNames = tabStripParentNames(taskState)
-            tabs.forEachIndexed { index, session ->
-                TaskSessionTab(
-                    session = session,
-                    index = index,
-                    isSelected = session.id == currentSessionId,
-                    parentNames = parentNames,
-                    onClick = { onSelect(session) },
-                    onDelete = if (onDeleted != null) {
-                        { deleteError = null; deleteTarget = session }
-                    } else {
-                        null
-                    },
-                )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val parentNames = tabStripParentNames(taskState)
+                tabs.forEachIndexed { index, session ->
+                    TaskSessionTab(
+                        session = session,
+                        index = index,
+                        isSelected = session.id == currentSessionId,
+                        parentNames = parentNames,
+                        palette = palette,
+                        onClick = { onSelect(session) },
+                        onDelete = if (onDeleted != null) {
+                            { deleteError = null; deleteTarget = session }
+                        } else {
+                            null
+                        },
+                    )
+                }
             }
+            TaskSessionAddButton(
+                palette = palette,
+                enabled = targetState is WorkspaceTargetState.Closed,
+                onClick = { openTargetSheet() },
+            )
         }
-        TaskSessionAddButton(
-            enabled = targetState is WorkspaceTargetState.Closed,
-            onClick = { openTargetSheet() },
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(palette.chipBorder.copy(alpha = if (terminalChrome) 1f else 0.85f)),
         )
     }
 
@@ -251,16 +273,17 @@ fun TaskSessionTabStrip(
 
 @Composable
 private fun TaskSessionAddButton(
+    palette: SessionStripPalette,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(SessionTabCorner)
     Box(
         modifier = Modifier
-            .size(34.dp)
+            .size(SessionTabHeight)
             .clip(shape)
-            .background(WandColors.bgElevated.copy(alpha = 0.72f))
-            .border(1.dp, WandColors.border, shape)
+            .background(palette.plusFill)
+            .border(1.dp, palette.chipBorder, shape)
             .clickable(enabled = enabled, onClick = onClick)
             .semantics { contentDescription = "新建工作窗口" },
         contentAlignment = Alignment.Center,
@@ -268,8 +291,8 @@ private fun TaskSessionAddButton(
         Icon(
             imageVector = WandIcons.add,
             contentDescription = null,
-            tint = if (enabled) WandColors.brand else WandColors.textMuted,
-            modifier = Modifier.size(17.dp),
+            tint = if (enabled) WandColors.brand else palette.muted,
+            modifier = Modifier.size(16.dp),
         )
     }
 }
@@ -283,41 +306,90 @@ private fun tabStripParentNames(taskState: WorkspaceTaskState): List<String> = w
     else -> emptyList()
 }
 
+internal data class SessionStripPalette(
+    val background: Color,
+    val chipFill: Color,
+    val chipBorder: Color,
+    val selectedFill: Color,
+    val selectedBorder: Color,
+    val text: Color,
+    val selectedText: Color,
+    val muted: Color,
+    val plusFill: Color,
+)
+
+@Composable
+@ReadOnlyComposable
+internal fun sessionStripPalette(terminalChrome: Boolean): SessionStripPalette =
+    if (terminalChrome) {
+        SessionStripPalette(
+            background = WandTerminal.background,
+            chipFill = Color.White.copy(alpha = 0.07f),
+            chipBorder = Color.White.copy(alpha = 0.14f),
+            selectedFill = WandColors.brand.copy(alpha = 0.22f),
+            selectedBorder = WandColors.brand.copy(alpha = 0.55f),
+            text = WandTerminal.text.copy(alpha = 0.78f),
+            selectedText = WandTerminal.text,
+            muted = WandTerminal.text.copy(alpha = 0.45f),
+            plusFill = Color.White.copy(alpha = 0.06f),
+        )
+    } else {
+        SessionStripPalette(
+            background = WandColors.bgPrimary,
+            chipFill = WandColors.surface,
+            chipBorder = WandColors.border,
+            selectedFill = WandColors.selectedFill,
+            selectedBorder = WandColors.brand.copy(alpha = 0.55f),
+            text = WandColors.textSecondary,
+            selectedText = WandColors.textPrimary,
+            muted = WandColors.textMuted,
+            plusFill = WandColors.surface,
+        )
+    }
+
+internal fun sessionTabTitleMaxDp(selected: Boolean): Int =
+    if (selected) 168 else 112
+
+private val SessionTabHeight = 34.dp
+private val SessionTabCorner = 8.dp
+
 @Composable
 private fun TaskSessionTab(
     session: WorkspaceSessionSummary,
     index: Int,
     isSelected: Boolean,
     parentNames: Collection<String> = emptyList(),
+    palette: SessionStripPalette,
     onClick: () -> Unit,
     onDelete: (() -> Unit)? = null,
 ) {
     val live = session.withLiveTitle()
     val label = listSessionLabel(live, index, parentNames)
     val accent = if (session.provider == "codex") WandColors.info else WandColors.brand
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(SessionTabCorner)
     val activity = live.activityStatus()
     val isRunning = activity == "running" || activity == "thinking"
     val a11yLabel = if (isSelected) "当前工作窗口 $label" else "切换到 $label"
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    LaunchedEffect(isSelected) {
+        if (isSelected) bringIntoViewRequester.bringIntoView()
+    }
 
     Row(
         modifier = Modifier
-            .height(34.dp)
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .height(SessionTabHeight)
             .clip(shape)
-            .background(if (isSelected) WandColors.selectedFill else WandColors.bgElevated.copy(alpha = 0.72f))
+            .background(if (isSelected) palette.selectedFill else palette.chipFill)
             .border(
                 width = 1.dp,
-                color = if (isSelected) WandColors.brand.copy(alpha = 0.55f) else WandColors.border,
+                color = if (isSelected) palette.selectedBorder else palette.chipBorder,
                 shape = shape,
             )
             .clickable(onClick = onClick)
             .padding(
-                start = if (isSelected) 10.dp else 8.dp,
-                end = when {
-                    isSelected && onDelete != null -> 2.dp
-                    isSelected -> 10.dp
-                    else -> 8.dp
-                },
+                start = 10.dp,
+                end = if (isSelected && onDelete != null) 2.dp else 10.dp,
             )
             .semantics { contentDescription = a11yLabel },
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -326,20 +398,21 @@ private fun TaskSessionTab(
         Icon(
             painter = BrandLogos.painterForProvider(session.provider),
             contentDescription = null,
-            tint = BrandLogos.tintForProvider(session.provider, if (isSelected) accent else WandColors.textSecondary),
+            tint = BrandLogos.tintForProvider(
+                session.provider,
+                if (isSelected) accent else palette.text,
+            ),
             modifier = Modifier.size(14.dp),
         )
-        if (isSelected) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 180.dp),
-            )
-        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (isSelected) palette.selectedText else palette.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = sessionTabTitleMaxDp(isSelected).dp),
+        )
         if (isRunning) {
             Box(
                 modifier = Modifier
@@ -351,7 +424,7 @@ private fun TaskSessionTab(
             Icon(
                 imageVector = WandIcons.close,
                 contentDescription = "删除终端 $label",
-                tint = WandColors.textMuted,
+                tint = palette.muted,
                 modifier = Modifier
                     .size(22.dp)
                     .clickable(onClick = onDelete)

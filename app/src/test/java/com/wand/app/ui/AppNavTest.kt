@@ -108,9 +108,18 @@ class AppNavTest {
     }
 
     @Test
-    fun roundTrip_newSessionWithCwd() {
-        val restored = roundTrip(Screen.NewSession("/some/path"))
-        assertEquals(Screen.NewSession("/some/path"), restored)
+    fun chatAndPtyUseHeavyDetailTransition() {
+        assertTrue(usesHeavyDetailTransition(Screen.Chat("session-1")))
+        assertTrue(usesHeavyDetailTransition(Screen.PtyTerminal("session-2")))
+        assertEquals(false, usesHeavyDetailTransition(Screen.SessionList))
+        assertEquals(false, usesHeavyDetailTransition(Screen.Settings))
+        assertEquals(false, usesHeavyDetailTransition(Screen.WorkspaceTask("ws", "task", "P", "T")))
+    }
+
+    @Test
+    fun oldNewSessionKeyRestoresToTaskHome() {
+        assertEquals(Screen.SessionList, NavState.deserializeScreen("new-session"))
+        assertEquals(Screen.SessionList, NavState.deserializeScreen("new-session:/tmp/project"))
     }
 
     @Test

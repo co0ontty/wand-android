@@ -505,68 +505,67 @@ fun TaskListScreen(
     Column(
         modifier = modifier.fillMaxSize().background(WandColors.bgPrimary),
     ) {
-        Box {
-            WandDetailTopBar(
-                title = serverDisplayName,
-                subtitle = "任务",
-                actions = {
-                    if (onCollapseSidebar != null) {
-                        WandIconButton(
-                            icon = WandIcons.panelCollapse,
-                            contentDescription = "收起任务侧边栏",
-                            onClick = onCollapseSidebar,
-                            variant = WandIconButtonVariant.Toolbar,
-                        )
-                    }
+        WandDetailTopBar(
+            title = serverDisplayName,
+            subtitle = "任务",
+            actions = {
+                if (onCollapseSidebar != null) {
                     WandIconButton(
-                        icon = WandIcons.add,
-                        contentDescription = "新建任务",
-                        onClick = { beginNewTask() },
-                        variant = WandIconButtonVariant.Accent,
-                        enabled = interactionEnabled,
+                        icon = WandIcons.panelCollapse,
+                        contentDescription = "收起任务侧边栏",
+                        onClick = onCollapseSidebar,
+                        variant = WandIconButtonVariant.Toolbar,
                     )
+                }
+                WandIconButton(
+                    icon = WandIcons.add,
+                    contentDescription = "新建任务",
+                    onClick = { beginNewTask() },
+                    variant = WandIconButtonVariant.Accent,
+                    enabled = interactionEnabled,
+                )
+                Box {
                     WandIconButton(
                         icon = WandIcons.more,
                         contentDescription = "更多选项",
                         onClick = { menuOpen = true },
                         variant = WandIconButtonVariant.Toolbar,
                     )
-                },
-            )
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                containerColor = WandColors.bgElevated,
-                modifier = Modifier.align(Alignment.TopEnd),
-            ) {
-                DropdownMenuItem(
-                    text = { Text("刷新任务") },
-                    leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
-                    onClick = {
-                        menuOpen = false
-                        scope.launch {
-                            state.load(silent = true)
-                            historyState.load(silent = true)
-                        }
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("设置") },
-                    leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
-                    onClick = { menuOpen = false; onOpenSettings() },
-                )
-                DropdownMenuItem(
-                    text = { Text("打开网页版") },
-                    leadingIcon = { Icon(WandIcons.web, contentDescription = null) },
-                    onClick = { menuOpen = false; onOpenWeb() },
-                )
-                DropdownMenuItem(
-                    text = { Text("切换服务器") },
-                    leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
-                    onClick = { menuOpen = false; onSwitchServer() },
-                )
-            }
-        }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                        containerColor = WandColors.bgElevated,
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("刷新任务") },
+                            leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                scope.launch {
+                                    state.load(silent = true)
+                                    historyState.load(silent = true)
+                                }
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("设置") },
+                            leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenSettings() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("打开网页版") },
+                            leadingIcon = { Icon(WandIcons.web, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenWeb() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("切换服务器") },
+                            leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
+                            onClick = { menuOpen = false; onSwitchServer() },
+                        )
+                    }
+                }
+            },
+        )
 
         Box(modifier = Modifier.fillMaxSize()) {
             AmbientBackground(Modifier.fillMaxSize())
@@ -1336,15 +1335,12 @@ internal fun taskSessionRoute(
     task: WorkspaceTaskSummary?,
 ): TaskSessionRoute = TaskSessionRoute(
     sessionId = session.id,
-    structured = session.isStructuredSession(),
+    structured = session.isStructured,
     workspaceId = task?.let { group.workspaceId },
     taskId = task?.id,
     workspaceName = task?.let { group.workspaceName },
     taskName = task?.name,
 )
-
-private fun WorkspaceSessionSummary.isStructuredSession(): Boolean =
-    sessionKind == "structured" || runner == "structured"
 
 private fun TaskDirectoryGroup.asWorkspace(): Workspace = Workspace(
     id = workspaceId,

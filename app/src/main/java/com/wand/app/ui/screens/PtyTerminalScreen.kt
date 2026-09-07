@@ -45,6 +45,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -55,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -100,12 +102,15 @@ import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandSnackbarHost
+import com.wand.app.ui.components.showWandNotice
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.WandTerminal
 import com.wand.app.ui.theme.glassSurface
@@ -142,6 +147,7 @@ fun PtyTerminalScreen(
     workspaceName: String? = null,
     taskName: String? = null,
     taskId: String? = null,
+    taskSessions: List<WorkspaceSessionSummary> = emptyList(),
     onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
     onDeleteTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
@@ -151,6 +157,7 @@ fun PtyTerminalScreen(
 ) {
     var snapshot by remember(sessionId) { mutableStateOf<SessionSnapshot?>(null) }
     var snapshotResolved by remember(sessionId) { mutableStateOf(false) }
+    var allowWebView by remember(sessionId) { mutableStateOf(false) }
     var webViewReady by remember(sessionId) { mutableStateOf(false) }
     var toast by remember(sessionId) { mutableStateOf<String?>(null) }
     // 底部快捷栏左端的拉手：折叠时只露出快捷键栏，展开时在上方滑出输入抽屉
@@ -208,6 +215,13 @@ fun PtyTerminalScreen(
         }
         snapshotResolved = true
     }
+    LaunchedEffect(sessionId) {
+        allowWebView = false
+        webViewReady = false
+        delay(WandMotion.normal.toLong())
+        withFrameNanos {}
+        allowWebView = true
+    }
     LaunchedEffect(api, sessionId, shortcutQueue) {
         for (shortcut in shortcutQueue) {
             try {
@@ -228,11 +242,11 @@ fun PtyTerminalScreen(
         enabled = snapshotResolved,
     )
 
+    val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(toast) {
-        if (toast != null) {
-            delay(2_600)
-            toast = null
-        }
+        val message = toast ?: return@LaunchedEffect
+        snackbarHostState.showWandNotice(message)
+        if (toast == message) toast = null
     }
 
     fun sendPtyDraft() {
@@ -281,6 +295,7 @@ fun PtyTerminalScreen(
         // 合成缓冲，部分 Android GPU 上会表现为整块终端反复闪烁。PTY 的 chrome 使用
         // 稳定的半透明降级材质，终端本体保持直接合成。
         containerColor = WandColors.bgPrimary,
+        snackbarHost = { WandSnackbarHost(snackbarHostState) },
         topBar = {
             Column {
                 PtyTopBar(
@@ -304,6 +319,7 @@ fun PtyTerminalScreen(
                         onSelect = onSwitchTaskSession,
                         onCreated = onCreateTaskSession,
                         onDeleted = onDeleteTaskSession,
+                        terminalChrome = true,
                     )
                 }
             }
@@ -331,14 +347,28 @@ fun PtyTerminalScreen(
             )
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (onSwitchTaskSession != null) {
+                        Modifier.taskSessionSwipe(
+                            sessions = taskSessions,
+                            currentSessionId = sessionId,
+                            onSelect = onSwitchTaskSession,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
                     .background(TerminalBackground),
             ) {
-                if (snapshotResolved) {
+                if (snapshotResolved && allowWebView) {
                     if (snapshot == null) {
                         PtyConnectionBanner(
                             message = "未能加载会话状态，终端仍可继续使用。",
@@ -376,21 +406,7 @@ fun PtyTerminalScreen(
                     onDismiss = { quickCommit.closePanel() },
                 )
             }
-            toast?.let { message ->
-                Text(
-                    message,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(padding)
-                        .padding(top = 10.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                )
-            }
+
         }
     }
 }
@@ -432,7 +448,7 @@ private fun PtyTopBar(
             null
         },
         titleContent = {
-            PtyProviderBadge(snapshot?.provider)
+            WandProviderMark(provider = snapshot?.provider, variant = WandProviderMarkVariant.Tinted)
             Column(modifier = Modifier.weight(1f)) {
                 ChatTopicTitle(
                     text = sessionChromeTitle(
@@ -674,111 +690,124 @@ private fun PtyInputDrawer(
 ) {
     val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
     val focusRequester = remember { FocusRequester() }
+    val expanded = pendingAttachments.isNotEmpty()
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
     }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        if (pendingAttachments.isNotEmpty()) {
-            PendingAttachmentsPreview(
-                attachments = pendingAttachments,
-                baseUrl = baseUrl,
-                onRemove = onRemoveAttachment,
+    val plusMenu: @Composable () -> Unit = {
+        ComposerActionsMenu(
+            backdrop = null,
+            uploading = uploading,
+            onPickPhoto = onPickPhoto,
+            onPickFile = onPickFile,
+        )
+    }
+    val sendButton: @Composable () -> Unit = {
+        FilledComposerAction(
+            enabled = canSend,
+            fillColor = if (canSend) WandColors.brand else WandColors.textSecondary.copy(alpha = 0.16f),
+            contentDescription = "发送",
+            onClick = onSend,
+        ) {
+            Icon(
+                WandIcons.arrowUp,
+                contentDescription = null,
+                tint = if (canSend) WandColors.textPrimary else WandColors.textSecondary.copy(alpha = 0.55f),
+                modifier = Modifier.size(ComposerActionIconSize),
             )
         }
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            ComposerActionsMenu(
-                backdrop = null,
-                uploading = uploading,
-                onPickPhoto = onPickPhoto,
-                onPickFile = onPickFile,
-            )
-            BasicTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                textStyle = TextStyle(
-                    fontSize = 16.sp,
-                    lineHeight = 21.sp,
-                    color = WandColors.textPrimary,
-                ),
-                cursorBrush = SolidColor(WandColors.brand),
-                minLines = 1,
-                maxLines = 5,
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.None,
-                    autoCorrectEnabled = false,
-                    imeAction = ImeAction.Send,
-                ),
-                keyboardActions = KeyboardActions(
-                    onSend = { if (canSend) onSend() },
-                ),
-                decorationBox = { innerTextField ->
-                    Box(
-                        contentAlignment = Alignment.CenterStart,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 40.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(WandColors.surfaceSoft.copy(alpha = 0.7f))
-                            .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
-                    ) {
-                        if (draft.isEmpty()) {
-                            Text(
-                                "输入终端命令",
-                                fontSize = 16.sp,
-                                color = WandColors.textMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        innerTextField()
-                    }
-                },
+    }
+    NativeComposerSurface(
+        backdrop = null,
+        expanded = expanded,
+        drawSurface = false,
+        modifier = Modifier.padding(start = 4.dp, end = 2.dp, top = 4.dp, bottom = 2.dp),
+        collapsedLeading = { plusMenu() },
+        inputContent = {
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .focusRequester(focusRequester),
-            )
+                    .heightIn(min = 34.dp),
+            ) {
+                if (expanded) {
+                    PendingAttachmentsPreview(
+                        attachments = pendingAttachments,
+                        baseUrl = baseUrl,
+                        onRemove = onRemoveAttachment,
+                        modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp),
+                    )
+                }
+                BasicTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    textStyle = TextStyle(
+                        fontSize = 16.sp,
+                        lineHeight = 21.sp,
+                        color = WandColors.textPrimary,
+                    ),
+                    cursorBrush = SolidColor(WandColors.brand),
+                    minLines = 1,
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrectEnabled = false,
+                        imeAction = ImeAction.Send,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onSend = { if (canSend) onSend() },
+                    ),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            contentAlignment = Alignment.CenterStart,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
+                        ) {
+                            if (draft.isEmpty()) {
+                                Text(
+                                    "输入终端命令",
+                                    fontSize = 16.sp,
+                                    color = WandColors.textMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 34.dp, max = 132.dp)
+                        .focusRequester(focusRequester),
+                )
+            }
+        },
+        collapsedTrailing = {
             VoiceMicButton(
                 voice = voice,
                 voiceMode = false,
-                onToggleMode = {},
+                onToggleMode = { runCatching { focusRequester.requestFocus() } },
                 onMicDown = onMicDown,
             )
-            PtyDrawerSendButton(enabled = canSend, onClick = onSend)
-        }
-    }
-}
-@Composable
-private fun PtyDrawerSendButton(enabled: Boolean, onClick: () -> Unit) {
-    val tint = if (enabled) WandColors.textPrimary else WandColors.textSecondary.copy(alpha = 0.55f)
-    val background = if (enabled) WandColors.brand else WandColors.textSecondary.copy(alpha = 0.16f)
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .background(background)
-            .clickable(
-                enabled = enabled,
-                onClickLabel = "发送",
-                role = Role.Button,
-                onClick = onClick,
-            ),
-    ) {
-        Icon(
-            WandIcons.arrowUp,
-            contentDescription = "发送",
-            tint = tint,
-            modifier = Modifier.size(18.dp),
-        )
-    }
+            sendButton()
+        },
+        expandedControls = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
+                modifier = Modifier.weight(1f),
+            ) {
+                plusMenu()
+            }
+            VoiceMicButton(
+                voice = voice,
+                voiceMode = false,
+                onToggleMode = { runCatching { focusRequester.requestFocus() } },
+                onMicDown = onMicDown,
+            )
+            sendButton()
+        },
+    )
 }
 
 /// 终端快捷键：所有按键统一高度、圆角、底色与描边，视觉重量只靠字号微调；
@@ -1070,7 +1099,10 @@ private val NativeTerminalSetupScript =
             '--term-font-size:10px!important;--term-row-height:15px!important;}' +
             '.is-wand-embed-terminal .terminal-scroll-wrap .xterm{padding:8px 4px 6px!important;}' +
             '.is-wand-embed-terminal .terminal-container{' +
-            'margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;}';
+            'margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;}' +
+            '.is-wand-embed-terminal .notification-bubble,' +
+            '.is-wand-embed-terminal .wand-ui-toast-viewport,' +
+            '.is-wand-embed-terminal .wand-ui-toast{display:none!important;}';
           document.head.appendChild(style);
         }
         function fit() {
@@ -1163,7 +1195,3 @@ private fun terminalShortcutForHardwareEvent(event: AndroidKeyEvent): TerminalSh
     )
 }
 
-@Composable
-private fun PtyProviderBadge(provider: String?) {
-    WandProviderMark(provider = provider, variant = WandProviderMarkVariant.Tinted)
-}

@@ -3,37 +3,6 @@ package com.wand.app.data
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class AgentActivityItem(
-    val sessionId: String,
-    val missionId: String?,
-    val attemptId: String?,
-    val state: String,
-    val title: String,
-    val summary: String?,
-    val provider: String?,
-    val cwd: String?,
-    val updatedAt: String,
-    val readAt: String?,
-) {
-    companion object {
-        fun parseList(array: JSONArray?): List<AgentActivityItem> = array?.parseEach { item ->
-            val sessionId = item.str("sessionId") ?: return@parseEach null
-            AgentActivityItem(
-                sessionId = sessionId,
-                missionId = item.str("missionId"),
-                attemptId = item.str("attemptId"),
-                state = item.str("state") ?: "done",
-                title = item.str("title") ?: "Agent 会话",
-                summary = item.str("summary"),
-                provider = item.str("provider"),
-                cwd = item.str("cwd"),
-                updatedAt = item.str("updatedAt") ?: "",
-                readAt = item.str("readAt"),
-            )
-        } ?: emptyList()
-    }
-}
-
 data class MissionAttempt(
     val id: String,
     val missionId: String,
@@ -140,7 +109,6 @@ data class MissionDiff(
 
 interface MissionsPort {
     suspend fun defaultMissionCwd(): String
-    suspend fun fetchInbox(): List<AgentActivityItem>
     suspend fun fetchMissions(): List<MissionInfo>
     suspend fun createMission(
         title: String?,
@@ -163,5 +131,4 @@ interface MissionsPort {
     ): MissionReviewComment
     suspend fun sendMissionReview(missionId: String, attemptId: String): List<MissionReviewComment>
     suspend fun archiveMission(missionId: String): MissionInfo
-    suspend fun markInboxRead(sessionId: String?)
 }

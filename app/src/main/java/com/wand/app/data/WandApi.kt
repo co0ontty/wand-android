@@ -23,7 +23,7 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
  * 登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
-class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSessionPort, MissionsPort, WorkspacePort {
+class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPort, WorkspacePort {
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
@@ -327,7 +327,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     // MARK: - 模型与思考深度
 
-    override suspend fun models(): ModelsResponse =
+    suspend fun models(): ModelsResponse =
         ModelsResponse.parse(requestObject("GET", "/api/models"))
 
     /** model 传 null 表示恢复默认（服务端收 JSON null）。 */
@@ -434,7 +434,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
      * 对齐 Web createStructuredSession：Codex / OpenCode 显式指定各自 runner，
      * Claude 不传 runner、由服务端按默认（claude-cli-print）解析。
      */
-    override suspend fun createStructuredSession(
+    suspend fun createStructuredSession(
         cwd: String,
         mode: String?,
         prompt: String?,
@@ -458,7 +458,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     }
 
     /** PTY 会话：POST /api/commands。Qoder 的 provider ID 与可执行命令名称不同。 */
-    override suspend fun createPtySession(
+    suspend fun createPtySession(
         cwd: String,
         mode: String?,
         initialInput: String?,
@@ -476,20 +476,20 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     }
 
     /** 空白终端：仅启动服务端配置的登录 Shell，不运行任何 Provider CLI。 */
-    override suspend fun createShellSession(cwd: String): SessionSnapshot {
+    suspend fun createShellSession(cwd: String): SessionSnapshot {
         val body = JSONObject().put("shell", true).put("cwd", cwd)
         return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
     }
 
     /** 将「新建会话」默认项持久化到服务端配置。 */
-    override suspend fun updateNewSessionDefaults(
-        mode: String?,
-        model: String?,
-        modelProvider: String,
-        thinkingEffort: String?,
-        defaultProvider: String?,
-        defaultSessionKind: String?,
-        defaultTaskWorktree: Boolean?,
+    suspend fun updateNewSessionDefaults(
+        mode: String? = null,
+        model: String? = null,
+        modelProvider: String = "claude",
+        thinkingEffort: String? = null,
+        defaultProvider: String? = null,
+        defaultSessionKind: String? = null,
+        defaultTaskWorktree: Boolean? = null,
     ) {
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
@@ -532,9 +532,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun defaultMissionCwd(): String =
         requestObject("GET", "/api/config").str("defaultCwd").orEmpty()
-
-    override suspend fun fetchInbox(): List<AgentActivityItem> =
-        AgentActivityItem.parseList(requestObject("GET", "/api/inbox").arr("items"))
 
     override suspend fun fetchMissions(): List<MissionInfo> =
         MissionInfo.parseList(requestObject("GET", "/api/missions").arr("missions"))
@@ -597,12 +594,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
 
     override suspend fun archiveMission(missionId: String): MissionInfo =
         MissionInfo.parse(requestObject("POST", "/api/missions/${encode(missionId)}/archive"))
-
-    override suspend fun markInboxRead(sessionId: String?) {
-        val body = JSONObject()
-        if (sessionId != null) body.put("sessionId", sessionId)
-        requestData("POST", "/api/inbox/read", body)
-    }
 
     // MARK: - Git 快速提交
 
@@ -790,7 +781,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, NewSession
     suspend fun listDirectory(query: String): DirectoryListing =
         DirectoryListing.parse(requestObject("GET", "/api/directory?q=${encode(query)}"))
 
-    override suspend fun recentPaths(): List<RecentPath> =
+    suspend fun recentPaths(): List<RecentPath> =
         RecentPath.parseList(requestArray("GET", "/api/recent-paths"))
 
     override suspend fun serverConfig(): ServerConfigInfo =

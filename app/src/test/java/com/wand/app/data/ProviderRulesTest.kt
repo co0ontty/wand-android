@@ -1,6 +1,8 @@
 package com.wand.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProviderRulesTest {
@@ -32,6 +34,23 @@ class ProviderRulesTest {
         assertEquals("qoder-model", defaults.defaultFor("qoder"))
         assertEquals("full-access", clampSessionMode("managed", "codex"))
         assertEquals("managed", clampSessionMode("native", "opencode"))
+        assertEquals("托管", sessionModeLabel("managed"))
+        assertEquals("标准", sessionModeLabel("unknown"))
+        assertEquals(
+            listOf("managed", "full-access", "auto-edit", "default", "native"),
+            SESSION_MODE_OPTIONS.map { it.id },
+        )
+    }
+
+    @Test
+    fun structuredSessionRoutingPrefersKindThenRunner() {
+        assertTrue(isStructuredSession("structured", "pty"))
+        assertFalse(isStructuredSession("pty", "structured"))
+        assertTrue(isStructuredSession(null, "structured"))
+        assertTrue(isStructuredSession(null, "codex-cli-exec"))
+        assertTrue(isStructuredSession(null, "pi-cli-json"))
+        assertFalse(isStructuredSession(null, "pty"))
+        assertFalse(isStructuredSession(null, null))
     }
 
     @Test
@@ -77,6 +96,15 @@ class ProviderRulesTest {
                 grok = response.grokModels,
             ).map { it.id },
         )
+    }
+
+    @Test
+    fun modelSearchMatchesIdAndLabelKeywords() {
+        assertEquals(true, matchesModelSearch("opus", "claude-opus-4-6", "Opus 4.6"))
+        assertEquals(true, matchesModelSearch("GPT 5.4", "openai/gpt-5.4", "GPT-5.4"))
+        assertEquals(true, matchesModelSearch("默认", "", "默认 · Claude Sonnet 4.6"))
+        assertEquals(false, matchesModelSearch("kimi xyz", "openai/gpt-5.4", "GPT-5.4"))
+        assertEquals(true, matchesModelSearch("  ", "anything", "label"))
     }
 
 }

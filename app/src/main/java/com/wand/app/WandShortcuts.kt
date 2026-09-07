@@ -5,7 +5,8 @@ import android.content.Intent
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
-import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.TaskDirectoryGroup
+import com.wand.app.data.providerDisplayName
 
 /**
  * 长按 App 图标的快捷操作（Launcher App Shortcuts），对称 iOS QuickActions.swift。
@@ -13,8 +14,8 @@ import com.wand.app.data.SessionSnapshot
  * 静态 shortcut 绑定到具体 alias 上会随切换失效，动态项绑 ConnectActivity 始终在。
  *
  * 每个 shortcut 都拉起 ConnectActivity（exported 启动入口），带 quick_action /
- * open_session_id extra；ConnectActivity 自动连接成功后在 launchWebView 里把 extra
- * 透传给 HomeActivity，再由 WandApp 落到对应页面。
+ * open_session_id extra；ConnectActivity 自动连接成功后把 extra 透传给
+ * HomeActivity，再由 WandApp 落到对应页面。
  */
 object WandShortcuts {
     const val EXTRA_QUICK_ACTION = "quick_action"
@@ -25,8 +26,8 @@ object WandShortcuts {
 
     const val ACTION_NEW_SESSION = "new-session"
 
-    /** 系统最多展示 4 个：固定「新建任务」+ 最近 3 个结构化会话。 */
-    fun update(context: Context, serverId: String, sessions: List<SessionSnapshot>) {
+    /** 系统最多展示 4 个：固定「新建任务」+ 任务树里最近 3 个结构化会话。 */
+    fun update(context: Context, serverId: String, groups: List<TaskDirectoryGroup>) {
         val shortcuts = mutableListOf(
             staticShortcut(
                 context,
@@ -41,16 +42,20 @@ object WandShortcuts {
             },
         )
 
-        // 只取结构化会话：PTY 会话原生不承载（走网页版），快捷直达聊天才有意义。
-        sessions.asSequence()
-            .filter { (it.archived ?: false) == false && it.isStructured }
+        groups.asSequence()
+            .flatMap { it.tasks.asSequence() }
+            .flatMap { it.sessions.asSequence() }
+            .filter { it.isStructured }
+            .sortedByDescending { it.startedAt.orEmpty() }
+            .distinctBy { it.id }
             .take(3)
             .forEachIndexed { index, session ->
+                val title = session.title?.takeIf { it.isNotEmpty() } ?: "会话"
                 shortcuts += staticShortcut(
                     context,
                     id = "shortcut-session-$serverId-${session.id}",
-                    shortLabel = session.displayTitle.take(20).ifEmpty { "会话" },
-                    longLabel = "${session.providerLabel} · ${session.displayTitle}".take(40),
+                    shortLabel = title.take(20),
+                    longLabel = "${providerDisplayName(session.provider)} · $title".take(40),
                     iconRes = R.drawable.ic_shortcut_chat,
                     rank = 2 + index,
                 ) {

@@ -16,12 +16,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,6 +35,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -68,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.wand.app.R
 import com.wand.app.data.WandApi
@@ -162,12 +161,22 @@ fun SettingsScreen(
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .navigationBarsPadding()
-            .imePadding(),
-    ) {
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = Color.Transparent,
+        topBar = {
+            WandDetailTopBar(
+                title = "设置",
+                backdrop = glassBackdrop,
+                leading = {
+                    WandDetailBackButton(
+                        onClick = onBack,
+                        contentDescription = "关闭设置",
+                    )
+                },
+            )
+        },
+    ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -178,8 +187,8 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .statusBarsPadding()
-                    .padding(top = 56.dp),
+                    .padding(padding)
+                    .imePadding(),
             ) {
                 SettingsOverview(
                     appVersion = settings.appVersion,
@@ -281,16 +290,6 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
         }
-        WandDetailTopBar(
-            title = "设置",
-            backdrop = glassBackdrop,
-            leading = {
-                WandDetailBackButton(
-                    onClick = onBack,
-                    contentDescription = "关闭设置",
-                )
-            },
-        )
     }
 }
 
@@ -299,22 +298,23 @@ private fun SettingsContentLayout(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    BoxWithConstraints(modifier = modifier) {
-        val wide = maxWidth >= 720.dp
-        val horizontalPadding = if (wide) 24.dp else 16.dp
-        val maxContentWidth = if (wide) 680.dp else 560.dp
+    val wide = LocalConfiguration.current.screenWidthDp >= 720
+    val horizontalPadding = if (wide) 24.dp else 16.dp
+    val maxContentWidth = if (wide) 680.dp else 560.dp
 
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = maxContentWidth)
-                .align(Alignment.TopCenter)
                 .padding(horizontal = horizontalPadding)
                 .padding(top = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            content()
-        }
+            content = content,
+        )
     }
 }
 

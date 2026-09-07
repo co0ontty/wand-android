@@ -23,7 +23,6 @@ sealed class Screen {
         val workspaceId: String? = null,
         val taskId: String? = null,
     ) : Screen()
-    data class NewSession(val initialCwd: String? = null) : Screen()
     data class Missions(
         val taskId: String? = null,
         val cwd: String? = null,
@@ -42,6 +41,10 @@ sealed class Screen {
         val taskName: String,
     ) : Screen()
 }
+
+/** Chat / PTY 首帧很重，手机栈用交叉淡入淡出，避免和滑动转场抢同一帧。 */
+internal fun usesHeavyDetailTransition(screen: Screen): Boolean =
+    screen is Screen.Chat || screen is Screen.PtyTerminal
 
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
 sealed class QuickAction {
@@ -133,14 +136,18 @@ class NavState {
         val Saver: Saver<NavState, Any> = listSaver(
             save = { nav -> nav.stack.map { screen -> screen.saveKey() } },
             restore = { savedStack ->
-                val restoredScreens = savedStack.mapNotNull { savedScreen ->
-                    savedScreen.restoreScreen()
-                }
-                NavState().apply {
-                    if (restoredScreens.firstOrNull() == Screen.SessionList) {
-                        stack.clear()
-                        stack.addAll(restoredScreens)
+                try {
+                    val restoredScreens = savedStack.mapNotNull { savedScreen ->
+                        (savedScreen as? String)?.restoreScreen()
                     }
+                    NavState().apply {
+                        if (restoredScreens.firstOrNull() == Screen.SessionList) {
+                            stack.clear()
+                            stack.addAll(restoredScreens)
+                        }
+                    }
+                } catch (_: Exception) {
+                    NavState()
                 }
             },
         )
@@ -174,7 +181,6 @@ class NavState {
                 workspaceId,
                 taskId,
             )
-            is Screen.NewSession -> initialCwd?.let { "$NEW_SESSION_PREFIX$it" } ?: NEW_SESSION_KEY
             is Screen.Missions -> if (taskId.isNullOrBlank() && cwd.isNullOrBlank() && taskName.isNullOrBlank()) {
                 MISSIONS_KEY
             } else {
@@ -202,8 +208,8 @@ class NavState {
                     Screen.PtyTerminal(sessionId, workspaceName, taskName, workspaceId, taskId)
                 },
             )
-            this == NEW_SESSION_KEY -> Screen.NewSession()
-            startsWith(NEW_SESSION_PREFIX) -> Screen.NewSession(removePrefix(NEW_SESSION_PREFIX))
+            this == NEW_SESSION_KEY -> Screen.SessionList
+            startsWith(NEW_SESSION_PREFIX) -> Screen.SessionList
             this == MISSIONS_KEY -> Screen.Missions()
             startsWith(MISSIONS_KEY + FIELD_SEP) -> {
                 val parts = removePrefix(MISSIONS_KEY + FIELD_SEP).split(FIELD_SEP, limit = 3)

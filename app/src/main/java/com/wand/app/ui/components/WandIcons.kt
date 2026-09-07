@@ -10,7 +10,6 @@ import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Menu
@@ -167,7 +166,6 @@ object WandIcons {
 
     /** 通知、音量与触感反馈。 */
     val notification: ImageVector = Icons.Outlined.NotificationsNone
-    val volume: ImageVector = Icons.AutoMirrored.Outlined.VolumeUp
     val haptic: ImageVector = Icons.Outlined.Vibration
 
     /** 设置页中的客户端能力。 */

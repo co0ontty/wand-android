@@ -5,6 +5,7 @@ import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.WorkspaceTaskSummary
+import com.wand.app.ui.Screen
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -68,6 +69,54 @@ class TaskListPresentationTest {
         assertEquals(
             "…/vibe_coding/wand",
             fitDirectoryPathCaption("wand", path, "…/vibe_coding/wand".length.toFloat(), measure),
+        )
+    }
+
+    @Test
+    fun horizontalSwipeSelectsAdjacentTaskSession() {
+        val sessions = listOf(
+            session("structured", "structured").copy(id = "session-1"),
+            session("pty", null).copy(id = "session-2"),
+            session("structured", "structured").copy(id = "session-3"),
+        )
+
+        assertEquals("session-2", taskSessionSwipeTarget(sessions, "session-1", -80f)?.id)
+        assertEquals("session-1", taskSessionSwipeTarget(sessions, "session-2", 80f)?.id)
+        assertNull(taskSessionSwipeTarget(sessions, "session-1", -40f))
+        assertNull(taskSessionSwipeTarget(sessions, "session-3", -80f))
+        assertNull(taskSessionSwipeTarget(sessions, "missing", 80f))
+    }
+
+    @Test
+    fun taskSessionTransitionDirectionMatchesTabMovement() {
+        val sessions = listOf(
+            session("structured", "structured").copy(id = "session-1"),
+            session("pty", null).copy(id = "session-2"),
+            session("structured", "structured").copy(id = "session-3"),
+        )
+
+        assertEquals(
+            1,
+            taskSessionTransitionDirection(
+                Screen.Chat("session-1", taskId = "task-1"),
+                Screen.PtyTerminal("session-2", taskId = "task-1"),
+                sessions,
+            ),
+        )
+        assertEquals(
+            -1,
+            taskSessionTransitionDirection(
+                Screen.Chat("session-3", taskId = "task-1"),
+                Screen.Chat("session-2", taskId = "task-1"),
+                sessions,
+            ),
+        )
+        assertNull(
+            taskSessionTransitionDirection(
+                Screen.Chat("session-1", taskId = "task-1"),
+                Screen.Chat("session-2", taskId = "task-2"),
+                sessions,
+            ),
         )
     }
 

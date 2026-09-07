@@ -371,6 +371,28 @@ data class StructuredSessionState(
     }
 }
 
+/**
+ * 结构化 vs PTY 的唯一判定。
+ * 显式 `sessionKind` 优先；缺失时才回落到 `runner`，避免任务列表和任务详情各写一套。
+ */
+private val STRUCTURED_RUNNERS = setOf(
+    "claude-cli-print",
+    "claude-sdk",
+    "codex-cli-exec",
+    "opencode-cli-run",
+    "grok-cli-headless",
+    "qoder-cli-print",
+    "pi-cli-json",
+    "structured",
+)
+
+fun isStructuredSession(sessionKind: String?, runner: String? = null): Boolean =
+    when (sessionKind) {
+        "structured" -> true
+        "pty" -> false
+        else -> runner in STRUCTURED_RUNNERS
+    }
+
 // MARK: - 会话快照
 
 /**
@@ -415,7 +437,7 @@ data class SessionSnapshot(
     val workspaceId: String? = null,
     val workspaceTaskId: String? = null,
 ) {
-    val isStructured: Boolean get() = (sessionKind ?: "pty") == "structured"
+    val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
     val providerLabel: String
         get() = providerDisplayName(provider)
@@ -655,6 +677,13 @@ data class HistorySession(
 }
 
 // MARK: - 模型列表
+
+fun matchesModelSearch(query: String, id: String, label: String): Boolean {
+    val needles = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (needles.isEmpty()) return true
+    val haystack = "$id $label".lowercase()
+    return needles.all { haystack.contains(it) }
+}
 
 /** GET /api/models 的单个模型（对称 iOS ModelInfo）。 */
 data class ModelInfo(

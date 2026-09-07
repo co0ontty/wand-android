@@ -4,11 +4,15 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
@@ -20,8 +24,7 @@ import javax.net.ssl.X509TrustManager
  * （__Host-wand_session / wand_session / wand_session_local）会自动带到
  * 后续请求上；不同 endpoint 使用独立 CookieJar，避免同 host 不同端口串登录态。
  *
- * 自签证书放行策略与现有 NetUtils.trustSelfSigned 一致（wand 是局域网自托管
- * 服务，HTTPS 默认用自签证书）。
+ * 自签证书放行仅用于用户自己的 wand server；跨源下载走系统证书校验。
  */
 object WandHttp {
 
@@ -33,6 +36,9 @@ object WandHttp {
     )
 
     private val clients = ConcurrentHashMap<String, EndpointClient>()
+    private val cleanupExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "wand-http-cleanup").apply { isDaemon = true }
+    }
 
     private class MemoryCookieJar : CookieJar {
         private val store = mutableListOf<Cookie>()
@@ -115,7 +121,11 @@ object WandHttp {
             // Existing WandApi/WandSocket instances may still hold this client after a profile is
             // removed. Retire its dispatcher permanently so they cannot reuse deleted credentials.
             client.dispatcher.executorService.shutdownNow()
-            client.connectionPool.evictAll()
+            // evictAll closes live TLS sockets (SSL write/close). On Android that is network I/O
+            // and StrictMode kills the app if it runs on the main thread after auto-connect.
+            cleanupExecutor.execute {
+                runCatching { client.connectionPool.evictAll() }
+            }
         }
     }
 
@@ -128,6 +138,80 @@ object WandHttp {
         return endpointClient.client.cookieJar.loadForRequest(requestUrl)
             .joinToString("; ") { cookie -> "${cookie.name}=${cookie.value}" }
             .takeIf { it.isNotEmpty() }
+    }
+
+    private val publicClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build()
+    }
+
+    class SimpleResponse(val code: Int, val body: String)
+
+    @JvmStatic
+    fun isSameOrigin(url: String, originBase: String): Boolean {
+        val left = url.toHttpUrlOrNull() ?: return false
+        val right = normalizeBaseUrl(originBase).toHttpUrlOrNull() ?: return false
+        return left.scheme.equals(right.scheme, ignoreCase = true) &&
+            left.host.equals(right.host, ignoreCase = true) &&
+            left.port == right.port
+    }
+
+    /**
+     * 同源走 endpoint 的 trust-all client（带 cookie）；跨源（GitHub 等）走系统证书校验。
+     * 调用方自行跟随重定向，避免 trust-all 扩散到公网。
+     */
+    @JvmStatic
+    fun requestClient(
+        url: String,
+        trustOriginBaseUrl: String?,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int,
+    ): OkHttpClient {
+        val sameOrigin = !trustOriginBaseUrl.isNullOrBlank() && isSameOrigin(url, trustOriginBaseUrl)
+        val base = if (sameOrigin) clientFor(trustOriginBaseUrl!!) else publicClient
+        return base.newBuilder()
+            .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+    }
+
+    @JvmStatic
+    @JvmOverloads
+    fun get(url: String, timeoutMs: Int, trustOriginBaseUrl: String? = null): SimpleResponse {
+        // 连接探测必须跟随重定向：HttpURLConnection GET 默认跟随，关掉以后
+        // http→https / 反代 301 会被当成「异常状态码」卡在连接页。
+        val origin = trustOriginBaseUrl ?: url
+        val client = clientFor(origin).newBuilder()
+            .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+        val request = Request.Builder().url(url).get().build()
+        client.newCall(request).execute().use { response ->
+            return SimpleResponse(response.code, response.body?.string().orEmpty())
+        }
+    }
+
+    @JvmStatic
+    fun postJson(url: String, json: String, timeoutMs: Int, trustOriginBaseUrl: String): SimpleResponse {
+        val client = clientFor(trustOriginBaseUrl).newBuilder()
+            .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .post(json.toRequestBody("application/json".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { response ->
+            return SimpleResponse(response.code, response.body?.string().orEmpty())
+        }
     }
 
     /** 补全协议并规范化 host、默认端口与 base path；query/fragment 不属于 endpoint。 */

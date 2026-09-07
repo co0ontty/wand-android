@@ -25,15 +25,16 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -124,30 +125,14 @@ final class UpdateManager {
                 String apiUrl = serverUrl + "/api/android-apk-update?currentVersion=" +
                         java.net.URLEncoder.encode(currentVersion, "UTF-8") +
                         "&channel=" + channel;
-                HttpURLConnection conn = NetUtils.openConnection(apiUrl,
-                        NetUtils.CONNECT_TIMEOUT_MS, NetUtils.READ_TIMEOUT_MS);
-
-                String cookie = WandHttp.cookieHeaderFor(serverUrl);
-                if (cookie != null) conn.setRequestProperty("Cookie", cookie);
-
-                conn.setRequestMethod("GET");
-
-                int code = conn.getResponseCode();
+                WandHttp.SimpleResponse response = WandHttp.get(apiUrl, 10_000, serverUrl);
+                int code = response.getCode();
                 if (code != 200) {
-                    conn.disconnect();
                     notifyNoUpdate(noUpdateCallback, "检查更新失败：服务器返回 " + code);
                     return;
                 }
 
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
-                reader.close();
-                conn.disconnect();
-
-                JSONObject data = new JSONObject(sb.toString());
+                JSONObject data = new JSONObject(response.getBody());
                 if (!data.optBoolean("updateAvailable", false)) {
                     notifyNoUpdate(noUpdateCallback,
                             "beta".equals(channel) ? "已是最新 Beta 版本。" : "已是最新正式版。");
@@ -190,29 +175,6 @@ final class UpdateManager {
             if (activity.isDestroyed()) return;
             callback.onNoUpdate(message);
         });
-    }
-
-    @SuppressLint("DefaultLocale")
-    void showUpdateDialog(String currentVer, String latestVer,
-                          String downloadUrl, String fileName, long size,
-                          String source, String releaseNotes, String channel, String sha256) {
-        String sizeText = size > 0 ? "\n文件大小: " + formatSize(size) : "";
-        String sourceText = "github".equals(source) ? "\n来源: GitHub Release" : "";
-        String channelText = "beta".equals(channel) ? "\n通道: Beta" : "\n通道: Stable";
-        String notesText = (releaseNotes != null && !releaseNotes.isEmpty())
-                ? "\n\n更新内容:\n" + releaseNotes : "";
-
-        new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
-                .setTitle(R.string.update_title)
-                .setMessage("当前版本: " + currentVer + "\n最新版本: " + latestVer
-                        + channelText + sizeText + sourceText + notesText)
-                .setPositiveButton(R.string.update_now, (dialog, which) ->
-                        downloadAndInstall(downloadUrl, fileName, source, latestVer, channel, sha256, size))
-                .setNegativeButton(R.string.remind_later, null)
-                .setNeutralButton(R.string.skip_version, (dialog, which) ->
-                        serverStore.setSkippedVersion(latestVer, channel))
-                .setCancelable(true)
-                .show();
     }
 
     void downloadAndInstall(String downloadUrl, String fileName,
@@ -308,9 +270,9 @@ final class UpdateManager {
      * MainActivity 仍通过上面的兼容入口使用相同的网络和落盘逻辑。
      *
      * 安全语义：
-     * - 关闭自动重定向，手工逐跳处理；每跳用 [NetUtils#openConnection] 的 origin
-     *   限定版本打开——只有 wand server 同源的跳信任自签名证书，GitHub 等跨源
-     *   跳走系统默认校验，Cookie 也只发给同源跳。
+     * - 关闭自动重定向，手工逐跳处理；每跳用 WandHttp.requestClient 按 origin
+     *   打开——只有 wand server 同源的跳信任自签名证书并带 cookie，GitHub 等跨源
+     *   跳走系统默认校验。
      * - 先写 {@code <fileName>.part} 临时文件，完整 + 哈希校验通过后才 rename 成
      *   最终文件名，进程被杀不会留下可被当作「待安装更新」的截断 APK。
      * - GitHub 来源用 Release digest + 检查接口给出的 size；再叠加 Content-Length
@@ -388,7 +350,7 @@ final class UpdateManager {
     private File downloadAttempt(String downloadUrl, String fileName, String expectedSha256,
                                  long expectedSize, String latestVersion, String channel,
                                  DownloadListener listener, DownloadRequest request) throws Exception {
-        HttpURLConnection conn = null;
+        Response response = null;
         File partFile = null;
         try {
             // 下载新包前先清掉目录里的历史 APK / 残留 .part：既释放本次下载需要的空间，
@@ -398,44 +360,45 @@ final class UpdateManager {
                     ? downloadUrl : serverUrl + downloadUrl;
             int responseCode = 0;
             for (int hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
-                conn = NetUtils.openConnection(currentUrl,
-                        NetUtils.DOWNLOAD_CONNECT_TIMEOUT_MS, NetUtils.DOWNLOAD_READ_TIMEOUT_MS,
-                        serverUrl);
-                conn.setInstanceFollowRedirects(false);
-                conn.setRequestProperty("User-Agent", "wand-android");
-                conn.setRequestProperty("Accept", "application/octet-stream");
-                // 禁止透明 gzip，否则 Content-Length 是压缩体积、读到的是解压后字节。
-                conn.setRequestProperty("Accept-Encoding", "identity");
-                if (NetUtils.isSameOrigin(new java.net.URL(currentUrl), serverUrl)) {
-                    String cookie = WandHttp.cookieHeaderFor(serverUrl);
-                    if (cookie != null) conn.setRequestProperty("Cookie", cookie);
+                OkHttpClient client = WandHttp.requestClient(
+                        currentUrl, serverUrl, 15_000, 120_000);
+                Request httpRequest = new Request.Builder()
+                        .url(currentUrl)
+                        .header("User-Agent", "wand-android")
+                        .header("Accept", "application/octet-stream")
+                        .header("Accept-Encoding", "identity")
+                        .build();
+                if (response != null) {
+                    response.close();
+                    response = null;
                 }
-                responseCode = conn.getResponseCode();
+                response = client.newCall(httpRequest).execute();
+                responseCode = response.code();
                 if (responseCode == 301 || responseCode == 302 || responseCode == 303
                         || responseCode == 307 || responseCode == 308) {
-                    String location = conn.getHeaderField("Location");
-                    conn.disconnect();
-                    conn = null;
+                    String location = response.header("Location");
+                    response.close();
+                    response = null;
                     if (location == null || location.isEmpty()) {
                         throw new Exception("服务器重定向缺少目标地址");
                     }
-                    currentUrl = new java.net.URL(new java.net.URL(currentUrl), location).toString();
+                    currentUrl = java.net.URI.create(currentUrl).resolve(location).toString();
                     continue;
                 }
                 break;
             }
-            if (conn == null) throw new Exception("重定向次数过多，已中止下载");
+            if (response == null) throw new Exception("重定向次数过多，已中止下载");
             if (responseCode != 200) throw new Exception("服务器返回 " + responseCode);
 
             // 下载响应头里的 X-APK-Sha256 反映本次实际发送的字节；check 与
             // 下载之间服务端 APK 若被重新部署，以响应头为准，避免用过期
             // 快照误报完整性校验失败。旧服务端无此头 → 回退 check 时的值。
-            String headerSha256 = conn.getHeaderField("X-APK-Sha256");
+            String headerSha256 = response.header("X-APK-Sha256");
             final String effectiveSha256 =
                     (headerSha256 != null && !headerSha256.trim().isEmpty())
                             ? headerSha256.trim() : expectedSha256;
 
-            long headerLength = conn.getContentLengthLong();
+            long headerLength = response.body() != null ? response.body().contentLength() : -1;
             long fileLength = headerLength > 0 ? headerLength : Math.max(0, expectedSize);
             File dir = activity.getExternalFilesDir(null);
             if (dir == null) throw new Exception("外部存储不可用");
@@ -452,7 +415,8 @@ final class UpdateManager {
                     (effectiveSha256 != null && !effectiveSha256.isEmpty())
                             ? java.security.MessageDigest.getInstance("SHA-256")
                             : null;
-            try (InputStream in = conn.getInputStream();
+            if (response.body() == null) throw new Exception("服务器没有返回安装包内容");
+            try (InputStream in = response.body().byteStream();
                  FileOutputStream out = new FileOutputStream(partFile)) {
                 byte[] buffer = new byte[8192];
                 long total = 0;
@@ -517,8 +481,8 @@ final class UpdateManager {
             }
             throw e;
         } finally {
-            if (conn != null) {
-                try { conn.disconnect(); } catch (Exception ignored) {}
+            if (response != null) {
+                try { response.close(); } catch (Exception ignored) {}
             }
         }
     }

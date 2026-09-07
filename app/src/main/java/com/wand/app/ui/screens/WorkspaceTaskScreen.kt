@@ -306,7 +306,7 @@ fun WorkspaceTaskScreen(
                     state = state,
                     onSelectSession = { session ->
                         workflow.selectSession(session.id)
-                        if (session.isStructuredSession()) {
+                        if (session.isStructured) {
                             onOpenSession(session.id)
                         } else {
                             onOpenPty(session.id)
@@ -588,9 +588,3 @@ private fun TaskErrorState(message: String, onRetry: () -> Unit) {
         }
     }
 }
-
-// MARK: - 辅助
-
-/** 判断会话摘要是否为结构化（非 PTY）会话，决定路由到 Chat 还是 PTY 页。 */
-private fun WorkspaceSessionSummary.isStructuredSession(): Boolean =
-    sessionKind == "structured"

@@ -34,7 +34,7 @@ public class ServerStore {
     private static final String KEY_KEEP_ALIVE = "keep_alive_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
-    private static final int MAX_RECENT = 5;
+
     private static final Object PROFILE_LOCK = new Object();
 
     private final SharedPreferences prefs;
@@ -221,10 +221,6 @@ public class ServerStore {
         return prefs.getString(KEY_LAST, "");
     }
 
-    public void setLastUrl(String url) {
-        prefs.edit().putString(KEY_LAST, url).apply();
-    }
-
     public List<String> getRecentUrls() {
         List<String> list = new ArrayList<>();
         String json = prefs.getString(KEY_RECENT, "[]");
@@ -239,54 +235,12 @@ public class ServerStore {
         return list;
     }
 
-    public void addRecentUrl(String url) {
-        List<String> list = getRecentUrls();
-        list.remove(url);
-        list.add(0, url);
-        while (list.size() > MAX_RECENT) {
-            list.remove(list.size() - 1);
-        }
-        JSONArray arr = new JSONArray(list);
-        prefs.edit().putString(KEY_RECENT, arr.toString()).apply();
-    }
-
-    public void removeRecentUrl(String url) {
-        List<String> list = getRecentUrls();
-        list.remove(url);
-        JSONArray arr = new JSONArray(list);
-        prefs.edit().putString(KEY_RECENT, arr.toString()).apply();
-    }
-
-    public void clearRecent() {
-        prefs.edit().putString(KEY_RECENT, "[]").apply();
-    }
-
-    public String getSkippedVersion() {
-        return prefs.getString("skipped_apk_version", "");
-    }
-
     public String getSkippedVersion(String channel) {
         return prefs.getString(channelKey("skipped_apk_version", channel), "");
     }
 
-    public void setSkippedVersion(String version) {
-        prefs.edit().putString("skipped_apk_version", version).apply();
-    }
-
     public void setSkippedVersion(String version, String channel) {
         prefs.edit().putString(channelKey("skipped_apk_version", channel), version).apply();
-    }
-
-    public String getDownloadedApkVersion() {
-        return prefs.getString("downloaded_apk_version", "");
-    }
-
-    public String getDownloadedApkVersion(String channel) {
-        return prefs.getString(channelKey("downloaded_apk_version", channel), "");
-    }
-
-    public void setDownloadedApkVersion(String version) {
-        prefs.edit().putString("downloaded_apk_version", version).apply();
     }
 
     public void setDownloadedApkVersion(String version, String channel) {
@@ -295,14 +249,6 @@ public class ServerStore {
 
     public String getAppToken() {
         return prefs.getString(KEY_APP_TOKEN, "");
-    }
-
-    public void setAppToken(String token) {
-        prefs.edit().putString(KEY_APP_TOKEN, token).apply();
-    }
-
-    public void clearAppToken() {
-        prefs.edit().remove(KEY_APP_TOKEN).apply();
     }
 
     public String getNotificationSound() {

@@ -114,4 +114,21 @@ class WandHttpTest {
         assertTrue(retiredFailure?.message?.contains("已从此设备移除") == true)
         assertTrue(replacement.cookieJar.loadForRequest(requestUrl).isEmpty())
     }
+
+    @Test
+    fun sameOriginIgnoresPathAndUsesCanonicalPort() {
+        assertTrue(
+            WandHttp.isSameOrigin(
+                "https://home.example:8443/android/download",
+                "https://home.example:8443/",
+            ),
+        )
+        assertTrue(WandHttp.isSameOrigin("http://127.0.0.1/api/config", "127.0.0.1"))
+        assertTrue(
+            !WandHttp.isSameOrigin(
+                "https://objects.githubusercontent.com/apk",
+                "https://home.example:8443",
+            ),
+        )
+    }
 }

@@ -146,30 +146,6 @@ fun StatusDot(status: String, modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * 状态徽章：圆点 + 中文标签的弱底胶囊。
- * 语义色 12% alpha 底 + 语义色文字，FULL 圆角，水平 8dp / 垂直 3dp 内边距，11sp。
- */
-@Composable
-fun StatusBadge(status: String, modifier: Modifier = Modifier) {
-    val color = statusColor(status)
-    Row(
-        modifier = modifier
-            .clip(WandShapes.full)
-            .background(color.copy(alpha = 0.12f))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        StatusDot(status, modifier = Modifier.size(6.dp))
-        Text(
-            wandStatusPresentation(status).label,
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-        )
-    }
-}
-
 /** 全屏居中加载占位。 */
 @Composable
 fun LoadingState(modifier: Modifier = Modifier, text: String = "加载中…") {
@@ -327,18 +303,6 @@ fun <T> WandChoiceStrip(
     }
 }
 
-/** 区块标题：13sp SemiBold textSecondary，letterSpacing 0.5sp，上 16dp 下 8dp。 */
-@Composable
-fun SectionHeader(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelMedium,
-        color = WandColors.textMuted,
-        letterSpacing = 0.sp,
-        modifier = modifier.padding(top = 18.dp, bottom = 7.dp),
-    )
-}
-
 /**
  * 统一卡片容器：平面色底 + 极轻软阴影。
  * - onClick 非空时整卡可点（带 ripple）。
@@ -419,27 +383,6 @@ fun Modifier.wandCardSurface(
     tint: Color? = null,
     rimTint: Color? = null,
 ): Modifier = glassCard(shape = shape, tint = tint, rimTint = rimTint)
-
-/** 顶栏 / 悬浮 chrome 里的统一圆形图标按钮。 */
-@Composable
-fun WandChromeIconButton(
-    icon: ImageVector,
-    contentDescription: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    tint: Color = WandColors.textSecondary,
-    enabled: Boolean = true,
-) {
-    WandIconButton(
-        icon = icon,
-        contentDescription = contentDescription,
-        onClick = onClick,
-        modifier = modifier,
-        variant = WandIconButtonVariant.Chrome,
-        tint = tint,
-        enabled = enabled,
-    )
-}
 
 /**
  * 顶栏 / 工具栏里的统一图标按钮（对齐 iOS toolbar button）。

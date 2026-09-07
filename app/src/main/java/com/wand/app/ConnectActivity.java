@@ -27,9 +27,6 @@ import com.wand.app.data.WandWebSession;
 
 import org.json.JSONObject;
 
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -481,25 +478,12 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private String testConnectionWithToken(String baseUrl, String appToken, int timeout) {
-        HttpURLConnection conn = null;
         try {
-            conn = NetUtils.openConnection(baseUrl + "/api/login", timeout, timeout);
-            conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setDoOutput(true);
-
             JSONObject body = new JSONObject();
             body.put("appToken", appToken);
-            byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
-            conn.setFixedLengthStreamingMode(payload.length);
-
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(payload);
-            }
-
-            int code = conn.getResponseCode();
-            conn.disconnect();
-
+            WandHttp.SimpleResponse response = WandHttp.postJson(
+                    baseUrl + "/api/login", body.toString(), timeout, baseUrl);
+            int code = response.getCode();
             if (code == 200) {
                 return null;
             } else if (code == 401) {
@@ -510,20 +494,13 @@ public class ConnectActivity extends AppCompatActivity {
             return "服务器返回了异常状态码: " + code;
         } catch (Exception e) {
             return NetworkErrorHelper.describeError(e, "connect");
-        } finally {
-            if (conn != null) {
-                try { conn.disconnect(); } catch (Exception ignored) {}
-            }
         }
     }
 
     private String testConnection(String baseUrl, int timeout) {
         try {
-            HttpURLConnection conn = NetUtils.openConnection(baseUrl + "/api/config", timeout, timeout);
-            conn.setRequestMethod("GET");
-            int code = conn.getResponseCode();
-            conn.disconnect();
-
+            WandHttp.SimpleResponse response = WandHttp.get(baseUrl + "/api/config", timeout, baseUrl);
+            int code = response.getCode();
             if (code == 200 || code == 401) {
                 return null;
             }

@@ -366,9 +366,6 @@ object WandMotion {
     /** 标准（出现 / 消失 / 折叠展开）。 */
     const val normal = 240
 
-    /** 慢（大面积布局过渡）。 */
-    const val slow = 360
-
     /** 呼吸动画单程时长。 */
     const val breathDuration = 1_600
 
@@ -394,15 +391,9 @@ object WandMotion {
 
     fun <T> tweenNormal(): TweenSpec<T> = tween(normal, easing = emphasized)
 
-    fun <T> tweenSlow(): TweenSpec<T> = tween(slow, easing = emphasized)
-
     fun <T> tweenEnter(): TweenSpec<T> = tween(normal, easing = enterEasing)
 
     fun <T> tweenExit(): TweenSpec<T> = tween(fast, easing = exitEasing)
-
-    /** 弹性进入（轻过冲，适合面板出现）。 */
-    fun <T> springSpec(): SpringSpec<T> =
-        spring(dampingRatio = 0.84f, stiffness = Spring.StiffnessMediumLow)
 
     /** 直接操作反馈：临界阻尼、无过冲，适合按压和非动量状态切换。 */
     fun <T> settleSpringSpec(): SpringSpec<T> =

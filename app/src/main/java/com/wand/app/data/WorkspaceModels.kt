@@ -363,6 +363,8 @@ data class WorkspaceSessionSummary(
     val providerCliActive: Boolean? = null,
     val inFlight: Boolean? = null,
 ) {
+    val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
+
     companion object {
         fun parse(o: JSONObject): WorkspaceSessionSummary? {
             val id = o.str("id")?.takeIf { it.isNotEmpty() } ?: return null

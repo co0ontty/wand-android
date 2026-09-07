@@ -3,14 +3,12 @@ package com.wand.app.ui.theme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -291,23 +289,6 @@ fun Modifier.glassSurface(
                 )
             )
     }
-}
-
-/** 玻璃面板便捷容器（FAB / toast / 浮层）。 */
-@Composable
-fun GlassPanel(
-    backdrop: GlassBackdrop?,
-    modifier: Modifier = Modifier,
-    shape: Shape = WandShapes.lg,
-    style: GlassStyle = WandGlass.regular,
-    contentAlignment: Alignment = Alignment.Center,
-    content: @Composable BoxScope.() -> Unit,
-) {
-    Box(
-        modifier = modifier.glassSurface(backdrop, shape, style),
-        contentAlignment = contentAlignment,
-        content = content,
-    )
 }
 
 /**

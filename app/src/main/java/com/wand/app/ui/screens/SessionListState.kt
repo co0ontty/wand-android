@@ -68,9 +68,6 @@ class SessionListState(private val port: SessionListPort) : ScopedStore() {
             while (true) {
                 delay(10_000)
                 load(silent = true)
-                // Workspace names are shared server state and can be changed from Web or
-                // another native client without altering the session-list revision.
-                if (directoryTree != null) loadDirectories(silent = true)
             }
         }
     }
