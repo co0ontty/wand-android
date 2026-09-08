@@ -454,7 +454,7 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         if (!model.isNullOrEmpty()) body.put("model", model)
         if (!thinkingEffort.isNullOrEmpty()) body.put("thinkingEffort", thinkingEffort)
         if (!prompt.isNullOrEmpty()) body.put("prompt", prompt)
-        return SessionSnapshot.parse(requestObject("POST", "/api/structured-sessions", body))
+        return SessionSnapshot.parse(requestObject("POST", "/api/structured-sessions", body, timeoutSec = 180))
     }
 
     /** PTY 会话：POST /api/commands。Qoder 的 provider ID 与可执行命令名称不同。 */
