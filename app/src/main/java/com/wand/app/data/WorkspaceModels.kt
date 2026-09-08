@@ -346,6 +346,9 @@ data class Workspace(
 
         fun parseList(arr: JSONArray): List<Workspace> =
             arr.parseEach { parse(it) }
+                .sortedWith(compareBy<Workspace> { it.createdAt.isNullOrEmpty() }
+                    .thenBy { it.createdAt ?: "" }
+                    .thenBy { it.id })
     }
 }
 

@@ -102,6 +102,7 @@ import com.wand.app.ui.screens.TaskSessionRoute
 import com.wand.app.ui.screens.taskSessionTransitionDirection
 import com.wand.app.ui.screens.WorkspaceTaskScreen
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -120,24 +121,39 @@ fun WandApp(
     var retryKey by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(retryKey) {
-        phase = AuthPhase.Authenticating
-        phase = try {
-            if (actions.connection.hasToken && api.token != null) {
-                WandAuth.loginWithToken(api.baseUrl, api.token)
-            } else {
-                // 裸地址连接（无 token）：直接试列表，401 时引导重新连接。
-                api.fetchSessionList(offset = 0, limit = 1, revision = null)
+        var attempt = 0
+        while (attempt < MAX_AUTH_RETRY_ATTEMPTS) {
+            phase = AuthPhase.Authenticating
+            phase = try {
+                if (actions.connection.hasToken && api.token != null) {
+                    WandAuth.loginWithToken(api.baseUrl, api.token)
+                } else {
+                    // 裸地址连接（无 token）：直接试列表，401 时引导重新连接。
+                    api.fetchSessionList(offset = 0, limit = 1, revision = null)
+                }
+                onAuthenticated()
+                AuthPhase.Ready
+            } catch (e: Exception) {
+                val msg = e.message ?: "未知错误"
+                AuthPhase.Failed(
+                    message = if (actions.connection.hasToken) {
+                        msg
+                    } else {
+                        "无法访问服务器：$msg\n如果服务器设有密码，请用「连接码」重新连接。"
+                    },
+                    retryAttempt = attempt + 1,
+                )
             }
-            onAuthenticated()
-            AuthPhase.Ready
-        } catch (e: Exception) {
-            val msg = e.message ?: "未知错误"
-            if (actions.connection.hasToken) {
-                AuthPhase.Failed(msg)
-            } else {
-                AuthPhase.Failed("无法访问服务器：$msg\n如果服务器设有密码，请用「连接码」重新连接。")
-            }
+
+            if (phase is AuthPhase.Ready) return@LaunchedEffect
+
+            val delayMs = reconnectDelayMs(attempt)
+            attempt++
+            delay(delayMs)
         }
+
+        // 达到重试上限后，返回服务器选择页让用户手动重连。
+        actions.navigation.switchServer()
     }
 
     Box(
@@ -149,6 +165,7 @@ fun WandApp(
             is AuthPhase.Authenticating -> AuthProgress()
             is AuthPhase.Failed -> AuthFailed(
                 message = p.message,
+                retryAttempt = p.retryAttempt,
                 onRetry = { retryKey++ },
                 onSwitchServer = actions.navigation.switchServer,
             )
@@ -160,8 +177,15 @@ fun WandApp(
 private sealed class AuthPhase {
     data object Authenticating : AuthPhase()
     data object Ready : AuthPhase()
-    data class Failed(val message: String) : AuthPhase()
+    data class Failed(val message: String, val retryAttempt: Int) : AuthPhase()
 }
+
+internal fun reconnectDelayMs(attempt: Int): Long {
+    val exponent = attempt.coerceIn(0, 6)
+    return (1_000L shl exponent).coerceAtMost(60_000L)
+}
+
+private const val MAX_AUTH_RETRY_ATTEMPTS = 10
 
 private val WideLayoutMinWidth = 640.dp
 private val WideLayoutMinHeight = 480.dp
@@ -215,7 +239,12 @@ private fun AuthProgress() {
 }
 
 @Composable
-private fun AuthFailed(message: String, onRetry: () -> Unit, onSwitchServer: () -> Unit) {
+private fun AuthFailed(
+    message: String,
+    retryAttempt: Int,
+    onRetry: () -> Unit,
+    onSwitchServer: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -245,7 +274,13 @@ private fun AuthFailed(message: String, onRetry: () -> Unit, onSwitchServer: () 
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
-                WandButton(label = "重试", onClick = onRetry, modifier = Modifier.fillMaxWidth())
+                Text(
+                    "连接失败，正在自动重试（${retryAttempt}/${MAX_AUTH_RETRY_ATTEMPTS}）…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                WandButton(label = "立即重试", onClick = onRetry, modifier = Modifier.fillMaxWidth())
                 WandButton(
                     label = "重新连接",
                     onClick = onSwitchServer,

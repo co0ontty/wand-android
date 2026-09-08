@@ -35,6 +35,7 @@ class WandSocket(baseUrl: String) {
     private val lastSeqBySession = mutableMapOf<String, Int>()
     private var lastMessageAt = SystemClock.elapsedRealtime()
     private var reconnectDelayMs = 1_000L
+    private var reconnectScheduled = false
     private var closed = false
 
     /** 当前连接的代号，旧连接的回调用它识别后丢弃，避免互相干扰。 */
@@ -66,6 +67,7 @@ class WandSocket(baseUrl: String) {
     fun close() {
         closed = true
         handler.removeCallbacksAndMessages(null)
+        reconnectScheduled = false
         generation += 1
         webSocket?.close(1001, null)
         webSocket = null
@@ -90,6 +92,7 @@ class WandSocket(baseUrl: String) {
 
     private fun openSocket() {
         if (closed) return
+        reconnectScheduled = false
         generation += 1
         val gen = generation
         lastMessageAt = SystemClock.elapsedRealtime()
@@ -181,13 +184,15 @@ class WandSocket(baseUrl: String) {
     // MARK: - 重连与看门狗
 
     private fun scheduleReconnect() {
-        if (closed) return
+        if (closed || reconnectScheduled) return
+        reconnectScheduled = true
         onConnectionChange?.invoke(false)
         webSocket?.cancel()
         webSocket = null
         val delay = reconnectDelayMs
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(30_000L)
         handler.postDelayed({
+            reconnectScheduled = false
             if (!closed && webSocket == null) openSocket()
         }, delay)
     }
