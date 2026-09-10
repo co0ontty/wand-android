@@ -7,6 +7,14 @@ import org.junit.Test
 
 class ActivityGroupingTest {
     @Test
+    fun cardsOnlyExpandWhenConfigured() {
+        assertFalse(shouldExpandChatCard(isLastTurn = true, configured = false))
+        assertTrue(shouldExpandChatCard(isLastTurn = true, configured = true))
+        assertFalse(shouldExpandChatCard(isLastTurn = false, configured = false))
+        assertTrue(shouldExpandChatCard(isLastTurn = false, configured = true))
+    }
+
+    @Test
     fun todoUpdatesStayOutsideTheCollapsedActivityGroup() {
         assertFalse(shouldCollapseToolInActivity("TodoWrite"))
         assertFalse(shouldCollapseToolInActivity("mcp__codex__update_plan"))

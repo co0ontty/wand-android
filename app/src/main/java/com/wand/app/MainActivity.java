@@ -13,6 +13,8 @@ import android.media.AudioManager;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Environment;
 import android.os.Message;
 import android.provider.Settings;
@@ -72,6 +74,10 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
 
     private static final int FILE_CHOOSER_REQUEST = 1002;
     private static final int WEB_MEDIA_PERMISSION_REQUEST = 1004;
+    private static final int MAX_AUTOMATIC_RECONNECT_ATTEMPTS = 8;
+    private static final long[] AUTOMATIC_RECONNECT_DELAYS_MS = {
+            500L, 1_000L, 2_000L, 4_000L, 8_000L, 15_000L
+    };
 
     private WebView webView;
     private ViewGroup webViewParent;
@@ -85,6 +91,8 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     private String sessionId;
     private boolean hasLoadedPage = false;
     private boolean lastLoadFailed = false;
+    private final Handler reconnectHandler = new Handler(Looper.getMainLooper());
+    private int reconnectAttempt = 0;
     private ValueCallback<Uri[]> pendingFileChooserCallback;
     private PermissionRequest pendingWebPermissionRequest;
     private String[] pendingWebPermissionResources;
@@ -162,6 +170,8 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
         errorMessage = findViewById(R.id.errorMessage);
 
         findViewById(R.id.retryButton).setOnClickListener(v -> {
+            reconnectHandler.removeCallbacksAndMessages(null);
+            reconnectAttempt = 0;
             prepareWebViewSessionAndLoad();
         });
         findViewById(R.id.backToConnectButton).setOnClickListener(v -> openConnectScreen());
@@ -204,6 +214,8 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
             if (!activityResumed || webView == null) return;
             if (("available".equals(state) || "validated".equals(state) || "changed".equals(state))
                     && errorOverlay != null && errorOverlay.getVisibility() == View.VISIBLE) {
+                reconnectHandler.removeCallbacksAndMessages(null);
+                reconnectAttempt = 0;
                 prepareWebViewSessionAndLoad();
                 return;
             }
@@ -436,6 +448,8 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
             public void onPageFinished(WebView view, String url) {
                 hasLoadedPage = true;
                 if (lastLoadFailed) return;
+                reconnectHandler.removeCallbacksAndMessages(null);
+                reconnectAttempt = 0;
                 hideError();
                 hideLoadingOverlay();
                 injectNativeInsetsMarker();
@@ -1136,6 +1150,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     protected void onResume() {
         super.onResume();
         activityResumed = true;
+        reconnectAttempt = 0;
         ensureWebView();
         if (webView == null) return;
         prepareWebViewSessionForResume();
@@ -1144,6 +1159,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     @Override
     protected void onPause() {
         activityResumed = false;
+        reconnectHandler.removeCallbacksAndMessages(null);
         if (webView != null) webView.onPause();
         super.onPause();
     }
@@ -1151,6 +1167,7 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
     @Override
     protected void onDestroy() {
         activityResumed = false;
+        reconnectHandler.removeCallbacksAndMessages(null);
         webSessionGeneration++;
         cancelPendingWebInteractions();
         destroyOwnedPopupWebViews();
@@ -1190,6 +1207,24 @@ public class MainActivity extends AppCompatActivity implements NetworkMonitor.Li
             loadingOverlay.setAlpha(1f);
             loadingOverlay.setVisibility(View.GONE);
         }
+        scheduleAutomaticReconnect();
+    }
+
+    private void scheduleAutomaticReconnect() {
+        if (!activityResumed || webView == null || networkMonitor == null
+                || !networkMonitor.hasUsableNetwork()) return;
+        if (reconnectAttempt >= MAX_AUTOMATIC_RECONNECT_ATTEMPTS) return;
+        reconnectHandler.removeCallbacksAndMessages(null);
+        int attempt = reconnectAttempt++;
+        long delayMs = AUTOMATIC_RECONNECT_DELAYS_MS[
+                Math.min(attempt, AUTOMATIC_RECONNECT_DELAYS_MS.length - 1)
+        ];
+        reconnectHandler.postDelayed(() -> {
+            if (!activityResumed || webView == null
+                    || errorOverlay.getVisibility() != View.VISIBLE
+                    || !networkMonitor.hasUsableNetwork()) return;
+            prepareWebViewSessionAndLoad();
+        }, delayMs);
     }
 
     private void hideError() {

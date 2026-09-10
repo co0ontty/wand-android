@@ -2,6 +2,8 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WorkspaceTaskStatus
+import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.workspaceProviderLabel
 
 internal const val DIRECTORY_PATH_MIN_TAIL = 2
@@ -78,6 +80,128 @@ internal fun directoryGroupMetaLabel(taskCount: Int, sessionCount: Int): String 
 
 internal fun directoryGroupSessionTotal(group: TaskDirectoryGroup): Int =
     group.tasks.sumOf { it.totalSessions } + group.standaloneSessions.size
+
+/** 首页概览使用真实目录数，而不是服务端分组数；同一目录下的多个项目只算一个目录。 */
+internal data class TaskListMetrics(
+    val directoryCount: Int,
+    val taskCount: Int,
+    val sessionCount: Int,
+)
+
+internal fun taskListMetrics(groups: List<TaskDirectoryGroup>): TaskListMetrics {
+    val visibleGroups = groups.filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
+    val directoryKeys = mutableSetOf<String>()
+    val taskIds = mutableSetOf<String>()
+    visibleGroups.forEach { group ->
+        directoryKeys += directoryMetricKey(group)
+        group.tasks.forEach { taskIds += it.id }
+    }
+    return TaskListMetrics(
+        directoryCount = directoryKeys.size,
+        taskCount = taskIds.size,
+        sessionCount = visibleGroups.sumOf(::directoryGroupSessionTotal),
+    )
+}
+
+/** 目录组偶尔会因历史项目绑定产生重复项；空 cwd 时退回 group id，不能误合并。 */
+private fun directoryMetricKey(group: TaskDirectoryGroup): String {
+    val trimmed = group.workspaceCwd.replace('\\', '/').trim()
+    if (trimmed.isEmpty()) return "id:${group.id}"
+    val normalized = trimmed.trimEnd('/').ifEmpty { "/" }
+    return "cwd:$normalized"
+}
+
+internal fun homeTaskSummaryLabel(metrics: TaskListMetrics): String = when {
+    metrics.directoryCount == 0 -> "按工作目录整理你的任务"
+    metrics.taskCount == 0 -> "${metrics.directoryCount} 个目录 · 暂无任务"
+    else -> "${metrics.directoryCount} 个目录 · ${metrics.taskCount} 个任务"
+}
+
+/** 展示层目录排序：活跃目录优先，其次按最近打开的任务排序；同值保留服务端顺序。 */
+internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
+    groups
+        .filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
+        .mapIndexed { index, group ->
+            IndexedDirectoryGroup(
+                group = group,
+                index = index,
+                active = groupHasLiveActivity(group),
+                latestOpenedAt = group.tasks.mapNotNull { it.task.lastOpenedAt }.maxOrNull(),
+            )
+        }
+        .sortedWith { left, right ->
+            when {
+                left.active != right.active -> if (left.active) -1 else 1
+                left.latestOpenedAt != right.latestOpenedAt -> compareNullableTimestamp(
+                    right.latestOpenedAt,
+                    left.latestOpenedAt,
+                )
+                else -> left.index - right.index
+            }
+        }
+        .map { it.group }
+
+/** 目录内先展示活跃任务，再展示最近使用任务，完成任务自然沉到底部。 */
+internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =
+    tasks
+        .mapIndexed { index, task ->
+            IndexedTaskSummary(
+                task = task,
+                index = index,
+                active = task.status == WorkspaceTaskStatus.Active,
+                live = task.sessions.any(::sessionHasLiveActivity),
+            )
+        }
+        .sortedWith { left, right ->
+            when {
+                left.live != right.live -> if (left.live) -1 else 1
+                left.active != right.active -> if (left.active) -1 else 1
+                left.task.task.lastOpenedAt != right.task.task.lastOpenedAt -> compareNullableTimestamp(
+                    right.task.task.lastOpenedAt,
+                    left.task.task.lastOpenedAt,
+                )
+                else -> left.index - right.index
+            }
+        }
+        .map { it.task }
+
+internal fun groupHasLiveActivity(group: TaskDirectoryGroup): Boolean =
+    group.standaloneSessions.any(::sessionHasLiveActivity) ||
+        group.tasks.any { task -> task.sessions.any(::sessionHasLiveActivity) }
+
+private fun sessionHasLiveActivity(session: WorkspaceSessionSummary): Boolean =
+    session.inFlight == true || session.status in setOf(
+        "running",
+        "thinking",
+        "permission",
+        "waiting-input",
+        "reconnecting",
+    )
+
+private fun compareNullableTimestamp(left: String?, right: String?): Int {
+    val leftValue = left?.takeIf { it.isNotBlank() }
+    val rightValue = right?.takeIf { it.isNotBlank() }
+    return when {
+        leftValue == null && rightValue == null -> 0
+        leftValue == null -> 1
+        rightValue == null -> -1
+        else -> leftValue.compareTo(rightValue)
+    }
+}
+
+private data class IndexedDirectoryGroup(
+    val group: TaskDirectoryGroup,
+    val index: Int,
+    val active: Boolean,
+    val latestOpenedAt: String?,
+)
+
+private data class IndexedTaskSummary(
+    val task: WorkspaceTaskSummary,
+    val index: Int,
+    val active: Boolean,
+    val live: Boolean,
+)
 
 /** 默认任务不标「共享」——那是常态，占标题栏却没有信息量。隔离才值得露出来。 */
 internal fun taskIsolationCaption(isolated: Boolean, branch: String? = null): String? {

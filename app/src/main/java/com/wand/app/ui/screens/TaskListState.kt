@@ -182,10 +182,10 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
         worktree: Boolean,
         workspaceId: String? = null,
     ): TaskCreationResult? = mutationMutex.withLock {
-        val normalizedName = name.trim()
+        val normalizedName = name.trim().ifEmpty { "未命名任务" }
         val normalizedCwd = cwd.trim()
         if (!isValidTaskName(normalizedName)) {
-            mutationError = if (normalizedName.isEmpty()) "请输入任务名称" else "任务名称无效或过长"
+            mutationError = "任务名称无效或过长"
             return@withLock null
         }
         mutationBusy = true

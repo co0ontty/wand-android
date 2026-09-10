@@ -216,6 +216,18 @@ class TaskListStateTest {
     }
 
     @Test
+    fun emptyTaskNameUsesServerSafeFallback() = runBlocking {
+        val port = FakeWorkspacePort()
+        val state = TaskListState(port)
+
+        val result = state.createTask("", "/work/wand", worktree = false)
+
+        assertEquals("未命名任务", port.standaloneRequests.single().name)
+        assertEquals("wand-global", result?.workspace?.id)
+        assertNull(state.mutationError)
+    }
+
+    @Test
     fun invalidTaskNameNeverCallsMutationPort() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)

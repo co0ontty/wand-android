@@ -7,7 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -32,8 +35,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,10 +51,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.data.DirectoryListing
 import com.wand.app.data.HistorySession
 import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionSnapshot
@@ -66,15 +69,17 @@ import com.wand.app.data.raw
 import com.wand.app.data.activityStatus
 import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.ui.withLiveTitle
+import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandBrandMark
+import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
-import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
@@ -124,14 +129,16 @@ fun TaskListScreen(
     onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
-    var menuOpen by remember { mutableStateOf(false) }
     var newTaskOpen by remember { mutableStateOf(false) }
-    var taskNameDraft by remember { mutableStateOf("") }
     var taskCwdDraft by remember { mutableStateOf("") }
-    var taskWorktreeEnabled by remember { mutableStateOf(true) }
     var newTaskWorkspaceId by remember { mutableStateOf<String?>(null) }
     var newTaskTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
+    var directoryPickerOpen by remember { mutableStateOf(false) }
+    var directoryPickerPath by remember { mutableStateOf("") }
+    var directoryListing by remember { mutableStateOf<DirectoryListing?>(null) }
+    var directoryLoading by remember { mutableStateOf(false) }
+    var directoryError by remember { mutableStateOf<String?>(null) }
     var pendingTarget by remember { mutableStateOf<Pair<TaskDirectoryGroup, WorkspaceTaskSummary>?>(null) }
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
@@ -146,25 +153,86 @@ fun TaskListScreen(
     val targetSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val recoverableEntries = historyState.entries.mapNotNull { it as? SessionListEntry.Recoverable }
-    val visibleGroups = state.groups.filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
+    val visibleGroups = directoryTreeGroups(state.groups)
     val hasVisibleContent = visibleGroups.isNotEmpty() || recoverableEntries.isNotEmpty()
+    val directoryGroupCount = visibleGroups.size
+    val metrics = taskListMetrics(visibleGroups)
+
+    fun normalizedPath(value: String): String = value.trim().replace(Regex("/+$"), "").ifEmpty { "/" }
+
+    fun workspaceForPath(value: String): String? {
+        val normalized = normalizedPath(value)
+        return state.groups.asSequence()
+            .filter { !it.synthetic }
+            .firstOrNull { normalizedPath(it.workspaceCwd) == normalized }
+            ?.workspaceId
+    }
+
+    fun updateTaskCwd(value: String) {
+        taskCwdDraft = value
+        // 手动改目录后，已选项目只有在目录仍匹配时才保留；不匹配就退回独立任务。
+        if (newTaskWorkspaceId != null && workspaceForPath(value) != newTaskWorkspaceId) {
+            newTaskWorkspaceId = null
+        }
+        state.clearMutationError()
+    }
 
     fun beginNewTask(initialCwd: String? = null, workspaceId: String? = null) {
         if (!interactionEnabled) return
         state.clearMutationError()
-        taskNameDraft = ""
         taskCwdDraft = initialCwd.orEmpty()
         newTaskWorkspaceId = workspaceId
-        taskWorktreeEnabled = state.defaultTaskWorktree
-        newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: WorkspaceSessionTarget.Claude
-        newTaskKind = state.defaultSessionKind
+        newTaskTarget = WorkspaceSessionTarget.Claude
+        newTaskKind = WorkspaceSessionKind.Structured
         newTaskOpen = true
         scope.launch {
             state.loadCreationDefaults()
-            taskWorktreeEnabled = state.defaultTaskWorktree
+            if (taskCwdDraft.isBlank()) {
+                taskCwdDraft = state.defaultCwd.orEmpty()
+            }
             newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: newTaskTarget
             newTaskKind = state.defaultSessionKind
         }
+    }
+
+    fun openDirectoryPicker() {
+        directoryPickerPath = taskCwdDraft.trim().ifEmpty {
+            state.defaultCwd?.trim().takeUnless { it.isNullOrEmpty() }
+                ?: state.recentPaths.firstOrNull()?.path.orEmpty()
+        }.ifEmpty { "/" }
+        directoryPickerOpen = true
+        directoryLoading = true
+        directoryError = null
+        scope.launch {
+            try {
+                directoryListing = api.listDirectory(directoryPickerPath)
+            } catch (error: Exception) {
+                directoryError = error.message ?: "无法读取目录"
+            } finally {
+                directoryLoading = false
+            }
+        }
+    }
+
+    fun browseDirectory(path: String) {
+        directoryPickerPath = path
+        directoryLoading = true
+        directoryError = null
+        scope.launch {
+            try {
+                directoryListing = api.listDirectory(path)
+            } catch (error: Exception) {
+                directoryError = error.message ?: "无法读取目录"
+            } finally {
+                directoryLoading = false
+            }
+        }
+    }
+
+    fun parentDirectory(path: String): String {
+        val normalized = path.trim().trimEnd('/').ifEmpty { "/" }
+        if (normalized == "/") return "/"
+        return normalized.substringBeforeLast('/').ifEmpty { "/" }
     }
 
     LaunchedEffect(state.newTaskRequest) {
@@ -175,27 +243,28 @@ fun TaskListScreen(
     }
 
     if (newTaskOpen) {
-        val name = taskNameDraft.trim()
         val cwd = taskCwdDraft.trim()
+        val matchingProjects = state.groups
+            .filter { !it.synthetic && normalizedPath(it.workspaceCwd) == normalizedPath(cwd) }
+        val selectedProject = matchingProjects.firstOrNull { it.workspaceId == newTaskWorkspaceId }
         WandDialog(
-            title = "新任务",
+            title = "新建任务",
             onDismissRequest = { if (!state.mutationBusy) newTaskOpen = false },
             icon = WandIcons.add,
             confirm = WandDialogAction(
-                label = if (state.mutationBusy) "创建中…" else "创建",
-                enabled = !state.mutationBusy && name.isNotEmpty(),
+                label = if (state.mutationBusy) "创建中…" else "创建任务",
+                enabled = !state.mutationBusy && cwd.isNotEmpty(),
                 onClick = {
-                    if (state.mutationBusy || name.isEmpty()) return@WandDialogAction
+                    if (state.mutationBusy || cwd.isEmpty()) return@WandDialogAction
                     scope.launch {
                         state.rememberCreationChoice(
                             defaultProvider = newTaskTarget.raw.takeUnless { newTaskTarget.isShell },
                             defaultSessionKind = newTaskKind,
-                            defaultTaskWorktree = taskWorktreeEnabled,
                         )
                         val result = state.createTask(
-                            name,
-                            cwd,
-                            if (cwd.isEmpty()) false else taskWorktreeEnabled,
+                            name = "",
+                            cwd = cwd,
+                            worktree = newTaskWorkspaceId != null && state.defaultTaskWorktree,
                             workspaceId = newTaskWorkspaceId,
                         )
                         if (result != null) {
@@ -230,145 +299,192 @@ fun TaskListScreen(
                 onClick = { newTaskOpen = false },
             ),
         ) {
-            WandTextField(
-                value = taskNameDraft,
-                onValueChange = { taskNameDraft = it; state.clearMutationError() },
-                modifier = Modifier.fillMaxWidth(),
-                label = "任务名称",
-                placeholder = "例如：修复会话恢复流程",
-                enabled = !state.mutationBusy,
-                singleLine = true,
+            Text(
+                "先选工作目录，再决定是否归入已有项目。任务名称由系统自动生成。",
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textMuted,
             )
-            Spacer(Modifier.height(10.dp))
-            WandTextField(
-                value = taskCwdDraft,
-                onValueChange = { taskCwdDraft = it; state.clearMutationError() },
-                modifier = Modifier.fillMaxWidth(),
-                label = if (newTaskWorkspaceId == null) "工作目录（可选）" else "任务目录",
-                placeholder = if (newTaskWorkspaceId == null) "留空则使用全局临时目录" else (state.defaultCwd ?: "/path/to/project"),
-                enabled = !state.mutationBusy,
-                singleLine = true,
-            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
+                    .border(1.dp, WandColors.border.copy(alpha = 0.72f), RoundedCornerShape(14.dp))
+                    .clickable(enabled = !state.mutationBusy) { openDirectoryPicker() }
+                    .padding(13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(WandColors.brandSoft),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand)
+                }
+                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(
+                        if (cwd.isEmpty()) "选择工作目录" else "工作目录",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = WandColors.textMuted,
+                    )
+                    Text(
+                        if (cwd.isEmpty()) "点击浏览服务器上的目录" else cwd,
+                        style = if (cwd.isEmpty()) MaterialTheme.typography.bodyMedium
+                        else MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = if (cwd.isEmpty()) WandColors.textPrimary else WandColors.brand,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Icon(WandIcons.chevronRight, contentDescription = "选择目录", tint = WandColors.textMuted)
+            }
             if (state.recentPaths.isNotEmpty()) {
                 Text(
-                    "最近目录",
+                    "最近使用",
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
-                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
+                    modifier = Modifier.padding(top = 12.dp, bottom = 6.dp),
                 )
-                state.recentPaths.take(4).forEach { recent ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = !state.mutationBusy) { taskCwdDraft = recent.path }
-                            .padding(horizontal = 10.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            WandIcons.folder,
-                            contentDescription = null,
-                            tint = WandColors.textMuted,
-                            modifier = Modifier.size(15.dp),
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    state.recentPaths.take(3).forEach { recent ->
+                        Text(
+                            recent.displayName,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(WandColors.surfaceSoft)
+                                .clickable(enabled = !state.mutationBusy) { updateTaskCwd(recent.path) }
+                                .padding(horizontal = 9.dp, vertical = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = WandColors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
-                            Text(
-                                recent.displayName,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = WandColors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                recent.path,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = WandColors.textMuted,
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
                     }
                 }
             }
             Text(
-                "CLI 工具",
+                if (cwd.isEmpty()) "必须选择目录才能创建任务" else "任务会在此目录下显示在目录树中",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (cwd.isEmpty()) WandColors.danger else WandColors.textMuted,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Text(
+                "项目归属（可选）",
                 style = MaterialTheme.typography.labelSmall,
                 color = WandColors.textMuted,
-                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
             )
-            WorkspaceSessionTarget.OPTIONS.forEach { option ->
-                val selected = newTaskTarget == option
+            if (matchingProjects.isEmpty()) {
                 Text(
-                    option.label,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(enabled = !state.mutationBusy) {
-                            newTaskTarget = option
-                            if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
-                        }
-                        .background(if (selected) WandColors.brand.copy(alpha = 0.12f) else WandColors.surfaceSoft.copy(alpha = 0.4f))
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    "此目录没有已绑定项目，将创建独立任务。",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (selected) WandColors.brand else WandColors.textPrimary,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = WandColors.textMuted,
                 )
-                Spacer(Modifier.height(4.dp))
-            }
-            if (!newTaskTarget.isShell) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    WorkspaceSessionKind.entries.forEach { option ->
-                        val selected = newTaskKind == option
-                        Text(
-                            option.label,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = !state.mutationBusy) {
-                                    newTaskKind = option
-                                    state.rememberCreationChoice(defaultSessionKind = option)
-                                }
-                                .background(if (selected) WandColors.brand.copy(alpha = 0.12f) else WandColors.surfaceSoft.copy(alpha = 0.4f))
-                                .padding(vertical = 8.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (selected) WandColors.brand else WandColors.textPrimary,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    val independentSelected = newTaskWorkspaceId == null
+                    CreationChoiceCard(
+                        title = "独立任务",
+                        subtitle = "按目录归类",
+                        selected = independentSelected,
+                        enabled = !state.mutationBusy,
+                        icon = WandIcons.folder,
+                        onClick = { newTaskWorkspaceId = null },
+                        modifier = Modifier.weight(1f),
+                    )
+                    matchingProjects.forEach { project ->
+                        CreationChoiceCard(
+                            title = project.workspaceName,
+                            subtitle = "已有项目",
+                            selected = selectedProject?.workspaceId == project.workspaceId,
+                            enabled = !state.mutationBusy,
+                            icon = WandIcons.folder,
+                            onClick = { newTaskWorkspaceId = project.workspaceId },
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
             }
-            if (cwd.isNotEmpty()) Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "独立 worktree 隔离",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = WandColors.textPrimary,
-                    )
-                    Text(
-                        if (taskWorktreeEnabled) {
-                            "在独立分支与工作树中运行，完成后可审查合并。"
-                        } else {
-                            "直接使用任务目录，适合非 Git 目录或共享改动。"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = WandColors.textMuted,
-                    )
+            Text(
+                "首次打开的工具",
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
+                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+            )
+            WorkspaceSessionTarget.OPTIONS.chunked(2).forEach { rowOptions ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    rowOptions.forEach { option ->
+                        val selected = newTaskTarget == option
+                        val logoProvider = option.raw.takeUnless { option.isShell }
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.62f))
+                                .border(
+                                    1.dp,
+                                    if (selected) WandColors.brand.copy(alpha = 0.7f) else WandColors.border.copy(alpha = 0.5f),
+                                    RoundedCornerShape(12.dp),
+                                )
+                                .clickable(enabled = !state.mutationBusy) {
+                                    newTaskTarget = option
+                                    if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
+                                }
+                                .padding(horizontal = 9.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Image(
+                                painter = BrandLogos.painterForProvider(logoProvider),
+                                contentDescription = null,
+                                modifier = Modifier.size(21.dp),
+                                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                                    BrandLogos.tintForProvider(logoProvider, WandColors.textPrimary),
+                                ),
+                            )
+                            Text(
+                                option.label,
+                                modifier = Modifier.padding(start = 7.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) WandColors.brand else WandColors.textPrimary,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    if (rowOptions.size == 1) Spacer(Modifier.weight(1f))
                 }
-                Switch(
-                    checked = taskWorktreeEnabled,
-                    onCheckedChange = {
-                        taskWorktreeEnabled = it
-                        state.rememberCreationChoice(defaultTaskWorktree = it)
-                    },
-                    enabled = !state.mutationBusy,
+            }
+            if (!newTaskTarget.isShell) {
+                Text(
+                    "运行方式",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.textMuted,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    WorkspaceSessionKind.entries.forEach { option ->
+                        val selected = newTaskKind == option
+                        CreationChoiceCard(
+                            title = option.label,
+                            subtitle = option.description,
+                            selected = selected,
+                            enabled = !state.mutationBusy,
+                            icon = if (option == WorkspaceSessionKind.Structured) WandIcons.chat else WandIcons.terminal,
+                            onClick = {
+                                newTaskKind = option
+                                state.rememberCreationChoice(defaultSessionKind = option)
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
             }
             state.mutationError?.let {
                 Text(
@@ -377,6 +493,60 @@ fun TaskListScreen(
                     color = WandColors.danger,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+            }
+        }
+    }
+
+    if (directoryPickerOpen) {
+        WandBottomSheet(
+            onDismissRequest = { if (!state.mutationBusy) directoryPickerOpen = false },
+            modifier = Modifier.navigationBarsPadding(),
+            sheetState = targetSheetState,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("选择工作目录", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
+                    Text(
+                        directoryPickerPath,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                TextButton(onClick = { directoryPickerOpen = false }) { Text("关闭") }
+            }
+            directoryError?.let {
+                Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp))
+            }
+            if (directoryLoading) {
+                Text("读取中…", color = WandColors.textMuted, modifier = Modifier.padding(20.dp))
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp).padding(horizontal = 12.dp)) {
+                    if (directoryPickerPath != "/") {
+                        item {
+                            DirectoryPickerRow("返回上一级", parentDirectory(directoryPickerPath), WandIcons.chevronRight) {
+                                browseDirectory(parentDirectory(directoryPickerPath))
+                            }
+                        }
+                    }
+                    items(directoryListing?.items.orEmpty().filter { it.isDirectory }, key = { it.path }) { item ->
+                        DirectoryPickerRow(item.name, item.path, WandIcons.folder) { browseDirectory(item.path) }
+                    }
+                }
+            }
+            TextButton(
+                onClick = {
+                    updateTaskCwd(directoryPickerPath)
+                    directoryPickerOpen = false
+                },
+                enabled = !directoryLoading,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Text("选择此目录")
             }
         }
     }
@@ -561,7 +731,7 @@ fun TaskListScreen(
                                 TaskSessionRoute(
                                     sessionId = snapshot.id,
                                     structured = snapshot.isStructured,
-                                    workspaceId = group.workspaceId,
+                                    workspaceId = task.task.workspaceId,
                                     taskId = task.id,
                                     workspaceName = group.workspaceName,
                                     taskName = task.name,
@@ -580,70 +750,14 @@ fun TaskListScreen(
     }
 
     Column(
-        modifier = modifier.fillMaxSize().background(WandColors.bgPrimary),
+        modifier = modifier
+            .fillMaxSize()
+            .background(WandColors.bgPrimary)
+            // HomeActivity uses transparent edge-to-edge system bars. Consume the top inset
+            // here so the dashboard chrome never sits underneath the clock/camera cutout.
+            .statusBarsPadding()
+            .navigationBarsPadding(),
     ) {
-        WandDetailTopBar(
-            title = serverDisplayName,
-            subtitle = "任务",
-            actions = {
-                if (onCollapseSidebar != null) {
-                    WandIconButton(
-                        icon = WandIcons.panelCollapse,
-                        contentDescription = "收起任务侧边栏",
-                        onClick = onCollapseSidebar,
-                        variant = WandIconButtonVariant.Toolbar,
-                    )
-                }
-                WandIconButton(
-                    icon = WandIcons.add,
-                    contentDescription = "新建任务",
-                    onClick = { beginNewTask() },
-                    variant = WandIconButtonVariant.Accent,
-                    enabled = interactionEnabled,
-                )
-                Box {
-                    WandIconButton(
-                        icon = WandIcons.more,
-                        contentDescription = "更多选项",
-                        onClick = { menuOpen = true },
-                        variant = WandIconButtonVariant.Toolbar,
-                    )
-                    DropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { menuOpen = false },
-                        containerColor = WandColors.bgElevated,
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("刷新任务") },
-                            leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
-                            onClick = {
-                                menuOpen = false
-                                scope.launch {
-                                    state.load(silent = true)
-                                    historyState.load(silent = true)
-                                }
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("设置") },
-                            leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
-                            onClick = { menuOpen = false; onOpenSettings() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("打开网页版") },
-                            leadingIcon = { Icon(WandIcons.web, contentDescription = null) },
-                            onClick = { menuOpen = false; onOpenWeb() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("切换服务器") },
-                            leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
-                            onClick = { menuOpen = false; onSwitchServer() },
-                        )
-                    }
-                }
-            },
-        )
-
         Box(modifier = Modifier.fillMaxSize()) {
             AmbientBackground(Modifier.fillMaxSize())
             when {
@@ -652,23 +766,62 @@ fun TaskListScreen(
                     message = state.loadError ?: "无法加载任务列表",
                     onRetry = { scope.launch { state.load() } },
                 )
-                !hasVisibleContent && !historyState.canLoadMore -> EmptyState(
-                    icon = WandIcons.todo,
-                    title = "还没有任务",
-                    subtitle = "新建任务并选择目录，之后的会话都会归属于该任务。",
-                    actionText = "新建任务",
-                    onAction = { beginNewTask() },
-                )
+                !hasVisibleContent && !historyState.canLoadMore -> Column(Modifier.fillMaxSize()) {
+                    HomeOverviewCard(
+                        serverDisplayName = serverDisplayName,
+                        directoryCount = 0,
+                        taskCount = 0,
+                        sessionCount = 0,
+                        onNewTask = { beginNewTask() },
+                        interactionEnabled = interactionEnabled,
+                        onRefresh = {
+                            scope.launch {
+                                state.load(silent = true)
+                                historyState.load(silent = true)
+                            }
+                        },
+                        onOpenSettings = onOpenSettings,
+                        onOpenWeb = onOpenWeb,
+                        onSwitchServer = onSwitchServer,
+                        onCollapseSidebar = onCollapseSidebar,
+                    )
+                    EmptyState(
+                        modifier = Modifier.weight(1f),
+                        icon = WandIcons.todo,
+                        title = "还没有任务",
+                        subtitle = "新建任务并选择目录，之后的会话都会归属于该任务。",
+                    )
+                }
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 12.dp,
-                        end = 10.dp,
-                        top = 4.dp,
+                        start = 14.dp,
+                        end = 14.dp,
+                        top = 8.dp,
                         bottom = 24.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    item(key = "overview") {
+                        HomeOverviewCard(
+                            serverDisplayName = serverDisplayName,
+                            directoryCount = metrics.directoryCount,
+                            taskCount = metrics.taskCount,
+                            sessionCount = metrics.sessionCount,
+                            onNewTask = { beginNewTask() },
+                            interactionEnabled = interactionEnabled,
+                            onRefresh = {
+                                scope.launch {
+                                    state.load(silent = true)
+                                    historyState.load(silent = true)
+                                }
+                            },
+                            onOpenSettings = onOpenSettings,
+                            onOpenWeb = onOpenWeb,
+                            onSwitchServer = onSwitchServer,
+                            onCollapseSidebar = onCollapseSidebar,
+                        )
+                    }
                     state.loadError?.let { message ->
                         item(key = "task-load-error") {
                             InlineError(message = message, onRetry = { scope.launch { state.load() } })
@@ -677,7 +830,7 @@ fun TaskListScreen(
                     items(visibleGroups, key = { "group-${it.id}" }) { group ->
                         TaskDirectorySection(
                             group = group,
-                            directoryCount = visibleGroups.size,
+                            directoryCount = directoryGroupCount,
                             groupCollapsed = state.isDirectoryCollapsed(group.id),
                             taskCollapsed = state::isTaskCollapsed,
                             standaloneCollapsed = state.isStandaloneCollapsed(group.id),
@@ -687,7 +840,7 @@ fun TaskListScreen(
                             onToggleTask = state::toggleTask,
                             onToggleStandalone = { state.toggleStandalone(group.id) },
                             onOpenTask = { task ->
-                                onOpenTask(group.workspaceId, task.id, group.workspaceName, task.name)
+                                onOpenTask(task.task.workspaceId, task.id, group.workspaceName, task.name)
                             },
                             onOpenSession = { session, task ->
                                 onOpenSession(taskSessionRoute(session, group, task))
@@ -752,6 +905,155 @@ fun TaskListScreen(
 }
 
 @Composable
+private fun HomeOverviewCard(
+    serverDisplayName: String,
+    directoryCount: Int,
+    taskCount: Int,
+    sessionCount: Int,
+    onNewTask: () -> Unit,
+    interactionEnabled: Boolean,
+    onRefresh: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenWeb: () -> Unit,
+    onSwitchServer: () -> Unit,
+    onCollapseSidebar: (() -> Unit)?,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    WandCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        containerColor = WandColors.surface.copy(alpha = 0.86f),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            WandBrandMark(size = 36)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 11.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Text(
+                        "工作台",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = WandColors.textPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    StatusDot("running", modifier = Modifier.size(7.dp))
+                    Text(
+                        "已连接",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = WandColors.success,
+                    )
+                }
+                Text(
+                    serverDisplayName.ifBlank { "当前服务器" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            if (onCollapseSidebar != null) {
+                WandIconButton(
+                    icon = WandIcons.panelCollapse,
+                    contentDescription = "收起任务侧边栏",
+                    onClick = onCollapseSidebar,
+                    variant = WandIconButtonVariant.Toolbar,
+                )
+            }
+            Box {
+                WandIconButton(
+                    icon = WandIcons.more,
+                    contentDescription = "更多选项",
+                    onClick = { menuOpen = true },
+                    variant = WandIconButtonVariant.Toolbar,
+                )
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                    containerColor = WandColors.bgElevated,
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("刷新任务") },
+                        leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
+                        onClick = { menuOpen = false; onRefresh() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("设置") },
+                        leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
+                        onClick = { menuOpen = false; onOpenSettings() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("打开网页版") },
+                        leadingIcon = { Icon(WandIcons.web, contentDescription = null) },
+                        onClick = { menuOpen = false; onOpenWeb() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("切换服务器") },
+                        leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
+                        onClick = { menuOpen = false; onSwitchServer() },
+                    )
+                }
+            }
+        }
+        WandButton(
+            label = "新建任务",
+            onClick = onNewTask,
+            enabled = interactionEnabled,
+            icon = WandIcons.add,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            HomeOverviewMetric("目录", directoryCount, Modifier.weight(1f))
+            HomeOverviewMetric("任务", taskCount, Modifier.weight(1f))
+            HomeOverviewMetric("窗口", sessionCount, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun HomeOverviewMetric(
+    label: String,
+    value: Int,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(WandColors.surfaceSoft.copy(alpha = 0.48f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            value.toString(),
+            style = MaterialTheme.typography.titleLarge,
+            color = WandColors.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = WandColors.textMuted,
+            modifier = Modifier.padding(top = 1.dp),
+        )
+    }
+}
+
+@Composable
 private fun TaskDirectorySection(
     group: TaskDirectoryGroup,
     directoryCount: Int,
@@ -781,13 +1083,27 @@ private fun TaskDirectorySection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 44.dp)
                 .then(
                     if (canCollapseDirectory) Modifier.clickable(onClick = onToggleGroup) else Modifier,
                 )
-                .padding(end = 2.dp, top = 6.dp, bottom = 6.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(WandColors.brandSoft),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    WandIcons.folder,
+                    contentDescription = null,
+                    tint = WandColors.brand,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Spacer(modifier = Modifier.size(9.dp))
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -804,21 +1120,10 @@ private fun TaskDirectorySection(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (group.synthetic) {
-                        Text(
-                            "未归档目录",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = WandColors.textMuted,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 10.sp,
-                            modifier = Modifier.padding(start = 6.dp),
-                        )
+                    if (groupHasLiveActivity(group)) {
+                        StatusDot("running", modifier = Modifier.padding(start = 7.dp).size(7.dp))
                     }
                 }
-                AdaptiveDirectoryPathCaption(
-                    name = group.workspaceName,
-                    cwd = group.workspaceCwd,
-                )
             }
             if (canCollapseDirectory) {
                 TreeDisclosureCaret(
@@ -884,8 +1189,12 @@ private fun TaskDirectorySection(
                 ) + fadeOut(WandMotion.tweenExit())
             },
         ) {
-            Column(modifier = Modifier.padding(end = 2.dp, bottom = 6.dp)) {
-                group.tasks.forEach { task ->
+            Column(
+                modifier = Modifier
+                    .padding(start = 25.dp, end = 2.dp, top = 1.dp, bottom = 4.dp)
+                    .fillMaxWidth(),
+            ) {
+                orderedTaskSummaries(group.tasks).forEach { task ->
                     TaskAggregateRow(
                         task = task,
                         parentNames = listOf(group.workspaceName),
@@ -1315,46 +1624,6 @@ private fun RecoverableHistorySection(
     }
 }
 
-@Composable
-private fun AdaptiveDirectoryPathCaption(
-    name: String,
-    cwd: String,
-    modifier: Modifier = Modifier,
-) {
-    val textMeasurer = rememberTextMeasurer()
-    val style = MaterialTheme.typography.labelSmall.copy(
-        color = WandColors.textMuted,
-        fontFamily = FontFamily.Monospace,
-        fontSize = 10.sp,
-    )
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val maxPx = if (constraints.hasBoundedWidth) {
-            constraints.maxWidth.toFloat()
-        } else {
-            Float.POSITIVE_INFINITY
-        }
-        val caption = remember(name, cwd, maxPx, style) {
-            fitDirectoryPathCaption(name, cwd, maxPx) { text ->
-                textMeasurer.measure(
-                    text = text,
-                    style = style,
-                    overflow = TextOverflow.Clip,
-                    softWrap = false,
-                    maxLines = 1,
-                ).size.width.toFloat()
-            }
-        }
-        if (caption != null) {
-            Text(
-                caption,
-                style = style,
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
-                softWrap = false,
-            )
-        }
-    }
-}
 
 @Composable
 private fun TreeDisclosureCaret(
@@ -1371,19 +1640,15 @@ private fun TreeDisclosureCaret(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (label != null) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelSmall,
-                color = WandColors.textMuted,
-            )
+            Text(label, style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
         }
         Icon(
             WandIcons.expand,
             contentDescription = contentDescription,
             tint = WandColors.textMuted,
-            modifier = Modifier
-                .size(16.dp)
-                .graphicsLayer { rotationZ = if (expanded) 0f else -90f },
+            modifier = Modifier.size(16.dp).graphicsLayer {
+                rotationZ = if (expanded) 0f else -90f
+            },
         )
     }
 }
@@ -1433,3 +1698,77 @@ private fun TaskDirectoryGroup.asWorkspace(): Workspace = Workspace(
     lastOpenedAt = null,
     worktreeCount = tasks.count { it.worktree != null },
 )
+
+@Composable
+private fun CreationChoiceCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    enabled: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.62f))
+            .border(
+                1.dp,
+                if (selected) WandColors.brand.copy(alpha = 0.7f) else WandColors.border.copy(alpha = 0.5f),
+                RoundedCornerShape(12.dp),
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = if (selected) WandColors.brand else WandColors.textMuted)
+        Text(
+            title,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) WandColors.brand else WandColors.textPrimary,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = WandColors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+@Composable
+private fun DirectoryPickerRow(
+    title: String,
+    path: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(20.dp))
+        Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary)
+            if (path != title) {
+                Text(
+                    path,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
+    }
+}

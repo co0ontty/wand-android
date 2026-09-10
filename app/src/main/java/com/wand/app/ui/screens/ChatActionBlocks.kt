@@ -189,15 +189,20 @@ fun AskUserQuestionCard(
     selection: AskUserSelectionState,
     onToggle: (Int, Int, Boolean) -> Unit,
     onSubmit: (String) -> Unit,
+    expandAll: Boolean = false,
 ) {
     val isAnswered = result != null
     // 已答时按行拆答案：每道题一行，行内 ", " 分隔多选 label（对齐 Web 的解析）。
     val answerLines = remember(result?.text) {
         result?.text?.trim()?.takeIf { it.isNotEmpty() }?.split("\n") ?: emptyList()
     }
-    var expanded by remember { mutableStateOf(!isAnswered) }
-    // 回答送达后自动折叠（对齐 Web 已答默认折叠）。
-    LaunchedEffect(isAnswered) { if (isAnswered) expanded = false }
+    var expanded by remember(toolUseId, result?.text, expandAll) {
+        mutableStateOf(expandAll || !isAnswered)
+    }
+    // 回答送达后自动折叠（对齐 Web 已答默认折叠）；最新回复要求始终保留完整内容。
+    LaunchedEffect(isAnswered, expandAll) {
+        if (isAnswered && !expandAll) expanded = false
+    }
     val allAnswered = questions.indices.all { !selection.selected[it].isNullOrEmpty() }
 
     // 状态色通过 glassCard 的 rimTint 表达（已答绿 / 待答品牌），

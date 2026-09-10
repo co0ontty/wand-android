@@ -18,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -63,7 +65,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -410,6 +414,7 @@ private fun ReadyContent(
                 taskState = taskState,
                 listState = listState,
                 listPaneWidth = listPaneWidth,
+                windowWidth = maxWidth,
                 sidebarCollapsed = sidebarCollapsed,
                 selectedSessionId = nav.current.sessionIdOrNull(),
                 onOpenSession = openTaskSession,
@@ -673,6 +678,7 @@ private fun WideReadyContent(
     taskState: TaskListState,
     listState: SessionListState,
     listPaneWidth: Dp,
+    windowWidth: Dp,
     sidebarCollapsed: Boolean,
     selectedSessionId: String?,
     onOpenSession: (TaskSessionRoute) -> Unit,
@@ -684,7 +690,17 @@ private fun WideReadyContent(
     showDetailBack: Boolean,
 ) {
     val lockedSidebarInteraction = remember { MutableInteractionSource() }
-    val sidebarContentWidth = if (sidebarCollapsed) 56.dp else listPaneWidth
+    val density = LocalDensity.current.density
+    var sidebarDragDeltaDp by rememberSaveable { mutableStateOf(0f) }
+    val minSidebarWidth = 220.dp
+    val maxSidebarWidth = (windowWidth - 360.dp)
+        .coerceAtLeast(minSidebarWidth)
+        .coerceAtMost(420.dp)
+    val sidebarContentWidth = if (sidebarCollapsed) {
+        56.dp
+    } else {
+        (listPaneWidth + sidebarDragDeltaDp.dp).coerceIn(minSidebarWidth, maxSidebarWidth)
+    }
     val sidebarWidth by animateDpAsState(
         targetValue = sidebarContentWidth,
         animationSpec = WandMotion.settleSpringSpec(),
@@ -835,7 +851,52 @@ private fun WideReadyContent(
                     )
                 }
             }
+            if (!sidebarCollapsed) {
+                SidebarResizeHandle(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .offset(x = (-14).dp),
+                    enabled = !sessionCreationInFlight,
+                    onDrag = { deltaPx ->
+                        sidebarDragDeltaDp += deltaPx / density
+                    },
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun SidebarResizeHandle(
+    modifier: Modifier = Modifier,
+    enabled: Boolean,
+    onDrag: (Float) -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .width(28.dp)
+            .fillMaxHeight()
+            .semantics {
+                contentDescription = "调整侧边栏宽度"
+            }
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectDragGestures(
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount.x)
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(5.dp)
+                .height(52.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(WandColors.textMuted.copy(alpha = 0.62f)),
+        )
     }
 }
 

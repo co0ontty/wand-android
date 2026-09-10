@@ -67,6 +67,11 @@ interface WorkspacePort {
     /** 新建任务时展示的最近目录。 */
     suspend fun recentTaskPaths(): List<RecentPath> = emptyList()
 
+    /** 目录浏览：返回当前路径下的目录与文件。 */
+    suspend fun listDirectory(path: String): DirectoryListing {
+        throw UnsupportedOperationException("目录浏览接口不可用")
+    }
+
     /** 读取服务端偏好（会话类型、独立 worktree 等）。 */
     suspend fun serverConfig(): ServerConfigInfo {
         throw UnsupportedOperationException("配置接口不可用")

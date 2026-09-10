@@ -727,6 +727,9 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         return TaskGroupsPage.parse(requestData("GET", path))
     }
 
+    override suspend fun listDirectory(path: String): DirectoryListing =
+        DirectoryListing.parse(requestObject("GET", "/api/directory?q=${encode(path)}"))
+
     override suspend fun taskDefaultCwd(): String? =
         requestObject("GET", "/api/config").str("defaultCwd")?.takeIf { it.isNotBlank() }
 
@@ -789,9 +792,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
     }
 
     // MARK: - 目录与配置
-
-    suspend fun listDirectory(query: String): DirectoryListing =
-        DirectoryListing.parse(requestObject("GET", "/api/directory?q=${encode(query)}"))
 
     suspend fun recentPaths(): List<RecentPath> =
         RecentPath.parseList(requestArray("GET", "/api/recent-paths"))

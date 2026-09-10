@@ -121,6 +121,98 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun directoryTreePutsLiveAndRecentlyOpenedDirectoriesFirst() {
+        val idle = group().copy(
+            workspaceId = "idle",
+            workspaceName = "Idle",
+            tasks = listOf(task().copy(task = task().task.copy(lastOpenedAt = "2026-01-01T00:00:00Z"))),
+        )
+        val recent = group().copy(
+            workspaceId = "recent",
+            workspaceName = "Recent",
+            tasks = listOf(task().copy(task = task().task.copy(lastOpenedAt = "2026-03-01T00:00:00Z"))),
+        )
+        val active = group().copy(
+            workspaceId = "active",
+            workspaceName = "Active",
+            standaloneSessions = listOf(session("structured", "structured").copy(status = "running")),
+        )
+
+        assertEquals(
+            listOf("Active", "Recent", "Idle"),
+            directoryTreeGroups(listOf(idle, recent, active)).map { it.workspaceName },
+        )
+    }
+
+    @Test
+    fun taskTreeKeepsLiveTasksAboveDoneTasksAndUsesRecentTimeAsTieBreaker() {
+        val done = task().copy(
+            task = task().task.copy(
+                id = "done",
+                status = WorkspaceTaskStatus.Done,
+                lastOpenedAt = "2026-04-01T00:00:00Z",
+            ),
+        )
+        val activeOld = task().copy(
+            task = task().task.copy(
+                id = "active-old",
+                lastOpenedAt = "2026-01-01T00:00:00Z",
+            ),
+        )
+        val activeRecent = task().copy(
+            task = task().task.copy(
+                id = "active-recent",
+                lastOpenedAt = "2026-03-01T00:00:00Z",
+            ),
+            sessions = listOf(session("structured", "structured").copy(status = "running")),
+        )
+
+        assertEquals(
+            listOf("active-recent", "active-old", "done"),
+            orderedTaskSummaries(listOf(done, activeOld, activeRecent)).map { it.id },
+        )
+    }
+
+    @Test
+    fun homeMetricsDeduplicateDirectoryAliasesAndTaskIds() {
+        val duplicateDirectory = group().copy(
+            workspaceId = "workspace-2",
+            workspaceName = "Repo alias",
+            workspaceCwd = "/repo/",
+            tasks = listOf(
+                task().copy(totalSessions = 2),
+                task().copy(
+                    task = task().task.copy(id = "task-2", name = "Review"),
+                    totalSessions = 1,
+                ),
+            ),
+            standaloneSessions = listOf(session("pty", null)),
+        )
+
+        assertEquals(
+            TaskListMetrics(directoryCount = 1, taskCount = 2, sessionCount = 4),
+            taskListMetrics(listOf(group(), duplicateDirectory)),
+        )
+        assertEquals(
+            1,
+            taskListMetrics(
+                listOf(
+                    group().copy(workspaceCwd = "/"),
+                    group().copy(workspaceId = "workspace-3", workspaceCwd = "///"),
+                ),
+            ).directoryCount,
+        )
+    }
+
+    @Test
+    fun homeSummaryExplainsDirectoryWithOnlyLegacySessions() {
+        val metrics = TaskListMetrics(directoryCount = 1, taskCount = 0, sessionCount = 2)
+
+        assertEquals("1 个目录 · 暂无任务", homeTaskSummaryLabel(metrics))
+        assertEquals("按工作目录整理你的任务", homeTaskSummaryLabel(metrics.copy(directoryCount = 0)))
+    }
+
+    @Test
     fun directoryGroupMetaLabelMatchesIosCountFormat() {
         assertEquals("2 任务 · 5 会话", directoryGroupMetaLabel(2, 5))
         assertEquals("0 任务 · 0 会话", directoryGroupMetaLabel(0, 0))

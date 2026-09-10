@@ -6,6 +6,8 @@ import android.content.res.Configuration;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.widget.Toast;
@@ -60,21 +62,46 @@ public class ConnectActivity extends AppCompatActivity {
     private ExecutorService networkExecutor;
     private Future<?> currentTask;
     private long connectionGeneration = 0L;
+    private final Handler autoConnectHandler = new Handler(Looper.getMainLooper());
+    private ServerProfile autoConnectProfile;
+    private int autoConnectAttempt = 0;
     private boolean managementMode = false;
     private String returnServerId;
     private boolean profilesChanged = false;
+
+    private static final class ProbeResult {
+        final String error;
+        final boolean retryable;
+
+        ProbeResult(String error, boolean retryable) {
+            this.error = error;
+            this.retryable = retryable;
+        }
+
+        static ProbeResult success() {
+            return new ProbeResult(null, false);
+        }
+    }
 
     private static final class ConnectionResult {
         final String serverUrl;
         final String appToken;
         final String error;
         final boolean authenticated;
+        final boolean retryable;
 
-        ConnectionResult(String serverUrl, String appToken, String error, boolean authenticated) {
+        ConnectionResult(
+                String serverUrl,
+                String appToken,
+                String error,
+                boolean authenticated,
+                boolean retryable
+        ) {
             this.serverUrl = serverUrl;
             this.appToken = appToken;
             this.error = error;
             this.authenticated = authenticated;
+            this.retryable = retryable;
         }
 
         boolean isSuccess() {
@@ -324,27 +351,80 @@ public class ConnectActivity extends AppCompatActivity {
 
     private void tryAutoConnect(ServerProfile profile) {
         autoConnecting = true;
+        autoConnectProfile = profile;
+        autoConnectAttempt = 0;
+        cancelAutoConnectRetry();
         connectView.showAutoConnecting("正在连接「" + profile.getDisplayName() + "」…");
+        startAutoConnectAttempt();
+    }
 
+    /**
+     * The launcher path used to probe the saved server only once. A short Wi-Fi/4G handoff,
+     * captive-portal check, or a sleeping server therefore dropped the user onto the connection
+     * form even though the exact same request would succeed a moment later. Keep transient
+     * failures inside the automatic connection state; only credential/address failures need user
+     * input.
+     */
+    private void startAutoConnectAttempt() {
+        ServerProfile profile = autoConnectProfile;
+        if (!autoConnecting || profile == null || isDestroyed()) return;
+
+        autoConnectAttempt += 1;
+        int attempt = autoConnectAttempt;
         cancelCurrentTask();
         final long requestGeneration = connectionGeneration;
         currentTask = networkExecutor.submit(() -> {
-            ConnectionResult result = verifyServerProfile(profile, 5000);
-            runOnUiThread(() -> handleAutoConnectResult(requestGeneration, result));
+            ConnectionResult result = verifyServerProfile(profile, 8000);
+            runOnUiThread(() -> handleAutoConnectResult(requestGeneration, result, attempt));
         });
     }
 
-    private void handleAutoConnectResult(long requestGeneration, ConnectionResult result) {
+    private void handleAutoConnectResult(
+            long requestGeneration,
+            ConnectionResult result,
+            int attempt
+    ) {
         if (isDestroyed() || requestGeneration != connectionGeneration || !autoConnecting) return;
-        autoConnecting = false;
-        if (!result.isSuccess()) {
-            String message = result.authenticated
-                    ? result.error
-                    : getString(R.string.auto_connect_failed);
-            showFormWithMessage(message);
+        currentTask = null;
+        if (result.isSuccess()) {
+            autoConnecting = false;
+            autoConnectProfile = null;
+            cancelAutoConnectRetry();
+            saveActivateAndLaunch(result);
             return;
         }
-        saveActivateAndLaunch(result);
+
+        if (result.retryable) {
+            ServerProfile profile = autoConnectProfile;
+            if (profile != null) {
+                connectView.setAutoStatus(
+                        "暂时无法连接，正在自动重试（第 " + attempt + " 次）…"
+                );
+                scheduleAutoConnectRetry(autoConnectRetryDelayMs(attempt));
+                return;
+            }
+        }
+
+        autoConnecting = false;
+        autoConnectProfile = null;
+        String message = result.authenticated
+                ? result.error
+                : getString(R.string.auto_connect_failed);
+        showFormWithMessage(message);
+    }
+
+    private void scheduleAutoConnectRetry(long delayMs) {
+        cancelAutoConnectRetry();
+        autoConnectHandler.postDelayed(this::startAutoConnectAttempt, delayMs);
+    }
+
+    private void cancelAutoConnectRetry() {
+        autoConnectHandler.removeCallbacksAndMessages(null);
+    }
+
+    private static long autoConnectRetryDelayMs(int attempt) {
+        int exponent = Math.min(Math.max(attempt - 1, 0), 4);
+        return Math.min(1_000L << exponent, 10_000L);
     }
 
     /**
@@ -359,6 +439,8 @@ public class ConnectActivity extends AppCompatActivity {
             return;
         }
         autoConnecting = false;
+        autoConnectProfile = null;
+        cancelAutoConnectRetry();
         cancelCurrentTask();
         showForm();
         if (focusInput) {
@@ -411,34 +493,30 @@ public class ConnectActivity extends AppCompatActivity {
             setAutoStatus("正在验证连接码…");
             String serverUrl = WandHttp.normalizeBaseUrl(decoded.getFirst());
             String appToken = decoded.getSecond();
-            String error = testConnectionWithToken(serverUrl, appToken, timeout);
-            return new ConnectionResult(serverUrl, appToken, error, true);
+            ProbeResult probe = testConnectionWithToken(serverUrl, appToken, timeout);
+            return new ConnectionResult(serverUrl, appToken, probe.error, true, probe.retryable);
         }
 
         String serverUrl = WandHttp.normalizeBaseUrl(rawInput);
         ServerProfile savedProfile = serverStore.getServerProfileByUrl(serverUrl);
         if (savedProfile != null && savedProfile.getHasToken()) {
             String savedToken = savedProfile.getToken();
-            String tokenError = testConnectionWithToken(serverUrl, savedToken, timeout);
-            return new ConnectionResult(serverUrl, savedToken, tokenError, true);
+            ProbeResult probe = testConnectionWithToken(serverUrl, savedToken, timeout);
+            return new ConnectionResult(serverUrl, savedToken, probe.error, true, probe.retryable);
         }
-        String error = testConnection(serverUrl, timeout);
-        return new ConnectionResult(serverUrl, null, error, false);
+        ProbeResult probe = testConnection(serverUrl, timeout);
+        return new ConnectionResult(serverUrl, null, probe.error, false, probe.retryable);
     }
 
     private ConnectionResult verifyServerProfile(ServerProfile profile, int timeout) {
         String serverUrl = profile.getBaseUrl();
         if (profile.getHasToken()) {
             String token = profile.getToken();
-            String error = testConnectionWithToken(serverUrl, token, timeout);
-            return new ConnectionResult(serverUrl, token, error, true);
+            ProbeResult probe = testConnectionWithToken(serverUrl, token, timeout);
+            return new ConnectionResult(serverUrl, token, probe.error, true, probe.retryable);
         }
-        return new ConnectionResult(
-                serverUrl,
-                null,
-                testConnection(serverUrl, timeout),
-                false
-        );
+        ProbeResult probe = testConnection(serverUrl, timeout);
+        return new ConnectionResult(serverUrl, null, probe.error, false, probe.retryable);
     }
 
     private void handleManualConnectResult(long requestGeneration, ConnectionResult result) {
@@ -469,6 +547,9 @@ public class ConnectActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        autoConnecting = false;
+        autoConnectProfile = null;
+        cancelAutoConnectRetry();
         super.onDestroy();
         cancelCurrentTask();
         if (networkExecutor != null) {
@@ -477,7 +558,7 @@ public class ConnectActivity extends AppCompatActivity {
         }
     }
 
-    private String testConnectionWithToken(String baseUrl, String appToken, int timeout) {
+    private ProbeResult testConnectionWithToken(String baseUrl, String appToken, int timeout) {
         try {
             JSONObject body = new JSONObject();
             body.put("appToken", appToken);
@@ -485,29 +566,46 @@ public class ConnectActivity extends AppCompatActivity {
                     baseUrl + "/api/login", body.toString(), timeout, baseUrl);
             int code = response.getCode();
             if (code == 200) {
-                return null;
+                return ProbeResult.success();
             } else if (code == 401) {
-                return "认证失败，连接码可能已过期（密码已更改），请重新获取连接码";
-            } else if (code == 429) {
-                return "登录尝试次数过多，请稍后再试";
+                return new ProbeResult(
+                        "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
+                        false
+                );
+            } else if (code == 429 || code >= 500) {
+                return new ProbeResult("服务器暂时不可用，请稍后再试", true);
             }
-            return "服务器返回了异常状态码: " + code;
+            return new ProbeResult("服务器返回了异常状态码: " + code, false);
         } catch (Exception e) {
-            return NetworkErrorHelper.describeError(e, "connect");
+            return new ProbeResult(
+                    NetworkErrorHelper.describeError(e, "connect"),
+                    isTransientConnectionError(e)
+            );
         }
     }
 
-    private String testConnection(String baseUrl, int timeout) {
+    private ProbeResult testConnection(String baseUrl, int timeout) {
         try {
             WandHttp.SimpleResponse response = WandHttp.get(baseUrl + "/api/config", timeout, baseUrl);
             int code = response.getCode();
             if (code == 200 || code == 401) {
-                return null;
+                return ProbeResult.success();
             }
-            return "服务器返回了异常状态码: " + code;
+            if (code == 429 || code >= 500) {
+                return new ProbeResult("服务器暂时不可用，请稍后再试", true);
+            }
+            return new ProbeResult("服务器返回了异常状态码: " + code, false);
         } catch (Exception e) {
-            return NetworkErrorHelper.describeError(e, "connect");
+            return new ProbeResult(
+                    NetworkErrorHelper.describeError(e, "connect"),
+                    isTransientConnectionError(e)
+            );
         }
+    }
+
+    private boolean isTransientConnectionError(Exception error) {
+        return !(error instanceof java.net.MalformedURLException)
+                && !(error instanceof IllegalArgumentException);
     }
 
     /** 连接成功后进入原生主界面（HomeActivity）；WebView（MainActivity）只作网页版兜底。 */
@@ -594,6 +692,8 @@ public class ConnectActivity extends AppCompatActivity {
 
     private void cancelPendingConnectionForProfileMutation() {
         autoConnecting = false;
+        autoConnectProfile = null;
+        cancelAutoConnectRetry();
         cancelCurrentTask();
         connectView.setConnecting(false);
     }

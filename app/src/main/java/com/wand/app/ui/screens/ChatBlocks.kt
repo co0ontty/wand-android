@@ -263,6 +263,7 @@ fun TurnView(
                     askSelections = askSelections,
                     onAskToggle = onAskToggle,
                     onAskSubmit = onAskSubmit,
+                    collapseActivities = !isLastTurn,
                 )
             }
         }
@@ -1177,6 +1178,11 @@ private fun subagentTailRefreshToken(blocks: List<ContentBlock>): Int {
     return token
 }
 
+internal fun shouldExpandChatCard(isLastTurn: Boolean, configured: Boolean): Boolean {
+    // 当前轮也只按用户配置展开；步骤标题始终由卡片头部显示。
+    return configured
+}
+
 @Composable
 private fun SegmentBlocks(
     blocks: List<ContentBlock>,
@@ -1305,6 +1311,7 @@ private fun RenderDisplayItem(
                         questions = askQuestions,
                         result = item.result,
                         selection = askSelections[use.id] ?: AskUserSelectionState(),
+                        expandAll = false,
                         onToggle = { qIdx, optIdx, multi ->
                             onAskToggle(use.id, qIdx, optIdx, multi)
                         },
@@ -1315,19 +1322,22 @@ private fun RenderDisplayItem(
                         input = use.input,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = cardDefaults.editCards,
+                        initiallyExpanded = shouldExpandChatCard(isLastTurn, cardDefaults.editCards),
                     )
                     use.name == "Bash" -> TerminalCard(
                         input = use.input,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = cardDefaults.terminal,
+                        initiallyExpanded = shouldExpandChatCard(isLastTurn, cardDefaults.terminal),
                     )
                     else -> ToolCard(
                         use = use,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = cardDefaults.shouldExpandTool(use.name),
+                        initiallyExpanded = shouldExpandChatCard(
+                            isLastTurn,
+                            cardDefaults.shouldExpandTool(use.name),
+                        ),
                     )
                 }
             }
@@ -1337,16 +1347,19 @@ private fun RenderDisplayItem(
             streaming = isLastTurn && isResponding && itemIndex == itemCount - 1,
             showSubagentTag = showSubagentTags,
             initiallyExpanded = when (val block = item.block) {
-                is ContentBlock.Thinking -> cardDefaults.thinking
-                is ContentBlock.ToolUse -> cardDefaults.shouldExpandTool(block.name)
-                is ContentBlock.ToolResult -> cardDefaults.editCards
+                is ContentBlock.Thinking -> shouldExpandChatCard(isLastTurn, cardDefaults.thinking)
+                is ContentBlock.ToolUse -> shouldExpandChatCard(
+                    isLastTurn,
+                    cardDefaults.shouldExpandTool(block.name),
+                )
+                is ContentBlock.ToolResult -> shouldExpandChatCard(isLastTurn, cardDefaults.editCards)
                 else -> false
             },
         )
         is DisplayItem.Exploration -> ExplorationDetailCard(
             tools = item.tools,
             running = isLastTurn && isResponding && item.tools.any { it.result == null },
-            initiallyExpanded = cardDefaults.toolGroup,
+            initiallyExpanded = shouldExpandChatCard(isLastTurn, cardDefaults.toolGroup),
         )
     }
 }
@@ -2574,7 +2587,11 @@ private fun ToolStatusIconBox(
 // MARK: - 探索上下文紧凑卡（连续只读探索工具合并，对齐 iOS ExplorationGroupCard）
 
 @Composable
-fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
+fun ExplorationGroupCard(
+    tools: List<ExplorationToolItem>,
+    running: Boolean,
+    expandAll: Boolean = false,
+) {
     val cardDefaults = LocalCardExpandDefaults.current
     val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
     val group = remember(items, running) {
@@ -2586,14 +2603,14 @@ fun ExplorationGroupCard(tools: List<ExplorationToolItem>, running: Boolean) {
             failed = items.any(::isDisplayItemFailed),
         )
     }
-    if (cardDefaults.toolGroup) {
+    if (expandAll || cardDefaults.toolGroup) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items.forEachIndexed { index, item ->
                 RenderDisplayItem(
                     item = item,
                     itemIndex = index,
                     itemCount = items.size,
-                    isLastTurn = running,
+                    isLastTurn = expandAll,
                     isResponding = running,
                     askSelections = emptyMap(),
                     onAskToggle = { _, _, _, _ -> },
