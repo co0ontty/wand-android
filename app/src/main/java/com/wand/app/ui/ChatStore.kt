@@ -559,13 +559,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
     }
 
-    /** 权限决策。结构化会话没有运行时批准条；PTY 走 approve/deny。 */
+    /** 权限决策。PTY 与 Claude SDK structured 都走 approve/deny；无 pending 时忽略。 */
     fun resolvePermission(resolution: String) {
-        if (isStructured) {
-            pendingEscalation = null
-            permissionBlocked = false
-            return
-        }
         val esc = pendingEscalation
         if (esc != null) {
             pendingEscalation = null
