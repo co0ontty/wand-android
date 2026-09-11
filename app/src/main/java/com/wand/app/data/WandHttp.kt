@@ -151,6 +151,33 @@ object WandHttp {
 
     class SimpleResponse(val code: Int, val body: String)
 
+    /**
+     * 把一个 endpoint 从 http 升到 https，其余部分不变。
+     *
+     * TLS 由 L4 反代（nginx stream / Nginx Proxy Manager 的 TCP stream）终止时，服务端只看到明文
+     * HTTP，`/api/app-connect-code` 会把 `https://host:tls-port` 误写成 `http://host:tls-port`。
+     * 老服务端发出来的这种连接码/地址会命中这里，客户端主动换成 https 重试。
+     */
+    @JvmStatic
+    fun preferHttpsUrl(raw: String): String? {
+        val trimmed = raw.trim()
+        if (!trimmed.startsWith("http://", ignoreCase = true)) return null
+        return "https://" + trimmed.substring("http://".length)
+    }
+
+    /**
+     * RPC 失败后是否值得用 https 再试一次：只对「明文 HTTP 打到了 TLS 端口」这一类错误生效，
+     * 避免把普通超时/拒绝连接的探测时间翻倍。
+     */
+    @JvmStatic
+    fun looksLikeHttpOnTlsPort(error: Throwable?): Boolean {
+        val message = error?.message?.lowercase() ?: return false
+        return message.contains("unexpected end of stream")
+            || message.contains("unexpected end of input")
+            || message.contains("malformed input")      // TLS 端口回明文时的 protobuf/TLS 解析失败
+            || message.contains("wrong version number") // OpenSSL: 明文打 TLS 端口
+    }
+
     @JvmStatic
     fun isSameOrigin(url: String, originBase: String): Boolean {
         val left = url.toHttpUrlOrNull() ?: return false

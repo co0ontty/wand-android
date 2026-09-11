@@ -79,6 +79,8 @@ data class BoardTask(
     val workspaceId: String?,
     val identifier: String,
     val title: String,
+    /** "auto" = 标题由服务端按描述自动生成，客户端不再把它当成用户手写标题。 */
+    val titleSource: String,
     val description: String,
     val status: String,
     val priority: String,
@@ -100,6 +102,7 @@ data class BoardTask(
                 workspaceId = item.str("workspaceId")?.takeIf { it.isNotBlank() },
                 identifier = item.str("identifier") ?: "",
                 title = item.str("title") ?: "任务",
+                titleSource = item.str("titleSource") ?: "user",
                 description = item.str("description") ?: "",
                 status = item.str("status") ?: "todo",
                 priority = item.str("priority") ?: "none",
@@ -267,6 +270,8 @@ fun boardAgentModelOptions(models: ModelsResponse?, provider: String): List<Mode
 
 interface TaskBoardPort {
     suspend fun listBoardTasks(workspaceId: String? = null): List<BoardTask>
+    /** 单条任务：新建后用来确认后台自动标题是否已生成。 */
+    suspend fun getBoardTask(id: String): BoardTask?
     suspend fun createBoardTask(
         title: String,
         description: String,
@@ -279,4 +284,6 @@ interface TaskBoardPort {
     suspend fun dispatchBoardTask(id: String, agent: BoardTaskAgent): BoardDispatchResult
     suspend fun listBoardWorkspaces(): List<Workspace>
     suspend fun boardModels(): ModelsResponse
+    suspend fun boardTaskAgentDefaults(): BoardTaskAgent
+    suspend fun saveBoardTaskAgentDefaults(agent: BoardTaskAgent): BoardTaskAgent
 }

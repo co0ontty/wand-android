@@ -72,14 +72,25 @@ public class ConnectActivity extends AppCompatActivity {
     private static final class ProbeResult {
         final String error;
         final boolean retryable;
+        /** 这次探测实际连通的 endpoint（可能因 http→https 回退而改写）。 */
+        final String baseUrl;
 
         ProbeResult(String error, boolean retryable) {
+            this(error, retryable, null);
+        }
+
+        ProbeResult(String error, boolean retryable, String baseUrl) {
             this.error = error;
             this.retryable = retryable;
+            this.baseUrl = baseUrl;
         }
 
         static ProbeResult success() {
             return new ProbeResult(null, false);
+        }
+
+        static ProbeResult success(String baseUrl) {
+            return new ProbeResult(null, false, baseUrl);
         }
     }
 
@@ -494,7 +505,8 @@ public class ConnectActivity extends AppCompatActivity {
             String serverUrl = WandHttp.normalizeBaseUrl(decoded.getFirst());
             String appToken = decoded.getSecond();
             ProbeResult probe = testConnectionWithToken(serverUrl, appToken, timeout);
-            return new ConnectionResult(serverUrl, appToken, probe.error, true, probe.retryable);
+            String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
+            return new ConnectionResult(resolvedUrl, appToken, probe.error, true, probe.retryable);
         }
 
         String serverUrl = WandHttp.normalizeBaseUrl(rawInput);
@@ -502,10 +514,12 @@ public class ConnectActivity extends AppCompatActivity {
         if (savedProfile != null && savedProfile.getHasToken()) {
             String savedToken = savedProfile.getToken();
             ProbeResult probe = testConnectionWithToken(serverUrl, savedToken, timeout);
-            return new ConnectionResult(serverUrl, savedToken, probe.error, true, probe.retryable);
+            String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
+            return new ConnectionResult(resolvedUrl, savedToken, probe.error, true, probe.retryable);
         }
         ProbeResult probe = testConnection(serverUrl, timeout);
-        return new ConnectionResult(serverUrl, null, probe.error, false, probe.retryable);
+        String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
+        return new ConnectionResult(resolvedUrl, null, probe.error, false, probe.retryable);
     }
 
     private ConnectionResult verifyServerProfile(ServerProfile profile, int timeout) {
@@ -513,10 +527,12 @@ public class ConnectActivity extends AppCompatActivity {
         if (profile.getHasToken()) {
             String token = profile.getToken();
             ProbeResult probe = testConnectionWithToken(serverUrl, token, timeout);
-            return new ConnectionResult(serverUrl, token, probe.error, true, probe.retryable);
+            String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
+            return new ConnectionResult(resolvedUrl, token, probe.error, true, probe.retryable);
         }
         ProbeResult probe = testConnection(serverUrl, timeout);
-        return new ConnectionResult(serverUrl, null, probe.error, false, probe.retryable);
+        String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
+        return new ConnectionResult(resolvedUrl, null, probe.error, false, probe.retryable);
     }
 
     private void handleManualConnectResult(long requestGeneration, ConnectionResult result) {
@@ -566,7 +582,7 @@ public class ConnectActivity extends AppCompatActivity {
                     baseUrl + "/api/login", body.toString(), timeout, baseUrl);
             int code = response.getCode();
             if (code == 200) {
-                return ProbeResult.success();
+                return ProbeResult.success(baseUrl);
             } else if (code == 401) {
                 return new ProbeResult(
                         "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
@@ -577,6 +593,9 @@ public class ConnectActivity extends AppCompatActivity {
             }
             return new ProbeResult("服务器返回了异常状态码: " + code, false);
         } catch (Exception e) {
+            ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(
+                    baseUrl, appToken, timeout, e);
+            if (upgraded != null) return upgraded;
             return new ProbeResult(
                     NetworkErrorHelper.describeError(e, "connect"),
                     isTransientConnectionError(e)
@@ -589,17 +608,64 @@ public class ConnectActivity extends AppCompatActivity {
             WandHttp.SimpleResponse response = WandHttp.get(baseUrl + "/api/config", timeout, baseUrl);
             int code = response.getCode();
             if (code == 200 || code == 401) {
-                return ProbeResult.success();
+                return ProbeResult.success(baseUrl);
             }
             if (code == 429 || code >= 500) {
                 return new ProbeResult("服务器暂时不可用，请稍后再试", true);
             }
             return new ProbeResult("服务器返回了异常状态码: " + code, false);
         } catch (Exception e) {
+            ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(baseUrl, null, timeout, e);
+            if (upgraded != null) return upgraded;
             return new ProbeResult(
                     NetworkErrorHelper.describeError(e, "connect"),
                     isTransientConnectionError(e)
             );
+        }
+    }
+
+    /**
+     * 老服务端在 L4 反代后会把连接码写成 `http://host:tls-port`（TLS 由反代终止，node 看到的是
+     * 明文，猜不出 scheme）。明文打到 TLS 端口时握手会立刻炸掉（OkHttp: unexpected end of stream，
+     * OpenSSL: wrong version number），而不是超时，所以这里能安全地用 https 再试一次并把改写后的
+     * endpoint 带回调用方。返回 null 表示不适用或 https 也不行，交由上层报原始错误。
+     */
+    private ProbeResult retryWithHttpsIfPlaintextHitTlsPort(
+            String baseUrl,
+            String appToken,
+            int timeout,
+            Exception cause
+    ) {
+        if (!WandHttp.looksLikeHttpOnTlsPort(cause)) return null;
+        String httpsUrl = WandHttp.preferHttpsUrl(baseUrl);
+        if (httpsUrl == null) return null;
+        try {
+            if (appToken != null) {
+                JSONObject body = new JSONObject();
+                body.put("appToken", appToken);
+                WandHttp.SimpleResponse response = WandHttp.postJson(
+                        httpsUrl + "/api/login", body.toString(), timeout, httpsUrl);
+                if (response.getCode() == 200) return ProbeResult.success(httpsUrl);
+                if (response.getCode() == 401) {
+                    return new ProbeResult(
+                            "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
+                            false
+                    );
+                }
+                return new ProbeResult(
+                        "服务器返回了异常状态码: " + response.getCode(),
+                        response.getCode() == 429 || response.getCode() >= 500
+                );
+            }
+            WandHttp.SimpleResponse response = WandHttp.get(httpsUrl + "/api/config", timeout, httpsUrl);
+            int code = response.getCode();
+            if (code == 200 || code == 401) return ProbeResult.success(httpsUrl);
+            return new ProbeResult(
+                    "服务器返回了异常状态码: " + code,
+                    code == 429 || code >= 500
+            );
+        } catch (Exception stillFailing) {
+            return null;
         }
     }
 

@@ -286,6 +286,8 @@ class HomeActivity : AppCompatActivity() {
                     serverStore.appearanceMode = mode.storageValue
                     WandAppearance.apply(mode)
                 },
+                getHomeListMode = { serverStore.homeListMode },
+                setHomeListMode = { mode -> serverStore.homeListMode = mode },
             ),
         )
 

@@ -34,6 +34,7 @@ public class ServerStore {
     private static final String KEY_KEEP_ALIVE = "keep_alive_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
+    private static final String KEY_HOME_LIST_MODE = "wand.homeListMode";
 
     private static final Object PROFILE_LOCK = new Object();
 
@@ -312,6 +313,15 @@ public class ServerStore {
             normalized = "system";
         }
         prefs.edit().putString(KEY_APPEARANCE_MODE, normalized).apply();
+    }
+
+    public String getHomeListMode() {
+        return prefs.getString(KEY_HOME_LIST_MODE, "sessions");
+    }
+
+    public void setHomeListMode(String mode) {
+        String normalized = "board".equals(mode) ? "board" : "sessions";
+        prefs.edit().putString(KEY_HOME_LIST_MODE, normalized).apply();
     }
 
     private static String channelKey(String base, String channel) {

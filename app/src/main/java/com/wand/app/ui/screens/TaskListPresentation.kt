@@ -8,6 +8,25 @@ import com.wand.app.data.workspaceProviderLabel
 internal const val DIRECTORY_PATH_MIN_TAIL = 2
 internal const val UNNAMED_TASK_NAME = "未命名任务"
 
+/** 首页模式：会话树（默认）或任务管理看板。点标题栏即可切换并持久化。 */
+enum class HomeListMode(val storageValue: String) {
+    Sessions("sessions"),
+    Tasks("board");
+
+    val label: String
+        get() = if (this == Tasks) "任务模式" else "会话模式"
+
+    val next: HomeListMode
+        get() = if (this == Tasks) Sessions else Tasks
+
+    companion object {
+        fun fromStorage(value: String?): HomeListMode = when (value) {
+            "board" -> Tasks
+            else -> Sessions
+        }
+    }
+}
+
 internal fun isUnnamedTaskName(name: String): Boolean {
     val trimmed = name.trim()
     return trimmed.isEmpty() || trimmed == UNNAMED_TASK_NAME

@@ -127,6 +127,29 @@ class ActivityGroupingTest {
     }
 
     @Test
+    fun trailingFinishedToolsStayLiveUntilProseOrTheTurnEnds() {
+        val thinking = ContentBlock.Thinking("planning", null)
+        val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
+        val result = ContentBlock.ToolResult("t1", "ok", false, false, null)
+
+        val live = activityFoldSegments(
+            listOf(thinking, use, result),
+            isLastTurn = true,
+            isResponding = true,
+        )
+        assertEquals(1, live.size)
+        assertTrue(live[0].activity)
+        assertTrue(live[0].running)
+
+        val settled = activityFoldSegments(
+            listOf(thinking, use, result),
+            isLastTurn = true,
+            isResponding = false,
+        )
+        assertFalse(settled[0].running)
+    }
+
+    @Test
     fun activityBarCompletesOnceProseClosesTheTurn() {
         val thinking = ContentBlock.Thinking("planning", null)
         val prose = ContentBlock.Text("最终回答", null)

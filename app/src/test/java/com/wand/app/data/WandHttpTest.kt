@@ -9,6 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class WandHttpTest {
     @Test
@@ -130,5 +131,39 @@ class WandHttpTest {
                 "https://home.example:8443",
             ),
         )
+    }
+
+    @Test
+    fun preferHttpsOnlyUpgradesPlainHttp() {
+        assertEquals(
+            "https://home.huniu.fun:8443",
+            WandHttp.preferHttpsUrl("http://home.huniu.fun:8443"),
+        )
+        assertEquals(
+            "https://home.huniu.fun:8443",
+            WandHttp.preferHttpsUrl("HTTP://home.huniu.fun:8443"),
+        )
+        // 已经是 https、或压根不是 http(s) 输入时没有可升级的空间。
+        assertNull(WandHttp.preferHttpsUrl("https://home.huniu.fun:8443"))
+        assertNull(WandHttp.preferHttpsUrl("httpz://home.huniu.fun:8443"))
+        assertNull(WandHttp.preferHttpsUrl("home.huniu.fun:8443"))
+    }
+
+    @Test
+    fun plaintextOnTlsPortIsRecognized() {
+        // OkHttp 把明文请求发给 TLS 端口时的真实报错。
+        assertEquals(
+            true,
+            WandHttp.looksLikeHttpOnTlsPort(
+                IOException("unexpected end of stream on http://home.huniu.fun:8443/..."),
+            ),
+        )
+        // OpenSSL 侧的同类失败文案。
+        assertEquals(true, WandHttp.looksLikeHttpOnTlsPort(IOException("wrong version number")))
+        assertEquals(true, WandHttp.looksLikeHttpOnTlsPort(IOException("unexpected end of input")))
+        // 普通超时 / 拒绝连接不应该触发 https 重试，否则探测时间翻倍。
+        assertEquals(false, WandHttp.looksLikeHttpOnTlsPort(IOException("timeout")))
+        assertEquals(false, WandHttp.looksLikeHttpOnTlsPort(IOException("Connection refused")))
+        assertEquals(false, WandHttp.looksLikeHttpOnTlsPort(null))
     }
 }

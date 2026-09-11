@@ -331,6 +331,8 @@ class HomeSettingsActions(
     val setKeepAlive: (Boolean) -> Unit,
     val getAppearanceMode: () -> WandAppearanceMode,
     val setAppearanceMode: (WandAppearanceMode) -> Unit,
+    val getHomeListMode: () -> String,
+    val setHomeListMode: (String) -> Unit,
 )
 
 /** 宿主能力按连接信息、导航和设备设置分组，页面只向下传递实际需要的能力。 */

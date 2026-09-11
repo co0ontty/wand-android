@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -54,6 +55,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,6 +68,7 @@ import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
+import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
@@ -116,13 +121,17 @@ fun TaskListScreen(
     state: TaskListState,
     historyState: SessionListState,
     api: WorkspacePort,
+    boardApi: TaskBoardPort,
     serverDisplayName: String,
     modifier: Modifier = Modifier,
+    homeListMode: HomeListMode = HomeListMode.Sessions,
+    onHomeListModeChange: (HomeListMode) -> Unit = {},
     selectedTaskId: String? = null,
     selectedSessionId: String? = null,
     interactionEnabled: Boolean = true,
     onOpenTask: (workspaceId: String, taskId: String, workspaceName: String, taskName: String) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit,
+    onOpenBoardSession: (sessionId: String, isStructured: Boolean) -> Unit = { _, _ -> },
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onTaskRenamed: (taskId: String, taskName: String) -> Unit = { _, _ -> },
     onTaskClosed: (taskId: String) -> Unit = {},
@@ -130,7 +139,6 @@ fun TaskListScreen(
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
-    onOpenTaskBoard: () -> Unit = {},
     onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
@@ -165,10 +173,12 @@ fun TaskListScreen(
 
     val recoverableEntries = historyState.entries.mapNotNull { it as? SessionListEntry.Recoverable }
     val visibleGroups = directoryTreeGroups(state.groups)
+    val showingBoard = homeListMode == HomeListMode.Tasks
     val managedSelection = SidebarManageSelection(selectedTaskIds, selectedSessionIds)
     val resolvedManagedDelete = resolveManagedDeletion(managedSelection, visibleGroups)
     val hasVisibleContent = visibleGroups.isNotEmpty() || recoverableEntries.isNotEmpty()
     val directoryGroupCount = visibleGroups.size
+    var boardRefreshNonce by remember { mutableStateOf(0) }
 
     fun normalizedPath(value: String): String = value.trim().replace(Regex("/+$"), "").ifEmpty { "/" }
 
@@ -866,20 +876,32 @@ fun TaskListScreen(
             Column(Modifier.fillMaxSize()) {
                 HomeOverviewCard(
                     serverDisplayName = serverDisplayName,
+                    homeListMode = homeListMode,
+                    onToggleHomeListMode = {
+                        selecting = false
+                        selectedTaskIds = emptySet()
+                        selectedSessionIds = emptySet()
+                        onHomeListModeChange(homeListMode.next)
+                    },
                     onNewTask = { beginNewTask() },
+                    showNewTask = !showingBoard,
                     interactionEnabled = interactionEnabled,
                     onRefresh = {
-                        scope.launch {
-                            state.load(silent = true)
-                            historyState.load(silent = true)
+                        if (showingBoard) {
+                            boardRefreshNonce += 1
+                        } else {
+                            scope.launch {
+                                state.load(silent = true)
+                                historyState.load(silent = true)
+                            }
                         }
                     },
                     onOpenSettings = onOpenSettings,
                     onOpenWeb = onOpenWeb,
                     onSwitchServer = onSwitchServer,
-                    onOpenTaskBoard = onOpenTaskBoard,
+                    onOpenTaskBoard = { onHomeListModeChange(HomeListMode.Tasks) },
                     onCollapseSidebar = onCollapseSidebar,
-                    onStartSelection = if (hasVisibleContent) {
+                    onStartSelection = if (!showingBoard && hasVisibleContent) {
                         {
                             selecting = true
                             selectedTaskIds = emptySet()
@@ -889,7 +911,17 @@ fun TaskListScreen(
                         null
                     },
                 )
-                when {
+                if (showingBoard) {
+                    Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                        TaskBoardScreen(
+                            api = boardApi,
+                            onBack = {},
+                            onOpenSession = onOpenBoardSession,
+                            embedded = true,
+                            refreshNonce = boardRefreshNonce,
+                        )
+                    }
+                } else when {
                     state.loading && !hasVisibleContent -> LoadingState(
                         modifier = Modifier.weight(1f),
                         text = "正在加载任务…",
@@ -1048,8 +1080,11 @@ fun TaskListScreen(
 @Composable
 private fun HomeOverviewCard(
     serverDisplayName: String,
+    homeListMode: HomeListMode,
+    onToggleHomeListMode: () -> Unit,
     onNewTask: () -> Unit,
     interactionEnabled: Boolean,
+    showNewTask: Boolean = true,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
@@ -1065,17 +1100,29 @@ private fun HomeOverviewCard(
             .padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            serverDisplayName.ifBlank { "当前服务器" },
-            style = MaterialTheme.typography.titleSmall,
-            color = WandColors.textPrimary,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Row(
             modifier = Modifier
                 .weight(1f)
                 .padding(end = 8.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                serverDisplayName.ifBlank { "当前服务器" },
+                style = MaterialTheme.typography.titleSmall,
+                color = WandColors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(8.dp))
+            HomeListModeChip(
+                mode = homeListMode,
+                enabled = interactionEnabled,
+                onClick = onToggleHomeListMode,
+            )
+            Spacer(Modifier.weight(1f))
+        }
         if (onCollapseSidebar != null) {
             WandIconButton(
                 icon = WandIcons.panelCollapse,
@@ -1084,13 +1131,15 @@ private fun HomeOverviewCard(
                 variant = WandIconButtonVariant.Toolbar,
             )
         }
-        WandIconButton(
-            icon = WandIcons.add,
-            contentDescription = "新建终端或任务",
-            onClick = onNewTask,
-            enabled = interactionEnabled,
-            variant = WandIconButtonVariant.Accent,
-        )
+        if (showNewTask) {
+            WandIconButton(
+                icon = WandIcons.add,
+                contentDescription = "新建终端或任务",
+                onClick = onNewTask,
+                enabled = interactionEnabled,
+                variant = WandIconButtonVariant.Accent,
+            )
+        }
         Box {
             WandIconButton(
                 icon = WandIcons.more,
@@ -1111,15 +1160,17 @@ private fun HomeOverviewCard(
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("刷新任务") },
+                        text = { Text(if (homeListMode == HomeListMode.Tasks) "刷新任务" else "刷新会话") },
                         leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
                         onClick = { menuOpen = false; onRefresh() },
                     )
-                    DropdownMenuItem(
-                        text = { Text("任务管理") },
-                        leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                        onClick = { menuOpen = false; onOpenTaskBoard() },
-                    )
+                    if (homeListMode != HomeListMode.Tasks) {
+                        DropdownMenuItem(
+                            text = { Text("任务管理") },
+                            leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenTaskBoard() },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("设置") },
                         leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
@@ -1137,6 +1188,43 @@ private fun HomeOverviewCard(
                     )
                 }
         }
+    }
+}
+
+@Composable
+private fun HomeListModeChip(
+    mode: HomeListMode,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val next = mode.next
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .semantics {
+                contentDescription = "当前${mode.label}，点按切换到${next.label}"
+            }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            mode.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = WandColors.brand,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        Icon(
+            WandIcons.expand,
+            contentDescription = null,
+            tint = WandColors.brand,
+            modifier = Modifier.size(14.dp),
+        )
     }
 }
 

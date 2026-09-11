@@ -98,6 +98,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
+import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.TaskBoardScreen
 import com.wand.app.ui.screens.PtyTerminalScreen
@@ -325,6 +326,13 @@ private fun ReadyContent(
     )
     val sessionCreationInFlight = creationState !is SessionCreationCoordinator.State.Idle
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
+    var homeListMode by remember {
+        mutableStateOf(HomeListMode.fromStorage(actions.settings.getHomeListMode()))
+    }
+    val changeHomeListMode: (HomeListMode) -> Unit = { mode ->
+        homeListMode = mode
+        actions.settings.setHomeListMode(mode.storageValue)
+    }
 
     DisposableEffect(taskState, listState) {
         taskState.startSync()
@@ -412,6 +420,9 @@ private fun ReadyContent(
             { workspaceId, taskId, workspaceName, taskName ->
                 openDetail(Screen.WorkspaceTask(workspaceId, taskId, workspaceName, taskName))
             }
+        val openBoardSession: (String, Boolean) -> Unit = { sessionId, structured ->
+            openDetail(if (structured) Screen.Chat(sessionId) else Screen.PtyTerminal(sessionId))
+        }
 
         if (wideLayout) {
             WideReadyContent(
@@ -424,8 +435,11 @@ private fun ReadyContent(
                 listPaneWidth = listPaneWidth,
                 windowWidth = maxWidth,
                 sidebarCollapsed = sidebarCollapsed,
+                homeListMode = homeListMode,
+                onHomeListModeChange = changeHomeListMode,
                 selectedSessionId = nav.current.sessionIdOrNull(),
                 onOpenSession = openTaskSession,
+                onOpenBoardSession = openBoardSession,
                 onOpenRestoredSession = openSnapshot,
                 onOpenSettings = openSettings,
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
@@ -441,7 +455,10 @@ private fun ReadyContent(
                 sessionDrafts = sessionDrafts,
                 taskState = taskState,
                 listState = listState,
+                homeListMode = homeListMode,
+                onHomeListModeChange = changeHomeListMode,
                 onOpenSession = openTaskSession,
+                onOpenBoardSession = openBoardSession,
                 onOpenRestoredSession = openSnapshot,
                 onOpenSettings = openSettings,
                 onOpenWorkspaceTask = openWorkspaceTask,
@@ -587,7 +604,10 @@ private fun SinglePaneContent(
     sessionDrafts: SessionDraftStore,
     taskState: TaskListState,
     listState: SessionListState,
+    homeListMode: HomeListMode,
+    onHomeListModeChange: (HomeListMode) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit,
+    onOpenBoardSession: (String, Boolean) -> Unit,
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
@@ -653,10 +673,14 @@ private fun SinglePaneContent(
                 state = taskState,
                 historyState = listState,
                 api = api,
+                boardApi = api,
                 serverDisplayName = actions.connection.serverDisplayName,
+                homeListMode = homeListMode,
+                onHomeListModeChange = onHomeListModeChange,
                 interactionEnabled = !sessionCreationInFlight,
                 onOpenTask = onOpenWorkspaceTask,
                 onOpenSession = onOpenSession,
+                onOpenBoardSession = onOpenBoardSession,
                 onOpenRestoredSession = onOpenRestoredSession,
                 onTaskRenamed = nav::renameWorkspaceTask,
                 onTaskClosed = nav::closeWorkspaceTask,
@@ -668,7 +692,6 @@ private fun SinglePaneContent(
                 onSwitchServer = {
                     if (!sessionCreationInFlight) actions.navigation.switchServer()
                 },
-                onOpenTaskBoard = { nav.push(Screen.TaskBoard()) },
             )
         } else {
             SessionDetailScreen(
@@ -705,8 +728,11 @@ private fun WideReadyContent(
     listPaneWidth: Dp,
     windowWidth: Dp,
     sidebarCollapsed: Boolean,
+    homeListMode: HomeListMode,
+    onHomeListModeChange: (HomeListMode) -> Unit,
     selectedSessionId: String?,
     onOpenSession: (TaskSessionRoute) -> Unit,
+    onOpenBoardSession: (String, Boolean) -> Unit,
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
@@ -782,13 +808,17 @@ private fun WideReadyContent(
                                 state = taskState,
                                 historyState = listState,
                                 api = api,
+                                boardApi = api,
                                 serverDisplayName = actions.connection.serverDisplayName,
                                 modifier = Modifier.fillMaxSize(),
+                                homeListMode = homeListMode,
+                                onHomeListModeChange = onHomeListModeChange,
                                 selectedSessionId = selectedSessionId,
                                 selectedTaskId = nav.current.taskIdOrNull(),
                                 interactionEnabled = !sessionCreationInFlight,
                                 onOpenTask = onOpenWorkspaceTask,
                                 onOpenSession = onOpenSession,
+                                onOpenBoardSession = onOpenBoardSession,
                                 onOpenRestoredSession = onOpenRestoredSession,
                                 onTaskRenamed = nav::renameWorkspaceTask,
                                 onTaskClosed = nav::closeWorkspaceTask,
@@ -800,7 +830,6 @@ private fun WideReadyContent(
                                 onSwitchServer = {
                                     if (!sessionCreationInFlight) actions.navigation.switchServer()
                                 },
-                                onOpenTaskBoard = { nav.push(Screen.TaskBoard()) },
                                 onCollapseSidebar = onToggleSidebarCollapsed,
                             )
                         }

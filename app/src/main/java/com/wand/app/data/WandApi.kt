@@ -659,6 +659,9 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         return BoardTask.parseList(requestArray("GET", "/api/wand-tasks$query"))
     }
 
+    override suspend fun getBoardTask(id: String): BoardTask? =
+        BoardTask.parse(requestObject("GET", "/api/wand-tasks/${encode(id)}"))
+
     override suspend fun createBoardTask(
         title: String,
         description: String,
@@ -689,6 +692,14 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
     override suspend fun listBoardWorkspaces(): List<Workspace> = listWorkspaces()
 
     override suspend fun boardModels(): ModelsResponse = models()
+
+    override suspend fun boardTaskAgentDefaults(): BoardTaskAgent =
+        BoardTaskAgent.parse(requestObject("GET", "/api/wand-task-agent-defaults"))
+            ?: BoardTaskAgent.default()
+
+    override suspend fun saveBoardTaskAgentDefaults(agent: BoardTaskAgent): BoardTaskAgent =
+        BoardTaskAgent.parse(requestObject("PUT", "/api/wand-task-agent-defaults", agent.toJson()))
+            ?: agent
 
     // MARK: - 工作空间（项目）与任务
 

@@ -1708,7 +1708,7 @@ private fun collapseActivityItems(
     }
     flushPending()
 
-    val live = isLastTurn && isResponding && isMessageActivityOpen(blocks)
+    val live = isLastTurn && isResponding
     val lastIndex = renderItems.indexOfLast { it is SegmentRenderItem.Activity }
     if (live && lastIndex >= 0 && renderItems.last() is SegmentRenderItem.Activity) {
         val last = renderItems[lastIndex] as SegmentRenderItem.Activity
@@ -1781,6 +1781,41 @@ private fun toolShowsImage(use: ContentBlock.ToolUse): Boolean {
 }
 
 @Composable
+private fun ActivityFoldPulseDots() {
+    val pulse = rememberInfiniteTransition(label = "activityDots")
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+        repeat(3) { index ->
+            val offset by pulse.animateFloat(
+                initialValue = 0f,
+                targetValue = -3.5f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(420, delayMillis = index * 120, easing = WandMotion.easing),
+                    repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+                ),
+                label = "activityDot$index",
+            )
+            val alpha by pulse.animateFloat(
+                initialValue = 0.28f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(420, delayMillis = index * 120, easing = WandMotion.easing),
+                    repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+                ),
+                label = "activityDotAlpha$index",
+            )
+            Box(
+                modifier = Modifier
+                    .size(4.dp)
+                    .offset(y = offset.dp)
+                    .graphicsLayer { this.alpha = alpha }
+                    .clip(CircleShape)
+                    .background(WandColors.brand),
+            )
+        }
+    }
+}
+
+@Composable
 private fun ActivityFoldCard(
     group: ActivityGroup,
     isLastTurn: Boolean,
@@ -1793,6 +1828,13 @@ private fun ActivityFoldCard(
     var expanded by rememberSaveable(group.key) { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val refreshToken = remember(group.items) { activityItemsRefreshToken(group.items) }
+    val liveMotion = rememberInfiniteTransition(label = "activityLive")
+    val countBreath by liveMotion.animateFloat(
+        initialValue = 1f,
+        targetValue = WandMotion.breathAlphaMin,
+        animationSpec = WandMotion.breath(),
+        label = "activityCountBreath",
+    )
 
     LaunchedEffect(expanded, refreshToken) {
         if (!expanded) return@LaunchedEffect
@@ -1844,6 +1886,7 @@ private fun ActivityFoldCard(
                     modifier = Modifier
                         .height(18.dp)
                         .widthIn(min = 18.dp)
+                        .graphicsLayer { alpha = if (group.running) countBreath else 1f }
                         .clip(WandShapes.full)
                         .background(WandColors.brand.copy(alpha = 0.12f))
                         .padding(horizontal = 5.dp),
@@ -1864,16 +1907,23 @@ private fun ActivityFoldCard(
                 )
             }
             if (group.running) {
-                Text(
-                    group.latest,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                ) {
+                    Text(
+                        group.latest,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ActivityFoldPulseDots()
+                }
             }
         }
         if (expanded) {

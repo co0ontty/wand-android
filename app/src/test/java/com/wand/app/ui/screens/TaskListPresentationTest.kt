@@ -420,6 +420,20 @@ class TaskListPresentationTest {
         assertTrue(route.structured)
     }
 
+    @Test
+    fun homeListModeParsesBoardAsTasksAndKeepsTreeAsDefault() {
+        assertEquals(HomeListMode.Sessions, HomeListMode.fromStorage(null))
+        assertEquals(HomeListMode.Sessions, HomeListMode.fromStorage("tasks"))
+        assertEquals(HomeListMode.Sessions, HomeListMode.fromStorage("sessions"))
+        assertEquals(HomeListMode.Tasks, HomeListMode.fromStorage("board"))
+        assertEquals("任务模式", HomeListMode.Tasks.label)
+        assertEquals("会话模式", HomeListMode.Sessions.label)
+        assertEquals(HomeListMode.Tasks, HomeListMode.Sessions.next)
+        assertEquals(HomeListMode.Sessions, HomeListMode.Tasks.next)
+        assertEquals("board", HomeListMode.Tasks.storageValue)
+        assertEquals("sessions", HomeListMode.Sessions.storageValue)
+    }
+
     private fun group() = TaskDirectoryGroup(
         workspaceId = "workspace-1",
         workspaceName = "Repo",
