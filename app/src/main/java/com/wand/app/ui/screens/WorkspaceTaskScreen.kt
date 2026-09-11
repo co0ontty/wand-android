@@ -92,6 +92,7 @@ fun WorkspaceTaskScreen(
     onOpenSession: (String) -> Unit,
     onOpenPty: (String) -> Unit,
     onOpenMissions: (String?) -> Unit = {},
+    onOpenTaskBoard: () -> Unit = {},
     onTaskChanged: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
@@ -259,6 +260,14 @@ fun WorkspaceTaskScreen(
                             onClick = {
                                 taskMenuOpen = false
                                 onOpenMissions(missionCwd)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("任务管理") },
+                            leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
+                            onClick = {
+                                taskMenuOpen = false
+                                onOpenTaskBoard()
                             },
                         )
                         DropdownMenuItem(

@@ -2,11 +2,31 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
-import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.workspaceProviderLabel
 
 internal const val DIRECTORY_PATH_MIN_TAIL = 2
+internal const val UNNAMED_TASK_NAME = "未命名任务"
+
+internal fun isUnnamedTaskName(name: String): Boolean {
+    val trimmed = name.trim()
+    return trimmed.isEmpty() || trimmed == UNNAMED_TASK_NAME
+}
+
+/** 未命名任务不单独占一行，会话并入该目录的未分组终端。 */
+internal fun flattenUnnamedTasksIntoStandalone(group: TaskDirectoryGroup): TaskDirectoryGroup {
+    val named = ArrayList<WorkspaceTaskSummary>(group.tasks.size)
+    val extraStandalone = ArrayList<WorkspaceSessionSummary>()
+    for (task in group.tasks) {
+        if (isUnnamedTaskName(task.name)) extraStandalone += task.sessions
+        else named += task
+    }
+    if (named.size == group.tasks.size) return group
+    return group.copy(
+        tasks = named,
+        standaloneSessions = group.standaloneSessions + extraStandalone,
+    )
+}
 
 /** 无宽度信息时的兜底：至少保留最后两层目录。 */
 internal fun shortenWorkspacePath(path: String, minTail: Int = DIRECTORY_PATH_MIN_TAIL): String {
@@ -74,96 +94,37 @@ private fun renderWorkspacePath(rooted: Boolean, parts: List<String>, truncated:
     }
 }
 
-/** 对齐 iOS 目录头：`2 任务 · 5 会话`，不单独再画文件夹图标。 */
-internal fun directoryGroupMetaLabel(taskCount: Int, sessionCount: Int): String =
-    "$taskCount 任务 · $sessionCount 会话"
-
-internal fun directoryGroupSessionTotal(group: TaskDirectoryGroup): Int =
-    group.tasks.sumOf { it.totalSessions } + group.standaloneSessions.size
-
-/** 首页概览使用真实目录数，而不是服务端分组数；同一目录下的多个项目只算一个目录。 */
-internal data class TaskListMetrics(
-    val directoryCount: Int,
-    val taskCount: Int,
-    val sessionCount: Int,
-)
-
-internal fun taskListMetrics(groups: List<TaskDirectoryGroup>): TaskListMetrics {
-    val visibleGroups = groups.filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
-    val directoryKeys = mutableSetOf<String>()
-    val taskIds = mutableSetOf<String>()
-    visibleGroups.forEach { group ->
-        directoryKeys += directoryMetricKey(group)
-        group.tasks.forEach { taskIds += it.id }
-    }
-    return TaskListMetrics(
-        directoryCount = directoryKeys.size,
-        taskCount = taskIds.size,
-        sessionCount = visibleGroups.sumOf(::directoryGroupSessionTotal),
-    )
-}
-
-/** 目录组偶尔会因历史项目绑定产生重复项；空 cwd 时退回 group id，不能误合并。 */
-private fun directoryMetricKey(group: TaskDirectoryGroup): String {
-    val trimmed = group.workspaceCwd.replace('\\', '/').trim()
-    if (trimmed.isEmpty()) return "id:${group.id}"
-    val normalized = trimmed.trimEnd('/').ifEmpty { "/" }
-    return "cwd:$normalized"
-}
-
-internal fun homeTaskSummaryLabel(metrics: TaskListMetrics): String = when {
-    metrics.directoryCount == 0 -> "按工作目录整理你的任务"
-    metrics.taskCount == 0 -> "${metrics.directoryCount} 个目录 · 暂无任务"
-    else -> "${metrics.directoryCount} 个目录 · ${metrics.taskCount} 个任务"
-}
-
-/** 展示层目录排序：活跃目录优先，其次按最近打开的任务排序；同值保留服务端顺序。 */
+/** 目录位置按创建时间固定：新建在前，打开/运行不会改位置。 */
 internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
     groups
+        .map(::flattenUnnamedTasksIntoStandalone)
         .filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
-        .mapIndexed { index, group ->
-            IndexedDirectoryGroup(
-                group = group,
-                index = index,
-                active = groupHasLiveActivity(group),
-                latestOpenedAt = group.tasks.mapNotNull { it.task.lastOpenedAt }.maxOrNull(),
-            )
-        }
+        .mapIndexed { index, group -> IndexedDirectoryGroup(group = group, index = index) }
         .sortedWith { left, right ->
-            when {
-                left.active != right.active -> if (left.active) -1 else 1
-                left.latestOpenedAt != right.latestOpenedAt -> compareNullableTimestamp(
-                    right.latestOpenedAt,
-                    left.latestOpenedAt,
-                )
-                else -> left.index - right.index
-            }
+            val created = compareNullableTimestamp(
+                directoryCreatedAt(right.group),
+                directoryCreatedAt(left.group),
+            )
+            if (created != 0) created else left.index - right.index
         }
         .map { it.group }
 
-/** 目录内先展示活跃任务，再展示最近使用任务，完成任务自然沉到底部。 */
+/** 目录内任务按创建时间固定：新建在前，打开不会改位置。 */
 internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =
     tasks
-        .mapIndexed { index, task ->
-            IndexedTaskSummary(
-                task = task,
-                index = index,
-                active = task.status == WorkspaceTaskStatus.Active,
-                live = task.sessions.any(::sessionHasLiveActivity),
-            )
-        }
+        .mapIndexed { index, task -> IndexedTaskSummary(task = task, index = index) }
         .sortedWith { left, right ->
-            when {
-                left.live != right.live -> if (left.live) -1 else 1
-                left.active != right.active -> if (left.active) -1 else 1
-                left.task.task.lastOpenedAt != right.task.task.lastOpenedAt -> compareNullableTimestamp(
-                    right.task.task.lastOpenedAt,
-                    left.task.task.lastOpenedAt,
-                )
-                else -> left.index - right.index
-            }
+            val created = compareNullableTimestamp(right.task.task.createdAt, left.task.task.createdAt)
+            if (created != 0) created else left.index - right.index
         }
         .map { it.task }
+
+internal fun directoryCreatedAt(group: TaskDirectoryGroup): String? {
+    group.createdAt?.takeIf { it.isNotBlank() }?.let { return it }
+    val times = group.tasks.mapNotNull { it.task.createdAt?.takeIf(String::isNotBlank) } +
+        group.standaloneSessions.mapNotNull { it.startedAt?.takeIf(String::isNotBlank) }
+    return times.minOrNull()
+}
 
 internal fun groupHasLiveActivity(group: TaskDirectoryGroup): Boolean =
     group.standaloneSessions.any(::sessionHasLiveActivity) ||
@@ -192,15 +153,11 @@ private fun compareNullableTimestamp(left: String?, right: String?): Int {
 private data class IndexedDirectoryGroup(
     val group: TaskDirectoryGroup,
     val index: Int,
-    val active: Boolean,
-    val latestOpenedAt: String?,
 )
 
 private data class IndexedTaskSummary(
     val task: WorkspaceTaskSummary,
     val index: Int,
-    val active: Boolean,
-    val live: Boolean,
 )
 
 /** 默认任务不标「共享」——那是常态，占标题栏却没有信息量。隔离才值得露出来。 */
@@ -257,4 +214,112 @@ internal fun listSessionLabel(
     )
     if (title.isNotEmpty() && !repeatsParent) return title
     return "${workspaceProviderLabel(session.provider)} ${index + 1}"
+}
+
+internal const val COLLAPSED_RAIL_LIMIT = 8
+
+internal data class SidebarManageSelection(
+    val taskIds: Set<String> = emptySet(),
+    val sessionIds: Set<String> = emptySet(),
+) {
+    val count: Int get() = taskIds.size + sessionIds.size
+    val isEmpty: Boolean get() = count == 0
+}
+
+internal data class CollapsedRailTask(
+    val group: TaskDirectoryGroup,
+    val task: WorkspaceTaskSummary,
+    val activity: String?,
+)
+
+internal data class CollapsedRailModel(
+    val items: List<CollapsedRailTask>,
+    val overflow: Int,
+)
+
+internal fun taskRailActivity(task: WorkspaceTaskSummary): String? {
+    if (task.sessions.any { session ->
+            session.status in setOf(
+                "failed",
+                "waiting-input",
+                "waiting_input",
+                "permission-blocked",
+                "reconnecting",
+            )
+        }
+    ) {
+        return "attention"
+    }
+    if (task.sessions.any { session ->
+            session.inFlight == true || session.ptyBusy == true || session.status == "thinking"
+        }
+    ) {
+        return "running"
+    }
+    return null
+}
+
+internal fun collectManagedIds(groups: List<TaskDirectoryGroup>): SidebarManageSelection {
+    val taskIds = linkedSetOf<String>()
+    val sessionIds = linkedSetOf<String>()
+    groups.forEach { group ->
+        group.tasks.forEach { task ->
+            taskIds += task.id
+            task.sessions.forEach { sessionIds += it.id }
+        }
+        group.standaloneSessions.forEach { sessionIds += it.id }
+    }
+    return SidebarManageSelection(taskIds, sessionIds)
+}
+
+internal fun resolveManagedDeletion(
+    selection: SidebarManageSelection,
+    groups: List<TaskDirectoryGroup>,
+): SidebarManageSelection {
+    val owned = groups.asSequence()
+        .flatMap { it.tasks }
+        .filter { it.id in selection.taskIds }
+        .flatMap { it.sessions }
+        .map { it.id }
+        .toSet()
+    return SidebarManageSelection(
+        taskIds = selection.taskIds,
+        sessionIds = selection.sessionIds.filterNot { it in owned }.toSet(),
+    )
+}
+
+internal fun describeManagedDeletion(selection: SidebarManageSelection): String {
+    val parts = buildList {
+        if (selection.taskIds.isNotEmpty()) add("${selection.taskIds.size} 个任务")
+        if (selection.sessionIds.isNotEmpty()) add("${selection.sessionIds.size} 个终端")
+    }
+    return parts.joinToString("和").ifEmpty { "所选项目" }
+}
+
+internal fun collapsedRailTasks(
+    groups: List<TaskDirectoryGroup>,
+    activeTaskId: String?,
+    limit: Int = COLLAPSED_RAIL_LIMIT,
+): CollapsedRailModel {
+    val items = groups.flatMap { group ->
+        group.tasks.map { task ->
+            CollapsedRailTask(group = group, task = task, activity = taskRailActivity(task))
+        }
+    }.sortedWith { left, right ->
+        val rank = railRank(left, activeTaskId).compareTo(railRank(right, activeTaskId))
+        if (rank != 0) rank
+        else compareNullableTimestamp(
+            right.task.task.lastOpenedAt ?: right.task.task.createdAt,
+            left.task.task.lastOpenedAt ?: left.task.task.createdAt,
+        )
+    }
+    val visible = items.take(limit.coerceAtLeast(0))
+    return CollapsedRailModel(items = visible, overflow = (items.size - visible.size).coerceAtLeast(0))
+}
+
+private fun railRank(item: CollapsedRailTask, activeTaskId: String?): Int = when {
+    item.task.id == activeTaskId -> 0
+    item.activity == "attention" -> 1
+    item.activity == "running" -> 2
+    else -> 3
 }

@@ -102,6 +102,12 @@ class AppNavTest {
     }
 
     @Test
+    fun roundTrip_taskBoardScreen() {
+        assertEquals(Screen.TaskBoard(), roundTrip(Screen.TaskBoard()))
+        assertEquals(Screen.TaskBoard("ws-9"), roundTrip(Screen.TaskBoard("ws-9")))
+    }
+
+    @Test
     fun roundTrip_sessionListScreen() {
         val restored = roundTrip(Screen.SessionList)
         assertEquals(Screen.SessionList, restored)

@@ -138,55 +138,27 @@ fun TaskSessionTabStrip(
     if (tabs.isNullOrEmpty()) return
     val palette = sessionStripPalette(terminalChrome)
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(palette.background),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val parentNames = tabStripParentNames(taskState)
-                tabs.forEachIndexed { index, session ->
-                    TaskSessionTab(
-                        session = session,
-                        index = index,
-                        isSelected = session.id == currentSessionId,
-                        parentNames = parentNames,
-                        palette = palette,
-                        onClick = { onSelect(session) },
-                        onDelete = if (onDeleted != null) {
-                            { deleteError = null; deleteTarget = session }
-                        } else {
-                            null
-                        },
-                    )
-                }
-            }
+    SessionStripLayout(
+        sessions = tabs,
+        currentSessionId = currentSessionId,
+        parentNames = tabStripParentNames(taskState),
+        palette = palette,
+        onSelect = onSelect,
+        onDelete = if (onDeleted != null) {
+            { deleteError = null; deleteTarget = it }
+        } else {
+            null
+        },
+        modifier = modifier,
+        terminalChrome = terminalChrome,
+        trailing = {
             TaskSessionAddButton(
                 palette = palette,
                 enabled = targetState is WorkspaceTargetState.Closed,
                 onClick = { openTargetSheet() },
             )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(0.5.dp)
-                .background(palette.chipBorder.copy(alpha = if (terminalChrome) 1f else 0.85f)),
-        )
-    }
+        },
+    )
 
     if (targetState !is WorkspaceTargetState.Closed) {
         val creating = targetState is WorkspaceTargetState.Creating
@@ -268,6 +240,95 @@ fun TaskSessionTabStrip(
                 color = if (deleteError != null) WandColors.danger else WandColors.textSecondary,
             )
         }
+    }
+}
+
+/**
+ * 未分组会话（没有任务归属、直接挂在目录下）的快捷切换条。
+ *
+ * 与任务内的 [TaskSessionTabStrip] 共用 [SessionStripLayout]，保证顶部会话切换
+ * 在任何入口下观感一致。数据来自根导航的聚合结果，不需要再拉任务详情。
+ */
+@Composable
+fun StandaloneSessionTabStrip(
+    sessions: List<WorkspaceSessionSummary>,
+    currentSessionId: String?,
+    parentNames: Collection<String> = emptyList(),
+    onSelect: (WorkspaceSessionSummary) -> Unit,
+    modifier: Modifier = Modifier,
+    terminalChrome: Boolean = false,
+) {
+    // 只有一个会话时不显示，避免顶部多出一条没有切换价值的信息栏。
+    if (sessions.size < 2) return
+    // 只做切换，不在这里删终端：未分组终端的删除入口保留在侧栏（带确认弹窗），
+    // 避免这条快速切换条变成容易误触的破坏性操作面。
+    SessionStripLayout(
+        sessions = sessions,
+        currentSessionId = currentSessionId,
+        parentNames = parentNames,
+        palette = sessionStripPalette(terminalChrome),
+        onSelect = onSelect,
+        onDelete = null,
+        modifier = modifier,
+        terminalChrome = terminalChrome,
+    )
+}
+
+/**
+ * 会话条通用布局：横向滚动的 Tab + 右侧固定操作槽 + 底部细分隔线。
+ * 任务会话与未分组会话共用，保证「顶部有别的会话」在任何入口下观感一致。
+ */
+@Composable
+internal fun SessionStripLayout(
+    sessions: List<WorkspaceSessionSummary>,
+    currentSessionId: String?,
+    parentNames: Collection<String>,
+    palette: SessionStripPalette,
+    onSelect: (WorkspaceSessionSummary) -> Unit,
+    onDelete: ((WorkspaceSessionSummary) -> Unit)?,
+    modifier: Modifier = Modifier,
+    terminalChrome: Boolean = false,
+    trailing: @Composable () -> Unit = {},
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(palette.background),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                sessions.forEachIndexed { index, session ->
+                    TaskSessionTab(
+                        session = session,
+                        index = index,
+                        isSelected = session.id == currentSessionId,
+                        parentNames = parentNames,
+                        palette = palette,
+                        onClick = { onSelect(session) },
+                        onDelete = onDelete?.let { delete -> { delete(session) } },
+                    )
+                }
+            }
+            trailing()
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(palette.chipBorder.copy(alpha = if (terminalChrome) 1f else 0.85f)),
+        )
     }
 }
 

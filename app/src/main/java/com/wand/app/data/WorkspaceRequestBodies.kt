@@ -38,10 +38,10 @@ internal fun createWorkspaceTaskWindowRequest(
     binding: WorkspaceBinding,
     kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
 ): WorkspaceTaskWindowRequest {
-    val body = JSONObject()
-        .put("cwd", binding.cwd)
-        .put("workspaceId", binding.workspaceId)
-        .put("workspaceTaskId", binding.workspaceTaskId)
+    val body = JSONObject().put("cwd", binding.cwd).apply {
+        binding.workspaceId?.trim()?.takeIf { it.isNotEmpty() }?.let { put("workspaceId", it) }
+        binding.workspaceTaskId?.trim()?.takeIf { it.isNotEmpty() }?.let { put("workspaceTaskId", it) }
+    }
     if (target.isShell) {
         body.put("shell", true)
         return WorkspaceTaskWindowRequest("/api/commands", body)

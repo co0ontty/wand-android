@@ -1,0 +1,105 @@
+package com.wand.app.data
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class TaskBoardModelsTest {
+    @Test
+    fun boardTaskParserReadsWorkspaceAgentAndSessions() {
+        val task = BoardTask.parse(
+            JSONObject()
+                .put("id", "task-1")
+                .put("workspaceId", "ws-1")
+                .put("identifier", "TASK-1")
+                .put("title", "修顶栏")
+                .put("description", "对齐 iOS")
+                .put("status", "doing")
+                .put("priority", "high")
+                .put("labels", JSONArray().put("ui"))
+                .put("sortOrder", 2)
+                .put(
+                    "agent",
+                    JSONObject()
+                        .put("provider", "codex")
+                        .put("model", "default")
+                        .put("thinkingEffort", "deep"),
+                )
+                .put("sessionIds", JSONArray().put("sess-1"))
+                .put(
+                    "sessions",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("id", "sess-1")
+                            .put("provider", "codex")
+                            .put("sessionKind", "structured")
+                            .put("title", "修顶栏")
+                            .put("status", "running")
+                            .put("cwd", "/repo")
+                            .put("model", "gpt-5")
+                            .put("thinkingEffort", "deep"),
+                    ),
+                )
+                .put(
+                    "workspace",
+                    JSONObject().put("id", "ws-1").put("name", "wand").put("cwd", "/repo"),
+                ),
+        )
+
+        requireNotNull(task)
+        assertEquals("task-1", task.id)
+        assertEquals("ws-1", task.workspaceId)
+        assertEquals("TASK-1", task.identifier)
+        assertEquals("doing", task.status)
+        assertEquals("high", task.priority)
+        assertEquals(listOf("ui"), task.labels)
+        assertEquals("codex", task.agent?.provider)
+        assertEquals("wand", task.workspace?.name)
+        assertEquals(listOf("sess-1"), task.sessionIds)
+        assertEquals("sess-1", task.sessions.single().id)
+        assertTrue(task.sessions.single().isStructured)
+    }
+
+    @Test
+    fun boardTaskParserAllowsUnassignedProjectAndAgent() {
+        val task = BoardTask.parse(JSONObject().put("id", "task-2").put("title", "草稿"))
+        requireNotNull(task)
+        assertNull(task.workspaceId)
+        assertNull(task.agent)
+        assertEquals("todo", task.status)
+        assertEquals("none", task.priority)
+        assertTrue(task.sessions.isEmpty())
+    }
+
+    @Test
+    fun createBodyOmitsWorkspaceAsJsonNull() {
+        val unassigned = createBoardTaskBody("标题", "说明", "todo", "none", null)
+        assertTrue(unassigned.isNull("workspaceId"))
+        val assigned = createBoardTaskBody("标题", "", "doing", "high", "ws-1")
+        assertEquals("ws-1", assigned.getString("workspaceId"))
+        assertEquals("doing", assigned.getString("status"))
+    }
+
+    @Test
+    fun patchBodyOnlyWritesProvidedFields() {
+        val patch = patchBoardTaskBody(status = "done", workspaceId = null)
+        assertEquals("done", patch.getString("status"))
+        assertTrue(patch.isNull("workspaceId"))
+        assertFalse(patch.has("title"))
+        assertFalse(patch.has("agent"))
+    }
+
+    @Test
+    fun statusAndPriorityLabelsCoverBoardColumns() {
+        assertEquals("待办", boardTaskStatusLabel("todo"))
+        assertEquals("进行中", boardTaskStatusLabel("doing"))
+        assertEquals("已完成", boardTaskStatusLabel("done"))
+        assertEquals("紧急", boardTaskPriorityLabel("urgent"))
+        assertEquals("无优先级", boardTaskPriorityLabel("none"))
+        assertEquals("Pi", boardTaskProviderLabel("pi"))
+    }
+}

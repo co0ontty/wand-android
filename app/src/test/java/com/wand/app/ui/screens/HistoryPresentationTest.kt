@@ -55,9 +55,9 @@ class HistoryPresentationTest {
     }
 
     @Test
-    fun onlyRepliesBeforeTheLatestUserInputStartCollapsed() {
+    fun historicalRepliesStayExpandedWithTheCurrentTurn() {
         assertFalse(shouldCollapseReply(turnIndex = 5, lastUserTurnIndex = -1))
-        assertTrue(shouldCollapseReply(turnIndex = 3, lastUserTurnIndex = 4))
+        assertFalse(shouldCollapseReply(turnIndex = 3, lastUserTurnIndex = 4))
         assertFalse(shouldCollapseReply(turnIndex = 5, lastUserTurnIndex = 4))
     }
 

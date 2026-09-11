@@ -216,15 +216,90 @@ class TaskListStateTest {
     }
 
     @Test
-    fun emptyTaskNameUsesServerSafeFallback() = runBlocking {
+    fun emptyTaskNameIsRejectedWithoutCreatingUnnamedTask() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
 
         val result = state.createTask("", "/work/wand", worktree = false)
 
-        assertEquals("未命名任务", port.standaloneRequests.single().name)
-        assertEquals("wand-global", result?.workspace?.id)
+        assertNull(result)
+        assertTrue(port.standaloneRequests.isEmpty())
+        assertTrue(port.taskRequests.isEmpty())
+        assertEquals("请输入任务名称", state.mutationError)
+    }
+
+    @Test
+    fun createUngroupedSessionOmitsTaskBinding() = runBlocking {
+        val port = FakeWorkspacePort()
+        val state = TaskListState(port)
+
+        val session = state.createUngroupedSession(
+            cwd = " /repo ",
+            target = WorkspaceSessionTarget.Claude,
+            kind = WorkspaceSessionKind.Pty,
+            workspaceId = "ws-1",
+        )
+
+        assertEquals("created-session", session?.id)
+        assertEquals(
+            WorkspaceBinding("ws-1", null, "/repo"),
+            port.createdWindowBindings.single(),
+        )
+        assertTrue(port.standaloneRequests.isEmpty())
+        assertTrue(port.taskRequests.isEmpty())
         assertNull(state.mutationError)
+    }
+
+    @Test
+    fun unnamedTaskSelectionExpandsStandaloneSection() = runBlocking {
+        val unnamedSession = WorkspaceSessionSummary(
+            id = "unnamed-session",
+            provider = "claude",
+            sessionKind = "structured",
+            runner = "structured",
+            title = "Loose",
+            status = "idle",
+            cwd = "/repo",
+            startedAt = null,
+        )
+        val unnamedTask = WorkspaceTaskSummary(
+            task = task("task-unnamed", "未命名任务"),
+            cwd = "/repo",
+            isolated = false,
+            worktreeError = null,
+            sessions = listOf(unnamedSession),
+            totalSessions = 1,
+        )
+        val group = group("ws-1", "/repo").copy(tasks = listOf(unnamedTask))
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
+        assertTrue(state.load())
+
+        state.toggleDirectory(group.id)
+        state.toggleStandalone(group.id)
+        assertTrue(state.isDirectoryCollapsed(group.id))
+        assertTrue(state.isStandaloneCollapsed(group.id))
+
+        state.expandPathToSelection(taskId = unnamedTask.id, sessionId = unnamedSession.id)
+
+        assertFalse(state.isDirectoryCollapsed(group.id))
+        assertFalse(state.isStandaloneCollapsed(group.id))
+    }
+
+    @Test
+    fun expansionStateSurvivesStoreReuse() = runBlocking {
+        val store = MemoryTaskListExpansionStore()
+        val group = group("ws-1", "/repo")
+        val first = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
+        assertTrue(first.load())
+        first.toggleDirectory(group.id)
+        first.toggleTask("task-1")
+        first.toggleHistory()
+
+        val restored = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
+        assertTrue(restored.isDirectoryCollapsed(group.id))
+        assertTrue(restored.isTaskCollapsed("task-1"))
+        assertTrue(restored.historyExpanded)
+        assertFalse(restored.isStandaloneCollapsed(group.id))
     }
 
     @Test
@@ -233,6 +308,7 @@ class TaskListStateTest {
         val state = TaskListState(port)
 
         assertNull(state.createTask("bad\nname", "/repo", worktree = true))
+        assertNull(state.createTask("   ", "/repo", worktree = true))
         assertNull(state.renameTask("task-1", ""))
 
         assertTrue(port.taskRequests.isEmpty())

@@ -23,7 +23,7 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
  * 登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
-class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPort, WorkspacePort {
+class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPort, WorkspacePort, TaskBoardPort {
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
@@ -651,6 +651,44 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
             requestObject("POST", "/api/sessions/$sessionId/git/push", body, timeoutSec = 180)
         )
     }
+
+    // MARK: - 任务管理（WandTask 看板）
+
+    override suspend fun listBoardTasks(workspaceId: String?): List<BoardTask> {
+        val query = workspaceId?.takeIf { it.isNotBlank() }?.let { "?workspaceId=${encode(it)}" }.orEmpty()
+        return BoardTask.parseList(requestArray("GET", "/api/wand-tasks$query"))
+    }
+
+    override suspend fun createBoardTask(
+        title: String,
+        description: String,
+        status: String,
+        priority: String,
+        workspaceId: String?,
+    ): BoardTask = BoardTask.parse(
+        requestObject("POST", "/api/wand-tasks", createBoardTaskBody(title, description, status, priority, workspaceId)),
+    ) ?: throw WandApiException(500, "创建任务响应无效。")
+
+    override suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask =
+        BoardTask.parse(requestObject("PATCH", "/api/wand-tasks/${encode(id)}", body))
+            ?: throw WandApiException(500, "更新任务响应无效。")
+
+    override suspend fun deleteBoardTask(id: String) {
+        requestData("DELETE", "/api/wand-tasks/${encode(id)}")
+    }
+
+    override suspend fun dispatchBoardTask(id: String, agent: BoardTaskAgent): BoardDispatchResult =
+        BoardDispatchResult.parse(
+            requestObject(
+                "POST",
+                "/api/wand-tasks/${encode(id)}/dispatch",
+                JSONObject().put("agent", agent.toJson()),
+            ),
+        )
+
+    override suspend fun listBoardWorkspaces(): List<Workspace> = listWorkspaces()
+
+    override suspend fun boardModels(): ModelsResponse = models()
 
     // MARK: - 工作空间（项目）与任务
 

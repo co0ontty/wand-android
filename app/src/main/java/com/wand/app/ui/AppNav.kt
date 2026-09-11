@@ -28,6 +28,9 @@ sealed class Screen {
         val cwd: String? = null,
         val taskName: String? = null,
     ) : Screen()
+    data class TaskBoard(
+        val workspaceId: String? = null,
+    ) : Screen()
     data object Settings : Screen()
     /**
      * 任务详情宿主页：导航参数只携带稳定的 workspaceId/taskId 和编码短显示名，
@@ -158,6 +161,7 @@ class NavState {
         private const val NEW_SESSION_KEY = "new-session"
         private const val NEW_SESSION_PREFIX = "new-session:"
         private const val MISSIONS_KEY = "missions"
+        private const val TASK_BOARD_KEY = "task-board"
         private const val SETTINGS_KEY = "settings"
         private const val WORKSPACES_KEY = "workspaces"
         private const val WORKSPACE_TASK_KEY = "workspace-task"
@@ -186,6 +190,11 @@ class NavState {
             } else {
                 MISSIONS_KEY + FIELD_SEP + taskId.orEmpty() + FIELD_SEP + cwd.orEmpty() +
                     FIELD_SEP + taskName.orEmpty()
+            }
+            is Screen.TaskBoard -> if (workspaceId.isNullOrBlank()) {
+                TASK_BOARD_KEY
+            } else {
+                TASK_BOARD_KEY + FIELD_SEP + workspaceId
             }
             Screen.Settings -> SETTINGS_KEY
             // 结构化分隔：用 \u0001 作为不可打印分隔符，避免任务名中的 `:`
@@ -219,6 +228,10 @@ class NavState {
                     taskName = parts.getOrNull(2)?.takeIf(String::isNotBlank),
                 )
             }
+            this == TASK_BOARD_KEY -> Screen.TaskBoard()
+            startsWith(TASK_BOARD_KEY + FIELD_SEP) -> Screen.TaskBoard(
+                workspaceId = removePrefix(TASK_BOARD_KEY + FIELD_SEP).takeIf(String::isNotBlank),
+            )
             this == SETTINGS_KEY -> Screen.Settings
             // 旧版项目根页升级后统一恢复到任务根页。
             this == WORKSPACES_KEY -> Screen.SessionList

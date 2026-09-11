@@ -1,6 +1,7 @@
 package com.wand.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -90,6 +91,26 @@ class WorkspaceTaskCreationTest {
         assertEquals("ws-1", binding.workspaceId)
         assertEquals("task-1", binding.workspaceTaskId)
         assertEquals("/worktree/path", binding.cwd)
+    }
+
+    @Test
+    fun ungroupedWindowOmitsTaskBinding() {
+        val ungrouped = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.Claude,
+            WorkspaceBinding(cwd = "/repo"),
+            WorkspaceSessionKind.Structured,
+        )
+        assertEquals("/repo", ungrouped.body.getString("cwd"))
+        assertFalse(ungrouped.body.has("workspaceId"))
+        assertFalse(ungrouped.body.has("workspaceTaskId"))
+
+        val underProject = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.Shell,
+            WorkspaceBinding(workspaceId = "ws-1", cwd = "/repo"),
+        )
+        assertTrue(underProject.body.getBoolean("shell"))
+        assertEquals("ws-1", underProject.body.getString("workspaceId"))
+        assertFalse(underProject.body.has("workspaceTaskId"))
     }
 
     @Test

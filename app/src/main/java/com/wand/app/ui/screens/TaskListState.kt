@@ -25,7 +25,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** Task-first root data. Workspace remains an internal directory binding, not a user-facing mode. */
-class TaskListState(private val port: WorkspacePort) : ScopedStore() {
+class TaskListState(
+    private val port: WorkspacePort,
+    private val expansionStore: TaskListExpansionStore = MemoryTaskListExpansionStore(),
+) : ScopedStore() {
     var groups by mutableStateOf<List<TaskDirectoryGroup>>(emptyList())
         private set
     var loading by mutableStateOf(true)
@@ -51,10 +54,16 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
     var newTaskRequest by mutableLongStateOf(0L)
         private set
 
-    private val directoryExpansion = mutableStateMapOf<String, Boolean>()
-    private val taskExpansion = mutableStateMapOf<String, Boolean>()
-    private val standaloneExpansion = mutableStateMapOf<String, Boolean>()
-    var historyExpanded by mutableStateOf(false)
+    private val directoryExpansion = mutableStateMapOf<String, Boolean>().apply {
+        expansionStore.collapsedIds(TASK_LIST_EXPANSION_DIRS).forEach { put(it, false) }
+    }
+    private val taskExpansion = mutableStateMapOf<String, Boolean>().apply {
+        expansionStore.collapsedIds(TASK_LIST_EXPANSION_TASKS).forEach { put(it, false) }
+    }
+    private val standaloneExpansion = mutableStateMapOf<String, Boolean>().apply {
+        expansionStore.collapsedIds(TASK_LIST_EXPANSION_LOOSE).forEach { put(it, false) }
+    }
+    var historyExpanded by mutableStateOf(expansionStore.historyExpanded)
         private set
 
     private val loadMutex = Mutex()
@@ -90,28 +99,32 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
 
     fun toggleDirectory(groupId: String) {
         directoryExpansion[groupId] = isDirectoryCollapsed(groupId)
+        persistDirectoryExpansion()
     }
 
     fun isTaskCollapsed(taskId: String): Boolean = taskExpansion[taskId] == false
 
     fun toggleTask(taskId: String) {
         taskExpansion[taskId] = isTaskCollapsed(taskId)
+        persistTaskExpansion()
     }
 
     fun isStandaloneCollapsed(groupId: String): Boolean = standaloneExpansion[groupId] == false
 
     fun toggleStandalone(groupId: String) {
         standaloneExpansion[groupId] = isStandaloneCollapsed(groupId)
+        persistStandaloneExpansion()
     }
 
     fun toggleHistory() {
         historyExpanded = !historyExpanded
+        expansionStore.historyExpanded = historyExpanded
     }
 
     /** Keep the selected branch visible after returning from a task or session detail. */
     fun expandPathToSelection(taskId: String?, sessionId: String?) {
         if (taskId == null && sessionId == null) return
-        groups.forEach { group ->
+        groups.map(::flattenUnnamedTasksIntoStandalone).forEach { group ->
             val selectedTask = group.tasks.firstOrNull { task ->
                 task.id == taskId || task.sessions.any { it.id == sessionId }
             }
@@ -123,6 +136,30 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
                 standaloneExpansion[group.id] = true
             }
         }
+        persistDirectoryExpansion()
+        persistTaskExpansion()
+        persistStandaloneExpansion()
+    }
+
+    private fun persistDirectoryExpansion() {
+        expansionStore.setCollapsedIds(
+            TASK_LIST_EXPANSION_DIRS,
+            directoryExpansion.filterValues { !it }.keys,
+        )
+    }
+
+    private fun persistTaskExpansion() {
+        expansionStore.setCollapsedIds(
+            TASK_LIST_EXPANSION_TASKS,
+            taskExpansion.filterValues { !it }.keys,
+        )
+    }
+
+    private fun persistStandaloneExpansion() {
+        expansionStore.setCollapsedIds(
+            TASK_LIST_EXPANSION_LOOSE,
+            standaloneExpansion.filterValues { !it }.keys,
+        )
     }
 
     suspend fun load(silent: Boolean = false): Boolean = loadMutex.withLock {
@@ -182,10 +219,10 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
         worktree: Boolean,
         workspaceId: String? = null,
     ): TaskCreationResult? = mutationMutex.withLock {
-        val normalizedName = name.trim().ifEmpty { "未命名任务" }
+        val normalizedName = name.trim()
         val normalizedCwd = cwd.trim()
         if (!isValidTaskName(normalizedName)) {
-            mutationError = "任务名称无效或过长"
+            mutationError = if (normalizedName.isEmpty()) "请输入任务名称" else "任务名称无效或过长"
             return@withLock null
         }
         mutationBusy = true
@@ -258,6 +295,40 @@ class TaskListState(private val port: WorkspacePort) : ScopedStore() {
             if (error is CancellationException) throw error
             mutationError = error.message ?: "删除任务失败"
             false
+        } finally {
+            mutationBusy = false
+        }
+    }
+
+    suspend fun createUngroupedSession(
+        cwd: String,
+        target: WorkspaceSessionTarget,
+        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+        workspaceId: String? = null,
+    ): SessionSnapshot? = mutationMutex.withLock {
+        val normalizedCwd = cwd.trim()
+        if (normalizedCwd.isEmpty()) {
+            mutationError = "请选择工作目录"
+            return@withLock null
+        }
+        mutationBusy = true
+        mutationError = null
+        try {
+            val session = port.createWorkspaceTaskWindow(
+                target,
+                WorkspaceBinding(
+                    workspaceId = workspaceId?.trim()?.takeIf { it.isNotEmpty() },
+                    workspaceTaskId = null,
+                    cwd = normalizedCwd,
+                ),
+                kind,
+            )
+            load(silent = true)
+            session
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            mutationError = error.message ?: "创建终端失败"
+            null
         } finally {
             mutationBusy = false
         }

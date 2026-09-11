@@ -40,6 +40,12 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun collapsedIdCodecRoundTripsAndDropsBlanks() {
+        assertEquals("a\nb", encodeCollapsedIds(listOf("b", "a", "")))
+        assertEquals(setOf("a", "b"), decodeCollapsedIds("b\n a \n\n"))
+    }
+
+    @Test
     fun directoryPathKeepsLeafAndDropsHomePrefix() {
         assertEquals("…/vibe_coding/wand", shortenWorkspacePath("/Users/me/Self/vibe_coding/wand"))
         assertEquals("/tmp/wand", shortenWorkspacePath("/tmp/wand"))
@@ -121,113 +127,169 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun directoryTreePutsLiveAndRecentlyOpenedDirectoriesFirst() {
-        val idle = group().copy(
-            workspaceId = "idle",
-            workspaceName = "Idle",
-            tasks = listOf(task().copy(task = task().task.copy(lastOpenedAt = "2026-01-01T00:00:00Z"))),
+    fun siblingSessionsForTaskUsesTaskWindows() {
+        val taskSessions = listOf(
+            session("structured", "structured").copy(id = "a"),
+            session("pty", null).copy(id = "b"),
         )
-        val recent = group().copy(
-            workspaceId = "recent",
-            workspaceName = "Recent",
-            tasks = listOf(task().copy(task = task().task.copy(lastOpenedAt = "2026-03-01T00:00:00Z"))),
-        )
-        val active = group().copy(
-            workspaceId = "active",
-            workspaceName = "Active",
-            standaloneSessions = listOf(session("structured", "structured").copy(status = "running")),
+        val groups = listOf(
+            group().copy(tasks = listOf(task().copy(sessions = taskSessions, totalSessions = 2))),
         )
 
         assertEquals(
-            listOf("Active", "Recent", "Idle"),
-            directoryTreeGroups(listOf(idle, recent, active)).map { it.workspaceName },
+            listOf("a", "b"),
+            siblingSessionsFor(groups, taskId = "task-1", sessionId = "a").map { it.id },
         )
     }
 
     @Test
-    fun taskTreeKeepsLiveTasksAboveDoneTasksAndUsesRecentTimeAsTieBreaker() {
+    fun siblingSessionsForStandaloneUsesDirectoryLooseSessions() {
+        val loose = listOf(
+            session("structured", "structured").copy(id = "loose-1"),
+            session("pty", null).copy(id = "loose-2"),
+        )
+        val groups = listOf(group().copy(tasks = emptyList(), standaloneSessions = loose))
+
+        assertEquals(
+            listOf("loose-1", "loose-2"),
+            siblingSessionsFor(groups, taskId = null, sessionId = "loose-1").map { it.id },
+        )
+        assertTrue(siblingSessionsFor(groups, taskId = null, sessionId = "missing").isEmpty())
+        assertTrue(siblingSessionsFor(groups, taskId = null, sessionId = null).isEmpty())
+    }
+
+    @Test
+    fun siblingSessionsForStandaloneIncludesFlattenedUnnamedTaskSessions() {
+        val loose = session("pty", null).copy(id = "loose-1")
+        val unnamed = task().copy(
+            task = task().task.copy(id = "task-unnamed", name = "未命名任务"),
+            sessions = listOf(session("structured", "structured").copy(id = "unnamed-1")),
+            totalSessions = 1,
+        )
+        val groups = listOf(
+            group().copy(tasks = listOf(unnamed), standaloneSessions = listOf(loose)),
+        )
+
+        assertEquals(
+            listOf("loose-1", "unnamed-1"),
+            siblingSessionsFor(groups, taskId = null, sessionId = "unnamed-1").map { it.id },
+        )
+    }
+
+    @Test
+    fun standaloneSessionsAlsoAnimateSwipeTransition() {
+        val sessions = listOf(
+            session("structured", "structured").copy(id = "loose-1"),
+            session("pty", null).copy(id = "loose-2"),
+        )
+
+        assertEquals(
+            1,
+            taskSessionTransitionDirection(
+                Screen.Chat("loose-1"),
+                Screen.PtyTerminal("loose-2"),
+                sessions,
+            ),
+        )
+        assertEquals(
+            -1,
+            taskSessionTransitionDirection(
+                Screen.PtyTerminal("loose-2"),
+                Screen.Chat("loose-1"),
+                sessions,
+            ),
+        )
+        assertNull(
+            taskSessionTransitionDirection(
+                Screen.Chat("loose-1"),
+                Screen.PtyTerminal("other"),
+                sessions,
+            ),
+        )
+    }
+
+    @Test
+    fun unnamedTasksFlattenIntoDirectoryStandaloneSessions() {
+        val named = task()
+        val unnamedSession = session("pty", null).copy(id = "loose-1", title = "Loose")
+        val unnamed = task().copy(
+            task = task().task.copy(id = "task-unnamed", name = "未命名任务"),
+            sessions = listOf(unnamedSession),
+            totalSessions = 1,
+        )
+        val existingStandalone = session("structured", "structured").copy(id = "legacy-1")
+        val group = group().copy(
+            tasks = listOf(named, unnamed),
+            standaloneSessions = listOf(existingStandalone),
+        )
+
+        val flattened = flattenUnnamedTasksIntoStandalone(group)
+        assertEquals(listOf("task-1"), flattened.tasks.map { it.id })
+        assertEquals(listOf("legacy-1", "loose-1"), flattened.standaloneSessions.map { it.id })
+
+        assertEquals(
+            listOf("legacy-1", "loose-1"),
+            directoryTreeGroups(listOf(group)).single().standaloneSessions.map { it.id },
+        )
+    }
+
+    @Test
+    fun directoryTreeKeepsCreatedOrderWithNewFoldersFirst() {
+        val older = group().copy(
+            workspaceId = "older",
+            workspaceName = "Older",
+            createdAt = "2026-01-01T00:00:00Z",
+            tasks = listOf(task().copy(task = task().task.copy(lastOpenedAt = "2026-06-01T00:00:00Z"))),
+        )
+        val newer = group().copy(
+            workspaceId = "newer",
+            workspaceName = "Newer",
+            createdAt = "2026-05-01T00:00:00Z",
+            tasks = listOf(task().copy(task = task().task.copy(lastOpenedAt = "2026-02-01T00:00:00Z"))),
+        )
+        val running = group().copy(
+            workspaceId = "running",
+            workspaceName = "Running",
+            createdAt = "2026-03-01T00:00:00Z",
+            standaloneSessions = listOf(session("structured", "structured").copy(status = "running")),
+        )
+
+        assertEquals(
+            listOf("Newer", "Running", "Older"),
+            directoryTreeGroups(listOf(older, newer, running)).map { it.workspaceName },
+        )
+    }
+
+    @Test
+    fun taskTreeKeepsCreatedOrderWithNewTasksFirst() {
         val done = task().copy(
             task = task().task.copy(
                 id = "done",
                 status = WorkspaceTaskStatus.Done,
-                lastOpenedAt = "2026-04-01T00:00:00Z",
+                createdAt = "2026-04-01T00:00:00Z",
+                lastOpenedAt = "2026-06-01T00:00:00Z",
             ),
         )
-        val activeOld = task().copy(
+        val older = task().copy(
             task = task().task.copy(
-                id = "active-old",
-                lastOpenedAt = "2026-01-01T00:00:00Z",
+                id = "older",
+                createdAt = "2026-01-01T00:00:00Z",
+                lastOpenedAt = "2026-05-01T00:00:00Z",
             ),
         )
-        val activeRecent = task().copy(
+        val newer = task().copy(
             task = task().task.copy(
-                id = "active-recent",
-                lastOpenedAt = "2026-03-01T00:00:00Z",
+                id = "newer",
+                createdAt = "2026-03-01T00:00:00Z",
+                lastOpenedAt = "2026-02-01T00:00:00Z",
             ),
             sessions = listOf(session("structured", "structured").copy(status = "running")),
         )
 
         assertEquals(
-            listOf("active-recent", "active-old", "done"),
-            orderedTaskSummaries(listOf(done, activeOld, activeRecent)).map { it.id },
+            listOf("done", "newer", "older"),
+            orderedTaskSummaries(listOf(older, done, newer)).map { it.id },
         )
-    }
-
-    @Test
-    fun homeMetricsDeduplicateDirectoryAliasesAndTaskIds() {
-        val duplicateDirectory = group().copy(
-            workspaceId = "workspace-2",
-            workspaceName = "Repo alias",
-            workspaceCwd = "/repo/",
-            tasks = listOf(
-                task().copy(totalSessions = 2),
-                task().copy(
-                    task = task().task.copy(id = "task-2", name = "Review"),
-                    totalSessions = 1,
-                ),
-            ),
-            standaloneSessions = listOf(session("pty", null)),
-        )
-
-        assertEquals(
-            TaskListMetrics(directoryCount = 1, taskCount = 2, sessionCount = 4),
-            taskListMetrics(listOf(group(), duplicateDirectory)),
-        )
-        assertEquals(
-            1,
-            taskListMetrics(
-                listOf(
-                    group().copy(workspaceCwd = "/"),
-                    group().copy(workspaceId = "workspace-3", workspaceCwd = "///"),
-                ),
-            ).directoryCount,
-        )
-    }
-
-    @Test
-    fun homeSummaryExplainsDirectoryWithOnlyLegacySessions() {
-        val metrics = TaskListMetrics(directoryCount = 1, taskCount = 0, sessionCount = 2)
-
-        assertEquals("1 个目录 · 暂无任务", homeTaskSummaryLabel(metrics))
-        assertEquals("按工作目录整理你的任务", homeTaskSummaryLabel(metrics.copy(directoryCount = 0)))
-    }
-
-    @Test
-    fun directoryGroupMetaLabelMatchesIosCountFormat() {
-        assertEquals("2 任务 · 5 会话", directoryGroupMetaLabel(2, 5))
-        assertEquals("0 任务 · 0 会话", directoryGroupMetaLabel(0, 0))
-        val grouped = group().copy(
-            tasks = listOf(
-                task().copy(totalSessions = 3),
-                task().copy(
-                    task = task().task.copy(id = "task-2", name = "Review"),
-                    totalSessions = 1,
-                ),
-            ),
-            standaloneSessions = listOf(session("pty", null)),
-        )
-        assertEquals(5, directoryGroupSessionTotal(grouped))
-        assertEquals("2 任务 · 5 会话", directoryGroupMetaLabel(grouped.tasks.size, directoryGroupSessionTotal(grouped)))
     }
 
     @Test
@@ -293,6 +355,62 @@ class TaskListPresentationTest {
     fun listSessionLabelAvoidsRepeatingDirectoryName() {
         val session = session("pty", null).copy(title = "wand", cwd = "/Users/me/wand")
         assertEquals("Claude 1", listSessionLabel(session, 0, listOf("wand")))
+    }
+
+    @Test
+    fun managedDeleteCascadesTaskSessionsAndKeepsLooseTerminals() {
+        val groups = listOf(
+            group().copy(
+                tasks = listOf(
+                    task().copy(
+                        sessions = listOf(
+                            session("structured", "structured").copy(id = "session-1"),
+                            session("pty", null).copy(id = "session-2"),
+                        ),
+                        totalSessions = 2,
+                    ),
+                    task().copy(
+                        task = task().task.copy(id = "task-2", name = "Docs"),
+                        sessions = listOf(session("pty", null).copy(id = "session-3")),
+                        totalSessions = 1,
+                    ),
+                ),
+                standaloneSessions = listOf(session("pty", null).copy(id = "loose-1")),
+            ),
+        )
+        val resolved = resolveManagedDeletion(
+            SidebarManageSelection(
+                taskIds = setOf("task-1"),
+                sessionIds = setOf("session-1", "loose-1"),
+            ),
+            groups,
+        )
+        assertEquals(setOf("task-1"), resolved.taskIds)
+        assertEquals(setOf("loose-1"), resolved.sessionIds)
+        assertEquals("1 个任务和1 个终端", describeManagedDeletion(resolved))
+    }
+
+    @Test
+    fun collapsedRailPrefersActiveAndAttentionTasks() {
+        val idle = task().copy(task = task().task.copy(id = "idle", name = "旧任务", lastOpenedAt = "2026-09-01T00:00:00Z"))
+        val active = task().copy(task = task().task.copy(id = "active", name = "当前", lastOpenedAt = "2026-09-08T00:00:00Z"))
+        val attention = task().copy(
+            task = task().task.copy(id = "attention", name = "待处理", lastOpenedAt = "2026-09-07T00:00:00Z"),
+            sessions = listOf(session("structured", "structured").copy(id = "blocked", status = "waiting-input")),
+            totalSessions = 1,
+        )
+        val running = task().copy(
+            task = task().task.copy(id = "running", name = "运行中", lastOpenedAt = "2026-09-06T00:00:00Z"),
+            sessions = listOf(session("structured", "structured").copy(id = "busy", inFlight = true)),
+            totalSessions = 1,
+        )
+        val rail = collapsedRailTasks(
+            listOf(group().copy(tasks = listOf(idle, active, attention, running))),
+            activeTaskId = "active",
+            limit = 3,
+        )
+        assertEquals(listOf("active", "attention", "running"), rail.items.map { it.task.id })
+        assertEquals(1, rail.overflow)
     }
 
     @Test

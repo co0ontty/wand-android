@@ -8,14 +8,48 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.orderWorkspaceSessions
 import com.wand.app.ui.Screen
 import kotlin.math.abs
 
 private val TaskSessionSwipeMinDistance = 72.dp
 
 /**
- * Returns the adjacent task session for a completed horizontal swipe.
+ * 可被左右滑动切换的「兄弟会话」列表：
+ * - 任务会话 → 同任务下的全部工作窗口；
+ * - 未分组会话 → 同目录下的未分组会话（含侧栏合并展示的未命名任务会话）。
+ *
+ * 顺序与侧栏展示一致，滑动方向据此判定。
+ */
+internal fun siblingSessionsFor(
+    groups: List<TaskDirectoryGroup>,
+    taskId: String?,
+    sessionId: String?,
+): List<WorkspaceSessionSummary> {
+    if (!taskId.isNullOrBlank()) {
+        return groups.asSequence()
+            .flatMap { it.tasks.asSequence() }
+            .firstOrNull { it.id == taskId }
+            ?.sessions
+            ?.let(::orderWorkspaceSessions)
+            .orEmpty()
+    }
+    if (sessionId.isNullOrBlank()) return emptyList()
+    // 侧栏把未命名任务的会话并入「未分组终端」，这里必须用同一份扁平化结果，
+    // 否则未命名任务里的会话拿不到兄弟列表，滑动失效。
+    groups.map(::flattenUnnamedTasksIntoStandalone).forEach { candidate ->
+        if (candidate.standaloneSessions.any { it.id == sessionId }) {
+            // 与任务工作窗口一致：按 startedAt 升序，左滑前进到更新的会话。
+            return orderWorkspaceSessions(candidate.standaloneSessions)
+        }
+    }
+    return emptyList()
+}
+
+/**
+ * Returns the adjacent session for a completed horizontal swipe.
  * A left swipe advances to the next tab; a right swipe goes back to the previous tab.
  */
 internal fun taskSessionSwipeTarget(
@@ -38,6 +72,8 @@ internal fun taskSessionTransitionDirection(
 ): Int? {
     val initialSession = taskSessionScreenIdentity(initial) ?: return null
     val targetSession = taskSessionScreenIdentity(target) ?: return null
+    // 未分组会话的 taskId 同为 null，靠 sessionId + 兄弟列表下标判定；跨目录的会话
+    // 不会同时出现在传入的列表里，因此不会误判为同一组。
     if (initialSession.taskId != targetSession.taskId || initialSession.sessionId == targetSession.sessionId) {
         return null
     }
@@ -48,17 +84,18 @@ internal fun taskSessionTransitionDirection(
 }
 
 private data class TaskSessionScreenIdentity(
-    val taskId: String,
+    /** 未分组会话为 null；任务内会话为所属 taskId。 */
+    val taskId: String?,
     val sessionId: String,
 )
 
 private fun taskSessionScreenIdentity(screen: Screen): TaskSessionScreenIdentity? = when (screen) {
-    is Screen.Chat -> screen.taskId?.let { TaskSessionScreenIdentity(it, screen.sessionId) }
-    is Screen.PtyTerminal -> screen.taskId?.let { TaskSessionScreenIdentity(it, screen.sessionId) }
+    is Screen.Chat -> TaskSessionScreenIdentity(screen.taskId, screen.sessionId)
+    is Screen.PtyTerminal -> TaskSessionScreenIdentity(screen.taskId, screen.sessionId)
     else -> null
 }
 
-/** Adds left/right navigation to the task session tabs without interfering with vertical scroll. */
+/** Adds left/right navigation to the sibling sessions without interfering with vertical scroll. */
 @Composable
 internal fun Modifier.taskSessionSwipe(
     sessions: List<WorkspaceSessionSummary>,

@@ -218,8 +218,8 @@ fun ChatScreen(
     workspaceName: String? = null,
     taskName: String? = null,
     taskId: String? = null,
-    taskSessions: List<WorkspaceSessionSummary> = emptyList(),
-    onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
+    siblingSessions: List<WorkspaceSessionSummary> = emptyList(),
+    onSwitchSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
     onDeleteTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
@@ -288,7 +288,7 @@ fun ChatScreen(
     val focusManager = LocalFocusManager.current
 
     // 探索类工具跨消息合并成「探索上下文」紧凑卡（对齐 iOS groupExplorationTurns）。
-    // 所有用户输入始终完整显示；最后一条用户输入之前的助手回复逐条默认折叠。
+    // 所有用户输入始终完整显示；历史回复默认展开，和当前轮一起展示。
     val displayItems = remember(store.messages) { groupExplorationTurns(store.messages) }
     val scrubberTargets = remember(displayItems) { conversationScrubberTargets(displayItems) }
     val lastUserTurnIndex = remember(store.messages) {
@@ -502,15 +502,23 @@ fun ChatScreen(
                     GitChangesButton(quickCommit, compact = true) { quickCommit.openPanel() }
                 },
                 )
-                // 任务内「其他终端」快捷 Tab（对齐 iOS sessionStrip）：非任务会话不显示。
-                if (taskId != null && onSwitchTaskSession != null && onCreateTaskSession != null) {
+                // 顶部「其他会话」快捷条：任务内展示同任务工作窗口；未分组会话展示同
+                // 目录的兄弟终端。都没有第二个会话时整条隐藏，不占垂直空间。
+                if (taskId != null && onSwitchSession != null && onCreateTaskSession != null) {
                     TaskSessionTabStrip(
                         api = api,
                         taskId = taskId,
                         currentSessionId = sessionId,
-                        onSelect = onSwitchTaskSession,
+                        onSelect = onSwitchSession,
                         onCreated = onCreateTaskSession,
                         onDeleted = onDeleteTaskSession,
+                    )
+                } else if (taskId == null && onSwitchSession != null && siblingSessions.size >= 2) {
+                    StandaloneSessionTabStrip(
+                        sessions = siblingSessions,
+                        currentSessionId = sessionId,
+                        parentNames = listOfNotNull(workspaceName?.trim()?.takeIf { it.isNotEmpty() }),
+                        onSelect = onSwitchSession,
                     )
                 }
             }
@@ -553,11 +561,11 @@ fun ChatScreen(
                     }
                 }
                 .then(
-                    if (onSwitchTaskSession != null) {
+                    if (onSwitchSession != null) {
                         Modifier.taskSessionSwipe(
-                            sessions = taskSessions,
+                            sessions = siblingSessions,
                             currentSessionId = sessionId,
-                            onSelect = onSwitchTaskSession,
+                            onSelect = onSwitchSession,
                         )
                     } else {
                         Modifier
@@ -1003,9 +1011,9 @@ internal fun messageItemKey(
     }
 }
 
-/** 最后一次用户输入之前的回复属于历史；当前轮回复保持展开。 */
+/** 历史回复不再默认收起，和当前轮一起展示。 */
 internal fun shouldCollapseReply(turnIndex: Int, lastUserTurnIndex: Int): Boolean =
-    lastUserTurnIndex >= 0 && turnIndex < lastUserTurnIndex
+    false
 
 /** 只有一条用户消息时整屏都能看到，侧边缩略条没有定位价值。 */
 internal fun shouldShowConversationTurnScrubber(itemCount: Int): Boolean = itemCount > 1

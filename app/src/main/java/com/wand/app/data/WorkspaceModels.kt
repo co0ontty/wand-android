@@ -47,10 +47,10 @@ enum class WorkspaceSessionKind(val raw: String, val label: String, val descript
     Pty("pty", "PTY", "原始 CLI 终端");
 }
 
-/** 创建任务工作窗口时绑定到任务的上下文：保证新会话落在正确的 worktree 并归属任务。 */
+/** 创建工作窗口时的归属上下文。未分组终端只带目录，不写 workspaceTaskId。 */
 data class WorkspaceBinding(
-    val workspaceId: String,
-    val workspaceTaskId: String,
+    val workspaceId: String? = null,
+    val workspaceTaskId: String? = null,
     val cwd: String,
 )
 
@@ -346,9 +346,10 @@ data class Workspace(
 
         fun parseList(arr: JSONArray): List<Workspace> =
             arr.parseEach { parse(it) }
-                .sortedWith(compareBy<Workspace> { it.createdAt.isNullOrEmpty() }
-                    .thenBy { it.createdAt ?: "" }
-                    .thenBy { it.id })
+                .sortedWith(
+                    compareByDescending<Workspace> { it.createdAt?.takeIf(String::isNotBlank) ?: "" }
+                        .thenByDescending { it.id },
+                )
     }
 }
 
@@ -495,6 +496,7 @@ data class TaskDirectoryGroup(
     val synthetic: Boolean,
     val tasks: List<WorkspaceTaskSummary>,
     val standaloneSessions: List<WorkspaceSessionSummary>,
+    val createdAt: String? = null,
 ) {
     val id: String get() = workspaceId
 
@@ -509,6 +511,7 @@ data class TaskDirectoryGroup(
                 tasks = o.arr("tasks")?.parseEach(WorkspaceTaskSummary::parse) ?: emptyList(),
                 standaloneSessions = o.arr("standaloneSessions")
                     ?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
+                createdAt = o.str("createdAt"),
             )
         }
 

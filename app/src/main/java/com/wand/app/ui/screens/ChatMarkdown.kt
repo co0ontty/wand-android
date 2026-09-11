@@ -157,17 +157,21 @@ private sealed class MarkdownBlock {
 /** 原生 Markdown 渲染：块级结构独立布局，内联标记使用 AnnotatedString。 */
 @Composable
 fun MarkdownText(text: String) {
+    val compact = LocalActivityFoldCompact.current
+    val bodySize = if (compact) 12.sp else 15.sp
+    val bodyHeight = if (compact) 18.sp else 22.sp
+    val bodyColor = if (compact) WandColors.textMuted else WandColors.textPrimary
     val blocks = remember(text) { parseMarkdownBlocks(text) }
     val subtleInset = WandColors.textPrimary.copy(alpha = 0.045f)
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp)) {
         blocks.forEach { block ->
             when (block) {
                 is MarkdownBlock.Paragraph -> SelectionContainer {
                     Text(
                         inlineMarkdown(block.text),
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
-                        color = WandColors.textPrimary,
+                        fontSize = bodySize,
+                        lineHeight = bodyHeight,
+                        color = bodyColor,
                         textAlign = TextAlign.Start,
                     )
                 }
@@ -186,7 +190,7 @@ fun MarkdownText(text: String) {
                             else -> 22.sp
                         },
                         fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
+                        color = bodyColor,
                         textAlign = TextAlign.Start,
                         modifier = Modifier.padding(top = if (block.level <= 2) 8.dp else 6.dp),
                     )
@@ -215,9 +219,9 @@ fun MarkdownText(text: String) {
                     SelectionContainer {
                         Text(
                             inlineMarkdown(block.text),
-                            fontSize = 15.sp,
-                            lineHeight = 22.sp,
-                            color = WandColors.textPrimary,
+                            fontSize = bodySize,
+                            lineHeight = bodyHeight,
+                            color = bodyColor,
                             textAlign = TextAlign.Start,
                             modifier = Modifier.weight(1f),
                         )

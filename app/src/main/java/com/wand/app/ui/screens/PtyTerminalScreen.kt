@@ -147,8 +147,8 @@ fun PtyTerminalScreen(
     workspaceName: String? = null,
     taskName: String? = null,
     taskId: String? = null,
-    taskSessions: List<WorkspaceSessionSummary> = emptyList(),
-    onSwitchTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
+    siblingSessions: List<WorkspaceSessionSummary> = emptyList(),
+    onSwitchSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
     onDeleteTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
@@ -310,15 +310,24 @@ fun PtyTerminalScreen(
                     onBack = onBack,
                     onOpenQuickCommit = { quickCommit.openPanel() },
                 )
-                // 任务内「其他终端」快捷 Tab（对齐 iOS sessionStrip）：非任务会话不显示。
-                if (taskId != null && onSwitchTaskSession != null && onCreateTaskSession != null) {
+                // 顶部「其他会话」快捷条：任务内展示同任务工作窗口；未分组会话展示同
+                // 目录的兄弟终端（深色铬下跟随终端配色）。
+                if (taskId != null && onSwitchSession != null && onCreateTaskSession != null) {
                     TaskSessionTabStrip(
                         api = api,
                         taskId = taskId,
                         currentSessionId = sessionId,
-                        onSelect = onSwitchTaskSession,
+                        onSelect = onSwitchSession,
                         onCreated = onCreateTaskSession,
                         onDeleted = onDeleteTaskSession,
+                        terminalChrome = true,
+                    )
+                } else if (taskId == null && onSwitchSession != null && siblingSessions.size >= 2) {
+                    StandaloneSessionTabStrip(
+                        sessions = siblingSessions,
+                        currentSessionId = sessionId,
+                        parentNames = listOfNotNull(workspaceName?.trim()?.takeIf { it.isNotEmpty() }),
+                        onSelect = onSwitchSession,
                         terminalChrome = true,
                     )
                 }
@@ -351,11 +360,11 @@ fun PtyTerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
-                    if (onSwitchTaskSession != null) {
+                    if (onSwitchSession != null) {
                         Modifier.taskSessionSwipe(
-                            sessions = taskSessions,
+                            sessions = siblingSessions,
                             currentSessionId = sessionId,
-                            onSelect = onSwitchTaskSession,
+                            onSelect = onSwitchSession,
                         )
                     } else {
                         Modifier

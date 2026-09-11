@@ -34,8 +34,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,21 +47,20 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,7 +79,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -143,7 +139,6 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.components.wandCardSurface
-import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.theme.glassSurface
@@ -164,6 +159,7 @@ import java.util.Locale
 
 /** ChatScreen 注入的会话上下文，用于按需加载被服务端截断的完整工具结果。 */
 internal val LocalChatApi = compositionLocalOf<WandApi?> { null }
+internal val LocalActivityFoldCompact = compositionLocalOf { false }
 internal val LocalChatSessionId = compositionLocalOf { "" }
 internal val LocalCardExpandDefaults = compositionLocalOf { CardExpandDefaults() }
 
@@ -216,10 +212,9 @@ fun TurnView(
         UserTurnView(turn, compact = compactUser)
         return
     }
-    // 历史回复默认收起，但折叠状态属于每一条 turn；点击某条不影响其他回复。
-    // initiallyCollapsed 改变意味着当前回复刚转为历史，此时应立即回到默认收起态。
+    // 历史回复默认展开，和当前轮一起展示；折叠状态仍属于每一条 turn。
     var localCollapsed by rememberSaveable(initiallyCollapsed) {
-        mutableStateOf(initiallyCollapsed)
+        mutableStateOf(false)
     }
     val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
     val nonSubagentContent = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
@@ -263,7 +258,6 @@ fun TurnView(
                     askSelections = askSelections,
                     onAskToggle = onAskToggle,
                     onAskSubmit = onAskSubmit,
-                    collapseActivities = !isLastTurn,
                 )
             }
         }
@@ -1194,35 +1188,13 @@ private fun SegmentBlocks(
     showSubagentTags: Boolean = true,
     collapseActivities: Boolean = true,
 ) {
-    val cardDefaults = LocalCardExpandDefaults.current
     val items = remember(blocks) { pairToolBlocks(blocks) }
-    val renderItems = remember(items, isLastTurn, isResponding, collapseActivities) {
+    val renderItems = remember(items, blocks, isLastTurn, isResponding, collapseActivities) {
         if (collapseActivities) {
-            collapseActivityItems(items, isLastTurn, isResponding)
+            collapseActivityItems(items, blocks, isLastTurn, isResponding)
         } else {
             items.mapIndexed { index, item -> SegmentRenderItem.Item(index, item) }
         }
-    }
-    var openActivityKey by remember { mutableStateOf<String?>(null) }
-    val openActivity = remember(renderItems, openActivityKey) {
-        val key = openActivityKey ?: return@remember null
-        renderItems
-            .filterIsInstance<SegmentRenderItem.Activity>()
-            .firstOrNull { it.group.key == key }
-            ?.group
-    }
-
-    openActivity?.let { group ->
-        ActivityDetailSheet(
-            group = group,
-            isLastTurn = isLastTurn,
-            isResponding = isResponding,
-            askSelections = askSelections,
-            onAskToggle = onAskToggle,
-            onAskSubmit = onAskSubmit,
-            showSubagentTags = showSubagentTags,
-            onDismiss = { openActivityKey = null },
-        )
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1239,29 +1211,16 @@ private fun SegmentBlocks(
                     onAskSubmit = onAskSubmit,
                     showSubagentTags = showSubagentTags,
                 )
-                is SegmentRenderItem.Activity -> {
-                    if (cardDefaults.toolGroup) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            renderItem.group.items.forEachIndexed { index, item ->
-                                RenderDisplayItem(
-                                    item = item,
-                                    itemIndex = index,
-                                    itemCount = renderItem.group.items.size,
-                                    isLastTurn = isLastTurn,
-                                    isResponding = isResponding,
-                                    askSelections = askSelections,
-                                    onAskToggle = onAskToggle,
-                                    onAskSubmit = onAskSubmit,
-                                    showSubagentTags = showSubagentTags,
-                                )
-                            }
-                        }
-                    } else {
-                        ActivitySummaryRow(
-                            group = renderItem.group,
-                            onClick = { openActivityKey = renderItem.group.key },
-                        )
-                    }
+                is SegmentRenderItem.Activity -> key(renderItem.group.key) {
+                    ActivityFoldCard(
+                        group = renderItem.group,
+                        isLastTurn = isLastTurn,
+                        isResponding = isResponding,
+                        askSelections = askSelections,
+                        onAskToggle = onAskToggle,
+                        onAskSubmit = onAskSubmit,
+                        showSubagentTags = showSubagentTags,
+                    )
                 }
             }
         }
@@ -1570,10 +1529,11 @@ private sealed class DisplayItem {
 
 private data class ActivityGroup(
     val key: String,
-    val summary: String,
+    val latest: String,
+    val meta: String,
+    val count: Int,
     val items: List<DisplayItem>,
     val running: Boolean,
-    val failed: Boolean,
 )
 
 private sealed class SegmentRenderItem {
@@ -1686,50 +1646,74 @@ private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse): Boolean {
     return true
 }
 
+internal data class ActivityFoldSegment(
+    val activity: Boolean,
+    val count: Int,
+    val running: Boolean,
+)
+
+/** 连续思考/工具收成一条压缩条；正文、图片、提问卡保持原位，出现即打断当前条。 */
+internal fun activityFoldSegments(
+    blocks: List<ContentBlock>,
+    isLastTurn: Boolean = false,
+    isResponding: Boolean = false,
+): List<ActivityFoldSegment> =
+    collapseActivityItems(pairToolBlocks(blocks), blocks, isLastTurn, isResponding).map { item ->
+        when (item) {
+            is SegmentRenderItem.Item -> ActivityFoldSegment(activity = false, count = 1, running = false)
+            is SegmentRenderItem.Activity -> ActivityFoldSegment(
+                activity = true,
+                count = item.group.count,
+                running = item.group.running,
+            )
+        }
+    }
+
 private fun collapseActivityItems(
     items: List<DisplayItem>,
+    blocks: List<ContentBlock>,
     isLastTurn: Boolean,
     isResponding: Boolean,
 ): List<SegmentRenderItem> {
     val renderItems = mutableListOf<SegmentRenderItem>()
-    val pending = mutableListOf<DisplayItem>()
-    var pendingStartIndex = -1
+    val pending = mutableListOf<Pair<Int, DisplayItem>>()
 
     fun flushPending() {
-        if (pending.isNotEmpty()) {
-            val groupItems = pending.toList()
-            if (groupItems.size >= TOOL_CALL_GROUP_THRESHOLD) {
-                val groupRunning = groupItems.any { isDisplayItemRunning(it, isLastTurn, isResponding) }
-                renderItems += SegmentRenderItem.Activity(
-                    ActivityGroup(
-                        key = activityGroupKey(groupItems, pendingStartIndex),
-                        summary = activitySummary(groupItems),
-                        items = groupItems,
-                        running = groupRunning,
-                        failed = groupItems.any(::isDisplayItemFailed),
-                    )
-                )
-            } else {
-                groupItems.forEachIndexed { offset, item ->
-                    renderItems += SegmentRenderItem.Item(pendingStartIndex + offset, item)
-                }
-            }
-            pending.clear()
-            pendingStartIndex = -1
+        if (pending.isEmpty()) return
+        val groupItems = pending.map { it.second }
+        val summary = summarizeActivityItems(groupItems)
+        if (summary.count > 0) {
+            renderItems += SegmentRenderItem.Activity(
+                ActivityGroup(
+                    key = activityGroupKey(groupItems, pending.first().first),
+                    latest = summary.latest,
+                    meta = summary.meta,
+                    count = summary.count,
+                    items = groupItems,
+                    running = false,
+                ),
+            )
         }
+        pending.clear()
     }
 
     items.forEachIndexed { index, item ->
-        if (shouldSkipDisplayItem(item)) return@forEachIndexed
+        if (shouldSkipDisplayItem(item) || isHiddenActivityItem(item)) return@forEachIndexed
         if (isCollapsibleActivityItem(item)) {
-            if (pending.isEmpty()) pendingStartIndex = index
-            pending += item
+            pending += index to item
         } else {
             flushPending()
             renderItems += SegmentRenderItem.Item(index, item)
         }
     }
     flushPending()
+
+    val live = isLastTurn && isResponding && isMessageActivityOpen(blocks)
+    val lastIndex = renderItems.indexOfLast { it is SegmentRenderItem.Activity }
+    if (live && lastIndex >= 0 && renderItems.last() is SegmentRenderItem.Activity) {
+        val last = renderItems[lastIndex] as SegmentRenderItem.Activity
+        renderItems[lastIndex] = SegmentRenderItem.Activity(last.group.copy(running = true))
+    }
     return renderItems
 }
 
@@ -1778,133 +1762,26 @@ internal fun isToolCardRunning(name: String, sessionReportsRunning: Boolean): Bo
     sessionReportsRunning && !isTodoUpdateToolName(name)
 
 internal fun shouldCollapseToolInActivity(name: String): Boolean =
-    name != "AskUserQuestion" && !isTodoUpdateToolName(name)
+    name != "AskUserQuestion"
+
+private fun isHiddenActivityItem(item: DisplayItem): Boolean {
+    val thinking = (item as? DisplayItem.Plain)?.block as? ContentBlock.Thinking ?: return false
+    return thinking.thinking.isBlank()
+}
 
 private fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
-    is DisplayItem.Plain -> item.block !is ContentBlock.Text && item.block !is ContentBlock.Unknown
+    is DisplayItem.Plain -> item.block is ContentBlock.Thinking || item.block is ContentBlock.ToolResult
     is DisplayItem.Exploration -> true
-    is DisplayItem.Tool -> shouldCollapseToolInActivity(item.use.name)
+    is DisplayItem.Tool -> shouldCollapseToolInActivity(item.use.name) && !toolShowsImage(item.use)
 }
 
-private fun isDisplayItemRunning(
-    item: DisplayItem,
-    isLastTurn: Boolean,
-    isResponding: Boolean,
-): Boolean {
-    if (!isLastTurn || !isResponding) return false
-    return when (item) {
-        is DisplayItem.Tool -> item.result == null
-        is DisplayItem.Exploration -> item.tools.any { it.result == null }
-        is DisplayItem.Plain -> item.block is ContentBlock.Thinking
-    }
-}
-
-private fun isDisplayItemFailed(item: DisplayItem): Boolean = when (item) {
-    is DisplayItem.Tool -> item.result?.isError == true
-    is DisplayItem.Exploration -> item.tools.any { it.result?.isError == true }
-    is DisplayItem.Plain -> (item.block as? ContentBlock.ToolResult)?.isError == true
-}
-
-private data class ActivityOutcomeCounts(
-    val succeeded: Int,
-    val failed: Int,
-)
-
-private fun activityOutcomeCounts(items: List<DisplayItem>): ActivityOutcomeCounts {
-    var succeeded = 0
-    var failed = 0
-
-    fun count(result: ContentBlock.ToolResult?) {
-        if (result == null) return
-        if (result.isError) failed += 1 else succeeded += 1
-    }
-
-    items.forEach { item ->
-        when (item) {
-            is DisplayItem.Tool -> count(item.result)
-            is DisplayItem.Exploration -> item.tools.forEach { count(it.result) }
-            is DisplayItem.Plain -> count(item.block as? ContentBlock.ToolResult)
-        }
-    }
-    return ActivityOutcomeCounts(succeeded = succeeded, failed = failed)
-}
-
-private fun activityStatusLabel(group: ActivityGroup): String {
-    if (group.running) return "运行中"
-    val outcome = activityOutcomeCounts(group.items)
-    return when {
-        outcome.succeeded > 0 && outcome.failed > 0 -> "成功 ${outcome.succeeded}，失败 ${outcome.failed}"
-        outcome.failed > 0 -> "失败 ${outcome.failed}"
-        outcome.succeeded > 0 -> "完成 ${outcome.succeeded}"
-        else -> "已完成"
-    }
+private fun toolShowsImage(use: ContentBlock.ToolUse): Boolean {
+    val candidate = use.input.str("file_path") ?: use.input.str("path") ?: use.input.str("url") ?: ""
+    return WandImage.isImagePath(candidate)
 }
 
 @Composable
-private fun activityStatusColor(group: ActivityGroup): Color = when {
-    group.running -> WandColors.brand
-    group.failed -> WandColors.danger
-    else -> WandColors.success
-}
-
-private fun activityStatusIcon(group: ActivityGroup): ImageVector = when {
-    group.running -> WandIcons.refresh
-    group.failed -> WandIcons.statusFail
-    else -> WandIcons.statusDone
-}
-
-@Composable
-private fun ActivitySummaryRow(group: ActivityGroup, onClick: () -> Unit) {
-    val statusLabel = activityStatusLabel(group)
-    val tint = activityStatusColor(group)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(WandShapes.sm)
-            .clickableWithoutRipple { onClick() }
-            .semantics(mergeDescendants = true) { stateDescription = statusLabel }
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 2.dp, vertical = 5.dp),
-    ) {
-        Icon(
-            activityStatusIcon(group),
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(18.dp),
-        )
-        Text(
-            buildAnnotatedString {
-                withStyle(SpanStyle(color = tint, fontWeight = FontWeight.SemiBold)) {
-                    append(statusLabel)
-                }
-                if (group.summary.isNotBlank()) {
-                    withStyle(SpanStyle(color = WandColors.textSecondary)) {
-                        append(" · ")
-                        append(group.summary)
-                    }
-                }
-            },
-            fontSize = 14.sp,
-            lineHeight = 19.sp,
-            color = WandColors.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            WandIcons.chevronRight,
-            contentDescription = "查看详情",
-            tint = WandColors.textMuted,
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ActivityDetailSheet(
+private fun ActivityFoldCard(
     group: ActivityGroup,
     isLastTurn: Boolean,
     isResponding: Boolean,
@@ -1912,168 +1789,266 @@ private fun ActivityDetailSheet(
     onAskToggle: (String, Int, Int, Boolean) -> Unit,
     onAskSubmit: (String, String) -> Unit,
     showSubagentTags: Boolean,
-    onDismiss: () -> Unit,
 ) {
-    // 关闭拖拽后直接以完整详情态打开，避免停在一个无法手势扩展的半展开状态。
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val statusLabel = activityStatusLabel(group)
-    val statusColor = activityStatusColor(group)
-    WandBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        // 详情里同时存在纵向长内容、横向表格和可展开卡片。禁用整张 sheet 的
-        // 拖拽后，纵向手势只由内容滚动消费，横向手势只由表格消费，轻触标题
-        // 才会展开卡片，避免三层手势在触摸阈值附近互相抢占。
-        gesturesEnabled = false,
-        showDragHandle = false,
+    var expanded by rememberSaveable(group.key) { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    val refreshToken = remember(group.items) { activityItemsRefreshToken(group.items) }
+
+    LaunchedEffect(expanded, refreshToken) {
+        if (!expanded) return@LaunchedEffect
+        withFrameNanos { }
+        scrollState.scrollTo(scrollState.maxValue)
+    }
+    LaunchedEffect(expanded, scrollState) {
+        if (!expanded) return@LaunchedEffect
+        snapshotFlow { scrollState.maxValue }.collect { maxValue ->
+            scrollState.scrollTo(maxValue)
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        NoOverscroll {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 680.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-                    .navigationBarsPadding()
-                    .imePadding()
-                    .padding(bottom = 18.dp),
+        Column(
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickableWithoutRipple(
+                    onClickLabel = if (expanded) "收起活动" else "展开活动",
+                    onClick = { expanded = !expanded },
+                )
+                .semantics(mergeDescendants = true) {
+                    stateDescription = if (expanded) "已展开" else "已收起"
+                }
+                .padding(horizontal = 2.dp, vertical = 4.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
+                if (group.meta.isNotBlank()) {
                     Text(
-                        "执行详情",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        statusLabel,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = statusColor,
+                        group.meta,
+                        fontSize = 10.sp,
+                        color = WandColors.textMuted.copy(alpha = 0.85f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(statusColor.copy(alpha = 0.12f))
-                            .padding(horizontal = 9.dp, vertical = 5.dp),
+                        modifier = Modifier.weight(1f),
                     )
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        Icon(
-                            WandIcons.close,
-                            contentDescription = "关闭执行详情",
-                            tint = WandColors.textSecondary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
+                } else {
+                    Spacer(modifier = Modifier.weight(1f))
                 }
-                group.items.forEachIndexed { index, item ->
-                    RenderDisplayItem(
-                        item = item,
-                        itemIndex = index,
-                        itemCount = group.items.size,
-                        isLastTurn = isLastTurn,
-                        isResponding = isResponding,
-                        askSelections = askSelections,
-                        onAskToggle = onAskToggle,
-                        onAskSubmit = onAskSubmit,
-                        showSubagentTags = showSubagentTags,
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .height(18.dp)
+                        .widthIn(min = 18.dp)
+                        .clip(WandShapes.full)
+                        .background(WandColors.brand.copy(alpha = 0.12f))
+                        .padding(horizontal = 5.dp),
+                ) {
+                    Text(
+                        group.count.toString(),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.brand,
+                        maxLines = 1,
                     )
+                }
+                ExpandChevron(
+                    expanded = expanded,
+                    tint = WandColors.textMuted,
+                    size = 14.dp,
+                    contentDescription = null,
+                )
+            }
+            if (group.running) {
+                Text(
+                    group.latest,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        if (expanded) {
+            HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.6f))
+            NoOverscroll {
+                CompositionLocalProvider(LocalActivityFoldCompact provides true) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 2.dp, vertical = 6.dp),
+                    ) {
+                        group.items.forEachIndexed { index, item ->
+                            RenderDisplayItem(
+                                item = item,
+                                itemIndex = index,
+                                itemCount = group.items.size,
+                                isLastTurn = isLastTurn,
+                                isResponding = isResponding,
+                                askSelections = askSelections,
+                                onAskToggle = onAskToggle,
+                                onAskSubmit = onAskSubmit,
+                                showSubagentTags = showSubagentTags,
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-private fun activitySummary(items: List<DisplayItem>): String {
-    val tools = activityTools(items)
-    if (items.size == 1 && tools.size == 1) {
-        val tool = tools.first()
-        val detail = toolSummary(tool.use.description, tool.use.input)
-        val label = activityVerb(tool.use.name)
-        return if (detail.isNotEmpty()) {
-            "$label $detail"
-        } else {
-            label
-        }
+private data class ActivityRunSummary(
+    val latest: String,
+    val meta: String,
+    val count: Int,
+)
+
+private val ACTIVITY_KIND_META = linkedMapOf(
+    "read" to "浏览",
+    "command" to "命令",
+    "search" to "搜索",
+    "edit" to "编辑",
+    "web" to "网页",
+    "other" to "调用",
+    "thinking" to "思考",
+)
+
+private fun summarizeActivityItems(items: List<DisplayItem>): ActivityRunSummary {
+    val counts = ACTIVITY_KIND_META.keys.associateWith { 0 }.toMutableMap()
+    var latest = ""
+    var count = 0
+
+    fun addTool(use: ContentBlock.ToolUse) {
+        val kind = activityKindOf(use.name)
+        counts[kind] = (counts[kind] ?: 0) + 1
+        val label = activityToolLabel(use.name, use.input)
+        if (label.isNotEmpty()) latest = label
+        count += 1
     }
-    if (items.size == 1 && items.first() is DisplayItem.Plain) {
-        val block = (items.first() as DisplayItem.Plain).block
-        return when (block) {
-            is ContentBlock.Thinking -> "思考过程"
-            is ContentBlock.ToolResult -> if (block.isError) "1 条执行错误" else "1 条执行结果"
-            else -> "1 项活动"
-        }
-    }
 
-    val readCount = tools.count { activityKind(it.use.name) == "read" }
-    val commandCount = tools.count { activityKind(it.use.name) == "command" }
-    val searchCount = tools.count { activityKind(it.use.name) == "search" }
-    val editCount = tools.count { activityKind(it.use.name) == "edit" }
-    val webCount = tools.count { activityKind(it.use.name) == "web" }
-    val todoCount = tools.count { activityKind(it.use.name) == "todo" }
-    val otherToolCount = tools.size - readCount - commandCount - searchCount - editCount - webCount - todoCount
-    val thinkingCount = items.count { it is DisplayItem.Plain && it.block is ContentBlock.Thinking }
-    val resultCount = items.count { it is DisplayItem.Plain && it.block is ContentBlock.ToolResult }
-
-    val parts = mutableListOf<String>()
-    if (readCount > 0) parts += "浏览 $readCount 个文件"
-    if (commandCount > 0) parts += "运行 $commandCount 条命令"
-    if (searchCount > 0) parts += "搜索 $searchCount 次"
-    if (editCount > 0) parts += "修改 $editCount 个文件"
-    if (webCount > 0) parts += "访问 $webCount 个网页"
-    if (todoCount > 0) parts += "更新 $todoCount 次待办"
-    if (thinkingCount > 0) parts += "思考 $thinkingCount 段"
-    if (resultCount > 0) parts += "生成 $resultCount 条结果"
-    if (otherToolCount > 0) parts += "调用 $otherToolCount 个工具"
-
-    return if (parts.isEmpty()) {
-        "${items.size} 项活动"
-    } else {
-        parts.joinToString("，")
-    }
-}
-
-private fun activityTools(items: List<DisplayItem>): List<ExplorationToolItem> =
-    items.flatMap { item ->
+    items.forEach { item ->
         when (item) {
-            is DisplayItem.Tool -> listOf(ExplorationToolItem(item.use, item.result))
-            is DisplayItem.Exploration -> item.tools
-            is DisplayItem.Plain -> emptyList()
+            is DisplayItem.Plain -> {
+                val thinking = (item.block as? ContentBlock.Thinking)?.thinking.orEmpty()
+                if (thinking.isBlank()) return@forEach
+                counts["thinking"] = (counts["thinking"] ?: 0) + 1
+                latest = activityThinkingLabel(thinking)
+                count += 1
+            }
+            is DisplayItem.Tool -> addTool(item.use)
+            is DisplayItem.Exploration -> item.tools.forEach { addTool(it.use) }
         }
     }
-
-private fun activityVerb(name: String): String = when (activityKind(name)) {
-    "read" -> "浏览"
-    "command" -> "运行"
-    "search" -> "搜索代码"
-    "edit" -> "修改"
-    "web" -> "访问网页"
-    "todo" -> "更新待办"
-    else -> toolLabel(name)
+    val meta = ACTIVITY_KIND_META.mapNotNull { (kind, label) ->
+        counts[kind]?.takeIf { it > 0 }?.let { "$label $it" }
+    }.joinToString(" · ")
+    return ActivityRunSummary(
+        latest = latest.ifBlank { "处理中" },
+        meta = meta,
+        count = count,
+    )
 }
 
-private fun activityKind(name: String): String {
+private fun activityItemsRefreshToken(items: List<DisplayItem>): Int {
+    var token = 1
+    fun mix(value: Any?) {
+        token = 31 * token + (value?.hashCode() ?: 0)
+    }
+    items.forEach { item ->
+        mix(displayItemStableKey(item))
+        when (item) {
+            is DisplayItem.Tool -> {
+                mix(item.use.input.toString())
+                mix(item.result?.text)
+            }
+            is DisplayItem.Exploration -> item.tools.forEach { tool ->
+                mix(tool.use.input.toString())
+                mix(tool.result?.text)
+            }
+            is DisplayItem.Plain -> when (val block = item.block) {
+                is ContentBlock.Thinking -> mix(block.thinking)
+                is ContentBlock.Text -> mix(block.text)
+                is ContentBlock.ToolResult -> mix(block.text)
+                else -> mix(block)
+            }
+        }
+    }
+    return token
+}
+
+internal fun truncateInline(value: String, max: Int): String {
+    val text = value.replace(Regex("\\s+"), " ").trim()
+    if (text.isEmpty()) return ""
+    return if (text.length > max) text.take(max - 1) + "…" else text
+}
+
+internal fun tailInline(value: String, max: Int): String {
+    val text = value.replace(Regex("\\s+"), " ").trim()
+    if (text.isEmpty()) return ""
+    return if (text.length > max) "…" + text.takeLast(max - 1) else text
+}
+
+internal fun fileNameOf(path: String): String {
+    val idx = path.lastIndexOf('/')
+    return if (idx >= 0) path.substring(idx + 1) else path
+}
+
+internal fun activityThinkingLabel(thinking: String): String =
+    tailInline(thinking, 240).ifBlank { "深度思考" }
+
+internal fun activityToolLabel(name: String, input: JSONObject): String {
+    val command = input.str("command") ?: input.str("cmd").orEmpty()
+    val path = input.str("file_path") ?: input.str("path").orEmpty()
+    val query = input.str("pattern") ?: input.str("query").orEmpty()
+    val url = input.str("url").orEmpty()
+    return when (name) {
+        "Bash" -> if (command.isNotEmpty()) "运行 ${truncateInline(command, 240)}" else "运行命令"
+        "Read" -> if (path.isNotEmpty()) "读取 ${truncateInline(path, 240)}" else "读取文件"
+        "Grep", "Glob", "WebSearch" -> if (query.isNotEmpty()) "搜索 ${truncateInline(query, 240)}" else "搜索"
+        "WebFetch" -> if (url.isNotEmpty()) "抓取 ${truncateInline(url, 240)}" else "抓取网页"
+        "Edit", "MultiEdit" -> "修改 ${if (path.isNotEmpty()) truncateInline(path, 240) else "文件"}"
+        "Write" -> "写入 ${if (path.isNotEmpty()) truncateInline(path, 240) else "文件"}"
+        else -> toolLabel(name)
+    }
+}
+
+internal fun activityKindOf(name: String): String {
     val lower = name.lowercase()
     return when {
-        isTodoUpdateToolName(name) -> "todo"
-        lower.startsWith("read") || lower.contains("notebook") -> "read"
-        lower == "bash" || lower.contains("command") || lower.contains("shell") -> "command"
-        lower.contains("grep") || lower.contains("glob") ||
-            lower.contains("search") || lower.contains("find") -> "search"
-        lower.contains("edit") || lower.contains("write") -> "edit"
-        lower.contains("web") || lower.contains("fetch") || lower.contains("http") -> "web"
-        lower.contains("todo") -> "todo"
+        listOf("read", "inspect", "view", "open", "list", "load").any { it in lower } -> "read"
+        listOf("bash", "exec", "command", "shell", "stdin", "terminal").any { it in lower } -> "command"
+        listOf("grep", "glob", "search", "find", "query", "lookup").any { it in lower } -> "search"
+        listOf("edit", "write", "patch", "replace", "notebook").any { it in lower } -> "edit"
+        listOf("web", "fetch", "http", "url", "browser").any { it in lower } -> "web"
         else -> "other"
     }
+}
+
+internal fun isMessageActivityOpen(blocks: List<ContentBlock>): Boolean {
+    val resultIds = blocks.mapNotNull { block ->
+        (block as? ContentBlock.ToolResult)?.toolUseId?.takeIf { it.isNotEmpty() }
+    }.toSet()
+    for (block in blocks.asReversed()) {
+        when (block) {
+            is ContentBlock.Text -> return false
+            is ContentBlock.Thinking -> return true
+            is ContentBlock.ToolUse -> return block.id.isEmpty() || block.id !in resultIds
+            is ContentBlock.ToolResult -> return false
+            is ContentBlock.Unknown -> continue
+        }
+    }
+    return false
 }
 
 /**
@@ -2354,6 +2329,7 @@ fun ToolCard(
     running: Boolean = false,
     initiallyExpanded: Boolean = false,
 ) {
+    val foldCompact = LocalActivityFoldCompact.current
     val compactTodoUpdate = isTodoUpdateToolName(use.name)
     // TodoWrite / TaskUpdate 只是把新的待办快照写入会话流，不会产生 tool_result。
     // 不能把后续模型仍在生成，误显示成这一次待办更新仍在执行。
@@ -2423,9 +2399,9 @@ fun ToolCard(
                 ) {
                     Text(
                         toolLabel(use.name),
-                        fontSize = 13.sp,
+                        fontSize = if (foldCompact) 11.sp else 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isError) WandColors.danger else WandColors.textPrimary,
+                        color = if (isError) WandColors.danger else if (foldCompact) WandColors.textMuted else WandColors.textPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -2453,9 +2429,9 @@ fun ToolCard(
                     ) {
                         Text(
                             toolLabel(use.name),
-                            fontSize = 13.sp,
+                            fontSize = if (foldCompact) 11.sp else 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (isError) WandColors.danger else WandColors.textPrimary,
+                            color = if (isError) WandColors.danger else if (foldCompact) WandColors.textMuted else WandColors.textPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
@@ -2592,49 +2568,27 @@ fun ExplorationGroupCard(
     running: Boolean,
     expandAll: Boolean = false,
 ) {
-    val cardDefaults = LocalCardExpandDefaults.current
     val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
-    val group = remember(items, running) {
+    val summary = remember(items) { summarizeActivityItems(items) }
+    val group = remember(items, running, summary) {
         ActivityGroup(
             key = "exploration:${items.firstOrNull()?.let(::displayItemStableKey) ?: tools.size}",
-            summary = activitySummary(items),
+            latest = summary.latest,
+            meta = summary.meta,
+            count = summary.count,
             items = items,
             running = running,
-            failed = items.any(::isDisplayItemFailed),
         )
     }
-    if (expandAll || cardDefaults.toolGroup) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items.forEachIndexed { index, item ->
-                RenderDisplayItem(
-                    item = item,
-                    itemIndex = index,
-                    itemCount = items.size,
-                    isLastTurn = expandAll,
-                    isResponding = running,
-                    askSelections = emptyMap(),
-                    onAskToggle = { _, _, _, _ -> },
-                    onAskSubmit = { _, _ -> },
-                    showSubagentTags = true,
-                )
-            }
-        }
-    } else {
-        var open by remember { mutableStateOf(false) }
-        if (open) {
-            ActivityDetailSheet(
-                group = group,
-                isLastTurn = running,
-                isResponding = running,
-                askSelections = emptyMap(),
-                onAskToggle = { _, _, _, _ -> },
-                onAskSubmit = { _, _ -> },
-                showSubagentTags = true,
-                onDismiss = { open = false },
-            )
-        }
-        ActivitySummaryRow(group = group, onClick = { open = true })
-    }
+    ActivityFoldCard(
+        group = group,
+        isLastTurn = expandAll,
+        isResponding = running,
+        askSelections = emptyMap(),
+        onAskToggle = { _, _, _, _ -> },
+        onAskSubmit = { _, _ -> },
+        showSubagentTags = true,
+    )
 }
 
 @Composable
@@ -3080,11 +3034,12 @@ private fun ThinkingBlock(
                     .size(16.dp)
                     .graphicsLayer { alpha = iconAlpha },
             )
+            val foldCompact = LocalActivityFoldCompact.current
             Text(
                 "深度思考",
-                fontSize = 13.sp,
+                fontSize = if (foldCompact) 11.sp else 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = WandColors.thinking,
+                color = if (foldCompact) WandColors.textMuted else WandColors.thinking,
             )
             ExpandChevron(
                 expanded = expanded,
@@ -3109,10 +3064,10 @@ private fun ThinkingBlock(
                 SelectionContainer(modifier = Modifier.padding(10.dp)) {
                     Text(
                         text,
-                        fontSize = 13.sp,
-                        lineHeight = 20.sp,
+                        fontSize = if (LocalActivityFoldCompact.current) 11.sp else 13.sp,
+                        lineHeight = if (LocalActivityFoldCompact.current) 16.sp else 20.sp,
                         fontStyle = FontStyle.Italic,
-                        color = WandColors.textSecondary,
+                        color = if (LocalActivityFoldCompact.current) WandColors.textMuted else WandColors.textSecondary,
                     )
                 }
             }
