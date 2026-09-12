@@ -273,7 +273,8 @@ fun TaskListScreen(
         val selectedProject = matchingProjects.firstOrNull { it.workspaceId == newTaskWorkspaceId }
         val groupedName = newTaskName.trim()
         val canCreateUngrouped = cwd.isNotEmpty()
-        val canCreateTask = canCreateUngrouped && TaskListState.isValidTaskName(groupedName)
+        // 任务名称可选：留空由服务端 / 看板自动命名。
+        val canCreateTask = canCreateUngrouped && TaskListState.isValidOptionalTaskName(groupedName)
         WandDialog(
             title = if (newTaskGrouped) "新建任务" else "新建终端",
             onDismissRequest = { if (!state.mutationBusy) newTaskOpen = false },
@@ -518,7 +519,8 @@ fun TaskListScreen(
                     value = newTaskName,
                     onValueChange = { newTaskName = it; state.clearMutationError() },
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    label = "任务名称",
+                    label = "任务名称（可选）",
+                    placeholder = "留空则由系统自动命名",
                     singleLine = true,
                 )
                 Text(

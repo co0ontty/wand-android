@@ -170,7 +170,11 @@ fun TaskBoardScreen(
     }
 
     val selected = tasks.firstOrNull { it.id == selectedId }
-    val scoped = filterBoardTasks(tasks, query, filterWorkspaceId)
+    val scoped = filterBoardTasks(
+        tasks.filterNot(::isPlaceholderBoardTask),
+        query,
+        filterWorkspaceId,
+    )
     val visible = sortBoardTasks(
         if (statusFilter.isBlank()) scoped else scoped.filter { it.status == statusFilter },
     )
@@ -356,6 +360,7 @@ private fun TaskBoardList(
     modifier: Modifier = Modifier,
 ) {
     val grouped = groupedBoardTasks(tasks)
+    val showWorkspace = filterWorkspaceId.isBlank()
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(14.dp, 8.dp, 14.dp, 96.dp),
@@ -419,6 +424,7 @@ private fun TaskBoardList(
                 items(items, key = { it.id }) { task ->
                     BoardTaskCard(
                         task = task,
+                        showWorkspace = showWorkspace,
                         onOpen = { onOpen(task) },
                         onToggleComplete = { onToggleComplete(task) },
                         onOpenSession = onOpenSession,
@@ -429,6 +435,7 @@ private fun TaskBoardList(
             items(tasks, key = { it.id }) { task ->
                 BoardTaskCard(
                     task = task,
+                    showWorkspace = showWorkspace,
                     onOpen = { onOpen(task) },
                     onToggleComplete = { onToggleComplete(task) },
                     onOpenSession = onOpenSession,
@@ -649,28 +656,25 @@ private fun BoardSectionHeader(status: String, count: Int) {
 @Composable
 private fun BoardTaskCard(
     task: BoardTask,
+    showWorkspace: Boolean,
     onOpen: () -> Unit,
     onToggleComplete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
 ) {
     val done = task.status == "done"
-    val processing = boardTaskProcessingLabel(task)
-    val progress = boardTaskProgress(task)
+    val model = boardTaskCardModel(task, showWorkspace)
+    val hasChips = model.workspaceName != null ||
+        model.priority != null ||
+        model.agentLabel != null ||
+        model.labels.isNotEmpty()
     WandCard(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
-        Text(
-            boardTaskDisplayId(task),
-            color = WandColors.textMuted,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.clickable(onClick = onOpen),
-        )
         Row(
-            modifier = Modifier.padding(top = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             BoardStatusCheck(status = task.status, onClick = onToggleComplete)
             Text(
-                task.title,
+                model.title,
                 color = if (done) WandColors.textMuted else WandColors.textPrimary,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
@@ -683,79 +687,67 @@ private fun BoardTaskCard(
             )
         }
         Column(modifier = Modifier.clickable(onClick = onOpen)) {
-                    if (task.description.isNotBlank()) {
-                        Text(
-                            task.description,
-                            color = WandColors.textSecondary,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 4.dp),
+            if (hasChips) {
+                FlowRow(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    model.workspaceName?.let { name ->
+                        BoardChip(label = name, icon = WandIcons.folder)
+                    }
+                    model.priority?.let { priority ->
+                        BoardChip(
+                            label = boardTaskPriorityLabel(priority),
+                            color = boardPriorityColor(priority),
                         )
                     }
-                    FlowRow(
-                        modifier = Modifier.padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        BoardChip(
-                            label = task.workspace?.name ?: "未指定项目",
-                            icon = WandIcons.folder,
-                        )
-                        if (task.priority != "none") {
-                            BoardChip(
-                                label = boardTaskPriorityLabel(task.priority),
-                                color = boardPriorityColor(task.priority),
+                    model.agentLabel?.let { label ->
+                        BoardChip(label = label)
+                    }
+                    model.labels.forEach { label ->
+                        BoardChip(label = label)
+                    }
+                }
+            }
+            model.processingLabel?.let { label ->
+                BoardProcessingRow(
+                    label = label,
+                    running = task.sessions.any { boardSessionRunning(it.status) },
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            if (model.sessions.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    model.sessions.forEach { session ->
+                        Row(
+                            modifier = Modifier
+                                .clip(WandShapes.full)
+                                .background(WandColors.surfaceSoft.copy(alpha = 0.8f))
+                                .clickable { onOpenSession(session.id, session.isStructured) }
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                painter = BrandLogos.painterForProvider(session.provider),
+                                contentDescription = null,
+                                tint = BrandLogos.tintForProvider(session.provider, WandColors.textPrimary),
+                                modifier = Modifier.size(12.dp),
+                            )
+                            Text(
+                                boardTaskProviderLabel(session.provider),
+                                color = WandColors.textSecondary,
+                                style = MaterialTheme.typography.labelSmall,
                             )
                         }
-                        BoardChip(
-                            label = task.agent?.let { boardTaskProviderLabel(it.provider) } ?: "未指派",
-                        )
-                        task.labels.take(3).forEach { label ->
-                            BoardChip(label = label)
-                        }
                     }
-                    if (processing != null) {
-                        BoardProcessingRow(
-                            label = processing,
-                            running = task.sessions.any { boardSessionRunning(it.status) },
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                    if (progress != null) {
-                        BoardProgressRow(progress = progress, modifier = Modifier.padding(top = 8.dp))
-                    }
-                    if (task.sessions.isNotEmpty()) {
-                        FlowRow(
-                            modifier = Modifier.padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            task.sessions.take(3).forEach { session ->
-                                Row(
-                                    modifier = Modifier
-                                        .clip(WandShapes.full)
-                                        .background(WandColors.surfaceSoft.copy(alpha = 0.8f))
-                                        .clickable { onOpenSession(session.id, session.isStructured) }
-                                        .padding(horizontal = 8.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Icon(
-                                        painter = BrandLogos.painterForProvider(session.provider),
-                                        contentDescription = null,
-                                        tint = BrandLogos.tintForProvider(session.provider, WandColors.textPrimary),
-                                        modifier = Modifier.size(12.dp),
-                                    )
-                                    Text(
-                                        boardTaskProviderLabel(session.provider),
-                                        color = WandColors.textSecondary,
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                }
-                            }
-                        }
-                    }
+                }
+            }
         }
     }
 }
@@ -852,30 +844,6 @@ private fun BoardProcessingRow(
                 .background(WandColors.success),
         )
         Text(label, color = WandColors.success, style = MaterialTheme.typography.labelSmall)
-    }
-}
-
-@Composable
-private fun BoardProgressRow(
-    progress: BoardTaskProgress,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        repeat(progress.total) { index ->
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(4.dp)
-                    .clip(WandShapes.full)
-                    .background(
-                        if (index < progress.completed) WandColors.success
-                        else WandColors.surfaceSoft,
-                    ),
-            )
-        }
     }
 }
 

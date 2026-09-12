@@ -9,6 +9,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -61,6 +63,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -80,6 +83,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.semantics
@@ -91,6 +95,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -1781,41 +1786,6 @@ private fun toolShowsImage(use: ContentBlock.ToolUse): Boolean {
 }
 
 @Composable
-private fun ActivityFoldPulseDots() {
-    val pulse = rememberInfiniteTransition(label = "activityDots")
-    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-        repeat(3) { index ->
-            val offset by pulse.animateFloat(
-                initialValue = 0f,
-                targetValue = -3.5f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(420, delayMillis = index * 120, easing = WandMotion.easing),
-                    repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
-                ),
-                label = "activityDot$index",
-            )
-            val alpha by pulse.animateFloat(
-                initialValue = 0.28f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(420, delayMillis = index * 120, easing = WandMotion.easing),
-                    repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
-                ),
-                label = "activityDotAlpha$index",
-            )
-            Box(
-                modifier = Modifier
-                    .size(4.dp)
-                    .offset(y = offset.dp)
-                    .graphicsLayer { this.alpha = alpha }
-                    .clip(CircleShape)
-                    .background(WandColors.brand),
-            )
-        }
-    }
-}
-
-@Composable
 private fun ActivityFoldCard(
     group: ActivityGroup,
     isLastTurn: Boolean,
@@ -1829,12 +1799,16 @@ private fun ActivityFoldCard(
     val scrollState = rememberScrollState()
     val refreshToken = remember(group.items) { activityItemsRefreshToken(group.items) }
     val liveMotion = rememberInfiniteTransition(label = "activityLive")
-    val countBreath by liveMotion.animateFloat(
-        initialValue = 1f,
-        targetValue = WandMotion.breathAlphaMin,
-        animationSpec = WandMotion.breath(),
-        label = "activityCountBreath",
+    val textScan by liveMotion.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "activityTextScan",
     )
+    var latestWidthPx by remember { mutableFloatStateOf(1f) }
 
     LaunchedEffect(expanded, refreshToken) {
         if (!expanded) return@LaunchedEffect
@@ -1886,7 +1860,6 @@ private fun ActivityFoldCard(
                     modifier = Modifier
                         .height(18.dp)
                         .widthIn(min = 18.dp)
-                        .graphicsLayer { alpha = if (group.running) countBreath else 1f }
                         .clip(WandShapes.full)
                         .background(WandColors.brand.copy(alpha = 0.12f))
                         .padding(horizontal = 5.dp),
@@ -1907,23 +1880,30 @@ private fun ActivityFoldCard(
                 )
             }
             if (group.running) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        group.latest,
+                val band = latestWidthPx * 0.34f
+                val startX = textScan * (latestWidthPx + band) - band
+                Text(
+                    group.latest,
+                    style = TextStyle(
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = WandColors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    ActivityFoldPulseDots()
-                }
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                WandColors.textMuted,
+                                WandColors.textMuted,
+                                WandColors.brand,
+                                WandColors.textMuted,
+                                WandColors.textMuted,
+                            ),
+                            start = Offset(startX, 0f),
+                            end = Offset(startX + band, 0f),
+                        ),
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { latestWidthPx = it.width.toFloat().coerceAtLeast(1f) },
+                )
             }
         }
         if (expanded) {

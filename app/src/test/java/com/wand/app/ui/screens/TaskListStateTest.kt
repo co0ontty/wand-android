@@ -19,6 +19,7 @@ import com.wand.app.data.layoutSessionIds
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -216,16 +217,17 @@ class TaskListStateTest {
     }
 
     @Test
-    fun emptyTaskNameIsRejectedWithoutCreatingUnnamedTask() = runBlocking {
+    fun emptyTaskNameCreatesUnnamedTaskForAutoTitle() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
 
+        // 名称可选：空名也允许创建，服务端先用「未命名任务」占位，
+        // 看板再按会话内容自动补标题。
         val result = state.createTask("", "/work/wand", worktree = false)
 
-        assertNull(result)
-        assertTrue(port.standaloneRequests.isEmpty())
-        assertTrue(port.taskRequests.isEmpty())
-        assertEquals("请输入任务名称", state.mutationError)
+        assertNotNull(result)
+        assertEquals(1, port.standaloneRequests.size)
+        assertNull(state.mutationError)
     }
 
     @Test
@@ -308,7 +310,6 @@ class TaskListStateTest {
         val state = TaskListState(port)
 
         assertNull(state.createTask("bad\nname", "/repo", worktree = true))
-        assertNull(state.createTask("   ", "/repo", worktree = true))
         assertNull(state.renameTask("task-1", ""))
 
         assertTrue(port.taskRequests.isEmpty())

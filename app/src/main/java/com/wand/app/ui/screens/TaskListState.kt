@@ -219,10 +219,12 @@ class TaskListState(
         worktree: Boolean,
         workspaceId: String? = null,
     ): TaskCreationResult? = mutationMutex.withLock {
+        // 任务名称是可选字段：留空时服务端会先用「未命名任务」，
+        // 看板再按会话内容自动补标题（见 wand-task-sync）。
         val normalizedName = name.trim()
         val normalizedCwd = cwd.trim()
-        if (!isValidTaskName(normalizedName)) {
-            mutationError = if (normalizedName.isEmpty()) "请输入任务名称" else "任务名称无效或过长"
+        if (!isValidOptionalTaskName(normalizedName)) {
+            mutationError = "任务名称无效或过长"
             return@withLock null
         }
         mutationBusy = true
@@ -441,6 +443,16 @@ class TaskListState(
         internal fun isValidTaskName(name: String): Boolean {
             val count = name.codePointCount(0, name.length)
             return name.isNotEmpty() && count <= MAX_TASK_NAME_LENGTH &&
+                name.none { it.isISOControl() || it == '\u2028' || it == '\u2029' }
+        }
+
+        /**
+         * 任务名称是可选字段：空串合法（服务端按会话内容自动命名），
+         * 只拦截超长和控制字符。
+         */
+        internal fun isValidOptionalTaskName(name: String): Boolean {
+            val count = name.codePointCount(0, name.length)
+            return count <= MAX_TASK_NAME_LENGTH &&
                 name.none { it.isISOControl() || it == '\u2028' || it == '\u2029' }
         }
     }

@@ -2,6 +2,8 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.BOARD_TASK_STATUSES
 import com.wand.app.data.BoardTask
+import com.wand.app.data.BoardTaskSession
+import com.wand.app.data.boardTaskProviderLabel
 
 internal data class BoardTaskStats(
     val total: Int,
@@ -74,6 +76,56 @@ internal fun boardTaskToggledStatus(status: String): String =
 internal fun boardTaskDisplayId(task: BoardTask): String =
     task.identifier.ifBlank { task.id.take(8) }
 
+internal fun boardTaskCardTitle(task: BoardTask): String {
+    val title = task.title.trim()
+    if (title.isNotEmpty()) return title
+    val fromDescription = task.description.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.isNotEmpty() && !isSyncedWorkspaceDescriptionLine(it) }
+    return fromDescription ?: UNNAMED_TASK_NAME
+}
+
+internal data class BoardTaskCardModel(
+    val title: String,
+    val workspaceName: String?,
+    val priority: String?,
+    val agentLabel: String?,
+    val labels: List<String>,
+    val processingLabel: String?,
+    val sessions: List<BoardTaskSession>,
+)
+
+internal fun boardTaskCardModel(task: BoardTask, showWorkspace: Boolean): BoardTaskCardModel {
+    val workspaceName = task.workspace?.name?.trim().orEmpty()
+    return BoardTaskCardModel(
+        title = boardTaskCardTitle(task),
+        workspaceName = workspaceName.takeIf { showWorkspace && it.isNotEmpty() },
+        priority = task.priority.takeIf { it.isNotBlank() && it != "none" },
+        agentLabel = task.agent?.let { boardTaskProviderLabel(it.provider) },
+        labels = task.labels.filter { it.isNotBlank() }.take(2),
+        processingLabel = boardTaskProcessingLabel(task),
+        sessions = task.sessions.take(3),
+    )
+}
+
+internal fun isSyncedWorkspaceDescription(description: String): Boolean {
+    val lines = description.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    if (lines.isEmpty()) return true
+    return lines.all(::isSyncedWorkspaceDescriptionLine)
+}
+
+internal fun isPlaceholderBoardTask(task: BoardTask): Boolean {
+    if (task.sessions.isNotEmpty()) return false
+    if (task.priority != "none" && task.priority.isNotBlank()) return false
+    if (task.agent != null) return false
+    if (task.labels.any { it.isNotBlank() }) return false
+    if (!isUnnamedTaskName(task.title)) return false
+    return isSyncedWorkspaceDescription(task.description)
+}
+
+private fun isSyncedWorkspaceDescriptionLine(line: String): Boolean =
+    line.startsWith("项目：") || line.startsWith("目录：") || line.startsWith("分支：")
+
 internal fun boardSessionRunning(status: String): Boolean = status == "running"
 
 internal fun boardSessionFinished(status: String): Boolean =
@@ -94,9 +146,13 @@ internal fun boardTaskProcessingLabel(task: BoardTask): String? {
 internal fun boardTaskProgress(task: BoardTask): BoardTaskProgress? {
     if (task.status != "doing") return null
     val total = maxOf(4, task.sessions.size + 2)
-    val completed = task.sessions.count { session ->
-        session.status == "exited" || session.status == "idle"
-    }.coerceAtMost(total)
+    val waitingAcceptance = task.sessions.isNotEmpty() &&
+        task.sessions.all { boardSessionFinished(it.status) }
+    val completed = if (waitingAcceptance) {
+        (total - 1).coerceAtLeast(0)
+    } else {
+        task.sessions.count { boardSessionFinished(it.status) }.coerceAtMost(total)
+    }
     return BoardTaskProgress(completed = completed, total = total)
 }
 

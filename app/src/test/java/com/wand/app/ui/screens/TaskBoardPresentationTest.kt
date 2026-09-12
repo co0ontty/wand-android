@@ -5,6 +5,7 @@ import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.BoardTaskWorkspace
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -102,6 +103,14 @@ class TaskBoardPresentationTest {
             ),
         )
         assertEquals(BoardTaskProgress(completed = 1, total = 4), progress)
+        assertEquals(
+            BoardTaskProgress(completed = 3, total = 4),
+            boardTaskProgress(task(status = "doing", sessions = listOf(session(status = "idle")))),
+        )
+        assertEquals(
+            BoardTaskProgress(completed = 3, total = 4),
+            boardTaskProgress(task(status = "doing", sessions = listOf(session(status = "exited")))),
+        )
         assertNull(boardTaskProgress(task(status = "todo")))
     }
 
@@ -109,6 +118,72 @@ class TaskBoardPresentationTest {
     fun displayIdFallsBackToShortId() {
         assertEquals("WAND-1", boardTaskDisplayId(task(identifier = "WAND-1")))
         assertEquals("abcdefgh", boardTaskDisplayId(task(id = "abcdefghijk", identifier = "")))
+    }
+
+    @Test
+    fun placeholderHidesUnnamedSyncedWorkspaceTasks() {
+        val emptyUnnamed = task(
+            title = "未命名任务",
+            description = "项目：wand\n目录：/tmp/wand",
+        )
+        val blankUnnamed = task(title = "  ", description = "")
+        assertTrue(isPlaceholderBoardTask(emptyUnnamed))
+        assertTrue(isPlaceholderBoardTask(blankUnnamed))
+        assertFalse(
+            isPlaceholderBoardTask(
+                task(title = "未命名任务", description = "项目：wand\n目录：/tmp/wand", sessions = listOf(session())),
+            ),
+        )
+        assertFalse(isPlaceholderBoardTask(task(title = "修登录", description = "")))
+        assertFalse(
+            isPlaceholderBoardTask(
+                task(title = "未命名任务", description = "把登录页的错误提示修好"),
+            ),
+        )
+    }
+
+    @Test
+    fun cardModelKeepsOnlyUsefulFields() {
+        val placeholderTitle = boardTaskCardTitle(
+            task(title = "", description = "项目：wand\n把登录页修好\n目录：/tmp"),
+        )
+        assertEquals("把登录页修好", placeholderTitle)
+
+        val slim = boardTaskCardModel(
+            task(
+                title = "修登录",
+                workspaceName = "wand",
+                workspaceId = "ws-1",
+            ),
+            showWorkspace = false,
+        )
+        assertEquals("修登录", slim.title)
+        assertNull(slim.workspaceName)
+        assertNull(slim.priority)
+        assertNull(slim.agentLabel)
+        assertTrue(slim.labels.isEmpty())
+        assertNull(slim.processingLabel)
+        assertTrue(slim.sessions.isEmpty())
+
+        val rich = boardTaskCardModel(
+            task(
+                title = "修登录",
+                priority = "high",
+                workspaceName = "wand",
+                workspaceId = "ws-1",
+                labels = listOf("bug", "login", "extra"),
+                agent = BoardTaskAgent("claude", "default", "off"),
+                status = "doing",
+                sessions = listOf(session(), session(id = "s2"), session(id = "s3"), session(id = "s4")),
+            ),
+            showWorkspace = true,
+        )
+        assertEquals("wand", rich.workspaceName)
+        assertEquals("high", rich.priority)
+        assertEquals("Claude", rich.agentLabel)
+        assertEquals(listOf("bug", "login"), rich.labels)
+        assertEquals("正在处理...", rich.processingLabel)
+        assertEquals(3, rich.sessions.size)
     }
 
     private fun task(
