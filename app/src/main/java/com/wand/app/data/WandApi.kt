@@ -668,8 +668,9 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         status: String,
         priority: String,
         workspaceId: String?,
+        agent: BoardTaskAgent?,
     ): BoardTask = BoardTask.parse(
-        requestObject("POST", "/api/wand-tasks", createBoardTaskBody(title, description, status, priority, workspaceId)),
+        requestObject("POST", "/api/wand-tasks", createBoardTaskBody(title, description, status, priority, workspaceId, agent)),
     ) ?: throw WandApiException(500, "创建任务响应无效。")
 
     override suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask =

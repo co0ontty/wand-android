@@ -93,6 +93,15 @@ class TaskBoardModelsTest {
         val assigned = createBoardTaskBody("标题", "", "doing", "high", "ws-1")
         assertEquals("ws-1", assigned.getString("workspaceId"))
         assertEquals("doing", assigned.getString("status"))
+        val withAgent = createBoardTaskBody(
+            "标题",
+            "说明",
+            "todo",
+            "none",
+            null,
+            BoardTaskAgent("pi", "default", "off"),
+        )
+        assertEquals("pi", withAgent.getJSONObject("agent").getString("provider"))
     }
 
     @Test
@@ -112,5 +121,27 @@ class TaskBoardModelsTest {
         assertEquals("紧急", boardTaskPriorityLabel("urgent"))
         assertEquals("无优先级", boardTaskPriorityLabel("none"))
         assertEquals("Pi", boardTaskProviderLabel("pi"))
+    }
+
+    @Test
+    fun sessionsGroupByTheAgentsThatRan() {
+        val claude = BoardTaskAgent("claude", "opus", "deep")
+        val groups = groupBoardSessionsByAgent(
+            listOf(
+                BoardTaskSession("s1", "claude", "structured", "修登录", "running", "/repo", "opus", "deep"),
+                BoardTaskSession("s2", "claude", "structured", "补测试", "exited", "/repo", "sonnet", "off"),
+                BoardTaskSession("s3", "codex", "structured", "实现 API", "idle", "/repo", "gpt-5", "standard"),
+            ),
+            claude,
+        )
+        assertEquals(listOf("claude", "codex"), groups.map { it.provider })
+        assertEquals(listOf("s1", "s2"), groups[0].sessions.map { it.id })
+        assertEquals(listOf("s3"), groups[1].sessions.map { it.id })
+        assertEquals("Claude · Codex", boardTaskAgentLabels(groups.flatMap { it.sessions }, claude))
+
+        val pending = groupBoardSessionsByAgent(emptyList(), BoardTaskAgent("pi", "default", "off"))
+        assertEquals(1, pending.size)
+        assertEquals("pi", pending[0].provider)
+        assertTrue(pending[0].sessions.isEmpty())
     }
 }

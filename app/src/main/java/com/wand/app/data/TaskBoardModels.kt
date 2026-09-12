@@ -200,12 +200,61 @@ fun boardTaskProviderLabel(provider: String): String = when (provider) {
     else -> provider.ifBlank { "Agent" }
 }
 
+data class BoardAgentGroup(
+    val provider: String,
+    val agent: BoardTaskAgent?,
+    val sessions: List<BoardTaskSession>,
+)
+
+/** 打开任务时按 CLI 工具列出已执行 / 已指派的 Agent。 */
+fun groupBoardSessionsByAgent(
+    sessions: List<BoardTaskSession>,
+    assigned: BoardTaskAgent? = null,
+): List<BoardAgentGroup> {
+    data class Builder(val provider: String, var agent: BoardTaskAgent?, val sessions: MutableList<BoardTaskSession>)
+    val builders = mutableListOf<Builder>()
+    val index = linkedMapOf<String, Builder>()
+    fun ensure(provider: String, agent: BoardTaskAgent?): Builder {
+        val key = provider.ifBlank { "session" }
+        index[key]?.let {
+            if (it.agent == null && agent != null) it.agent = agent
+            return it
+        }
+        val next = Builder(key, agent, mutableListOf())
+        index[key] = next
+        builders += next
+        return next
+    }
+    if (assigned != null && assigned.provider in BOARD_TASK_PROVIDERS) {
+        ensure(assigned.provider, assigned)
+    }
+    for (session in sessions) {
+        val agent = if (session.provider in BOARD_TASK_PROVIDERS) {
+            BoardTaskAgent(
+                provider = session.provider,
+                model = session.model.ifBlank { "default" },
+                thinkingEffort = session.thinkingEffort.ifBlank { "off" },
+            )
+        } else {
+            null
+        }
+        ensure(agent?.provider ?: session.provider, agent).sessions += session
+    }
+    return builders.map { BoardAgentGroup(it.provider, it.agent, it.sessions.toList()) }
+}
+
+fun boardTaskAgentLabels(sessions: List<BoardTaskSession>, assigned: BoardTaskAgent?): String? {
+    val labels = groupBoardSessionsByAgent(sessions, assigned).map { boardTaskProviderLabel(it.provider) }
+    return labels.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
 fun createBoardTaskBody(
     title: String,
     description: String,
     status: String,
     priority: String,
     workspaceId: String?,
+    agent: BoardTaskAgent? = null,
 ): JSONObject {
     val body = JSONObject()
         .put("title", title)
@@ -215,6 +264,7 @@ fun createBoardTaskBody(
         .put("labels", JSONArray())
     if (workspaceId.isNullOrBlank()) body.put("workspaceId", JSONObject.NULL)
     else body.put("workspaceId", workspaceId)
+    if (agent != null) body.put("agent", agent.toJson())
     return body
 }
 
@@ -278,6 +328,7 @@ interface TaskBoardPort {
         status: String,
         priority: String,
         workspaceId: String?,
+        agent: BoardTaskAgent? = null,
     ): BoardTask
     suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask
     suspend fun deleteBoardTask(id: String)

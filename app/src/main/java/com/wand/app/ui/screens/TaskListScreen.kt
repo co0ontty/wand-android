@@ -268,9 +268,6 @@ fun TaskListScreen(
 
     if (newTaskOpen) {
         val cwd = taskCwdDraft.trim()
-        val matchingProjects = state.groups
-            .filter { !it.synthetic && normalizedPath(it.workspaceCwd) == normalizedPath(cwd) }
-        val selectedProject = matchingProjects.firstOrNull { it.workspaceId == newTaskWorkspaceId }
         val groupedName = newTaskName.trim()
         val canCreateUngrouped = cwd.isNotEmpty()
         // 任务名称可选：留空由服务端 / 看板自动命名。
@@ -523,43 +520,6 @@ fun TaskListScreen(
                     placeholder = "留空则由系统自动命名",
                     singleLine = true,
                 )
-                Text(
-                    "项目归属（可选）",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-                )
-                if (matchingProjects.isEmpty()) {
-                    Text(
-                        "此目录没有已绑定项目，任务会按目录显示。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = WandColors.textMuted,
-                    )
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        val independentSelected = newTaskWorkspaceId == null
-                        CreationChoiceCard(
-                            title = "不挂项目",
-                            subtitle = "按目录归类",
-                            selected = independentSelected,
-                            enabled = !state.mutationBusy,
-                            icon = WandIcons.folder,
-                            onClick = { newTaskWorkspaceId = null },
-                            modifier = Modifier.weight(1f),
-                        )
-                        matchingProjects.forEach { project ->
-                            CreationChoiceCard(
-                                title = project.workspaceName,
-                                subtitle = "已有项目",
-                                selected = selectedProject?.workspaceId == project.workspaceId,
-                                enabled = !state.mutationBusy,
-                                icon = WandIcons.folder,
-                                onClick = { newTaskWorkspaceId = project.workspaceId },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                }
             }
             state.mutationError?.let {
                 Text(
@@ -1579,6 +1539,15 @@ private fun TaskAggregateRow(
                     contentDescription = if (expanded) "收起终端" else "展开终端",
                     label = task.totalSessions.toString(),
                     onClick = onToggle,
+                )
+            }
+            if (!selecting) {
+                WandIconButton(
+                    icon = WandIcons.add,
+                    contentDescription = "在任务中新建会话",
+                    onClick = onNewWindow,
+                    variant = WandIconButtonVariant.Compact,
+                    tint = WandColors.brand,
                 )
             }
             Box {

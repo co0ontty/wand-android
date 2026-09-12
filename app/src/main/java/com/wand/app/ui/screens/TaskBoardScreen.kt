@@ -67,6 +67,7 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.Workspace
 import com.wand.app.data.boardAgentModelOptions
+import com.wand.app.data.groupBoardSessionsByAgent
 import com.wand.app.data.boardTaskEffortLabel
 import com.wand.app.data.boardTaskPriorityLabel
 import com.wand.app.data.boardTaskProviderLabel
@@ -317,16 +318,23 @@ fun TaskBoardScreen(
     if (showCreate) {
         CreateBoardTaskDialog(
             workspaces = workspaces,
+            models = models,
+            lastAgent = lastAgent,
             defaultWorkspaceId = filterWorkspaceId,
             onDismiss = { showCreate = false },
-            onCreate = { title, description, status, priority, workspaceId ->
+            onCreate = { title, description, status, priority, workspaceId, agent ->
                 scope.launch {
                     try {
-                        val created = api.createBoardTask(title, description, status, priority, workspaceId)
+                        val created = api.createBoardTask(title, description, status, priority, workspaceId, agent)
+                        lastAgent = agent
+                        runCatching { api.saveBoardTaskAgentDefaults(agent) }
                         showCreate = false
-                        refresh()
                         selectedId = created.id
-                        // 标题留空时服务端后台生成；轮询几次把新标题刷到列表和详情。
+                        if (description.isNotBlank()) {
+                            runCatching { api.dispatchBoardTask(created.id, agent) }
+                                .onFailure { error = it.message ?: "任务已创建，但第一次指派失败。" }
+                        }
+                        refresh()
                         if (title.isBlank() && created.titleSource == "auto") {
                             awaitGeneratedBoardTaskTitle(created.id, created.title)
                         }
@@ -948,9 +956,13 @@ private fun TaskBoardDetail(
             containerColor = WandColors.successSoft,
             contentPadding = PaddingValues(14.dp),
         ) {
-            Text("指派 Agent", color = WandColors.textPrimary, style = MaterialTheme.typography.titleSmall)
             Text(
-                "只作用于这条任务",
+                if (task.sessions.isEmpty()) "指派 Agent" else "再指派一个 Agent",
+                color = WandColors.textPrimary,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                "同一任务可以派给多个 Agent",
                 color = WandColors.textMuted,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -997,43 +1009,69 @@ private fun TaskBoardDetail(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        if (task.sessions.isNotEmpty()) {
-            Text("已绑定会话", color = WandColors.textSecondary, style = MaterialTheme.typography.labelLarge)
-            task.sessions.forEach { session ->
-                WandCard(
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                    onClick = { onOpenSession(session.id, session.isStructured) },
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            painter = BrandLogos.painterForProvider(session.provider),
-                            contentDescription = null,
-                            tint = BrandLogos.tintForProvider(session.provider, WandColors.textPrimary),
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                boardTaskProviderLabel(session.provider),
-                                color = WandColors.textPrimary,
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                            if (session.model.isNotBlank()) {
-                                Text(
-                                    session.model,
-                                    color = WandColors.textMuted,
-                                    style = MaterialTheme.typography.labelSmall,
+        Text("已指派的 Agent", color = WandColors.textSecondary, style = MaterialTheme.typography.labelLarge)
+        val agentGroups = groupBoardSessionsByAgent(task.sessions, task.agent)
+        if (agentGroups.isEmpty()) {
+            Text(
+                "还没有指派 Agent。描述会作为第一次派发的任务内容。",
+                color = WandColors.textMuted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        } else {
+            agentGroups.forEach { group ->
+                Text(
+                    boardTaskProviderLabel(group.provider) +
+                        (group.agent?.let { " · ${if (it.model == "default") "默认模型" else it.model}" } ?: ""),
+                    color = WandColors.textPrimary,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                if (group.sessions.isEmpty()) {
+                    Text(
+                        "已指派，等待派发",
+                        color = WandColors.textMuted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                } else {
+                    group.sessions.forEach { session ->
+                        WandCard(
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            onClick = { onOpenSession(session.id, session.isStructured) },
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    painter = BrandLogos.painterForProvider(session.provider),
+                                    contentDescription = null,
+                                    tint = BrandLogos.tintForProvider(session.provider, WandColors.textPrimary),
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        session.title.ifBlank { boardTaskProviderLabel(session.provider) },
+                                        color = WandColors.textPrimary,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        listOfNotNull(
+                                            session.model.takeIf { it.isNotBlank() && it != "default" },
+                                            boardSessionStatusLabel(session.status),
+                                        ).joinToString(" · "),
+                                        color = WandColors.textMuted,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                                Icon(
+                                    WandIcons.chevronRight,
+                                    contentDescription = null,
+                                    tint = WandColors.textMuted,
+                                    modifier = Modifier.size(16.dp),
                                 )
                             }
                         }
-                        Icon(
-                            WandIcons.chevronRight,
-                            contentDescription = null,
-                            tint = WandColors.textMuted,
-                            modifier = Modifier.size(16.dp),
-                        )
                     }
                 }
             }
@@ -1052,24 +1090,27 @@ private fun TaskBoardDetail(
 @Composable
 private fun CreateBoardTaskDialog(
     workspaces: List<Workspace>,
+    models: ModelsResponse?,
+    lastAgent: BoardTaskAgent,
     defaultWorkspaceId: String,
     onDismiss: () -> Unit,
-    onCreate: (title: String, description: String, status: String, priority: String, workspaceId: String?) -> Unit,
+    onCreate: (title: String, description: String, status: String, priority: String, workspaceId: String?, agent: BoardTaskAgent) -> Unit,
 ) {
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("todo") }
     var priority by remember { mutableStateOf("none") }
     var workspaceId by remember { mutableStateOf(defaultWorkspaceId) }
+    var agent by remember { mutableStateOf(lastAgent) }
+    val modelOptions = boardAgentModelOptions(models, agent.provider)
     WandDialog(
         title = "新建任务",
         onDismissRequest = onDismiss,
         confirm = WandDialogAction(
-            label = "创建",
-            // 标题可选：只写描述也能建，标题由服务端按描述自动生成。
+            label = if (description.trim().isNotEmpty()) "创建并指派" else "创建任务",
             enabled = title.trim().isNotEmpty() || description.trim().isNotEmpty(),
             onClick = {
-                onCreate(title.trim(), description.trim(), status, priority, workspaceId.ifBlank { null })
+                onCreate(title.trim(), description.trim(), status, priority, workspaceId.ifBlank { null }, agent)
             },
         ),
         dismiss = WandDialogAction(label = "取消", onClick = onDismiss),
@@ -1088,15 +1129,34 @@ private fun CreateBoardTaskDialog(
             value = description,
             onValueChange = { description = it },
             label = "描述",
-            placeholder = "标题留空时按这段描述自动生成标题",
+            placeholder = "将作为第一个 Agent 的指派内容",
             minLines = 3,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
         BoardChoice(
-            label = "项目 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "不指定项目"}",
-            options = listOf("" to "不指定项目（使用全局目录）") + workspaces.map { it.id to it.name },
+            label = "目录 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "不指定目录"}",
+            options = listOf("" to "不指定目录（使用全局目录）") + workspaces.map { it.id to it.name },
             onSelect = { workspaceId = it },
+        )
+        BoardChoice(
+            label = "第一次指派 · ${boardTaskProviderLabel(agent.provider)}",
+            options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
+            onSelect = { provider ->
+                val nextModels = boardAgentModelOptions(models, provider)
+                val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
+                agent = agent.copy(provider = provider, model = model)
+            },
+        )
+        BoardChoice(
+            label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
+            options = modelOptions.map { it.id to it.label },
+            onSelect = { agent = agent.copy(model = it) },
+        )
+        BoardChoice(
+            label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
+            options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
+            onSelect = { agent = agent.copy(thinkingEffort = it) },
         )
         BoardChoice(
             label = "状态 · ${boardTaskStatusLabel(status)}",
@@ -1109,6 +1169,15 @@ private fun CreateBoardTaskDialog(
             onSelect = { priority = it },
         )
     }
+}
+
+
+private fun boardSessionStatusLabel(status: String): String = when (status) {
+    "running" -> "进行中"
+    "idle" -> "空闲"
+    "exited" -> "已结束"
+    "failed" -> "失败"
+    else -> status.ifBlank { "会话" }
 }
 
 @Composable

@@ -3,7 +3,7 @@ package com.wand.app.ui.screens
 import com.wand.app.data.BOARD_TASK_STATUSES
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskSession
-import com.wand.app.data.boardTaskProviderLabel
+import com.wand.app.data.boardTaskAgentLabels
 
 internal data class BoardTaskStats(
     val total: Int,
@@ -101,7 +101,7 @@ internal fun boardTaskCardModel(task: BoardTask, showWorkspace: Boolean): BoardT
         title = boardTaskCardTitle(task),
         workspaceName = workspaceName.takeIf { showWorkspace && it.isNotEmpty() },
         priority = task.priority.takeIf { it.isNotBlank() && it != "none" },
-        agentLabel = task.agent?.let { boardTaskProviderLabel(it.provider) },
+        agentLabel = boardTaskAgentLabels(task.sessions, task.agent),
         labels = task.labels.filter { it.isNotBlank() }.take(2),
         processingLabel = boardTaskProcessingLabel(task),
         sessions = task.sessions.take(3),
