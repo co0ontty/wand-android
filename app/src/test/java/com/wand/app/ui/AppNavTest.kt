@@ -1,8 +1,8 @@
 package com.wand.app.ui
 
+import androidx.compose.runtime.saveable.SaverScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -14,12 +14,29 @@ import org.junit.Test
  */
 class AppNavTest {
 
+    /** JVM 单测里 canBeSaved 恒真；生产走 SavedStateRegistry 的实现。 */
+    private val saverScope = object : SaverScope {
+        override fun canBeSaved(value: Any): Boolean = true
+    }
+
+    private fun saveStack(vararg screens: Screen): List<Any?> {
+        val nav = NavState().apply { screens.forEach(::push) }
+        return with(NavState.Saver) { saverScope.save(nav) } as List<Any?>
+    }
+
+    private fun restoreStack(saved: List<Any?>): List<Screen> =
+        NavState.Saver.restore(saved)?.stack.orEmpty()
+
+    /** 直接喂持久化 key，覆盖老版本写入的 key 的迁移。 */
+    private fun restoreKeys(vararg keys: String): List<Screen> = restoreStack(keys.toList())
+
+    /** 走真实 Saver 的往返，不再依赖生产代码里的测试专用转发函数。 */
     private fun roundTrip(screen: Screen): Screen? =
-        NavState.deserializeScreen(NavState.serializeScreen(screen))
+        restoreStack(saveStack(screen)).lastOrNull()
 
     @Test
     fun legacyWorkspacesKeyRestoresTaskRoot() {
-        assertEquals(Screen.SessionList, NavState.deserializeScreen("workspaces"))
+        assertEquals(Screen.SessionList, restoreKeys("workspaces").firstOrNull())
     }
 
     @Test
@@ -124,13 +141,15 @@ class AppNavTest {
 
     @Test
     fun oldNewSessionKeyRestoresToTaskHome() {
-        assertEquals(Screen.SessionList, NavState.deserializeScreen("new-session"))
-        assertEquals(Screen.SessionList, NavState.deserializeScreen("new-session:/tmp/project"))
+        assertEquals(Screen.SessionList, restoreKeys("new-session").firstOrNull())
+        assertEquals(Screen.SessionList, restoreKeys("new-session:/tmp/project").firstOrNull())
     }
 
     @Test
-    fun roundTrip_unknownKey_returnsNull() {
-        assertNull(NavState.deserializeScreen("totally-unknown-key"))
+    fun unknownKeyDegradesToRootInsteadOfThrowing() {
+        // Saver 只在栈底仍是会话列表时提交恢复结果；认不出的 key 全部丢弃，回到根路由。
+        assertEquals(listOf(Screen.SessionList), restoreKeys("totally-unknown-key"))
+        assertEquals(listOf(Screen.SessionList), restoreKeys("totally-unknown-key", "chat:abc"))
     }
 
     @Test

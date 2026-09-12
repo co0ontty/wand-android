@@ -32,8 +32,6 @@ class ProviderRulesTest {
         assertEquals("codex-model", defaults.defaultFor("codex"))
         assertEquals("grok-model", defaults.defaultFor("grok"))
         assertEquals("qoder-model", defaults.defaultFor("qoder"))
-        assertEquals("full-access", clampSessionMode("managed", "codex"))
-        assertEquals("managed", clampSessionMode("native", "opencode"))
         assertEquals("托管", sessionModeLabel("managed"))
         assertEquals("标准", sessionModeLabel("unknown"))
         assertEquals(
@@ -77,25 +75,23 @@ class ProviderRulesTest {
         assertEquals("grok-3", response.defaultModelFor("grok"))
         assertEquals(
             listOf("zhipu/glm5.2-cp"),
-            modelsForProvider(
-                provider = "qoder",
-                claude = response.models,
-                codex = response.codexModels,
-                opencode = response.opencodeModels,
-                qoder = response.qoderModels,
-            ).map { it.id },
+            response.modelsFor("qoder").map { it.id },
         )
         assertEquals(
             listOf("grok-3"),
-            modelsForProvider(
-                provider = "grok",
-                claude = response.models,
-                codex = response.codexModels,
-                opencode = response.opencodeModels,
-                qoder = response.qoderModels,
-                grok = response.grokModels,
-            ).map { it.id },
+            response.modelsFor("grok").map { it.id },
         )
+        assertEquals(response.models, response.modelsFor("claude"))
+        assertEquals(response.models, response.modelsFor(null))
+    }
+
+    @Test
+    fun providerTableIsTheSingleSourceForCliAndRunnerNames() {
+        assertEquals("qodercli", WandProvider.cliCommandFor("qoder"))
+        assertEquals("codex", WandProvider.cliCommandFor("codex"))
+        assertEquals("custom", WandProvider.cliCommandFor("custom"))
+        assertEquals("codex-cli-exec", structuredRunnerFor("codex"))
+        assertEquals("claude-cli-print", structuredRunnerFor("unknown"))
     }
 
     @Test

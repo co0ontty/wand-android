@@ -11,13 +11,11 @@ import com.wand.app.data.activeWorkWindowTab
 import com.wand.app.data.addSessionWindow
 import com.wand.app.data.orderWorkspaceSessions
 import com.wand.app.data.reconcileTaskWindowLayout
-import com.wand.app.data.workspaceSessionLabel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 // MARK: - 任务详情状态
@@ -39,12 +37,7 @@ sealed class WorkspaceTaskState {
         val selectedSessionId: String?,
         /** 调和后的布局（保留 split / 非会话 tab）。 */
         val layout: TaskWindowLayout,
-    ) : WorkspaceTaskState() {
-        /** 当前活动会话（基于布局活动 tab + 选中态）。 */
-        val activeSessionId: String?
-            get() = selectedSessionId
-                ?: activeWorkWindowTab(layout)?.let { (it as? com.wand.app.data.PaneTab.Session)?.sessionId }
-    }
+    ) : WorkspaceTaskState() {    }
     data class Error(val message: String) : WorkspaceTaskState()
 }
 

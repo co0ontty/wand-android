@@ -280,10 +280,6 @@ class NavState {
             val taskId = parts.getOrNull(4)?.takeIf(String::isNotBlank)
             return create(sessionId, workspaceName, taskName, workspaceId, taskId)
         }
-
-        // 测试辅助：把一个 Screen 序列化为字符串再恢复回来，验证 Saver 语义。
-        internal fun serializeScreen(screen: Screen): String = screen.saveKey()
-        internal fun deserializeScreen(key: String): Screen? = key.restoreScreen()
     }
 }
 

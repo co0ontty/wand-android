@@ -77,7 +77,7 @@ class TaskBoardPresentationTest {
     }
 
     @Test
-    fun processingLabelAndProgressFollowSessions() {
+    fun processingLabelFollowsSessions() {
         assertNull(boardTaskProcessingLabel(task(status = "todo")))
         assertEquals("等待派发", boardTaskProcessingLabel(task(status = "doing")))
         assertEquals(
@@ -96,28 +96,6 @@ class TaskBoardPresentationTest {
             "暂停处理",
             boardTaskProcessingLabel(task(status = "doing", sessions = listOf(session(status = "stopped")))),
         )
-        val progress = boardTaskProgress(
-            task(
-                status = "doing",
-                sessions = listOf(session(id = "a", status = "idle"), session(id = "b", status = "running")),
-            ),
-        )
-        assertEquals(BoardTaskProgress(completed = 1, total = 4), progress)
-        assertEquals(
-            BoardTaskProgress(completed = 3, total = 4),
-            boardTaskProgress(task(status = "doing", sessions = listOf(session(status = "idle")))),
-        )
-        assertEquals(
-            BoardTaskProgress(completed = 3, total = 4),
-            boardTaskProgress(task(status = "doing", sessions = listOf(session(status = "exited")))),
-        )
-        assertNull(boardTaskProgress(task(status = "todo")))
-    }
-
-    @Test
-    fun displayIdFallsBackToShortId() {
-        assertEquals("WAND-1", boardTaskDisplayId(task(identifier = "WAND-1")))
-        assertEquals("abcdefgh", boardTaskDisplayId(task(id = "abcdefghijk", identifier = "")))
     }
 
     @Test

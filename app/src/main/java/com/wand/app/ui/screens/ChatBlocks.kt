@@ -1,10 +1,6 @@
 package com.wand.app.ui.screens
 
 import android.animation.ValueAnimator
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -25,7 +21,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,16 +42,13 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -84,28 +76,18 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.LinkAnnotation
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.TextLinkStyles
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -123,7 +105,6 @@ import com.wand.app.data.ToolUseSemantic
 import com.wand.app.data.TurnUsage
 import com.wand.app.data.WandApi
 import com.wand.app.data.arrayField
-import com.wand.app.data.int
 import com.wand.app.data.str
 import com.wand.app.data.summaryText
 import com.wand.app.ui.AskUserSelectionState
@@ -131,7 +112,6 @@ import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.WandAsyncImage
 import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
-import com.wand.app.ui.WandServerFileLink
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.NoOverscroll
@@ -1196,7 +1176,7 @@ private fun SegmentBlocks(
     val items = remember(blocks) { pairToolBlocks(blocks) }
     val renderItems = remember(items, blocks, isLastTurn, isResponding, collapseActivities) {
         if (collapseActivities) {
-            collapseActivityItems(items, blocks, isLastTurn, isResponding)
+            collapseActivityItems(items, isLastTurn, isResponding)
         } else {
             items.mapIndexed { index, item -> SegmentRenderItem.Item(index, item) }
         }
@@ -1526,13 +1506,13 @@ private fun shouldCompactUserBody(text: String): Boolean =
 
 // MARK: - 工具调用与结果的渲染层配对
 
-private sealed class DisplayItem {
+internal sealed class DisplayItem {
     class Plain(val block: ContentBlock) : DisplayItem()
     class Tool(val use: ContentBlock.ToolUse, val result: ContentBlock.ToolResult?) : DisplayItem()
     class Exploration(val tools: List<ExplorationToolItem>) : DisplayItem()
 }
 
-private data class ActivityGroup(
+internal data class ActivityGroup(
     val key: String,
     val latest: String,
     val meta: String,
@@ -1541,7 +1521,7 @@ private data class ActivityGroup(
     val running: Boolean,
 )
 
-private sealed class SegmentRenderItem {
+internal sealed class SegmentRenderItem {
     data class Item(val index: Int, val item: DisplayItem) : SegmentRenderItem()
     data class Activity(val group: ActivityGroup) : SegmentRenderItem()
 }
@@ -1651,32 +1631,8 @@ private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse): Boolean {
     return true
 }
 
-internal data class ActivityFoldSegment(
-    val activity: Boolean,
-    val count: Int,
-    val running: Boolean,
-)
-
-/** 连续思考/工具收成一条压缩条；正文、图片、提问卡保持原位，出现即打断当前条。 */
-internal fun activityFoldSegments(
-    blocks: List<ContentBlock>,
-    isLastTurn: Boolean = false,
-    isResponding: Boolean = false,
-): List<ActivityFoldSegment> =
-    collapseActivityItems(pairToolBlocks(blocks), blocks, isLastTurn, isResponding).map { item ->
-        when (item) {
-            is SegmentRenderItem.Item -> ActivityFoldSegment(activity = false, count = 1, running = false)
-            is SegmentRenderItem.Activity -> ActivityFoldSegment(
-                activity = true,
-                count = item.group.count,
-                running = item.group.running,
-            )
-        }
-    }
-
-private fun collapseActivityItems(
+internal fun collapseActivityItems(
     items: List<DisplayItem>,
-    blocks: List<ContentBlock>,
     isLastTurn: Boolean,
     isResponding: Boolean,
 ): List<SegmentRenderItem> {
@@ -2060,22 +2016,6 @@ internal fun activityKindOf(name: String): String {
     }
 }
 
-internal fun isMessageActivityOpen(blocks: List<ContentBlock>): Boolean {
-    val resultIds = blocks.mapNotNull { block ->
-        (block as? ContentBlock.ToolResult)?.toolUseId?.takeIf { it.isNotEmpty() }
-    }.toSet()
-    for (block in blocks.asReversed()) {
-        when (block) {
-            is ContentBlock.Text -> return false
-            is ContentBlock.Thinking -> return true
-            is ContentBlock.ToolUse -> return block.id.isEmpty() || block.id !in resultIds
-            is ContentBlock.ToolResult -> return false
-            is ContentBlock.Unknown -> continue
-        }
-    }
-    return false
-}
-
 /**
  * 连续读取、搜索、网页获取通常只是模型探索上下文，不需要逐张占满对话流。
  * 连续 4 次及以上才合并；1～3 次操作仍保留完整工具卡。
@@ -2113,7 +2053,7 @@ private fun collapseConsecutiveExplorationTools(paired: List<DisplayItem>): List
  * 邻接配对会把别的工具的结果挂错卡片）；id 缺失时退回「紧随其后的第一个结果」
  * 邻接兜底。没配上的 ToolResult 原样透传（走 OrphanResultBlock）。
  */
-private fun pairToolBlocks(content: List<ContentBlock>): List<DisplayItem> {
+internal fun pairToolBlocks(content: List<ContentBlock>): List<DisplayItem> {
     val items = mutableListOf<DisplayItem>()
     val consumed = mutableSetOf<Int>()
     content.forEachIndexed { i, block ->

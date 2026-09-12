@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -43,7 +42,6 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -90,14 +88,12 @@ import com.wand.app.data.UploadedFile
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandWebSession
-import com.wand.app.data.providerDisplayName
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.applyProvisionalSessionTopic
 import com.wand.app.ui.ptyComposerSubmitChunks
 import com.wand.app.ui.sessionChromeTitle
 import com.wand.app.ui.sessionTopicBlocklist
-import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar

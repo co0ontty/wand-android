@@ -69,18 +69,23 @@ class ActivityGroupingTest {
         assertEquals("search", activityKindOf("Grep"))
     }
 
-    @Test
-    fun messageActivityStaysOpenUntilProseArrives() {
-        val thinking = ContentBlock.Thinking("planning", null)
-        val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-        val result = ContentBlock.ToolResult("t1", "ok", false, false, null)
-        val text = ContentBlock.Text("done", null)
+    /** 折叠条的分段规则，直接测生产路径 collapseActivityItems（不再有只给测试用的包装函数）。 */
+    private fun foldSegments(
+        blocks: List<ContentBlock>,
+        isLastTurn: Boolean = false,
+        isResponding: Boolean = false,
+    ): List<SegmentRenderItem> =
+        collapseActivityItems(pairToolBlocks(blocks), isLastTurn, isResponding)
 
-        assertTrue(isMessageActivityOpen(listOf(thinking)))
-        assertTrue(isMessageActivityOpen(listOf(thinking, use)))
-        assertFalse(isMessageActivityOpen(listOf(thinking, use, result)))
-        assertFalse(isMessageActivityOpen(listOf(thinking, use, result, text)))
-        assertTrue(isMessageActivityOpen(listOf(text, thinking)))
+    private fun foldShape(
+        blocks: List<ContentBlock>,
+        isLastTurn: Boolean = false,
+        isResponding: Boolean = false,
+    ): List<Triple<Boolean, Int, Boolean>> = foldSegments(blocks, isLastTurn, isResponding).map { item ->
+        when (item) {
+            is SegmentRenderItem.Item -> Triple(false, 1, false)
+            is SegmentRenderItem.Activity -> Triple(true, item.group.count, item.group.running)
+        }
     }
 
     @Test
@@ -92,18 +97,15 @@ class ActivityGroupingTest {
         val second = ContentBlock.ToolUse("t2", "Read", null, JSONObject().put("file_path", "a.kt"), null)
         val moreProse = ContentBlock.Text("继续", null)
 
-        val segments = activityFoldSegments(
+        val segments = foldShape(
             listOf(thinking, first, firstResult, prose, second, moreProse),
         )
 
         assertEquals(4, segments.size)
-        assertTrue(segments[0].activity)
-        assertEquals(2, segments[0].count)
-        assertFalse(segments[0].running)
-        assertFalse(segments[1].activity)
-        assertTrue(segments[2].activity)
-        assertEquals(1, segments[2].count)
-        assertFalse(segments[3].activity)
+        assertEquals(Triple(true, 2, false), segments[0])
+        assertEquals(false, segments[1].first)
+        assertEquals(Triple(true, 1, false), segments[2])
+        assertEquals(false, segments[3].first)
     }
 
     @Test
@@ -112,18 +114,16 @@ class ActivityGroupingTest {
         val prose = ContentBlock.Text("中间结论", null)
         val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
 
-        val segments = activityFoldSegments(
+        val segments = foldShape(
             listOf(thinking, prose, use),
             isLastTurn = true,
             isResponding = true,
         )
 
         assertEquals(3, segments.size)
-        assertTrue(segments[0].activity)
-        assertFalse(segments[0].running)
-        assertFalse(segments[1].activity)
-        assertTrue(segments[2].activity)
-        assertTrue(segments[2].running)
+        assertEquals(Triple(true, 1, false), segments[0])
+        assertEquals(false, segments[1].first)
+        assertEquals(Triple(true, 1, true), segments[2])
     }
 
     @Test
@@ -132,36 +132,34 @@ class ActivityGroupingTest {
         val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
         val result = ContentBlock.ToolResult("t1", "ok", false, false, null)
 
-        val live = activityFoldSegments(
+        val live = foldShape(
             listOf(thinking, use, result),
             isLastTurn = true,
             isResponding = true,
         )
         assertEquals(1, live.size)
-        assertTrue(live[0].activity)
-        assertTrue(live[0].running)
+        assertEquals(Triple(true, 2, true), live[0])
 
-        val settled = activityFoldSegments(
+        val settled = foldShape(
             listOf(thinking, use, result),
             isLastTurn = true,
             isResponding = false,
         )
-        assertFalse(settled[0].running)
+        assertEquals(Triple(true, 2, false), settled[0])
     }
 
     @Test
     fun activityBarCompletesOnceProseClosesTheTurn() {
         val thinking = ContentBlock.Thinking("planning", null)
         val prose = ContentBlock.Text("最终回答", null)
-        val segments = activityFoldSegments(
+        val segments = foldShape(
             listOf(thinking, prose),
             isLastTurn = true,
             isResponding = true,
         )
 
         assertEquals(2, segments.size)
-        assertTrue(segments[0].activity)
-        assertFalse(segments[0].running)
-        assertFalse(segments[1].activity)
+        assertEquals(Triple(true, 1, false), segments[0])
+        assertEquals(false, segments[1].first)
     }
 }

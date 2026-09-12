@@ -315,9 +315,3 @@ fun AmbientBackground(modifier: Modifier = Modifier) {
 /** [AmbientBackground] 的 Modifier 形态：次级页面直接挂在 Scaffold modifier 上。 */
 @Composable
 fun Modifier.ambientBackground(): Modifier = this.background(WandColors.bgPrimary)
-
-/** 次级页面顶栏的降级玻璃（不叠在滚动内容上，无 backdrop 采样）。 */
-val secondaryBarGlass: GlassStyle
-    @Composable @ReadOnlyComposable get() =
-        (if (isWandDarkTheme()) DarkGlassRegular else LightGlassRegular)
-            .copy(refractionHeight = 0.dp, shadowElevation = 0.dp)

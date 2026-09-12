@@ -568,7 +568,7 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         provider: String,
         prompt: String,
     ): SessionSnapshot {
-        val command = if (provider == "qoder") "qodercli" else provider
+        val command = WandProvider.cliCommandFor(provider)
         val body = JSONObject()
             .put("command", command)
             .put("provider", provider)

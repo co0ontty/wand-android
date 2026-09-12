@@ -551,12 +551,12 @@ private fun legacyDefaultModelFor(
     qoder: String? = null,
     grok: String? = null,
     pi: String? = null,
-): String = when (provider) {
-    "codex" -> codex.orEmpty()
-    "opencode" -> opencode.orEmpty()
-    "grok" -> grok.orEmpty()
-    "qoder" -> qoder.orEmpty()
-    "pi" -> pi.orEmpty()
+): String = when (WandProvider.fromId(provider)) {
+    WandProvider.Codex -> codex.orEmpty()
+    WandProvider.OpenCode -> opencode.orEmpty()
+    WandProvider.Grok -> grok.orEmpty()
+    WandProvider.Qoder -> qoder.orEmpty()
+    WandProvider.Pi -> pi.orEmpty()
     else -> claude.orEmpty()
 }
 
@@ -586,6 +586,16 @@ data class ModelsResponse(
                 defaultGrokModel,
                 defaultPiModel,
             )
+
+    /** 当前 provider 的模型目录；调用方不再自己挑字段。 */
+    fun modelsFor(provider: String?): List<ModelInfo> = when (WandProvider.fromId(provider)) {
+        WandProvider.Codex -> codexModels
+        WandProvider.OpenCode -> opencodeModels
+        WandProvider.Grok -> grokModels
+        WandProvider.Qoder -> qoderModels
+        WandProvider.Pi -> piModels
+        else -> models
+    }
 
     companion object {
         fun parse(o: JSONObject): ModelsResponse = ModelsResponse(
@@ -946,15 +956,7 @@ data class GitFileEntry(
     val path: String,
     val status: String,
     val isSubmodule: Boolean?,
-) {
-    /** ".M" → "M"、"??" → "?"，给列表一个紧凑的状态徽标。 */
-    val shortStatus: String
-        get() {
-            val cleaned = status.replace(".", "")
-            if (cleaned == "??") return "?"
-            return cleaned.ifEmpty { "·" }
-        }
-}
+)
 
 /** GET /api/sessions/:id/git-status 响应（服务端 GitStatusResult 子集）。 */
 data class GitStatusResult(

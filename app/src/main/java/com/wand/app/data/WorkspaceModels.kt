@@ -764,15 +764,8 @@ fun buildWorkspaceMergeAgentPrompt(
 }
 
 /** 工作区内统一使用的 provider 展示名（对齐 Web workspaceProviderLabel）。 */
-fun workspaceProviderLabel(provider: String?): String = when (provider) {
-    "claude" -> "Claude"
-    "codex" -> "Codex"
-    "opencode" -> "OpenCode"
-    "grok" -> "Grok"
-    "qoder" -> "Qoder"
-    "pi" -> "Pi"
-    else -> "终端"
-}
+fun workspaceProviderLabel(provider: String?): String =
+    WandProvider.fromId(provider)?.displayName ?: "终端"
 
 /** 单个会话标签的展示名（对齐 Web workspaceSessionLabel）。 */
 fun workspaceSessionLabel(session: WorkspaceSessionSummary, index: Int): String {

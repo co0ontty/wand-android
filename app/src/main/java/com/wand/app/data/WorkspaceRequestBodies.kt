@@ -24,14 +24,8 @@ internal data class WorkspaceTaskWindowRequest(
     val body: JSONObject,
 )
 
-internal fun structuredRunnerFor(provider: String): String = when (provider) {
-    "codex" -> "codex-cli-exec"
-    "opencode" -> "opencode-cli-run"
-    "grok" -> "grok-cli-headless"
-    "qoder" -> "qoder-cli-print"
-    "pi" -> "pi-cli-json"
-    else -> "claude-cli-print"
-}
+internal fun structuredRunnerFor(provider: String): String =
+    WandProvider.fromId(provider)?.structuredRunner ?: WandProvider.Claude.structuredRunner
 
 internal fun createWorkspaceTaskWindowRequest(
     target: WorkspaceSessionTarget,
@@ -52,6 +46,6 @@ internal fun createWorkspaceTaskWindowRequest(
         body.put("runner", structuredRunnerFor(provider))
         return WorkspaceTaskWindowRequest("/api/structured-sessions", body)
     }
-    body.put("command", if (provider == "qoder") "qodercli" else provider)
+    body.put("command", WandProvider.cliCommandFor(provider))
     return WorkspaceTaskWindowRequest("/api/commands", body)
 }

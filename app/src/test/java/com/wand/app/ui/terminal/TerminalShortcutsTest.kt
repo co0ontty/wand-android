@@ -50,7 +50,6 @@ class TerminalShortcutsTest {
     fun unsupportedInputsAreRejectedInsteadOfSendingAmbiguousBytes() {
         assertNull(encodeTerminalKey(TerminalKeyBinding("")))
         assertNull(encodeTerminalKey(TerminalKeyBinding("hello")))
-        assertNull(normalizeTerminalKeyInput("\n\t"))
     }
 
     @Test

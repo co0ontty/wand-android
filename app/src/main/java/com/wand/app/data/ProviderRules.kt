@@ -25,39 +25,48 @@ val SESSION_MODE_OPTIONS = listOf(
 fun sessionModeLabel(id: String): String =
     SESSION_MODE_OPTIONS.firstOrNull { it.id == id }?.label ?: "标准"
 
+/**
+ * provider 标识的单一真源：展示名、structured runner、PTY CLI 名都在这里。
+ *
+ * 加一个 provider 只改这张表，不再到 `WandApi` / `WorkspaceRequestBodies` 里各补一个 `when`。
+ */
+enum class WandProvider(
+    val id: String,
+    val displayName: String,
+    /** 服务端 structured runner 标识；claude 是默认值。 */
+    val structuredRunner: String,
+    /** PTY 场景下的 CLI 可执行文件名（多数与 id 相同）。 */
+    val cliCommand: String,
+) {
+    Claude("claude", "Claude", "claude-cli-print", "claude"),
+    Codex("codex", "Codex", "codex-cli-exec", "codex"),
+    OpenCode("opencode", "OpenCode", "opencode-cli-run", "opencode"),
+    Grok("grok", "Grok", "grok-cli-headless", "grok"),
+    Qoder("qoder", "Qoder", "qoder-cli-print", "qodercli"),
+    Pi("pi", "Pi", "pi-cli-json", "pi"),
+    ;
+
+    companion object {
+        fun fromId(provider: String?): WandProvider? =
+            entries.firstOrNull { it.id == provider }
+
+        /** PTY / 命令类接口用的可执行文件名；未识别的 provider 原样透传。 */
+        fun cliCommandFor(provider: String): String =
+            fromId(provider)?.cliCommand ?: provider
+    }
+}
+
 fun providerDisplayName(provider: String?): String = when (provider) {
     null, "terminal" -> "终端"
-    "codex" -> "Codex"
-    "opencode" -> "OpenCode"
-    "grok" -> "Grok"
-    "qoder" -> "Qoder"
-    "pi" -> "Pi"
-    else -> "Claude"
+    else -> WandProvider.fromId(provider)?.displayName ?: WandProvider.Claude.displayName
 }
 
-fun modelsForProvider(
-    provider: String?,
-    claude: List<ModelInfo>,
-    codex: List<ModelInfo>,
-    opencode: List<ModelInfo>,
-    qoder: List<ModelInfo> = emptyList(),
-    grok: List<ModelInfo> = emptyList(),
-    pi: List<ModelInfo> = emptyList(),
-): List<ModelInfo> = when (provider) {
-    "codex" -> codex
-    "opencode" -> opencode
-    "grok" -> grok
-    "qoder" -> qoder
-    "pi" -> pi
-    else -> claude
-}
-
-fun ProviderDefaultModels.defaultFor(provider: String?): String? = when (provider) {
-    "codex" -> codex
-    "opencode" -> opencode
-    "grok" -> grok
-    "qoder" -> qoder
-    "pi" -> pi
+fun ProviderDefaultModels.defaultFor(provider: String?): String? = when (WandProvider.fromId(provider)) {
+    WandProvider.Codex -> codex
+    WandProvider.OpenCode -> opencode
+    WandProvider.Grok -> grok
+    WandProvider.Qoder -> qoder
+    WandProvider.Pi -> pi
     else -> claude
 }
 
@@ -66,11 +75,4 @@ fun supportedSessionModeIds(provider: String?): Set<String> = when (provider) {
     "opencode", "grok", "pi" -> setOf("default", "full-access", "managed")
     "qoder" -> setOf("default", "full-access", "auto-edit", "managed")
     else -> allSessionModeIds
-}
-
-fun clampSessionMode(mode: String, provider: String?): String {
-    if (provider == "codex") return "full-access"
-    val supported = supportedSessionModeIds(provider)
-    if (mode in supported) return mode
-    return if ("managed" in supported) "managed" else supported.first()
 }

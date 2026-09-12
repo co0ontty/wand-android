@@ -6,7 +6,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
@@ -18,7 +17,6 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Cancel
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudSync
@@ -42,11 +40,9 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
@@ -164,9 +160,7 @@ object WandIcons {
     /** 外观与主题。 */
     val appearance: ImageVector = Icons.Outlined.Palette
 
-    /** 通知、音量与触感反馈。 */
-    val notification: ImageVector = Icons.Outlined.NotificationsNone
-    val haptic: ImageVector = Icons.Outlined.Vibration
+    /** 通知、音量与触感反馈。 */    val haptic: ImageVector = Icons.Outlined.Vibration
 
     /** 设置页中的客户端能力。 */
     val keepAlive: ImageVector = Icons.Outlined.CloudSync
@@ -179,9 +173,6 @@ object WandIcons {
 
     /** 检查更新。 */
     val update: ImageVector = Icons.Outlined.SystemUpdate
-
-    /** 断开连接。 */
-    val logout: ImageVector = Icons.AutoMirrored.Outlined.Logout
 
     /** 行尾右箭头。 */
     val chevronRight: ImageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight
@@ -222,12 +213,7 @@ object WandIcons {
     /** 空态大图标 / 会话列表空态。 */
     val sparkle: ImageVector = Icons.Outlined.AutoAwesome
 
-    /** 聊天会话（runner 类型徽章）。 */
-    val chat: ImageVector = Icons.Outlined.ChatBubbleOutline
-
-    /** 时钟（历史会话相对时间徽章，对称 iOS clock）。 */
-    val clock: ImageVector = Icons.Outlined.Schedule
-}
+    /** 聊天会话（runner 类型徽章）。 */}
 
 /**
  * Git 分支三节点图标（对称 Web 的 branch SVG 与 iOS 的 SF Symbol）。

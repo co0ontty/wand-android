@@ -10,7 +10,6 @@ import com.wand.app.data.ChatSessionEventReducer
 import com.wand.app.data.ChatSessionEventState
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.ModelInfo
-import com.wand.app.data.modelsForProvider
 import com.wand.app.data.PendingSessionSettings
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SessionEvent
@@ -366,15 +365,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             return
         }
         val provider = snapshot?.provider ?: "claude"
-        availableModels = modelsForProvider(
-            provider = provider,
-            claude = response.models,
-            codex = response.codexModels,
-            opencode = response.opencodeModels,
-            qoder = response.qoderModels,
-            grok = response.grokModels,
-            pi = response.piModels,
-        )
+        availableModels = response.modelsFor(provider)
         defaultModel = response.defaultModelFor(provider)
         normalizeThinkingEffortFor(selectedModel)
     }

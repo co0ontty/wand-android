@@ -46,39 +46,6 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun directoryPathKeepsLeafAndDropsHomePrefix() {
-        assertEquals("…/vibe_coding/wand", shortenWorkspacePath("/Users/me/Self/vibe_coding/wand"))
-        assertEquals("/tmp/wand", shortenWorkspacePath("/tmp/wand"))
-        assertEquals(null, directoryPathCaption("wand", "wand"))
-        assertEquals("…/vibe_coding/wand", directoryPathCaption("wand", "/Users/me/Self/vibe_coding/wand"))
-    }
-
-    @Test
-    fun fitWorkspacePathExpandsWhenSpaceAllowsAndKeepsLastTwo() {
-        val path = "/Users/me/Self/vibe_coding/wand"
-        val measure = { text: String -> text.length.toFloat() }
-
-        assertEquals(path, fitWorkspacePath(path, 1000f, measure))
-        assertEquals(
-            "…/Self/vibe_coding/wand",
-            fitWorkspacePath(path, "…/Self/vibe_coding/wand".length.toFloat(), measure),
-        )
-        assertEquals(
-            "…/vibe_coding/wand",
-            fitWorkspacePath(path, "…/vibe_coding/wand".length.toFloat(), measure),
-        )
-        assertEquals("…/vibe_coding/wand", fitWorkspacePath(path, 1f, measure))
-        assertEquals("/tmp/wand", fitWorkspacePath("/tmp/wand", 1f, measure))
-
-        assertNull(fitDirectoryPathCaption("wand", "wand", 1000f, measure))
-        assertEquals(path, fitDirectoryPathCaption("wand", path, 1000f, measure))
-        assertEquals(
-            "…/vibe_coding/wand",
-            fitDirectoryPathCaption("wand", path, "…/vibe_coding/wand".length.toFloat(), measure),
-        )
-    }
-
-    @Test
     fun horizontalSwipeSelectsAdjacentTaskSession() {
         val sessions = listOf(
             session("structured", "structured").copy(id = "session-1"),
@@ -290,12 +257,6 @@ class TaskListPresentationTest {
             listOf("done", "newer", "older"),
             orderedTaskSummaries(listOf(older, done, newer)).map { it.id },
         )
-    }
-
-    @Test
-    fun taskIsolationOmitsDefaultSharedLabel() {
-        assertNull(taskIsolationCaption(false))
-        assertEquals("隔离", taskIsolationCaption(true, "wand/ui"))
     }
 
     @Test

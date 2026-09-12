@@ -14,11 +14,6 @@ internal data class BoardTaskStats(
     val high: Int,
 )
 
-internal data class BoardTaskProgress(
-    val completed: Int,
-    val total: Int,
-)
-
 internal fun boardTaskStats(tasks: List<BoardTask>): BoardTaskStats {
     var todo = 0
     var doing = 0
@@ -72,9 +67,6 @@ internal fun groupedBoardTasks(tasks: List<BoardTask>): List<Pair<String, List<B
 
 internal fun boardTaskToggledStatus(status: String): String =
     if (status == "done") "todo" else "done"
-
-internal fun boardTaskDisplayId(task: BoardTask): String =
-    task.identifier.ifBlank { task.id.take(8) }
 
 internal fun boardTaskCardTitle(task: BoardTask): String {
     val title = task.title.trim()
@@ -141,18 +133,5 @@ internal fun boardTaskProcessingLabel(task: BoardTask): String? {
         task.sessions.isNotEmpty() -> "暂停处理"
         else -> "等待派发"
     }
-}
-
-internal fun boardTaskProgress(task: BoardTask): BoardTaskProgress? {
-    if (task.status != "doing") return null
-    val total = maxOf(4, task.sessions.size + 2)
-    val waitingAcceptance = task.sessions.isNotEmpty() &&
-        task.sessions.all { boardSessionFinished(it.status) }
-    val completed = if (waitingAcceptance) {
-        (total - 1).coerceAtLeast(0)
-    } else {
-        task.sessions.count { boardSessionFinished(it.status) }.coerceAtMost(total)
-    }
-    return BoardTaskProgress(completed = completed, total = total)
 }
 

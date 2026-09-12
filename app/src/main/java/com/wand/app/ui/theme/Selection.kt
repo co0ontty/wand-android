@@ -52,16 +52,7 @@ fun Modifier.wandSelectedSurface(
         .then(if (width > 0.dp) Modifier.border(width, stroke, shape) else Modifier)
 }
 
-/**
- * Legacy spacing tokens kept for source compatibility with older callers.
- * Row selection no longer uses a leading accent bar.
- */
-val WandSelectedRowBarStart: Dp = 5.dp
-
-/** @see WandSelectedRowBarStart */
-val WandSelectedRowBarWidth: Dp = 2.dp
-
-/** @see WandSelectedRowBarStart */
+/** 列表行选中态始终给左槽留位，选中/未选不会左右跳动。 */
 val WandSelectedRowLeadingInset: Dp = 14.dp
 
 /**

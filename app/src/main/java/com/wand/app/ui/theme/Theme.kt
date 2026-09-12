@@ -30,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -423,8 +422,6 @@ object WandShapes {
 
     // 自定义每角圆角时用的原始半径（如聊天气泡"尾巴"）。
     val radiusXs: Dp = 6.dp
-    val radiusSm: Dp = 10.dp
-    val radiusMd: Dp = 14.dp
     val radiusLg: Dp = 20.dp
 }
 

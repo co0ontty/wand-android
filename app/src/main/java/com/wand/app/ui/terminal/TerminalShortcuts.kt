@@ -149,12 +149,6 @@ fun buildTerminalShortcut(
     )
 }
 
-fun normalizeTerminalKeyInput(raw: String): String? {
-    val key = raw.firstOrNull { it != '\n' && it != '\r' && it != '\t' } ?: return null
-    if (key.code !in 32..126) return null
-    return key.lowercaseChar().toString()
-}
-
 fun terminalShortcutLabel(binding: TerminalKeyBinding): String {
     val normalized = normalizeTerminalBinding(binding) ?: return ""
     val modifiers = TerminalModifier.entries

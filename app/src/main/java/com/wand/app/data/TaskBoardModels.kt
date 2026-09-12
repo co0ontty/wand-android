@@ -183,15 +183,8 @@ fun boardTaskEffortLabel(effort: String): String = when (effort) {
     else -> "关闭"
 }
 
-fun boardTaskProviderLabel(provider: String): String = when (provider) {
-    "claude" -> "Claude"
-    "codex" -> "Codex"
-    "opencode" -> "OpenCode"
-    "grok" -> "Grok"
-    "qoder" -> "Qoder"
-    "pi" -> "Pi"
-    else -> provider.ifBlank { "Agent" }
-}
+fun boardTaskProviderLabel(provider: String): String =
+    WandProvider.fromId(provider)?.displayName ?: provider.ifBlank { "Agent" }
 
 data class BoardAgentGroup(
     val provider: String,
@@ -287,14 +280,7 @@ fun patchBoardTaskBody(
 val UNSET_WORKSPACE: String? = "__wand_unset_workspace__"
 
 fun boardAgentModelOptions(models: ModelsResponse?, provider: String): List<ModelInfo> {
-    val catalog = when (provider) {
-        "codex" -> models?.codexModels.orEmpty()
-        "opencode" -> models?.opencodeModels.orEmpty()
-        "grok" -> models?.grokModels.orEmpty()
-        "qoder" -> models?.qoderModels.orEmpty()
-        "pi" -> models?.piModels.orEmpty()
-        else -> models?.models.orEmpty()
-    }
+    val catalog = models?.modelsFor(provider).orEmpty()
     val hasDefault = catalog.any { it.id == "default" }
     return if (hasDefault) catalog
     else listOf(

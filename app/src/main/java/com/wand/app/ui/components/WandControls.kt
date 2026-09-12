@@ -299,7 +299,21 @@ private fun WandDialogTextAction(action: WandDialogAction) {
     }
 }
 
-/** 官方文本输入控件的品牌默认值。复杂输入仍可在其上组合 leading/trailing 内容。 */
+/** Wand 官方输入控件：统一的容器色、边框、光标与错误态，String 与 TextFieldValue 两种载体共用同一套外观。 */
+@Composable
+private fun wandFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = WandColors.surface,
+    unfocusedContainerColor = WandColors.surface.copy(alpha = 0.90f),
+    focusedBorderColor = WandColors.focusRing,
+    unfocusedBorderColor = WandColors.borderStrong.copy(alpha = 0.72f),
+    errorBorderColor = WandColors.danger,
+    focusedTextColor = WandColors.textPrimary,
+    unfocusedTextColor = WandColors.textPrimary,
+    cursorColor = WandColors.brand,
+    focusedLabelColor = WandColors.brand,
+    unfocusedLabelColor = WandColors.textMuted,
+)
+
 @Composable
 fun WandTextField(
     value: String,
@@ -339,22 +353,11 @@ fun WandTextField(
         trailingIcon = trailingIcon,
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = WandColors.surface,
-            unfocusedContainerColor = WandColors.surface.copy(alpha = 0.90f),
-            focusedBorderColor = WandColors.focusRing,
-            unfocusedBorderColor = WandColors.borderStrong.copy(alpha = 0.72f),
-            errorBorderColor = WandColors.danger,
-            focusedTextColor = WandColors.textPrimary,
-            unfocusedTextColor = WandColors.textPrimary,
-            cursorColor = WandColors.brand,
-            focusedLabelColor = WandColors.brand,
-            unfocusedLabelColor = WandColors.textMuted,
-        ),
+        colors = wandFieldColors(),
     )
 }
 
-/** 需要精确控制光标/选区的同款输入接口（例如“切换服务器”时全选地址）。 */
+/** 同上，但载体是 [TextFieldValue]：用于需要精确控制光标/选区的场景（例如“切换服务器”时全选地址）。 */
 @Composable
 fun WandTextField(
     value: TextFieldValue,
@@ -390,20 +393,10 @@ fun WandTextField(
         trailingIcon = trailingIcon,
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = WandColors.surface,
-            unfocusedContainerColor = WandColors.surface.copy(alpha = 0.90f),
-            focusedBorderColor = WandColors.focusRing,
-            unfocusedBorderColor = WandColors.borderStrong.copy(alpha = 0.72f),
-            errorBorderColor = WandColors.danger,
-            focusedTextColor = WandColors.textPrimary,
-            unfocusedTextColor = WandColors.textPrimary,
-            cursorColor = WandColors.brand,
-            focusedLabelColor = WandColors.brand,
-            unfocusedLabelColor = WandColors.textMuted,
-        ),
+        colors = wandFieldColors(),
     )
 }
+
 
 enum class WandProviderMarkVariant {
     Plain,

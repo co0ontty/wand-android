@@ -15,14 +15,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -36,7 +34,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -82,7 +79,6 @@ import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBottomSheet
-import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandDialog
@@ -91,7 +87,6 @@ import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
-import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -517,14 +512,7 @@ fun TaskListScreen(
                     singleLine = true,
                 )
             }
-            state.mutationError?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WandColors.danger,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
+            MutationErrorText(state.mutationError, modifier = Modifier.padding(top = 8.dp))
         }
     }
 
@@ -610,9 +598,7 @@ fun TaskListScreen(
                 label = "任务名称",
                 singleLine = true,
             )
-            state.mutationError?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = WandColors.danger)
-            }
+            MutationErrorText(state.mutationError)
         }
     }
 
@@ -641,9 +627,7 @@ fun TaskListScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )
-            state.mutationError?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = WandColors.danger)
-            }
+            MutationErrorText(state.mutationError)
         }
     }
 
@@ -672,9 +656,7 @@ fun TaskListScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )
-            state.mutationError?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = WandColors.danger)
-            }
+            MutationErrorText(state.mutationError)
         }
     }
 
@@ -704,9 +686,7 @@ fun TaskListScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )
-            state.mutationError?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = WandColors.danger)
-            }
+            MutationErrorText(state.mutationError)
         }
     }
 
@@ -744,9 +724,7 @@ fun TaskListScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )
-            state.mutationError?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = WandColors.danger)
-            }
+            MutationErrorText(state.mutationError)
         }
     }
 
@@ -1871,4 +1849,19 @@ private fun DirectoryPickerRow(
         }
         Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
     }
+}
+
+/**
+ * 任务增删改共用的错误提示槽。原来在 5 个对话框里各抄一遍同样的 Text 样式，
+ * 改一次配色就要改五处。
+ */
+@Composable
+private fun MutationErrorText(message: String?, modifier: Modifier = Modifier) {
+    if (message == null) return
+    Text(
+        message,
+        style = MaterialTheme.typography.bodySmall,
+        color = WandColors.danger,
+        modifier = modifier,
+    )
 }
