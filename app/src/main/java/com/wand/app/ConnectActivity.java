@@ -123,7 +123,6 @@ public class ConnectActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (redirectToCreationHostIfBusy()) return;
         managementMode = getIntent().getBooleanExtra(EXTRA_MANAGEMENT_MODE, false);
         returnServerId = getIntent().getStringExtra(EXTRA_RETURN_SERVER_ID);
         profilesChanged = getIntent().getBooleanExtra(EXTRA_PROFILES_CHANGED, false);
@@ -139,20 +138,19 @@ public class ConnectActivity extends AppCompatActivity {
         serverStore = new ServerStore(this);
         connectView.setListener(new ConnectUiListener() {
             @Override public void onConnect() {
-                if (!redirectToCreationHostIfBusy()) attemptConnect();
+                attemptConnect();
             }
             @Override public void onScanQr() {
-                if (!redirectToCreationHostIfBusy()) requestQrScan();
+                requestQrScan();
             }
             @Override public void onCancelAutoConnect() {
-                if (!redirectToCreationHostIfBusy()) abortAutoConnect(false);
+                abortAutoConnect(false);
             }
             @Override public void onSwitchServer() {
-                if (!redirectToCreationHostIfBusy()) abortAutoConnect(true);
+                abortAutoConnect(true);
             }
             @Override public void onPickServer(String serverId) {
-                if (redirectToCreationHostIfBusy()) return;
-                ServerProfile profile = serverStore.getServerProfile(serverId);
+                        ServerProfile profile = serverStore.getServerProfile(serverId);
                 if (profile == null) {
                     refreshServerList();
                     return;
@@ -161,8 +159,7 @@ public class ConnectActivity extends AppCompatActivity {
                 attemptConnect(profile);
             }
             @Override public void onRemoveServer(String serverId) {
-                if (redirectToCreationHostIfBusy()) return;
-                cancelPendingConnectionForProfileMutation();
+                        cancelPendingConnectionForProfileMutation();
                 ServerProfile profile = serverStore.getServerProfile(serverId);
                 ServerProfile active = serverStore.getActiveServerProfile();
                 if (profile != null) WandHttp.resetClient(profile.getBaseUrl());
@@ -182,8 +179,7 @@ public class ConnectActivity extends AppCompatActivity {
                 refreshServerList();
             }
             @Override public void onClearServers() {
-                if (redirectToCreationHostIfBusy()) return;
-                cancelPendingConnectionForProfileMutation();
+                        cancelPendingConnectionForProfileMutation();
                 for (ServerProfile profile : serverStore.getServerProfiles()) {
                     WandHttp.resetClient(profile.getBaseUrl());
                 }
@@ -304,7 +300,6 @@ public class ConnectActivity extends AppCompatActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (redirectToCreationHostIfBusy()) return;
         IntentResult result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
         if (result != null) {
             String contents = result.getContents();
@@ -342,7 +337,6 @@ public class ConnectActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (redirectToCreationHostIfBusy()) return;
         handleDeepLink(intent);
     }
 
@@ -546,7 +540,6 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private void saveActivateAndLaunch(ConnectionResult result) {
-        if (redirectToCreationHostIfBusy()) return;
         ServerProfile profile = serverStore.saveServerProfile(result.serverUrl, result.appToken);
         serverStore.setActiveServerId(profile.getId());
         WandHttp.resetClient(profile.getBaseUrl());
@@ -710,7 +703,6 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private void handleManagementBack() {
-        if (redirectToCreationHostIfBusy()) return;
         if (returnServerId != null && serverStore.getServerProfile(returnServerId) != null) {
             if (profilesChanged) {
                 launchStoredHome(returnServerId);
@@ -785,26 +777,9 @@ public class ConnectActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (redirectToCreationHostIfBusy()) return;
         if (!autoConnecting) {
             refreshServerList();
         }
-    }
-
-    /** Existing management/multi-window instances must honor the same process-wide create gate. */
-    private boolean redirectToCreationHostIfBusy() {
-        if (!SessionCreationCoordinator.isBusy()) return false;
-        autoConnecting = false;
-        if (networkExecutor != null) cancelCurrentTask();
-        Intent homeIntent = new Intent(this, HomeActivity.class);
-        homeIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        String hostServerId = SessionCreationCoordinator.busyHostServerId();
-        if (hostServerId != null) {
-            homeIntent.putExtra(WandShortcuts.EXTRA_SERVER_ID, hostServerId);
-        }
-        startActivity(homeIntent);
-        finish();
-        return true;
     }
 
     private void refreshServerList() {

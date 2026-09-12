@@ -171,13 +171,6 @@ fun boardTaskPriorityLabel(priority: String): String = when (priority) {
     else -> "无优先级"
 }
 
-fun boardTaskStatusEmpty(status: String): String = when (status) {
-    "todo" -> "还没有待办任务"
-    "doing" -> "暂无进行中的任务"
-    "done" -> "还没有完成的任务"
-    else -> "暂无任务"
-}
-
 val BOARD_TASK_STATUSES = listOf("todo", "doing", "done")
 val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
 val BOARD_TASK_PROVIDERS = listOf("claude", "codex", "opencode", "grok", "qoder", "pi")
@@ -332,7 +325,12 @@ interface TaskBoardPort {
     ): BoardTask
     suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask
     suspend fun deleteBoardTask(id: String)
-    suspend fun dispatchBoardTask(id: String, agent: BoardTaskAgent): BoardDispatchResult
+    suspend fun dispatchBoardTask(
+        id: String,
+        agent: BoardTaskAgent,
+        prompt: String? = null,
+        workspaceId: String? = UNSET_WORKSPACE,
+    ): BoardDispatchResult
     suspend fun listBoardWorkspaces(): List<Workspace>
     suspend fun boardModels(): ModelsResponse
     suspend fun boardTaskAgentDefaults(): BoardTaskAgent

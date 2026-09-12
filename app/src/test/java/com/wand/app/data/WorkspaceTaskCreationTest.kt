@@ -72,10 +72,10 @@ class WorkspaceTaskCreationTest {
 
     @Test
     fun shellTargetUsesBoundShellBodyWithoutProviderCommand() {
-        val body = createWorkspaceTaskWindowRequestBody(
+        val body = createWorkspaceTaskWindowRequest(
             WorkspaceSessionTarget.Shell,
             WorkspaceBinding("ws-1", "task-1", "/worktree/path"),
-        )
+        ).body
 
         assertTrue(body.getBoolean("shell"))
         assertTrue(!body.has("command"))

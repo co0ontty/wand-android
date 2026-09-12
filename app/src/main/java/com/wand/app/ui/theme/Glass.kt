@@ -97,23 +97,6 @@ fun cardShadowColors(): Pair<Color, Color> =
     }
 
 /**
- * 表面微光：竖向渐变叠在底色之上 —— 顶端一抹高光、底端一抹阴影，
- * 让平涂的卡面读出"受光的微曲面"。叠在 background(底色) 之后、border 之前。
- */
-@Composable
-@ReadOnlyComposable
-fun surfaceSheenBrush(highlightScale: Float = 1f): Brush {
-    val dark = isWandDarkTheme()
-    // 高光只保留上沿的一点受光感；半透明着色卡按实心度衰减，避免白印。
-    val topWhite = (if (dark) 0.020f else 0.030f) * highlightScale.coerceIn(0f, 1f)
-    return Brush.verticalGradient(
-        0f to Color.White.copy(alpha = topWhite),
-        0.24f to Color.Transparent,
-        1f to (if (dark) Color.Black.copy(alpha = 0.035f) else Color.Black.copy(alpha = 0.006f)),
-    )
-}
-
-/**
  * 倒角描边：竖向渐变（顶高光 → 底背光），比四向均匀描边更有斜面立体感。
  * rimLight/rimShade 取自 GlassStyle。
  */

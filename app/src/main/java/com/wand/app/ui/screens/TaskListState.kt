@@ -63,9 +63,6 @@ class TaskListState(
     private val standaloneExpansion = mutableStateMapOf<String, Boolean>().apply {
         expansionStore.collapsedIds(TASK_LIST_EXPANSION_LOOSE).forEach { put(it, false) }
     }
-    var historyExpanded by mutableStateOf(expansionStore.historyExpanded)
-        private set
-
     private val loadMutex = Mutex()
     private val mutationMutex = Mutex()
     private val creationDefaultsMutex = Mutex()
@@ -114,11 +111,6 @@ class TaskListState(
     fun toggleStandalone(groupId: String) {
         standaloneExpansion[groupId] = isStandaloneCollapsed(groupId)
         persistStandaloneExpansion()
-    }
-
-    fun toggleHistory() {
-        historyExpanded = !historyExpanded
-        expansionStore.historyExpanded = historyExpanded
     }
 
     /** Keep the selected branch visible after returning from a task or session detail. */
@@ -420,10 +412,6 @@ class TaskListState(
         }
     }
 
-    fun clearLoadError(message: String) {
-        if (loadError == message) loadError = null
-    }
-
     fun clearMutationError() {
         mutationError = null
     }
@@ -436,9 +424,6 @@ class TaskListState(
             if (trimmed == "/") return trimmed
             return trimmed.trimEnd('/').ifEmpty { "/" }
         }
-
-        internal fun directoryName(path: String): String =
-            normalizeWorkspacePath(path).substringAfterLast('/').ifEmpty { "任务目录" }
 
         internal fun isValidTaskName(name: String): Boolean {
             val count = name.codePointCount(0, name.length)

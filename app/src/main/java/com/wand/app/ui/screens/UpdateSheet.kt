@@ -5,6 +5,7 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,22 +19,26 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -337,25 +342,41 @@ private fun UpdateDownloadingContent(
     } else {
         0f
     }
+    val animatedRatio by animateFloatAsState(
+        targetValue = ratio,
+        animationSpec = WandMotion.tweenFast(),
+        label = "updateDownloadRatio",
+    )
     val progressLabel = if (hasTotal) "${(ratio * 100).roundToInt()}%" else "…"
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-            UpdateOrb(icon = WandIcons.update, tint = WandColors.brand, active = true)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            UpdateOrb(
+                icon = WandIcons.update,
+                tint = WandColors.brand,
+                active = true,
+                progress = if (hasTotal) animatedRatio else null,
+                indeterminate = !hasTotal,
+            )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("正在下载 v${state.update.latestVersion}", style = MaterialTheme.typography.titleMedium, color = WandColors.textPrimary)
                 Text(
-                    if (hasTotal) "下载完成后会提示你安装。" else "正在确定更新包大小。",
-                    style = MaterialTheme.typography.bodySmall,
+                    "正在下载",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "v${state.update.latestVersion}",
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
                     color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                progressLabel,
-                fontSize = 28.sp,
-                lineHeight = 30.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.brand,
-            )
         }
         Column(
             modifier = Modifier
@@ -364,32 +385,52 @@ private fun UpdateDownloadingContent(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (hasTotal) {
-                LinearProgressIndicator(
-                    progress = { ratio },
-                    modifier = Modifier.fillMaxWidth().height(7.dp).clip(CircleShape),
-                    color = WandColors.brand,
-                    trackColor = WandColors.brandSoft,
-                )
-            } else {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().height(7.dp).clip(CircleShape),
-                    color = WandColors.brand,
-                    trackColor = WandColors.brandSoft,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (hasTotal) {
+                    LinearProgressIndicator(
+                        progress = { ratio },
+                        modifier = Modifier.weight(1f).height(8.dp).clip(CircleShape),
+                        color = WandColors.brand,
+                        trackColor = WandColors.brandSoft,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.weight(1f).height(8.dp).clip(CircleShape),
+                        color = WandColors.brand,
+                        trackColor = WandColors.brandSoft,
+                    )
+                }
+                UpdateDownloadPercent(progressLabel)
             }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    if (hasTotal) "${formatByteSize(state.downloadedBytes)} / ${formatByteSize(state.totalBytes)}" else formatByteSize(state.downloadedBytes),
+                    if (hasTotal) {
+                        "${formatByteSize(state.downloadedBytes)} / ${formatByteSize(state.totalBytes)}"
+                    } else {
+                        formatByteSize(state.downloadedBytes)
+                    },
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
                     color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
+                Spacer(Modifier.width(12.dp))
                 Text(
                     if (state.bytesPerSecond > 0) "${formatByteSize(state.bytesPerSecond)}/s" else "连接中",
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
                     color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
                 )
             }
         }
@@ -570,21 +611,89 @@ private fun UpdateNotes(notes: String, size: Long, source: String) {
 }
 
 @Composable
+private fun UpdateDownloadPercent(label: String) {
+    val percentStyle = TextStyle(
+        fontSize = 13.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+        fontFeatureSettings = "tnum",
+        fontFamily = FontFamily.Monospace,
+    )
+    // 紧凑数字放在进度条右侧，按「100%」预留宽度，不再和标题抢宽。
+    Box(contentAlignment = Alignment.CenterEnd) {
+        Text(
+            text = "100%",
+            style = percentStyle,
+            color = Color.Transparent,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.clearAndSetSemantics {},
+        )
+        Text(
+            text = label,
+            style = percentStyle,
+            color = WandColors.brand,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+@Composable
 private fun UpdateOrb(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     tint: Color,
     active: Boolean = false,
+    progress: Float? = null,
+    indeterminate: Boolean = false,
 ) {
+    val showRing = progress != null || indeterminate
     val shape = CircleShape
     Box(
-        modifier = Modifier
-            .size(52.dp)
-            .clip(shape)
-            .background(tint.copy(alpha = if (active) 0.16f else 0.12f))
-            .border(0.8.dp, tint.copy(alpha = 0.28f), shape),
+        modifier = Modifier.size(52.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(25.dp))
+        Box(
+            modifier = Modifier
+                .size(if (showRing) 40.dp else 52.dp)
+                .clip(shape)
+                .background(tint.copy(alpha = if (active) 0.16f else 0.12f))
+                .then(
+                    if (showRing) {
+                        Modifier
+                    } else {
+                        Modifier.border(0.8.dp, tint.copy(alpha = 0.28f), shape)
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(if (showRing) 20.dp else 25.dp),
+            )
+        }
+        if (progress != null) {
+            CircularProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.size(52.dp),
+                color = tint,
+                trackColor = tint.copy(alpha = 0.18f),
+                strokeWidth = 2.5.dp,
+                strokeCap = StrokeCap.Round,
+                gapSize = 0.dp,
+            )
+        } else if (indeterminate) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(52.dp),
+                color = tint,
+                trackColor = tint.copy(alpha = 0.18f),
+                strokeWidth = 2.5.dp,
+                strokeCap = StrokeCap.Round,
+            )
+        }
     }
 }
 

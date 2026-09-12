@@ -55,9 +55,3 @@ internal fun createWorkspaceTaskWindowRequest(
     body.put("command", if (provider == "qoder") "qodercli" else provider)
     return WorkspaceTaskWindowRequest("/api/commands", body)
 }
-
-internal fun createWorkspaceTaskWindowRequestBody(
-    target: WorkspaceSessionTarget,
-    binding: WorkspaceBinding,
-    kind: WorkspaceSessionKind = WorkspaceSessionKind.Pty,
-): JSONObject = createWorkspaceTaskWindowRequest(target, binding, kind).body

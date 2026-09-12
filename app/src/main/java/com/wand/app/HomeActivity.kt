@@ -4,7 +4,6 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -17,10 +16,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.ServerProfile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandHttp
@@ -40,8 +35,6 @@ import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.WandTheme
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.launch
 
 /**
  * 原生主界面（Compose）：任务列表 / 聊天或终端 / 任务创建 / 设置。
@@ -66,22 +59,9 @@ class HomeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val serverStore = ServerStore(this)
-        // 创建任务不依赖 Activity 生命周期。重建或从外部入口返回时，始终重新挂到发起
-        // 创建的 Home；忽略这期间到达的通知/快捷操作，避免把目标 session 路由到另一台服务器。
-        val busyHostServerId = SessionCreationCoordinator.busyHostServerId()
-        val busyHostProfile = busyHostServerId?.let(serverStore::getServerProfile)
-        val requestedServerId = if (busyHostServerId == null) {
-            intent.getStringExtra(WandShortcuts.EXTRA_SERVER_ID)
-        } else {
-            busyHostProfile?.id
-        }
-        val legacyServerUrl = if (busyHostServerId == null) {
-            intent.getStringExtra("server_url")
-        } else {
-            null
-        }
-        val requestedProfile = busyHostProfile
-            ?: requestedServerId?.let(serverStore::getServerProfile)
+        val requestedServerId = intent.getStringExtra(WandShortcuts.EXTRA_SERVER_ID)
+        val legacyServerUrl = intent.getStringExtra("server_url")
+        val requestedProfile = requestedServerId?.let(serverStore::getServerProfile)
         if (requestedServerId != null && requestedProfile == null) {
             // server_id 是稳定路由键。绝不能在目标已移除时回退到另一个 active profile，
             // 否则旧通知或快捷入口中的 session id 可能被错误地发往另一台服务器。
@@ -112,22 +92,18 @@ class HomeActivity : AppCompatActivity() {
         val appToken = serverProfile.token
 
         // 长按图标快捷操作（WandShortcuts → ConnectActivity 透传）：认证就绪后消费一次。
-        val initialQuickAction = if (busyHostServerId != null) {
-            null
-        } else {
-            when (intent.getStringExtra(WandShortcuts.EXTRA_QUICK_ACTION)) {
-                WandShortcuts.ACTION_NEW_SESSION -> QuickAction.NewSession
-                else -> intent.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID)
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.let { sessionId ->
-                        val isStructured = when (intent.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_KIND)) {
-                            "structured" -> true
-                            "pty" -> false
-                            else -> null
-                        }
-                        QuickAction.OpenSession(sessionId, isStructured)
+        val initialQuickAction = when (intent.getStringExtra(WandShortcuts.EXTRA_QUICK_ACTION)) {
+            WandShortcuts.ACTION_NEW_SESSION -> QuickAction.NewSession
+            else -> intent.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID)
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { sessionId ->
+                    val isStructured = when (intent.getStringExtra(WandShortcuts.EXTRA_OPEN_SESSION_KIND)) {
+                        "structured" -> true
+                        "pty" -> false
+                        else -> null
                     }
-            }
+                    QuickAction.OpenSession(sessionId, isStructured)
+                }
         }
 
         var appearanceMode by mutableStateOf(
@@ -234,14 +210,6 @@ class HomeActivity : AppCompatActivity() {
             ""
         }
 
-        fun runWhenCreationIdle(action: () -> Unit) {
-            if (SessionCreationCoordinator.isBusy()) {
-                Toast.makeText(this, "会话正在创建，请稍候", Toast.LENGTH_SHORT).show()
-            } else {
-                action()
-            }
-        }
-
         val actions = HomeActions(
             connection = HomeConnectionInfo(
                 serverId = serverProfile.id,
@@ -252,21 +220,13 @@ class HomeActivity : AppCompatActivity() {
             ),
             servers = serverConnections,
             navigation = HomeNavigationActions(
-                openWeb = {
-                    runWhenCreationIdle { openWebFallback(serverProfile.id) }
-                },
-                switchServer = {
-                    runWhenCreationIdle { switchServer() }
-                },
-                manageServers = {
-                    runWhenCreationIdle { manageServers(serverProfile.id) }
-                },
+                openWeb = { openWebFallback(serverProfile.id) },
+                switchServer = { switchServer() },
+                manageServers = { manageServers(serverProfile.id) },
                 reconnectServer = { targetServerId ->
-                    runWhenCreationIdle { manageServers(serverProfile.id, targetServerId) }
+                    manageServers(serverProfile.id, targetServerId)
                 },
-                disconnect = {
-                    runWhenCreationIdle { disconnect(serverStore, serverProfile.id) }
-                },
+                disconnect = { disconnect(serverStore, serverProfile.id) },
             ),
             settings = HomeSettingsActions(
                 appVersion = appVersion,
@@ -290,38 +250,6 @@ class HomeActivity : AppCompatActivity() {
                 setHomeListMode = { mode -> serverStore.homeListMode = mode },
             ),
         )
-
-        // Completion delivery must not depend on WandApp reaching its authenticated Ready phase.
-        // A failed host login can still consume a failed/successful create and release the global
-        // gate, preventing a Home ↔ Connect redirect loop after Activity recreation.
-        val creationOwnerServerId = busyHostServerId ?: serverProfile.id
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                SessionCreationCoordinator.state.collect { state ->
-                    val completed = state as? SessionCreationCoordinator.State.Completed
-                        ?: return@collect
-                    if (completed.hostServerId != creationOwnerServerId) return@collect
-                    val claimed = SessionCreationCoordinator.takeCompleted(completed.requestId)
-                        ?: return@collect
-                    when (val outcome = claimed.outcome) {
-                        is SessionCreationCoordinator.Outcome.Success -> {
-                            openCreatedSession(
-                                serverStore = serverStore,
-                                serverId = claimed.targetServerId,
-                                snapshot = outcome.snapshot,
-                            )
-                        }
-                        is SessionCreationCoordinator.Outcome.Failure -> {
-                            Toast.makeText(
-                                this@HomeActivity,
-                                "创建失败：${outcome.message}",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    }
-                }
-            }
-        }
 
         if (serverStore.isKeepAliveEnabled) {
             setKeepAlive(true, serverProfile.id)
@@ -447,10 +375,6 @@ class HomeActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (SessionCreationCoordinator.isBusy()) {
-            Toast.makeText(this, "会话正在创建，请稍候", Toast.LENGTH_SHORT).show()
-            return
-        }
         val targetServerId = intent.getStringExtra(WandShortcuts.EXTRA_SERVER_ID)
         val hasNavigationTarget =
             intent.hasExtra(WandShortcuts.EXTRA_QUICK_ACTION) ||
@@ -515,30 +439,6 @@ class HomeActivity : AppCompatActivity() {
         // 移除当前服务器后清掉会话快捷项，避免长按图标还能直达已移除的连接。
         WandShortcuts.clear(this)
         switchServer()
-    }
-
-    private fun openCreatedSession(
-        serverStore: ServerStore,
-        serverId: String,
-        snapshot: SessionSnapshot,
-    ) {
-        val profile = serverStore.getServerProfile(serverId) ?: run {
-            Toast.makeText(this, "找不到所选服务器，请重新连接", Toast.LENGTH_LONG).show()
-            return
-        }
-        serverStore.setActiveServerId(profile.id)
-        SessionWatcher.stop()
-        runCatching { stopService(Intent(this, WandForegroundService::class.java)) }
-        val target = Intent(this, HomeActivity::class.java).apply {
-            putExtra(WandShortcuts.EXTRA_SERVER_ID, profile.id)
-            putExtra(WandShortcuts.EXTRA_OPEN_SESSION_ID, snapshot.id)
-            putExtra(
-                WandShortcuts.EXTRA_OPEN_SESSION_KIND,
-                if (snapshot.isStructured) "structured" else "pty",
-            )
-        }
-        startActivity(target)
-        finish()
     }
 
     private fun setKeepAlive(enabled: Boolean, serverId: String) {

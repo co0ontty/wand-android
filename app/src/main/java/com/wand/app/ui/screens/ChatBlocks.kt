@@ -2029,11 +2029,6 @@ internal fun tailInline(value: String, max: Int): String {
     return if (text.length > max) "…" + text.takeLast(max - 1) else text
 }
 
-internal fun fileNameOf(path: String): String {
-    val idx = path.lastIndexOf('/')
-    return if (idx >= 0) path.substring(idx + 1) else path
-}
-
 internal fun activityThinkingLabel(thinking: String): String =
     tailInline(thinking, 240).ifBlank { "深度思考" }
 

@@ -10,9 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
-import com.wand.app.ui.parseIsoMillis
 
 /** REST 错误：status 为 null 表示网络层失败。message 面向用户（中文）。 */
 class WandApiException(val status: Int?, message: String) : Exception(message)
@@ -23,7 +21,7 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
  * 登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
-class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPort, WorkspacePort, TaskBoardPort {
+class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort, TaskBoardPort {
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
@@ -138,102 +136,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
 
     // MARK: - 会话
 
-    override suspend fun fetchSessionList(
-        offset: Int,
-        limit: Int,
-        revision: String?,
-    ): SessionListPage = try {
-        val revisionQuery = revision?.let { "&revision=${encode(it)}" }.orEmpty()
-        SessionListPage.parse(
-            requestObject("GET", "/api/session-list?offset=$offset&limit=$limit$revisionQuery"),
-        )
-    } catch (e: WandApiException) {
-        if (e.status != 404) throw e
-        fetchLegacySessionList(offset, limit, revision)
-    }
-
-    override suspend fun fetchSessionDirectories(): SessionDirectoryTreeResponse =
-        SessionDirectoryTreeResponse.parse(requestObject("GET", "/api/session-directories"))
-
-    override suspend fun renameSessionDirectory(path: String, name: String) {
-        requestObject(
-            "PUT",
-            "/api/session-directories/name",
-            JSONObject().put("path", path).put("name", name),
-        )
-    }
-
-    private suspend fun fetchLegacySessionList(
-        offset: Int,
-        limit: Int,
-        requestedRevision: String?,
-    ): SessionListPage {
-        val sessions = SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
-        val claudeHistory = HistorySession.parseList(
-            requestArray("GET", "/api/claude-history"),
-            provider = "claude",
-        )
-        val codexHistory = HistorySession.parseList(
-            requestArray("GET", "/api/codex-history"),
-            provider = "codex",
-        )
-        val openCodeHistory = HistorySession.parseList(
-            requestArray("GET", "/api/opencode-history"),
-            provider = "opencode",
-        )
-        val qoderHistory = HistorySession.parseList(
-            requestArray("GET", "/api/qoder-history"),
-            provider = "qoder",
-        )
-        val managedHistory = sessions.mapNotNull { session ->
-            session.claudeSessionId?.let { id -> historyProvider(session.provider) to id }
-        }.toSet()
-        val entries = buildList {
-            sessions.forEach { session ->
-                add(SessionListEntry.Managed(
-                    key = "session-${session.id}",
-                    sortTimestamp = parseIsoMillis(session.startedAt) ?: 0L,
-                    session = session,
-                ))
-            }
-            (claudeHistory + codexHistory + openCodeHistory + qoderHistory)
-                .filter { history ->
-                    (history.hasConversation ?: true) &&
-                        !(history.managedByWand ?: false) &&
-                        (history.apiProvider to history.claudeSessionId) !in managedHistory
-                }
-                .forEach { history ->
-                    add(SessionListEntry.Recoverable(
-                        key = "recoverable-${history.apiProvider}-${history.id}",
-                        sortTimestamp = history.mtimeMs?.toLong() ?: parseIsoMillis(history.timestamp) ?: 0L,
-                        history = history,
-                    ))
-                }
-        }.sortedWith(compareByDescending<SessionListEntry> { it.sortTimestamp }.thenBy { it.key })
-        val revision = legacySessionListRevision(entries)
-        if (offset > 0 && requestedRevision != revision) {
-            throw WandApiException(409, "会话列表已更新，请重新加载")
-        }
-        val boundedOffset = offset.coerceIn(0, entries.size)
-        return SessionListPage(
-            entries = entries.drop(boundedOffset).take(limit),
-            offset = boundedOffset,
-            total = entries.size,
-            revision = revision,
-        )
-    }
-
-    private fun legacySessionListRevision(entries: List<SessionListEntry>): String {
-        val content = entries.joinToString("\\n") { it.toString() }
-        val digest = MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-    }
-
-    private fun historyProvider(provider: String?): String = when (provider) {
-        "codex", "opencode", "qoder", "pi" -> provider
-        else -> "claude"
-    }
-
     /** Returns all managed sessions for notification state, without session-list pagination. */
     suspend fun listSessions(): List<SessionSnapshot> =
         SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
@@ -318,10 +220,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         requestData("DELETE", "/api/structured-sessions/$id/queued")
     }
 
-    override suspend fun deleteSession(id: String) {
-        requestData("DELETE", "/api/sessions/$id")
-    }
-
     suspend fun resumeSession(id: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/resume"))
 
@@ -388,25 +286,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         }
     }
 
-    // MARK: - 历史会话
-
-    override suspend fun resumeHistory(history: HistorySession): SessionSnapshot {
-        val provider = history.apiProvider
-        return SessionSnapshot.parse(
-            requestObject(
-                "POST",
-                "/api/$provider-sessions/${encode(history.claudeSessionId)}/resume",
-                JSONObject().put("cwd", history.cwd),
-            )
-        )
-    }
-
-    override suspend fun deleteHistoryBatch(provider: String, ids: List<String>) {
-        if (ids.isEmpty()) return
-        val body = JSONObject().put("claudeSessionIds", JSONArray(ids))
-        requestData("POST", "/api/$provider-history/batch-delete", body)
-    }
-
     // MARK: - 权限
 
     suspend fun resolveEscalation(
@@ -428,58 +307,6 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/$sessionId/deny-permission"))
 
     // MARK: - 新建会话
-
-    /**
-     * 结构化会话（非 PTY）：POST /api/structured-sessions。
-     * 对齐 Web createStructuredSession：Codex / OpenCode 显式指定各自 runner，
-     * Claude 不传 runner、由服务端按默认（claude-cli-print）解析。
-     */
-    suspend fun createStructuredSession(
-        cwd: String,
-        mode: String?,
-        prompt: String?,
-        provider: String,
-        model: String?,
-        thinkingEffort: String?,
-    ): SessionSnapshot {
-        val body = JSONObject().put("cwd", cwd).put("provider", provider)
-        when (provider) {
-            "codex" -> body.put("runner", "codex-cli-exec")
-            "opencode" -> body.put("runner", "opencode-cli-run")
-            "grok" -> body.put("runner", "grok-cli-headless")
-            "qoder" -> body.put("runner", "qoder-cli-print")
-            "pi" -> body.put("runner", "pi-cli-json")
-        }
-        if (!mode.isNullOrEmpty()) body.put("mode", mode)
-        if (!model.isNullOrEmpty()) body.put("model", model)
-        if (!thinkingEffort.isNullOrEmpty()) body.put("thinkingEffort", thinkingEffort)
-        if (!prompt.isNullOrEmpty()) body.put("prompt", prompt)
-        return SessionSnapshot.parse(requestObject("POST", "/api/structured-sessions", body, timeoutSec = 180))
-    }
-
-    /** PTY 会话：POST /api/commands。Qoder 的 provider ID 与可执行命令名称不同。 */
-    suspend fun createPtySession(
-        cwd: String,
-        mode: String?,
-        initialInput: String?,
-        provider: String,
-        model: String?,
-        thinkingEffort: String?,
-    ): SessionSnapshot {
-        val command = if (provider == "qoder") "qodercli" else provider
-        val body = JSONObject().put("command", command).put("provider", provider).put("cwd", cwd)
-        if (!mode.isNullOrEmpty()) body.put("mode", mode)
-        if (!model.isNullOrEmpty()) body.put("model", model)
-        if (!thinkingEffort.isNullOrEmpty()) body.put("thinkingEffort", thinkingEffort)
-        if (!initialInput.isNullOrEmpty()) body.put("initialInput", initialInput)
-        return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
-    }
-
-    /** 空白终端：仅启动服务端配置的登录 Shell，不运行任何 Provider CLI。 */
-    suspend fun createShellSession(cwd: String): SessionSnapshot {
-        val body = JSONObject().put("shell", true).put("cwd", cwd)
-        return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
-    }
 
     /** 将「新建会话」默认项持久化到服务端配置。 */
     suspend fun updateNewSessionDefaults(
@@ -681,12 +508,23 @@ class WandApi(baseUrl: String, val token: String?) : SessionListPort, MissionsPo
         requestData("DELETE", "/api/wand-tasks/${encode(id)}")
     }
 
-    override suspend fun dispatchBoardTask(id: String, agent: BoardTaskAgent): BoardDispatchResult =
+    override suspend fun dispatchBoardTask(
+        id: String,
+        agent: BoardTaskAgent,
+        prompt: String?,
+        workspaceId: String?,
+    ): BoardDispatchResult =
         BoardDispatchResult.parse(
             requestObject(
                 "POST",
                 "/api/wand-tasks/${encode(id)}/dispatch",
-                JSONObject().put("agent", agent.toJson()),
+                JSONObject().put("agent", agent.toJson()).also { body ->
+                    if (!prompt.isNullOrBlank()) body.put("prompt", prompt)
+                    if (workspaceId !== UNSET_WORKSPACE) {
+                        if (workspaceId.isNullOrBlank()) body.put("workspaceId", JSONObject.NULL)
+                        else body.put("workspaceId", workspaceId)
+                    }
+                },
             ),
         )
 

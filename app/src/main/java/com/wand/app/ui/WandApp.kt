@@ -78,9 +78,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.wand.app.SessionCreationCoordinator
 import com.wand.app.data.WandApi
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
@@ -102,7 +99,6 @@ import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.TaskBoardScreen
 import com.wand.app.ui.screens.PtyTerminalScreen
-import com.wand.app.ui.screens.SessionListState
 import com.wand.app.ui.screens.SettingsScreen
 import com.wand.app.ui.screens.SharedTaskListExpansionStore
 import com.wand.app.ui.screens.TaskListScreen
@@ -140,7 +136,7 @@ fun WandApp(
                     WandAuth.loginWithToken(api.baseUrl, api.token)
                 } else {
                     // 裸地址连接（无 token）：直接试列表，401 时引导重新连接。
-                    api.fetchSessionList(offset = 0, limit = 1, revision = null)
+                    api.listSessions()
                 }
                 onAuthenticated()
                 AuthPhase.Ready
@@ -316,15 +312,10 @@ private fun ReadyContent(
     }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
-    // 任务聚合是根导航的数据真源；会话列表仅保留历史恢复、通知和 launcher 快捷方式。
+    // 任务聚合是根导航的数据真源。通知走 SessionWatcher，快捷方式用当前任务树。
     val taskState = remember(api, context) {
         TaskListState(api, SharedTaskListExpansionStore(context, api.baseUrl))
     }
-    val listState = remember(api) { SessionListState(api) }
-    val creationState by SessionCreationCoordinator.state.collectAsStateWithLifecycle(
-        minActiveState = Lifecycle.State.RESUMED,
-    )
-    val sessionCreationInFlight = creationState !is SessionCreationCoordinator.State.Idle
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
     var homeListMode by remember {
         mutableStateOf(HomeListMode.fromStorage(actions.settings.getHomeListMode()))
@@ -334,12 +325,10 @@ private fun ReadyContent(
         actions.settings.setHomeListMode(mode.storageValue)
     }
 
-    DisposableEffect(taskState, listState) {
+    DisposableEffect(taskState) {
         taskState.startSync()
-        listState.startSync()
         onDispose {
             taskState.shutdown()
-            listState.shutdown()
         }
     }
     LaunchedEffect(taskState.groups, actions.connection.serverId) {
@@ -373,19 +362,14 @@ private fun ReadyContent(
         }
     }
 
-    BackHandler(
-        enabled = nav.stack.size > 1 && !sessionCreationInFlight,
-    ) { nav.pop() }
-    BackHandler(enabled = sessionCreationInFlight) {}
+    BackHandler(enabled = nav.stack.size > 1) { nav.pop() }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wideLayout = usesWideListDetail(maxWidth, maxHeight)
         val listPaneWidth = wideListPaneWidth(maxWidth)
         val showDetailBack = !wideLayout || nav.stack.size > 2
         val openDetail: (Screen) -> Unit = { screen ->
-            if (!sessionCreationInFlight) {
-                if (wideLayout) nav.setDetail(screen) else nav.push(screen)
-            }
+            if (wideLayout) nav.setDetail(screen) else nav.push(screen)
         }
         val openSnapshot: (SessionSnapshot) -> Unit = { session ->
             openDetail(session.detailScreen())
@@ -412,7 +396,7 @@ private fun ReadyContent(
             )
         }
         val openSettings: () -> Unit = {
-            if (!sessionCreationInFlight && nav.current !is Screen.Settings) {
+            if (nav.current !is Screen.Settings) {
                 nav.push(Screen.Settings)
             }
         }
@@ -431,7 +415,6 @@ private fun ReadyContent(
                 actions = actions,
                 sessionDrafts = sessionDrafts,
                 taskState = taskState,
-                listState = listState,
                 listPaneWidth = listPaneWidth,
                 windowWidth = maxWidth,
                 sidebarCollapsed = sidebarCollapsed,
@@ -444,7 +427,6 @@ private fun ReadyContent(
                 onOpenSettings = openSettings,
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                 onOpenWorkspaceTask = openWorkspaceTask,
-                sessionCreationInFlight = sessionCreationInFlight,
                 showDetailBack = showDetailBack,
             )
         } else {
@@ -454,7 +436,6 @@ private fun ReadyContent(
                 actions = actions,
                 sessionDrafts = sessionDrafts,
                 taskState = taskState,
-                listState = listState,
                 homeListMode = homeListMode,
                 onHomeListModeChange = changeHomeListMode,
                 onOpenSession = openTaskSession,
@@ -462,11 +443,7 @@ private fun ReadyContent(
                 onOpenRestoredSession = openSnapshot,
                 onOpenSettings = openSettings,
                 onOpenWorkspaceTask = openWorkspaceTask,
-                sessionCreationInFlight = sessionCreationInFlight,
             )
-        }
-        if (sessionCreationInFlight) {
-            SessionCreationRecoveryOverlay()
         }
     }
 }
@@ -603,7 +580,6 @@ private fun SinglePaneContent(
     actions: HomeActions,
     sessionDrafts: SessionDraftStore,
     taskState: TaskListState,
-    listState: SessionListState,
     homeListMode: HomeListMode,
     onHomeListModeChange: (HomeListMode) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit,
@@ -611,7 +587,6 @@ private fun SinglePaneContent(
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
-    sessionCreationInFlight: Boolean,
 ) {
     val reduceMotion = reduceMotionEnabled()
     val frame = SinglePaneFrame(nav.current, nav.stack.size)
@@ -671,13 +646,11 @@ private fun SinglePaneContent(
         if (screen is Screen.SessionList) {
             TaskListScreen(
                 state = taskState,
-                historyState = listState,
                 api = api,
                 boardApi = api,
                 serverDisplayName = actions.connection.serverDisplayName,
                 homeListMode = homeListMode,
                 onHomeListModeChange = onHomeListModeChange,
-                interactionEnabled = !sessionCreationInFlight,
                 onOpenTask = onOpenWorkspaceTask,
                 onOpenSession = onOpenSession,
                 onOpenBoardSession = onOpenBoardSession,
@@ -686,12 +659,8 @@ private fun SinglePaneContent(
                 onTaskClosed = nav::closeWorkspaceTask,
                 onSessionClosed = nav::closeSession,
                 onOpenSettings = onOpenSettings,
-                onOpenWeb = {
-                    if (!sessionCreationInFlight) actions.navigation.openWeb()
-                },
-                onSwitchServer = {
-                    if (!sessionCreationInFlight) actions.navigation.switchServer()
-                },
+                onOpenWeb = actions.navigation.openWeb,
+                onSwitchServer = actions.navigation.switchServer,
             )
         } else {
             SessionDetailScreen(
@@ -724,7 +693,6 @@ private fun WideReadyContent(
     actions: HomeActions,
     sessionDrafts: SessionDraftStore,
     taskState: TaskListState,
-    listState: SessionListState,
     listPaneWidth: Dp,
     windowWidth: Dp,
     sidebarCollapsed: Boolean,
@@ -737,10 +705,8 @@ private fun WideReadyContent(
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
-    sessionCreationInFlight: Boolean,
     showDetailBack: Boolean,
 ) {
-    val lockedSidebarInteraction = remember { MutableInteractionSource() }
     val density = LocalDensity.current.density
     var sidebarDragDeltaDp by rememberSaveable { mutableStateOf(0f) }
     val minSidebarWidth = 220.dp
@@ -806,7 +772,6 @@ private fun WideReadyContent(
                         } else {
                             TaskListScreen(
                                 state = taskState,
-                                historyState = listState,
                                 api = api,
                                 boardApi = api,
                                 serverDisplayName = actions.connection.serverDisplayName,
@@ -815,8 +780,7 @@ private fun WideReadyContent(
                                 onHomeListModeChange = onHomeListModeChange,
                                 selectedSessionId = selectedSessionId,
                                 selectedTaskId = nav.current.taskIdOrNull(),
-                                interactionEnabled = !sessionCreationInFlight,
-                                onOpenTask = onOpenWorkspaceTask,
+                                                onOpenTask = onOpenWorkspaceTask,
                                 onOpenSession = onOpenSession,
                                 onOpenBoardSession = onOpenBoardSession,
                                 onOpenRestoredSession = onOpenRestoredSession,
@@ -824,29 +788,13 @@ private fun WideReadyContent(
                                 onTaskClosed = nav::closeWorkspaceTask,
                                 onSessionClosed = nav::closeSession,
                                 onOpenSettings = onOpenSettings,
-                                onOpenWeb = {
-                                    if (!sessionCreationInFlight) actions.navigation.openWeb()
-                                },
-                                onSwitchServer = {
-                                    if (!sessionCreationInFlight) actions.navigation.switchServer()
-                                },
+                                onOpenWeb = actions.navigation.openWeb,
+                                onSwitchServer = actions.navigation.switchServer,
                                 onCollapseSidebar = onToggleSidebarCollapsed,
                             )
                         }
                     }
                 }
-            }
-            if (sessionCreationInFlight) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(WandColors.bgPrimary.copy(alpha = 0.08f))
-                        .clickable(
-                            interactionSource = lockedSidebarInteraction,
-                            indication = null,
-                            onClick = {},
-                        ),
-                )
             }
         }
         Box(
@@ -925,7 +873,7 @@ private fun WideReadyContent(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
                         .offset(x = (-14).dp),
-                    enabled = !sessionCreationInFlight,
+                    enabled = true,
                     onDrag = { deltaPx ->
                         sidebarDragDeltaDp += deltaPx / density
                     },
@@ -966,53 +914,6 @@ private fun SidebarResizeHandle(
                 .clip(RoundedCornerShape(3.dp))
                 .background(WandColors.textMuted.copy(alpha = 0.62f)),
         )
-    }
-}
-
-@Composable
-private fun SessionCreationRecoveryOverlay() {
-    val blockerInteraction = remember { MutableInteractionSource() }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(WandColors.bgPrimary.copy(alpha = 0.88f))
-            .clickable(
-                interactionSource = blockerInteraction,
-                indication = null,
-                onClick = {},
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        WandCard(
-            modifier = Modifier
-                .padding(24.dp)
-                .fillMaxWidth()
-                .widthIn(max = 360.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(24.dp),
-                )
-                Text(
-                    "正在创建会话",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    "请求仍在所选服务器上运行，完成后会自动打开。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
     }
 }
 

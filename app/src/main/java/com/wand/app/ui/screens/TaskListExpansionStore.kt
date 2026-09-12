@@ -15,7 +15,6 @@ internal fun decodeCollapsedIds(raw: String?): Set<String> =
 interface TaskListExpansionStore {
     fun collapsedIds(kind: String): Set<String>
     fun setCollapsedIds(kind: String, ids: Set<String>)
-    var historyExpanded: Boolean
 }
 
 class MemoryTaskListExpansionStore : TaskListExpansionStore {
@@ -24,7 +23,6 @@ class MemoryTaskListExpansionStore : TaskListExpansionStore {
     override fun setCollapsedIds(kind: String, ids: Set<String>) {
         collapsed[kind] = ids.toSet()
     }
-    override var historyExpanded: Boolean = false
 }
 
 class SharedTaskListExpansionStore(
@@ -40,12 +38,6 @@ class SharedTaskListExpansionStore(
     override fun setCollapsedIds(kind: String, ids: Set<String>) {
         prefs.edit().putString(key(kind), encodeCollapsedIds(ids)).apply()
     }
-
-    override var historyExpanded: Boolean
-        get() = prefs.getBoolean(key("history"), false)
-        set(value) {
-            prefs.edit().putBoolean(key("history"), value).apply()
-        }
 
     private fun key(kind: String): String = "$prefix.$kind"
 

@@ -63,8 +63,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.DirectoryListing
-import com.wand.app.data.HistorySession
-import com.wand.app.data.SessionListEntry
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
@@ -119,7 +117,6 @@ data class TaskSessionRoute(
 @Composable
 fun TaskListScreen(
     state: TaskListState,
-    historyState: SessionListState,
     api: WorkspacePort,
     boardApi: TaskBoardPort,
     serverDisplayName: String,
@@ -171,12 +168,11 @@ fun TaskListScreen(
     var reviewTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     val targetSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    val recoverableEntries = historyState.entries.mapNotNull { it as? SessionListEntry.Recoverable }
     val visibleGroups = directoryTreeGroups(state.groups)
     val showingBoard = homeListMode == HomeListMode.Tasks
     val managedSelection = SidebarManageSelection(selectedTaskIds, selectedSessionIds)
     val resolvedManagedDelete = resolveManagedDeletion(managedSelection, visibleGroups)
-    val hasVisibleContent = visibleGroups.isNotEmpty() || recoverableEntries.isNotEmpty()
+    val hasVisibleContent = visibleGroups.isNotEmpty()
     val directoryGroupCount = visibleGroups.size
     var boardRefreshNonce by remember { mutableStateOf(0) }
 
@@ -854,7 +850,6 @@ fun TaskListScreen(
                         } else {
                             scope.launch {
                                 state.load(silent = true)
-                                historyState.load(silent = true)
                             }
                         }
                     },
@@ -893,7 +888,7 @@ fun TaskListScreen(
                         message = state.loadError ?: "无法加载任务列表",
                         onRetry = { scope.launch { state.load() } },
                     )
-                    !hasVisibleContent && !historyState.canLoadMore -> EmptyState(
+                    !hasVisibleContent -> EmptyState(
                         modifier = Modifier.weight(1f),
                         icon = WandIcons.todo,
                         title = "还没有任务",
@@ -1012,24 +1007,6 @@ fun TaskListScreen(
                             },
                             onReview = { reviewTarget = group },
                         )
-                    }
-                    if (recoverableEntries.isNotEmpty() || historyState.canLoadMore) {
-                        item(key = "recoverable-history") {
-                            RecoverableHistorySection(
-                                entries = recoverableEntries,
-                                expanded = state.historyExpanded,
-                                canLoadMore = historyState.canLoadMore,
-                                loadingMore = historyState.loadingMore,
-                                onToggle = state::toggleHistory,
-                                onOpen = { history ->
-                                    scope.launch {
-                                        historyState.restore(history)?.let(onOpenRestoredSession)
-                                    }
-                                },
-                                onLoadMore = { scope.launch { historyState.loadMore() } },
-                                isRestoring = historyState::isRestoring,
-                            )
-                        }
                     }
                         }
                     }
@@ -1792,99 +1769,6 @@ private fun AggregateSessionRow(
 }
 
 @Composable
-private fun RecoverableHistorySection(
-    entries: List<SessionListEntry.Recoverable>,
-    expanded: Boolean,
-    canLoadMore: Boolean,
-    loadingMore: Boolean,
-    onToggle: () -> Unit,
-    onOpen: (HistorySession) -> Unit,
-    onLoadMore: () -> Unit,
-    isRestoring: (HistorySession) -> Boolean,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-            .background(WandColors.bgElevated.copy(alpha = 0.62f)),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                WandIcons.history,
-                contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(18.dp),
-            )
-            Text(
-                "可恢复历史（${entries.size}）",
-                style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textSecondary,
-                modifier = Modifier.weight(1f).padding(start = 9.dp),
-            )
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起历史" else "展开历史",
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(17.dp).graphicsLayer { rotationZ = if (expanded) 180f else 0f },
-            )
-        }
-        if (expanded) {
-            entries.forEach { entry ->
-                val history = entry.history
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable(
-                        enabled = !isRestoring(history),
-                        onClick = { onOpen(history) },
-                    ).padding(start = 42.dp, end = 14.dp, top = 9.dp, bottom = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            history.firstUserMessage.ifBlank { "空会话" },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = WandColors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            "${workspaceProviderLabel(history.provider)} · ${history.cwd}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = WandColors.textMuted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (isRestoring(history)) {
-                        Text("恢复中…", style = MaterialTheme.typography.labelSmall, color = WandColors.brand)
-                    } else {
-                        Icon(
-                            WandIcons.chevronRight,
-                            contentDescription = "恢复会话",
-                            tint = WandColors.textMuted,
-                            modifier = Modifier.size(15.dp),
-                        )
-                    }
-                }
-            }
-            if (canLoadMore) {
-                WandButton(
-                    label = if (loadingMore) "加载中…" else "加载更多历史",
-                    onClick = onLoadMore,
-                    enabled = !loadingMore,
-                    compact = true,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-                )
-            }
-        }
-    }
-}
-
-
-@Composable
 private fun TreeDisclosureCaret(
     expanded: Boolean,
     contentDescription: String,
@@ -1957,49 +1841,6 @@ private fun TaskDirectoryGroup.asWorkspace(): Workspace = Workspace(
     lastOpenedAt = null,
     worktreeCount = tasks.count { it.worktree != null },
 )
-
-@Composable
-private fun CreationChoiceCard(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    enabled: Boolean,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.62f))
-            .border(
-                1.dp,
-                if (selected) WandColors.brand.copy(alpha = 0.7f) else WandColors.border.copy(alpha = 0.5f),
-                RoundedCornerShape(12.dp),
-            )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = if (selected) WandColors.brand else WandColors.textMuted)
-        Text(
-            title,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (selected) WandColors.brand else WandColors.textPrimary,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-        Text(
-            subtitle,
-            style = MaterialTheme.typography.labelSmall,
-            color = WandColors.textMuted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-    }
-}
 
 @Composable
 private fun DirectoryPickerRow(

@@ -243,14 +243,14 @@ fun TaskBoardScreen(
                         lastAgent = agent
                         scope.launch { runCatching { api.saveBoardTaskAgentDefaults(agent) } }
                     },
-                    onDispatch = { agent ->
+                    onDispatch = { agent, prompt ->
                         lastAgent = agent
                         scope.launch {
                             busy = true
                             try {
                                 runCatching { api.saveBoardTaskAgentDefaults(agent) }
-                                api.updateBoardTask(selected.id, patchBoardTaskBody(agent = agent))
-                                val result = api.dispatchBoardTask(selected.id, agent)
+                                api.updateBoardTask(selected.id, patchBoardTaskBody(agent = agent, workspaceId = selected.workspaceId))
+                                val result = api.dispatchBoardTask(selected.id, agent, prompt, selected.workspaceId)
                                 refresh()
                                 if (result.sessionId.isNotBlank()) {
                                     onOpenSession(result.sessionId, true)
@@ -331,7 +331,7 @@ fun TaskBoardScreen(
                         showCreate = false
                         selectedId = created.id
                         if (description.isNotBlank()) {
-                            runCatching { api.dispatchBoardTask(created.id, agent) }
+                            runCatching { api.dispatchBoardTask(created.id, agent, description, workspaceId) }
                                 .onFailure { error = it.message ?: "任务已创建，但第一次指派失败。" }
                         }
                         refresh()
@@ -864,16 +864,25 @@ private fun TaskBoardDetail(
     busy: Boolean,
     onPatch: (JSONObject) -> Unit,
     onRemember: (BoardTaskAgent) -> Unit,
-    onDispatch: (BoardTaskAgent) -> Unit,
+    onDispatch: (BoardTaskAgent, String) -> Unit,
     onDelete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var title by remember(task.id, task.title) { mutableStateOf(task.title) }
-    var description by remember(task.id, task.description) { mutableStateOf(task.description) }
     var agent by remember(task.id, task.agent) { mutableStateOf(task.agent ?: lastAgent) }
+    val hasAgents = task.sessions.isNotEmpty()
+    var composeOpen by remember(task.id) { mutableStateOf(!hasAgents) }
+    var composePrompt by remember(task.id) { mutableStateOf(if (hasAgents) "" else task.description) }
     val modelOptions = boardAgentModelOptions(models, agent.provider)
     val done = task.status == "done"
+    val workspaceChoices = buildList {
+        add("" to "不指定项目（使用全局目录）")
+        val seen = workspaces.map { it.id }.toSet()
+        workspaces.forEach { add(it.id to it.name) }
+        val current = task.workspace
+        if (current != null && current.id !in seen) add(current.id to current.name)
+    }
 
     Column(
         modifier = modifier
@@ -891,14 +900,6 @@ private fun TaskBoardDetail(
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
         )
-        WandTextField(
-            value = description,
-            onValueChange = { description = it },
-            label = "描述",
-            minLines = 4,
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth(),
-        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -906,7 +907,7 @@ private fun TaskBoardDetail(
             WandButton(
                 label = "保存",
                 onClick = {
-                    onPatch(patchBoardTaskBody(title = title.trim().ifBlank { task.title }, description = description))
+                    onPatch(patchBoardTaskBody(title = title.trim().ifBlank { task.title }))
                 },
                 enabled = !busy && title.trim().isNotEmpty(),
                 variant = WandButtonVariant.Secondary,
@@ -947,73 +948,16 @@ private fun TaskBoardDetail(
             )
             BoardChoice(
                 label = "项目 · ${task.workspace?.name ?: "未指定项目"}",
-                options = listOf("" to "不指定项目（使用全局目录）") + workspaces.map { it.id to it.name },
+                options = workspaceChoices,
                 onSelect = { onPatch(patchBoardTaskBody(workspaceId = it.ifBlank { null })) },
                 enabled = !busy,
-            )
-        }
-        WandCard(
-            containerColor = WandColors.successSoft,
-            contentPadding = PaddingValues(14.dp),
-        ) {
-            Text(
-                if (task.sessions.isEmpty()) "指派 Agent" else "再指派一个 Agent",
-                color = WandColors.textPrimary,
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Text(
-                "同一任务可以派给多个 Agent",
-                color = WandColors.textMuted,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-            BoardChoice(
-                label = "CLI 工具 · ${boardTaskProviderLabel(agent.provider)}",
-                options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
-                onSelect = { provider ->
-                    val nextModels = boardAgentModelOptions(models, provider)
-                    val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
-                    val next = agent.copy(provider = provider, model = model)
-                    agent = next
-                    onRemember(next)
-                },
-                enabled = !busy,
-            )
-            BoardChoice(
-                label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
-                options = modelOptions.map { it.id to it.label },
-                onSelect = {
-                    val next = agent.copy(model = it)
-                    agent = next
-                    onRemember(next)
-                },
-                enabled = !busy,
-            )
-            BoardChoice(
-                label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
-                options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
-                onSelect = {
-                    val next = agent.copy(thinkingEffort = it)
-                    agent = next
-                    onRemember(next)
-                },
-                enabled = !busy,
-            )
-            Spacer(Modifier.height(4.dp))
-            WandButton(
-                label = if (task.sessions.isEmpty()) "派发 Agent" else "再派发一次",
-                onClick = { onDispatch(agent) },
-                enabled = !busy,
-                loading = busy,
-                variant = WandButtonVariant.Success,
-                modifier = Modifier.fillMaxWidth(),
             )
         }
         Text("已指派的 Agent", color = WandColors.textSecondary, style = MaterialTheme.typography.labelLarge)
         val agentGroups = groupBoardSessionsByAgent(task.sessions, task.agent)
         if (agentGroups.isEmpty()) {
             Text(
-                "还没有指派 Agent。描述会作为第一次派发的任务内容。",
+                "还没有指派 Agent。",
                 color = WandColors.textMuted,
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -1074,6 +1018,88 @@ private fun TaskBoardDetail(
                         }
                     }
                 }
+            }
+        }
+        if (composeOpen) {
+            WandCard(
+                containerColor = WandColors.successSoft,
+                contentPadding = PaddingValues(14.dp),
+            ) {
+                Text(
+                    if (task.sessions.isEmpty()) "指派 Agent" else "再指派一个 Agent",
+                    color = WandColors.textPrimary,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "先输入提示词，再选参数直接派发",
+                    color = WandColors.textMuted,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                WandTextField(
+                    value = composePrompt,
+                    onValueChange = { composePrompt = it },
+                    label = "提示词",
+                    placeholder = "输入这次派给 Agent 的提示词…",
+                    minLines = 4,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                BoardChoice(
+                    label = "CLI 工具 · ${boardTaskProviderLabel(agent.provider)}",
+                    options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
+                    onSelect = { provider ->
+                        val nextModels = boardAgentModelOptions(models, provider)
+                        val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
+                        val next = agent.copy(provider = provider, model = model)
+                        agent = next
+                        onRemember(next)
+                    },
+                    enabled = !busy,
+                )
+                BoardChoice(
+                    label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
+                    options = modelOptions.map { it.id to it.label },
+                    onSelect = {
+                        val next = agent.copy(model = it)
+                        agent = next
+                        onRemember(next)
+                    },
+                    enabled = !busy,
+                )
+                BoardChoice(
+                    label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
+                    options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
+                    onSelect = {
+                        val next = agent.copy(thinkingEffort = it)
+                        agent = next
+                        onRemember(next)
+                    },
+                    enabled = !busy,
+                )
+                Spacer(Modifier.height(4.dp))
+                WandButton(
+                    label = if (busy) "正在派发…" else "派发 Agent",
+                    onClick = { onDispatch(agent, composePrompt.trim()) },
+                    enabled = !busy && composePrompt.trim().isNotEmpty(),
+                    loading = busy,
+                    variant = WandButtonVariant.Success,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(WandShapes.sm)
+                    .clickable(enabled = !busy) {
+                        composePrompt = ""
+                        composeOpen = true
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(WandIcons.add, contentDescription = "再指派一个 Agent", tint = WandColors.textSecondary)
             }
         }
         WandButton(

@@ -187,7 +187,7 @@ class TaskListStateTest {
     }
 
     @Test
-    fun treeExpansionTracksStandaloneAndHistorySections() = runBlocking {
+    fun treeExpansionTracksStandaloneSections() = runBlocking {
         val standalone = WorkspaceSessionSummary(
             id = "standalone-1",
             provider = "shell",
@@ -204,16 +204,13 @@ class TaskListStateTest {
 
         state.toggleDirectory(group.id)
         state.toggleStandalone(group.id)
-        state.toggleHistory()
         assertTrue(state.isDirectoryCollapsed(group.id))
         assertTrue(state.isStandaloneCollapsed(group.id))
-        assertTrue(state.historyExpanded)
 
         state.expandPathToSelection(taskId = null, sessionId = standalone.id)
 
         assertFalse(state.isDirectoryCollapsed(group.id))
         assertFalse(state.isStandaloneCollapsed(group.id))
-        assertTrue(state.historyExpanded)
     }
 
     @Test
@@ -295,12 +292,10 @@ class TaskListStateTest {
         assertTrue(first.load())
         first.toggleDirectory(group.id)
         first.toggleTask("task-1")
-        first.toggleHistory()
 
         val restored = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
         assertTrue(restored.isDirectoryCollapsed(group.id))
         assertTrue(restored.isTaskCollapsed("task-1"))
-        assertTrue(restored.historyExpanded)
         assertFalse(restored.isStandaloneCollapsed(group.id))
     }
 
