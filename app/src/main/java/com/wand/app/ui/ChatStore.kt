@@ -104,7 +104,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private val earlierPageSize = 40
 
     private val socket = WandSocket(api.baseUrl)
+    /**
+     * started = 对象是否跑过首次加载；active = 页面当前是否可见。
+     * Compose / Navigation 可能复用同一个 ChatStore：shutdown 关 socket 后，
+     * 若只看 started 会把重进详情永久挡住，红条就一直挂着，退出再进才好。
+     */
     private var started = false
+    private var active = false
     private var queuePromotePending = false
     private val settingsMutationMutex = Mutex()
     private var modelMutationGeneration = 0L
@@ -123,29 +129,53 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     // MARK: - 生命周期
 
     fun start() {
-        if (started) return
-        started = true
-
-        socket.onEvent = { event -> handle(event) }
-        socket.onConnectionChange = { up -> connected = up }
-
-        scope.launch {
-            try {
-                val snap = api.getSession(sessionId)
-                apply(snap)
-            } catch (e: Exception) {
-                loadError = e.message ?: "加载失败"
+        when (chatRealtimeStartKind(active = active, started = started)) {
+            ChatRealtimeStartKind.Skip -> return
+            ChatRealtimeStartKind.Reconnect -> {
+                active = true
+                ensureScope()
+                connectSocket()
+                return
             }
-            loadModels()
-            loadCardDefaults()
-            loading = false
-            socket.connect()
-            socket.subscribe(sessionId)
+            ChatRealtimeStartKind.FirstConnect -> {
+                active = true
+                started = true
+                ensureScope()
+                socket.onEvent = { event -> handle(event) }
+                socket.onConnectionChange = { up -> connected = up }
+                // 实时连接不能被 REST / 模型目录 / 卡片默认值挡住。旧逻辑等三段请求收尾才
+                // connect，页面看起来已经打开、红条却一直挂着；退回再进才重新建连。
+                connectSocket()
+                scope.launch {
+                    try {
+                        val snap = api.getSession(sessionId)
+                        apply(snap)
+                    } catch (e: Exception) {
+                        loadError = e.message ?: "加载失败"
+                    }
+                    loadModels()
+                    loadCardDefaults()
+                    loading = false
+                }
+            }
         }
     }
 
+    fun handleEnterForeground() {
+        if (!active) return
+        socket.reconnectForForeground()
+    }
+
+    private fun connectSocket() {
+        socket.connect()
+        socket.subscribe(sessionId)
+    }
+
     override fun shutdown() {
-        socket.close()
+        if (active) {
+            active = false
+            socket.close()
+        }
         super.shutdown()
     }
 
@@ -631,3 +661,12 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
     }
 }
+
+internal enum class ChatRealtimeStartKind { Skip, FirstConnect, Reconnect }
+
+/** 详情页实时连接：页面仍可见时跳过；关过 socket 的同一 store 必须重连而不是被 started 挡住。 */
+internal fun chatRealtimeStartKind(active: Boolean, started: Boolean): ChatRealtimeStartKind {
+    if (active) return ChatRealtimeStartKind.Skip
+    return if (started) ChatRealtimeStartKind.Reconnect else ChatRealtimeStartKind.FirstConnect
+}
+

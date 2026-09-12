@@ -124,6 +124,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wand.app.SessionWatcher
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.matchesModelSearch
@@ -234,6 +237,24 @@ fun ChatScreen(
     DisposableEffect(store) {
         store.start()
         onDispose { store.shutdown() }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(store, lifecycleOwner) {
+        var paused = false
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> paused = true
+                Lifecycle.Event.ON_RESUME -> {
+                    if (paused) {
+                        paused = false
+                        store.handleEnterForeground()
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     DisposableEffect(quickCommit) {
         onDispose { quickCommit.shutdown() }

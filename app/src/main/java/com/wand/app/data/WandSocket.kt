@@ -64,6 +64,23 @@ class WandSocket(baseUrl: String) {
         handler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS)
     }
 
+    /**
+     * 回前台强制拆掉可能已被系统冻住的半开连接。不先发 disconnected：主动重建不应闪红条，
+     * 只有新连接失败才走 onFailure → scheduleReconnect。
+     */
+    fun reconnectForForeground() {
+        if (closed) return
+        reconnectScheduled = false
+        reconnectDelayMs = 1_000L
+        generation += 1
+        webSocket?.cancel()
+        webSocket = null
+        lastMessageAt = SystemClock.elapsedRealtime()
+        openSocket()
+        handler.removeCallbacks(watchdogRunnable)
+        handler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS)
+    }
+
     fun close() {
         closed = true
         handler.removeCallbacksAndMessages(null)
