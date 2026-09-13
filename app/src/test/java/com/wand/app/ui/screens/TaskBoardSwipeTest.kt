@@ -33,14 +33,27 @@ class TaskBoardSwipeTest {
 
     @Test
     fun revealDecidesByVelocityThenDistance() {
-        assertTrue(boardTaskSwipeShouldReveal(offsetPx = 50f, revealWidthPx = 100f, velocity = 0f))
-        assertFalse(boardTaskSwipeShouldReveal(offsetPx = 49f, revealWidthPx = 100f, velocity = 0f))
-        assertTrue(boardTaskSwipeShouldReveal(offsetPx = 10f, revealWidthPx = 100f, velocity = 900f))
-        assertFalse(boardTaskSwipeShouldReveal(offsetPx = 90f, revealWidthPx = 100f, velocity = -900f))
+        // 按钮露在右侧，划开方向是从右往左：位移与速度都为负。
+        assertTrue(boardTaskSwipeShouldReveal(offsetPx = -50f, revealWidthPx = 100f, velocity = 0f))
+        assertFalse(boardTaskSwipeShouldReveal(offsetPx = -49f, revealWidthPx = 100f, velocity = 0f))
+        assertTrue(boardTaskSwipeShouldReveal(offsetPx = -10f, revealWidthPx = 100f, velocity = -900f))
+        assertFalse(boardTaskSwipeShouldReveal(offsetPx = -90f, revealWidthPx = 100f, velocity = 900f))
+        // 从左往右滑不划开。
+        assertFalse(boardTaskSwipeShouldReveal(offsetPx = 0f, revealWidthPx = 100f, velocity = 900f))
     }
 
     @Test
     fun revealStaysClosedWithoutRevealWidth() {
-        assertFalse(boardTaskSwipeShouldReveal(offsetPx = 120f, revealWidthPx = 0f, velocity = 900f))
+        assertFalse(boardTaskSwipeShouldReveal(offsetPx = -120f, revealWidthPx = 0f, velocity = -900f))
+    }
+
+    @Test
+    fun confirmCopyStatesThePendingChange() {
+        assertEquals("开始任务？", boardTaskSwipeActionTitle(BoardTaskSwipeAction.Start))
+        assertEquals("确认完成？", boardTaskSwipeActionTitle(BoardTaskSwipeAction.Complete))
+        assertEquals("归档任务？", boardTaskSwipeActionTitle(BoardTaskSwipeAction.Archive))
+        assertEquals("任务将标记为进行中。", boardTaskSwipeConfirmMessage(BoardTaskSwipeAction.Start))
+        assertEquals("任务将标记为已完成。", boardTaskSwipeConfirmMessage(BoardTaskSwipeAction.Complete))
+        assertTrue(boardTaskSwipeConfirmMessage(BoardTaskSwipeAction.Archive).contains("归档"))
     }
 }

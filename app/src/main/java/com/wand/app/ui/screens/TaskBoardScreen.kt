@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -393,10 +394,18 @@ private fun TaskBoardList(
     var archiveCollapsed by remember { mutableStateOf(true) }
     // 同一时刻只允许一张卡划开：新划开的卡接管，旧卡在自身 LaunchedEffect 里收起。
     var swipedTaskId by remember { mutableStateOf<String?>(null) }
+    // 划出的动作不直接改任务，先经过二次确认，避免误触直接改状态。
+    var pendingSwipe by remember { mutableStateOf<Pair<BoardTask, BoardTaskSwipeAction>?>(null) }
+    val listState = rememberLazyListState()
+    // 列表一滚动就收掉已划开的卡，不给「停在待点状态」的机会。
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) swipedTaskId = null
+    }
     val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
     val showWorkspace = filterWorkspaceId.isBlank()
     LazyColumn(
         modifier = modifier,
+        state = listState,
         contentPadding = PaddingValues(14.dp, 8.dp, 14.dp, 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -466,7 +475,10 @@ private fun TaskBoardList(
                         onOpen = { onOpen(task) },
                         onToggleComplete = { onToggleComplete(task) },
                         onOpenSession = onOpenSession,
-                        onSwipeAction = { action -> onSwipeAction(task, action) },
+                        onSwipeAction = { action ->
+                            swipedTaskId = null
+                            pendingSwipe = task to action
+                        },
                     )
                 }
                 if (status == "done" && sectionArchived.isNotEmpty()) {
@@ -487,7 +499,10 @@ private fun TaskBoardList(
                                 onOpen = { onOpen(task) },
                                 onToggleComplete = { onToggleComplete(task) },
                                 onOpenSession = onOpenSession,
-                                onSwipeAction = { action -> onSwipeAction(task, action) },
+                                onSwipeAction = { action ->
+                                    swipedTaskId = null
+                                    pendingSwipe = task to action
+                                },
                             )
                         }
                     }
@@ -503,10 +518,58 @@ private fun TaskBoardList(
                     onOpen = { onOpen(task) },
                     onToggleComplete = { onToggleComplete(task) },
                     onOpenSession = onOpenSession,
-                    onSwipeAction = { action -> onSwipeAction(task, action) },
+                    onSwipeAction = { action ->
+                        swipedTaskId = null
+                        pendingSwipe = task to action
+                    },
                 )
             }
         }
+    }
+    pendingSwipe?.let { (task, action) ->
+        BoardTaskSwipeConfirmDialog(
+            task = task,
+            action = action,
+            onDismiss = { pendingSwipe = null },
+            onConfirm = {
+                pendingSwipe = null
+                onSwipeAction(task, action)
+            },
+        )
+    }
+}
+
+/** 划出动作后的二次确认；确认才真正改状态或归档。 */
+@Composable
+private fun BoardTaskSwipeConfirmDialog(
+    task: BoardTask,
+    action: BoardTaskSwipeAction,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    WandDialog(
+        title = boardTaskSwipeActionTitle(action),
+        onDismissRequest = onDismiss,
+        icon = boardTaskSwipeActionIcon(action),
+        confirm = WandDialogAction(
+            label = boardTaskSwipeActionLabel(action),
+            destructive = action == BoardTaskSwipeAction.Archive,
+            onClick = onConfirm,
+        ),
+        dismiss = WandDialogAction(label = "取消", onClick = onDismiss),
+    ) {
+        Text(
+            "「${boardTaskCardTitle(task)}」",
+            color = WandColors.textPrimary,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            boardTaskSwipeConfirmMessage(action),
+            color = WandColors.textSecondary,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 6.dp),
+        )
     }
 }
 

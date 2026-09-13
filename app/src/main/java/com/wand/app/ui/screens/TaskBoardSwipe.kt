@@ -78,24 +78,42 @@ internal fun boardTaskSwipeTargetStatus(action: BoardTaskSwipeAction): String? =
     BoardTaskSwipeAction.Archive -> null
 }
 
-/** 松手后是否停在「已划开」状态：速度优先，速度过小才看位移过半。 */
+/** 二次确认弹窗标题。 */
+internal fun boardTaskSwipeActionTitle(action: BoardTaskSwipeAction): String = when (action) {
+    BoardTaskSwipeAction.Start -> "开始任务？"
+    BoardTaskSwipeAction.Complete -> "确认完成？"
+    BoardTaskSwipeAction.Archive -> "归档任务？"
+}
+
+/** 二次确认弹窗正文：说清这一下会把任务改成什么。 */
+internal fun boardTaskSwipeConfirmMessage(action: BoardTaskSwipeAction): String = when (action) {
+    BoardTaskSwipeAction.Start -> "任务将标记为进行中。"
+    BoardTaskSwipeAction.Complete -> "任务将标记为已完成。"
+    BoardTaskSwipeAction.Archive -> "任务将移入归档，之后仍可在「归档」中找回。"
+}
+
+/**
+ * 松手后是否停在「已划开」状态：速度优先，速度过小才看位移过半。
+ *
+ * 按钮露在右侧，所以划开方向是从右往左：位移为负、速度为负。
+ */
 internal fun boardTaskSwipeShouldReveal(
     offsetPx: Float,
     revealWidthPx: Float,
     velocity: Float,
 ): Boolean {
     if (revealWidthPx <= 0f) return false
-    if (velocity >= BOARD_TASK_SWIPE_OPEN_VELOCITY) return true
-    if (velocity <= -BOARD_TASK_SWIPE_OPEN_VELOCITY) return false
-    return offsetPx >= revealWidthPx / 2f
+    if (velocity <= -BOARD_TASK_SWIPE_OPEN_VELOCITY) return true
+    if (velocity >= BOARD_TASK_SWIPE_OPEN_VELOCITY) return false
+    return offsetPx <= -revealWidthPx / 2f
 }
 
 /**
- * 右划任务卡露出动作按钮（左划不会移除卡片）。
+ * 从右往左划任务卡，右侧露出动作按钮。
  *
- * - 卡片向右平移，动作按钮固定在左侧被卡片盖住，平移量就是露出的宽度；
+ * - 卡片向左平移，动作按钮固定在右侧被卡片盖住，平移量就是露出的宽度；
  * - 卡片半透明玻璃底会透出按钮颜色，所以在卡片下面垫一层 [WandColors.bgPrimary] 保持原观感；
- * - 划开状态下点卡片任意位置只收起，不打开详情。
+ * - 划开状态下点卡片任意位置只收起，不打开详情；动作本身由调用方做二次确认。
  *
  * 开合状态由调用方持有（同一时刻只允许一张卡划开），本组件只负责手势与动画。
  */
@@ -128,7 +146,7 @@ internal fun BoardTaskSwipeCard(
 
     // 外部收起（别的卡片被划开、点了动作按钮）时同步动画回位。
     LaunchedEffect(revealed, revealWidthPx) {
-        settle(if (revealed) revealWidthPx else 0f)
+        settle(if (revealed) -revealWidthPx else 0f)
     }
 
     Box(
@@ -137,21 +155,21 @@ internal fun BoardTaskSwipeCard(
             .draggable(
                 orientation = Orientation.Horizontal,
                 state = rememberDraggableState { delta ->
-                    scope.launch { offset.snapTo((offset.value + delta).coerceIn(0f, revealWidthPx)) }
+                    scope.launch { offset.snapTo((offset.value + delta).coerceIn(-revealWidthPx, 0f)) }
                 },
                 onDragStopped = { velocity ->
                     val open = boardTaskSwipeShouldReveal(offset.value, revealWidthPx, velocity)
                     latestOnRevealedChange.value(open)
-                    settle(if (open) revealWidthPx else 0f)
+                    settle(if (open) -revealWidthPx else 0f)
                 },
             ),
     ) {
         Row(
             modifier = Modifier
                 .matchParentSize()
-                .padding(end = 6.dp),
+                .padding(start = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
         ) {
             actions.forEach { action ->
                 BoardTaskSwipeButton(
@@ -219,7 +237,8 @@ private fun BoardTaskSwipeButton(
     }
 }
 
-private fun boardTaskSwipeActionIcon(action: BoardTaskSwipeAction): ImageVector = when (action) {
+/** 动作图标：按钮与二次确认弹窗共用，所以对同包可见。 */
+internal fun boardTaskSwipeActionIcon(action: BoardTaskSwipeAction): ImageVector = when (action) {
     BoardTaskSwipeAction.Start -> WandIcons.play
     BoardTaskSwipeAction.Complete -> WandIcons.check
     BoardTaskSwipeAction.Archive -> WandIcons.archive
