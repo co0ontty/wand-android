@@ -268,6 +268,51 @@ class ChatSessionEventReducerTest {
         assertEquals("收紧 resume 时间窗", untitled.copy(title = "收紧 resume 时间窗").displayTitle)
     }
 
+    @Test
+    fun fullRefreshKeepsClientTimestampsWhenServerOmitsThem() {
+        val local = ConversationTurn(
+            role = "user",
+            content = listOf(ContentBlock.Text("hi", subagent = null)),
+            createdAt = "2026-03-27T01:02:03Z",
+        )
+        val current = ChatSessionEventState(
+            messages = listOf(local),
+            loadedOffset = 0,
+            messageTotal = 1,
+        )
+        val next = ChatSessionEventReducer.reduce(
+            current,
+            output(MessageUpdate.Full(listOf(textTurn("user", "hi")), offset = 0, total = 1)),
+        )
+        assertEquals("2026-03-27T01:02:03Z", next.messages.single().createdAt)
+    }
+
+    @Test
+    fun incrementalReplaceKeepsCreatedAtAndFillsCompletedAt() {
+        val streaming = ConversationTurn(
+            role = "assistant",
+            content = listOf(ContentBlock.Text("hi", subagent = null)),
+            createdAt = "2026-03-27T01:02:03Z",
+        )
+        val current = ChatSessionEventState(messages = listOf(streaming), messageTotal = 1)
+        val next = ChatSessionEventReducer.reduce(
+            current,
+            output(
+                MessageUpdate.Incremental(
+                    ConversationTurn(
+                        role = "assistant",
+                        content = listOf(ContentBlock.Text("hi!", subagent = null)),
+                        completedAt = "2026-03-27T01:02:09Z",
+                    ),
+                    expectedCount = 1,
+                ),
+            ),
+        )
+        assertEquals("2026-03-27T01:02:03Z", next.messages.single().createdAt)
+        assertEquals("2026-03-27T01:02:09Z", next.messages.single().completedAt)
+        assertEquals("hi!", turnText(next.messages.single()))
+    }
+
     private fun output(
         messages: MessageUpdate,
         changes: SessionChanges = SessionChanges(),

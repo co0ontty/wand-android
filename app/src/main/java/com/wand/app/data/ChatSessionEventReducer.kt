@@ -1,5 +1,7 @@
 package com.wand.app.data
 
+import java.time.Instant
+
 /** Compose-independent realtime state. The interface is the test surface for event sequences. */
 data class ChatSessionEventState(
     val messages: List<ConversationTurn> = emptyList(),
@@ -145,9 +147,10 @@ object ChatSessionEventReducer {
             current.messages.isEmpty() -> incoming to snapOffset
             current.loadedOffset <= snapOffset -> {
                 val keep = (snapOffset - current.loadedOffset).coerceIn(0, current.messages.size)
-                (current.messages.subList(0, keep) + incoming) to current.loadedOffset
+                val previousTail = current.messages.drop(keep)
+                (current.messages.subList(0, keep) + overlayConversationTurnTimes(previousTail, incoming)) to current.loadedOffset
             }
-            else -> incoming to snapOffset
+            else -> overlayConversationTurnTimes(current.messages, incoming) to snapOffset
         }
         return current.copy(
             messages = messages,
@@ -162,9 +165,12 @@ object ChatSessionEventReducer {
     ): ChatSessionEventState {
         val expected = update.expectedCount
         val last = current.messages.lastOrNull()
+        val incoming = stampLiveTurnTime(
+            mergeConversationTurnTimes(last?.takeIf { it.role == update.message.role }, update.message),
+        )
         val messages = when {
-            last != null && last.role == update.message.role -> current.messages.dropLast(1) + update.message
-            current.loadedOffset + current.messages.size < expected || expected == 0 -> current.messages + update.message
+            last != null && last.role == update.message.role -> current.messages.dropLast(1) + incoming
+            current.loadedOffset + current.messages.size < expected || expected == 0 -> current.messages + incoming
             else -> current.messages
         }
         return current.copy(
@@ -241,4 +247,29 @@ object ChatSessionEventReducer {
         }
         return next
     }
+}
+
+internal fun mergeConversationTurnTimes(
+    previous: ConversationTurn?,
+    incoming: ConversationTurn,
+): ConversationTurn {
+    val createdAt = incoming.createdAt ?: previous?.createdAt
+    val completedAt = incoming.completedAt ?: previous?.completedAt
+    if (createdAt == incoming.createdAt && completedAt == incoming.completedAt) return incoming
+    return incoming.copy(createdAt = createdAt, completedAt = completedAt)
+}
+
+internal fun overlayConversationTurnTimes(
+    previous: List<ConversationTurn>,
+    incoming: List<ConversationTurn>,
+): List<ConversationTurn> {
+    if (previous.isEmpty()) return incoming
+    return incoming.mapIndexed { index, turn ->
+        mergeConversationTurnTimes(previous.getOrNull(index), turn)
+    }
+}
+
+internal fun stampLiveTurnTime(turn: ConversationTurn, now: String = Instant.now().toString()): ConversationTurn {
+    if (!turn.createdAt.isNullOrBlank()) return turn
+    return turn.copy(createdAt = now)
 }

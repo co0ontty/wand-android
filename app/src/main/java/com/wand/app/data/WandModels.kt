@@ -282,6 +282,8 @@ data class ConversationTurn(
     val role: String,
     val content: List<ContentBlock>,
     val usage: TurnUsage? = null,
+    val createdAt: String? = null,
+    val completedAt: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): ConversationTurn {
@@ -293,6 +295,8 @@ data class ConversationTurn(
                 role = o.str("role") ?: "assistant",
                 content = blocks,
                 usage = TurnUsage.parse(o.obj("usage")),
+                createdAt = o.str("createdAt"),
+                completedAt = o.str("completedAt"),
             )
         }
 

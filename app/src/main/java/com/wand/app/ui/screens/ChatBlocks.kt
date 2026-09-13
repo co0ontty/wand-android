@@ -220,6 +220,7 @@ fun TurnView(
         modifier = Modifier.fillMaxWidth(),
     ) {
         if (showHeader) {
+            ChatMessageTime(conversationTurnClock(turn), alignEnd = false)
             // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
             // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
             AssistantReplyHeader(
@@ -402,6 +403,7 @@ internal fun SubagentActivityDock(
     usage: TurnUsage?,
     taskTitle: String?,
     sessionRunning: Boolean,
+    completedClock: String = "",
     modifier: Modifier = Modifier,
     onExpandedChange: (Boolean) -> Unit = {},
 ) {
@@ -532,7 +534,7 @@ internal fun SubagentActivityDock(
             modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp).padding(horizontal = 3.dp),
         ) {
             UsageStatusCompact(usage, Modifier.weight(1f))
-            ReplyStatusCompact(taskTitle, sessionRunning, Modifier.weight(1f))
+            ReplyStatusCompact(taskTitle, sessionRunning, completedClock, Modifier.weight(1f))
         }
     }
 }
@@ -1016,18 +1018,23 @@ private fun UsageStatusCompact(usage: TurnUsage?, modifier: Modifier = Modifier)
 private fun ReplyStatusCompact(
     taskTitle: String?,
     sessionRunning: Boolean,
+    completedClock: String = "",
     modifier: Modifier = Modifier,
 ) {
     val text = if (sessionRunning) {
         taskTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: "正在思考…"
+    } else if (completedClock.isNotBlank()) {
+        "完成 $completedClock"
     } else {
         "回复完成"
     }
     Text(
         text,
-        fontSize = 10.sp,
-        lineHeight = 14.sp,
-        color = WandColors.textMuted,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.Monospace,
+        color = WandColors.textSecondary,
         textAlign = TextAlign.End,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -1051,6 +1058,21 @@ private fun formatUsd(value: Double): String = when {
 
 // 历史用户消息只承担“话题提示”，约三行手机正文就进入两行摘要态。
 private const val COMPACT_USER_MIN_CHARS = 72
+
+@Composable
+private fun ChatMessageTime(clock: String, alignEnd: Boolean) {
+    if (clock.isBlank()) return
+    Text(
+        clock,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.Monospace,
+        color = WandColors.textSecondary,
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
+    )
+}
 
 /** user turn 只保留父对话内容；subagent 输出统一交给底部常驻 Agent 状态坞。 */
 @Composable
@@ -1439,6 +1461,7 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
             .fillMaxWidth()
             .padding(start = 44.dp),
     ) {
+        ChatMessageTime(conversationTurnClock(turn), alignEnd = true)
         // 附件缩略图 / 文件块：右对齐贴在气泡上方（对齐网页 user-attachments 块在正文之上）。
         if (parsed.paths.isNotEmpty() && baseUrl.isNotEmpty()) {
             parsed.paths.forEach { path ->
@@ -1631,6 +1654,7 @@ private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse): Boolean {
     return true
 }
 
+/** 连续思考/工具收成一条压缩条：遇到正文就切段，末尾活动条保持 running 态。 */
 internal fun collapseActivityItems(
     items: List<DisplayItem>,
     isLastTurn: Boolean,

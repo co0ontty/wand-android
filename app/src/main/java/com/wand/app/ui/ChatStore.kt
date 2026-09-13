@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
+import java.time.Instant
 
 /**
  * 单个会话的状态机 —— 逐行移植 iOS ChatStore.swift：
@@ -400,6 +401,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 messages = messages + ConversationTurn(
                     role = "user",
                     content = listOf(com.wand.app.data.ContentBlock.Text(trimmed, null)),
+                    createdAt = Instant.now().toString(),
                 )
                 isResponding = true
             }

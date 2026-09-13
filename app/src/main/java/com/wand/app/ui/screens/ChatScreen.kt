@@ -177,6 +177,7 @@ import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.time.Instant
 
 private enum class ChatScrollMode {
     StickToBottom,
@@ -309,7 +310,30 @@ fun ChatScreen(
     val subagentActivities = remember(store.messages, store.isResponding) {
         collectSubagentActivities(store.messages, store.isResponding)
     }
-    val showActivityDock = store.isStructured && (store.isResponding || subagentActivities.isNotEmpty())
+    var holdCompletedClock by remember(sessionId) { mutableStateOf("") }
+    var sawResponding by remember(sessionId) { mutableStateOf(false) }
+    LaunchedEffect(sessionId, store.isResponding) {
+        if (store.isResponding) {
+            sawResponding = true
+        } else if (sawResponding) {
+            val fromTurn = store.messages.lastOrNull { it.role == "assistant" }
+                ?.let(::conversationTurnClock)
+                ?.takeIf { it.isNotBlank() }
+            holdCompletedClock = fromTurn ?: formatChatClock(Instant.now().toString())
+        }
+    }
+    val completedClock = if (store.isResponding) {
+        ""
+    } else {
+        holdCompletedClock.ifBlank {
+            store.messages.lastOrNull { it.role == "assistant" }
+                ?.let(::conversationTurnClock)
+                .orEmpty()
+        }
+    }
+    val showActivityDock = store.isStructured && (
+        store.isResponding || subagentActivities.isNotEmpty() || completedClock.isNotBlank()
+    )
     // 顶栏用量：避免 ChatScreen 每次重组都对全部消息线性扫描。
     val lastAssistantUsage = remember(store.messages) {
         store.messages.lastOrNull { it.role == "assistant" }?.usage
@@ -793,6 +817,7 @@ fun ChatScreen(
                         usage = lastAssistantUsage,
                         taskTitle = store.currentTaskTitle,
                         sessionRunning = store.isResponding,
+                        completedClock = completedClock,
                         onExpandedChange = { activityDockExpanded = it },
                     )
                 }

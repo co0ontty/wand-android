@@ -4,6 +4,7 @@ import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.time.ZoneOffset
 
 class ChatPresentationTest {
     @Test
@@ -94,6 +95,23 @@ class ChatPresentationTest {
         assertEquals(0, conversationScrubberIndexForDisplayItem(targets, 1))
         assertEquals(1, conversationScrubberIndexForDisplayItem(targets, 2))
         assertEquals(1, conversationScrubberIndexForDisplayItem(targets, 3))
+    }
+
+    @Test
+    fun chatClockUsesTimeOfDayForSameDay() {
+        val zone = ZoneOffset.UTC
+        val today = java.time.ZonedDateTime.now(zone).toLocalDate().atTime(9, 8, 7).atZone(zone)
+        assertEquals("09:08:07", formatChatClock(today.toInstant().toString(), zone))
+    }
+
+    @Test
+    fun chatClockIncludesDateWhenNotToday() {
+        assertEquals(
+            "1/2 03:04:05",
+            formatChatClock("2020-01-02T03:04:05Z", ZoneOffset.UTC),
+        )
+        assertEquals("", formatChatClock(null))
+        assertEquals("", formatChatClock(""))
     }
 
     private fun textTurn(role: String, text: String) = ConversationTurn(
