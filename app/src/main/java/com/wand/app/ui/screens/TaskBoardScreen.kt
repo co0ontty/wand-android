@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import com.wand.app.data.BOARD_TASK_EFFORTS
 import com.wand.app.data.BOARD_TASK_PRIORITIES
 import com.wand.app.data.BOARD_TASK_PROVIDERS
+import com.wand.app.data.BOARD_TASK_DETAIL_STATUSES
 import com.wand.app.data.BOARD_TASK_STATUSES
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskAgent
@@ -298,6 +299,25 @@ fun TaskBoardScreen(
                     onToggleComplete = { task ->
                         patchTask(task.id, patchBoardTaskBody(status = boardTaskToggledStatus(task.status)))
                     },
+                    onSwipeAction = { task, action ->
+                        val status = boardTaskSwipeTargetStatus(action)
+                        if (status != null) {
+                            patchTask(task.id, patchBoardTaskBody(status = status))
+                        } else {
+                            // 归档 = DELETE（服务端 archiveBoardTask），与详情页「归档」一致。
+                            scope.launch {
+                                busy = true
+                                try {
+                                    api.deleteBoardTask(task.id)
+                                    refresh()
+                                } catch (e: Exception) {
+                                    error = e.message
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        }
+                    },
                     onOpenSession = onOpenSession,
                     onCreate = { showCreate = true },
                     modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
@@ -363,11 +383,17 @@ private fun TaskBoardList(
     onStatusFilter: (String) -> Unit,
     onOpen: (BoardTask) -> Unit,
     onToggleComplete: (BoardTask) -> Unit,
+    onSwipeAction: (BoardTask, BoardTaskSwipeAction) -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onCreate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val grouped = groupedBoardTasks(tasks)
+    val archived = boardArchivedTasks(tasks)
+    var archiveCollapsed by remember { mutableStateOf(true) }
+    // 同一时刻只允许一张卡划开：新划开的卡接管，旧卡在自身 LaunchedEffect 里收起。
+    var swipedTaskId by remember { mutableStateOf<String?>(null) }
+    val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
     val showWorkspace = filterWorkspaceId.isBlank()
     LazyColumn(
         modifier = modifier,
@@ -397,6 +423,7 @@ private fun TaskBoardList(
                         "todo" to "待办",
                         "doing" to "进行中",
                         "done" to "已完成",
+                        "archived" to "归档",
                     ),
                     selected = statusFilter,
                     onSelect = onStatusFilter,
@@ -425,28 +452,58 @@ private fun TaskBoardList(
             }
         } else if (statusFilter.isBlank()) {
             grouped.forEach { (status, items) ->
-                if (items.isEmpty()) return@forEach
+                val sectionArchived = if (status == "done") archived else emptyList()
+                if (items.isEmpty() && sectionArchived.isEmpty()) return@forEach
                 item(key = "header-$status") {
                     BoardSectionHeader(status = status, count = items.size)
                 }
                 items(items, key = { it.id }) { task ->
-                    BoardTaskCard(
+                    BoardTaskItem(
                         task = task,
                         showWorkspace = showWorkspace,
+                        revealed = swipedTaskId == task.id,
+                        onRevealedChange = { open -> swipedTaskId = if (open) task.id else null },
                         onOpen = { onOpen(task) },
                         onToggleComplete = { onToggleComplete(task) },
                         onOpenSession = onOpenSession,
+                        onSwipeAction = { action -> onSwipeAction(task, action) },
                     )
+                }
+                if (status == "done" && sectionArchived.isNotEmpty()) {
+                    item(key = "archive-header") {
+                        BoardArchiveHeader(
+                            count = sectionArchived.size,
+                            expanded = archiveOpen,
+                            onToggle = { archiveCollapsed = !archiveCollapsed },
+                        )
+                    }
+                    if (archiveOpen) {
+                        items(sectionArchived, key = { it.id }) { task ->
+                            BoardTaskItem(
+                                task = task,
+                                showWorkspace = showWorkspace,
+                                revealed = swipedTaskId == task.id,
+                                onRevealedChange = { open -> swipedTaskId = if (open) task.id else null },
+                                onOpen = { onOpen(task) },
+                                onToggleComplete = { onToggleComplete(task) },
+                                onOpenSession = onOpenSession,
+                                onSwipeAction = { action -> onSwipeAction(task, action) },
+                            )
+                        }
+                    }
                 }
             }
         } else {
             items(tasks, key = { it.id }) { task ->
-                BoardTaskCard(
+                BoardTaskItem(
                     task = task,
                     showWorkspace = showWorkspace,
+                    revealed = swipedTaskId == task.id,
+                    onRevealedChange = { open -> swipedTaskId = if (open) task.id else null },
                     onOpen = { onOpen(task) },
                     onToggleComplete = { onToggleComplete(task) },
                     onOpenSession = onOpenSession,
+                    onSwipeAction = { action -> onSwipeAction(task, action) },
                 )
             }
         }
@@ -634,6 +691,41 @@ private fun BoardMetricTile(
 }
 
 @Composable
+private fun BoardArchiveHeader(
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.sm)
+            .clickable(onClick = onToggle)
+            .padding(start = 10.dp, top = 8.dp, bottom = 4.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            WandIcons.folder,
+            contentDescription = if (expanded) "收起归档任务" else "展开归档任务",
+            tint = WandColors.textMuted,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            "归档任务",
+            color = WandColors.textMuted,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            count.toString(),
+            color = WandColors.textMuted,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
 private fun BoardSectionHeader(status: String, count: Int) {
     val color = boardStatusColor(status)
     Row(
@@ -662,6 +754,33 @@ private fun BoardSectionHeader(status: String, count: Int) {
 }
 
 @Composable
+private fun BoardTaskItem(
+    task: BoardTask,
+    showWorkspace: Boolean,
+    revealed: Boolean,
+    onRevealedChange: (Boolean) -> Unit,
+    onOpen: () -> Unit,
+    onToggleComplete: () -> Unit,
+    onOpenSession: (String, Boolean) -> Unit,
+    onSwipeAction: (BoardTaskSwipeAction) -> Unit,
+) {
+    BoardTaskSwipeCard(
+        status = task.status,
+        revealed = revealed,
+        onRevealedChange = onRevealedChange,
+        onAction = onSwipeAction,
+    ) {
+        BoardTaskCard(
+            task = task,
+            showWorkspace = showWorkspace,
+            onOpen = onOpen,
+            onToggleComplete = onToggleComplete,
+            onOpenSession = onOpenSession,
+        )
+    }
+}
+
+@Composable
 private fun BoardTaskCard(
     task: BoardTask,
     showWorkspace: Boolean,
@@ -669,7 +788,7 @@ private fun BoardTaskCard(
     onToggleComplete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
 ) {
-    val done = task.status == "done"
+    val done = task.status == "done" || task.status == "archived"
     val model = boardTaskCardModel(task, showWorkspace)
     val hasChips = model.workspaceName != null ||
         model.priority != null ||
@@ -765,7 +884,7 @@ private fun BoardStatusCheck(
     status: String,
     onClick: () -> Unit,
 ) {
-    val done = status == "done"
+    val done = status == "done" || status == "archived"
     val doing = status == "doing"
     val green = WandColors.success
     Box(
@@ -875,7 +994,7 @@ private fun TaskBoardDetail(
     var composeOpen by remember(task.id) { mutableStateOf(!hasAgents) }
     var composePrompt by remember(task.id) { mutableStateOf(if (hasAgents) "" else task.description) }
     val modelOptions = boardAgentModelOptions(models, agent.provider)
-    val done = task.status == "done"
+    val done = task.status == "done" || task.status == "archived"
     val workspaceChoices = buildList {
         add("" to "不指定项目（使用全局目录）")
         val seen = workspaces.map { it.id }.toSet()
@@ -928,7 +1047,7 @@ private fun TaskBoardDetail(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BOARD_TASK_STATUSES.forEach { status ->
+            BOARD_TASK_DETAIL_STATUSES.forEach { status ->
                 val selected = task.status == status
                 val color = boardStatusColor(status)
                 BoardFilterChip(

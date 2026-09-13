@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.ArrowUpward
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
@@ -185,6 +187,12 @@ object WandIcons {
 
     /** 选中勾。 */
     val check: ImageVector = Icons.Outlined.Check
+
+    /** 开始 / 推进任务（任务卡右划动作用）。 */
+    val play: ImageVector = Icons.Outlined.PlayArrow
+
+    /** 归档（任务卡右划动作用）。 */
+    val archive: ImageVector = Icons.Outlined.Archive
 
     /** AskUserQuestion 提问卡。 */
     val question: ImageVector = Icons.AutoMirrored.Outlined.HelpOutline

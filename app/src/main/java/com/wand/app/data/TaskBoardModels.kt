@@ -160,6 +160,7 @@ fun boardTaskStatusLabel(status: String): String = when (status) {
     "todo" -> "待办"
     "doing" -> "进行中"
     "done" -> "已完成"
+    "archived" -> "归档"
     else -> status
 }
 
@@ -172,6 +173,7 @@ fun boardTaskPriorityLabel(priority: String): String = when (priority) {
 }
 
 val BOARD_TASK_STATUSES = listOf("todo", "doing", "done")
+val BOARD_TASK_DETAIL_STATUSES = listOf("todo", "doing", "done", "archived")
 val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
 val BOARD_TASK_PROVIDERS = listOf("claude", "codex", "opencode", "grok", "qoder", "pi")
 val BOARD_TASK_EFFORTS = listOf("off", "standard", "deep", "max")

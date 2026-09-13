@@ -74,6 +74,22 @@ class TaskBoardPresentationTest {
         assertEquals("done", boardTaskToggledStatus("todo"))
         assertEquals("done", boardTaskToggledStatus("doing"))
         assertEquals("todo", boardTaskToggledStatus("done"))
+        assertEquals("todo", boardTaskToggledStatus("archived"))
+    }
+
+    @Test
+    fun archivedTasksStayOutOfDoneStatsAndMainGroups() {
+        val tasks = listOf(
+            task(id = "t", status = "todo"),
+            task(id = "d", status = "done"),
+            task(id = "a", status = "archived"),
+        )
+        val stats = boardTaskStats(tasks)
+        assertEquals(1, stats.done)
+        assertEquals(1, stats.remaining)
+        assertEquals(listOf("a"), boardArchivedTasks(tasks).map { it.id })
+        assertEquals(listOf("d"), groupedBoardTasks(tasks)[2].second.map { it.id })
+        assertEquals(listOf("a"), filterBoardTasks(tasks, "", "", "archived").map { it.id })
     }
 
     @Test

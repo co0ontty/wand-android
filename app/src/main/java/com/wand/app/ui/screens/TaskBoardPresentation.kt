@@ -23,7 +23,7 @@ internal fun boardTaskStats(tasks: List<BoardTask>): BoardTaskStats {
         when (task.status) {
             "todo" -> todo += 1
             "doing" -> doing += 1
-            else -> done += 1
+            "done" -> done += 1
         }
         if (task.priority == "high" || task.priority == "urgent") high += 1
     }
@@ -65,8 +65,11 @@ internal fun sortBoardTasks(tasks: List<BoardTask>): List<BoardTask> =
 internal fun groupedBoardTasks(tasks: List<BoardTask>): List<Pair<String, List<BoardTask>>> =
     BOARD_TASK_STATUSES.map { status -> status to tasks.filter { it.status == status } }
 
+internal fun boardArchivedTasks(tasks: List<BoardTask>): List<BoardTask> =
+    tasks.filter { it.status == "archived" }
+
 internal fun boardTaskToggledStatus(status: String): String =
-    if (status == "done") "todo" else "done"
+    if (status == "done" || status == "archived") "todo" else "done"
 
 internal fun boardTaskCardTitle(task: BoardTask): String {
     val title = task.title.trim()
