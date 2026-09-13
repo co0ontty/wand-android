@@ -155,6 +155,7 @@ class TaskBoardPresentationTest {
         assertNull(slim.workspaceName)
         assertNull(slim.priority)
         assertNull(slim.agentLabel)
+        assertFalse(slim.agentRunning)
         assertTrue(slim.labels.isEmpty())
         assertNull(slim.processingLabel)
         assertTrue(slim.sessions.isEmpty())
@@ -175,9 +176,32 @@ class TaskBoardPresentationTest {
         assertEquals("wand", rich.workspaceName)
         assertEquals("high", rich.priority)
         assertEquals("Claude", rich.agentLabel)
+        assertTrue(rich.agentRunning)
         assertEquals(listOf("bug", "login"), rich.labels)
         assertEquals("正在处理...", rich.processingLabel)
         assertEquals(3, rich.sessions.size)
+    }
+
+    @Test
+    fun agentRunningTracksOnlyLiveSessions() {
+        assertFalse(
+            boardTaskCardModel(
+                task(agent = BoardTaskAgent("claude", "default", "off")),
+                showWorkspace = false,
+            ).agentRunning,
+        )
+        assertFalse(
+            boardTaskCardModel(
+                task(sessions = listOf(session(status = "idle"), session(id = "s2", status = "exited"))),
+                showWorkspace = false,
+            ).agentRunning,
+        )
+        assertTrue(
+            boardTaskCardModel(
+                task(sessions = listOf(session(status = "exited"), session(id = "s2", status = "running"))),
+                showWorkspace = false,
+            ).agentRunning,
+        )
     }
 
     private fun task(

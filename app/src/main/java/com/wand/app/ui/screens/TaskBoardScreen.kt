@@ -1,6 +1,9 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -893,7 +896,12 @@ private fun BoardTaskCard(
                         )
                     }
                     model.agentLabel?.let { label ->
-                        BoardChip(label = label)
+                        BoardChip(
+                            label = label,
+                            color = if (model.agentRunning) WandColors.textPrimary else WandColors.textSecondary,
+                        ) {
+                            if (model.agentRunning) BoardAgentDots()
+                        }
                     }
                     model.labels.forEach { label ->
                         BoardChip(label = label)
@@ -981,6 +989,7 @@ private fun BoardChip(
     label: String,
     icon: ImageVector? = null,
     color: Color = WandColors.textSecondary,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -1000,6 +1009,53 @@ private fun BoardChip(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        trailing?.invoke()
+    }
+}
+
+private const val BOARD_AGENT_DOT_CYCLE_MS = 1_200
+private const val BOARD_AGENT_DOT_STAGGER_MS = 150
+
+/**
+ * 胶囊尾部的三点跳动指示：Agent 会话在跑时出现，节奏对齐 Web 任务卡与聊天流式占位。
+ * 三个点错峰循环，跳动幅度 3dp，只动 translationY 和 alpha，不引起父容器重布局。
+ */
+@Composable
+private fun BoardAgentDots(modifier: Modifier = Modifier) {
+    val animate = !reduceMotionEnabled()
+    val transition = rememberInfiniteTransition(label = "boardAgentDots")
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        for (index in 0 until 3) {
+            val lift by transition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = keyframes {
+                        durationMillis = BOARD_AGENT_DOT_CYCLE_MS
+                        0f at 0
+                        1f at 120
+                        0f at 240
+                        0f at BOARD_AGENT_DOT_CYCLE_MS
+                    },
+                    initialStartOffset = StartOffset(index * BOARD_AGENT_DOT_STAGGER_MS),
+                ),
+                label = "boardAgentDotLift$index",
+            )
+            val raised = if (animate) lift else 0f
+            Box(
+                modifier = Modifier
+                    .graphicsLayer { translationY = -3.dp.toPx() * raised }
+                    .size(3.dp)
+                    .clip(CircleShape)
+                    .background(
+                        WandColors.success.copy(alpha = if (animate) 0.35f + 0.65f * raised else 1f),
+                    ),
+            )
+        }
     }
 }
 
