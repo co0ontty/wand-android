@@ -209,6 +209,7 @@ fun TurnView(
     val preview = remember(nonSubagentContent, collapsed) {
         if (collapsed) replyPreview(nonSubagentContent) else ""
     }
+    val copyText = remember(turn.content) { conversationTurnCopyText(turn) }
     val setCollapsed: (Boolean) -> Unit = { next ->
         if (currentReplyExpandedOverride == null) {
             localCollapsed = next
@@ -226,6 +227,7 @@ fun TurnView(
             AssistantReplyHeader(
                 collapsed = collapsed,
                 preview = preview,
+                copyText = copyText,
                 onToggle = {
                     val next = !collapsed
                     setCollapsed(next)
@@ -263,6 +265,7 @@ fun TurnView(
 private fun AssistantReplyHeader(
     collapsed: Boolean,
     preview: String,
+    copyText: String,
     onToggle: () -> Unit,
 ) {
     val background by animateColorAsState(
@@ -322,6 +325,9 @@ private fun AssistantReplyHeader(
             )
         } else {
             Spacer(modifier = Modifier.weight(1f))
+        }
+        if (copyText.isNotBlank()) {
+            MessageCopyButton(copyText = copyText)
         }
         Text(
             if (collapsed) "展开" else "收起",
@@ -1051,20 +1057,34 @@ private fun formatUsd(value: Double): String = when {
 private const val COMPACT_USER_MIN_CHARS = 72
 
 @Composable
-private fun ChatMessageTime(clock: String, alignEnd: Boolean) {
-    if (clock.isBlank()) return
-    Text(
-        clock,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        fontWeight = FontWeight.Medium,
-        fontFamily = FontFamily.Monospace,
-        color = WandColors.textSecondary,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
-    )
+private fun ChatMessageTime(
+    clock: String,
+    alignEnd: Boolean,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    if (clock.isBlank() && trailing == null) return
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        if (clock.isNotBlank()) {
+            Text(
+                clock,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                fontWeight = FontWeight.Medium,
+                fontFamily = FontFamily.Monospace,
+                color = WandColors.textSecondary,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
+            )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+        trailing?.invoke()
+    }
 }
 
 /** user turn 只保留父对话内容；subagent 输出统一交给底部常驻 Agent 状态坞。 */
@@ -1454,7 +1474,13 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
             .fillMaxWidth()
             .padding(start = 44.dp),
     ) {
-        ChatMessageTime(conversationTurnClock(turn), alignEnd = true)
+        if (parsed.body.isNotBlank()) {
+            ChatMessageTime(conversationTurnClock(turn), alignEnd = true) {
+                MessageCopyButton(copyText = parsed.body)
+            }
+        } else {
+            ChatMessageTime(conversationTurnClock(turn), alignEnd = true)
+        }
         // 附件缩略图 / 文件块：右对齐贴在气泡上方（对齐网页 user-attachments 块在正文之上）。
         if (parsed.paths.isNotEmpty() && baseUrl.isNotEmpty()) {
             parsed.paths.forEach { path ->
