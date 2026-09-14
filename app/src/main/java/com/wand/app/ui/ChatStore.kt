@@ -8,6 +8,7 @@ import com.wand.app.data.ConversationTurn
 import com.wand.app.data.CardExpandDefaults
 import com.wand.app.data.ChatSessionEventReducer
 import com.wand.app.data.ChatSessionEventState
+import com.wand.app.data.enrichConversationTimes
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.ModelInfo
 import com.wand.app.data.PendingSessionSettings
@@ -232,7 +233,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private fun applyRealtimeState(next: ChatSessionEventState) {
         // 逐字段相等短路：WS 事件很密（服务端 16ms debounce），无变化的字段
         // 不回写 Compose state，避免下游 remember(store.xxx) 因引用变化被反复击穿。
-        if (messages !== next.messages) messages = next.messages
+        val nextMessages = enrichConversationTimes(
+            messages,
+            next.messages,
+            wasResponding = isResponding,
+            nowResponding = next.isResponding,
+        )
+        if (messages !== nextMessages) messages = nextMessages
         if (loadedOffset != next.loadedOffset) loadedOffset = next.loadedOffset
         if (messageTotal != next.messageTotal) messageTotal = next.messageTotal
         if (status != next.status) status = next.status

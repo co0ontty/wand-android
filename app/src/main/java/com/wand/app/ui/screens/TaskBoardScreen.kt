@@ -896,12 +896,7 @@ private fun BoardTaskCard(
                         )
                     }
                     model.agentLabel?.let { label ->
-                        BoardChip(
-                            label = label,
-                            color = if (model.agentRunning) WandColors.textPrimary else WandColors.textSecondary,
-                        ) {
-                            if (model.agentRunning) BoardAgentDots()
-                        }
+                        BoardChip(label = label)
                     }
                     model.labels.forEach { label ->
                         BoardChip(label = label)
@@ -922,6 +917,7 @@ private fun BoardTaskCard(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     model.sessions.forEach { session ->
+                        val running = boardSessionRunning(session.status)
                         Row(
                             modifier = Modifier
                                 .clip(WandShapes.full)
@@ -939,9 +935,10 @@ private fun BoardTaskCard(
                             )
                             Text(
                                 boardTaskProviderLabel(session.provider),
-                                color = WandColors.textSecondary,
+                                color = if (running) WandColors.textPrimary else WandColors.textSecondary,
                                 style = MaterialTheme.typography.labelSmall,
                             )
+                            if (running) BoardAgentDots()
                         }
                     }
                 }
@@ -989,7 +986,6 @@ private fun BoardChip(
     label: String,
     icon: ImageVector? = null,
     color: Color = WandColors.textSecondary,
-    trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -1009,7 +1005,6 @@ private fun BoardChip(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        trailing?.invoke()
     }
 }
 
@@ -1017,7 +1012,7 @@ private const val BOARD_AGENT_DOT_CYCLE_MS = 1_200
 private const val BOARD_AGENT_DOT_STAGGER_MS = 150
 
 /**
- * 胶囊尾部的三点跳动指示：Agent 会话在跑时出现，节奏对齐 Web 任务卡与聊天流式占位。
+ * 具体 Agent 会话胶囊尾部的三点跳动：该会话在跑时出现，节奏对齐 Web 任务卡与聊天流式占位。
  * 三个点错峰循环，跳动幅度 3dp，只动 translationY 和 alpha，不引起父容器重布局。
  */
 @Composable
@@ -1216,6 +1211,7 @@ private fun TaskBoardDetail(
                     )
                 } else {
                     group.sessions.forEach { session ->
+                        val running = boardSessionRunning(session.status)
                         WandCard(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                             onClick = { onOpenSession(session.id, session.isStructured) },
@@ -1231,12 +1227,20 @@ private fun TaskBoardDetail(
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        session.title.ifBlank { boardTaskProviderLabel(session.provider) },
-                                        color = WandColors.textPrimary,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        maxLines = 1,
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Text(
+                                            session.title.ifBlank { boardTaskProviderLabel(session.provider) },
+                                            color = WandColors.textPrimary,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                        )
+                                        if (running) BoardAgentDots()
+                                    }
                                     Text(
                                         listOfNotNull(
                                             session.model.takeIf { it.isNotBlank() && it != "default" },

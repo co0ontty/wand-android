@@ -16,6 +16,9 @@ import org.json.JSONObject
 
 // MARK: - Provider / 工作窗口目标
 
+/** 服务端的全局任务空间 id（`wand-global`）：不挂目录，不参与重命名。 */
+const val GLOBAL_WORKSPACE_ID = "wand-global"
+
 /** 工作空间支持的 Agent provider。 */
 typealias WorkspaceProvider = String
 

@@ -89,6 +89,22 @@ interface WorkspacePort {
     /** PATCH /api/workspace-tasks/:taskId —— 重命名任务。 */
     suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask
 
+    /**
+     * PATCH /api/workspaces/:id —— 重命名项目（工作区显示名）。
+     * 服务端会把目录自定义名一起写，保证各端显示同一个名字。
+     */
+    suspend fun renameWorkspace(workspaceId: String, name: String): Workspace {
+        throw UnsupportedOperationException("重命名项目接口不可用")
+    }
+
+    /**
+     * PUT /api/session-directories/name —— 重命名没有项目实体的合成目录。
+     * [name] 为空时恢复目录名。
+     */
+    suspend fun renameSessionDirectory(cwd: String, name: String?) {
+        throw UnsupportedOperationException("重命名目录接口不可用")
+    }
+
     /** DELETE /api/workspace-tasks/:taskId?cascade=1 —— 删除任务、会话和隔离 worktree。 */
     suspend fun deleteWorkspaceTask(taskId: String)
 

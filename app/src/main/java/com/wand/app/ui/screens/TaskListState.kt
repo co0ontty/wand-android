@@ -278,6 +278,35 @@ class TaskListState(
         }
     }
 
+    /**
+     * 重命名目录（工作区显示名）：合成目录走目录接口，已有项目走项目接口，
+     * 服务端会把两边名字写成同一个。
+     */
+    suspend fun renameDirectory(group: TaskDirectoryGroup, name: String): Boolean = mutationMutex.withLock {
+        val normalizedName = name.trim()
+        if (!isValidTaskName(normalizedName)) {
+            mutationError = if (normalizedName.isEmpty()) "请输入工作区名称" else "工作区名称无效或过长"
+            return@withLock false
+        }
+        mutationBusy = true
+        mutationError = null
+        try {
+            if (group.synthetic) {
+                port.renameSessionDirectory(group.workspaceCwd, normalizedName)
+            } else {
+                port.renameWorkspace(group.workspaceId, normalizedName)
+            }
+            load(silent = true)
+            true
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            mutationError = error.message ?: "重命名工作区失败"
+            false
+        } finally {
+            mutationBusy = false
+        }
+    }
+
     suspend fun deleteTask(taskId: String): Boolean = mutationMutex.withLock {
         mutationBusy = true
         mutationError = null

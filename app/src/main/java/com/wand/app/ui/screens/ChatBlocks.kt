@@ -394,7 +394,7 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
     }
 }
 
-/** 输入栏上方的紧凑状态坞：Agent 气泡独占上层，用量与回复状态保持纯文字。 */
+/** 输入栏上方的紧凑状态坞：Agent 气泡独占上层；用量与回复状态只在流式期间以纯文字展示。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun SubagentActivityDock(
@@ -403,7 +403,6 @@ internal fun SubagentActivityDock(
     usage: TurnUsage?,
     taskTitle: String?,
     sessionRunning: Boolean,
-    completedClock: String = "",
     modifier: Modifier = Modifier,
     onExpandedChange: (Boolean) -> Unit = {},
 ) {
@@ -528,13 +527,15 @@ internal fun SubagentActivityDock(
                 },
             )
         }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp).padding(horizontal = 3.dp),
-        ) {
-            UsageStatusCompact(usage, Modifier.weight(1f))
-            ReplyStatusCompact(taskTitle, sessionRunning, completedClock, Modifier.weight(1f))
+        if (sessionRunning) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp).padding(horizontal = 3.dp),
+            ) {
+                UsageStatusCompact(usage, Modifier.weight(1f))
+                ReplyStatusCompact(taskTitle, Modifier.weight(1f))
+            }
         }
     }
 }
@@ -1017,24 +1018,14 @@ private fun UsageStatusCompact(usage: TurnUsage?, modifier: Modifier = Modifier)
 @Composable
 private fun ReplyStatusCompact(
     taskTitle: String?,
-    sessionRunning: Boolean,
-    completedClock: String = "",
     modifier: Modifier = Modifier,
 ) {
-    val text = if (sessionRunning) {
-        taskTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: "正在思考…"
-    } else if (completedClock.isNotBlank()) {
-        "完成 $completedClock"
-    } else {
-        "回复完成"
-    }
+    val text = taskTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: "正在思考…"
     Text(
         text,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        fontWeight = FontWeight.Medium,
-        fontFamily = FontFamily.Monospace,
-        color = WandColors.textSecondary,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        color = WandColors.textMuted,
         textAlign = TextAlign.End,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -1069,7 +1060,9 @@ private fun ChatMessageTime(clock: String, alignEnd: Boolean) {
         fontWeight = FontWeight.Medium,
         fontFamily = FontFamily.Monospace,
         color = WandColors.textSecondary,
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp),
         textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
     )
 }

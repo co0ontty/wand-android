@@ -222,7 +222,7 @@ class TaskListPresentationTest {
         )
 
         assertEquals(
-            listOf("Newer", "Running", "Older"),
+            listOf("Older", "Newer", "Running"),
             directoryTreeGroups(listOf(older, newer, running)).map { it.workspaceName },
         )
     }
@@ -254,7 +254,7 @@ class TaskListPresentationTest {
         )
 
         assertEquals(
-            listOf("done", "newer", "older"),
+            listOf("older", "done", "newer"),
             orderedTaskSummaries(listOf(older, done, newer)).map { it.id },
         )
     }

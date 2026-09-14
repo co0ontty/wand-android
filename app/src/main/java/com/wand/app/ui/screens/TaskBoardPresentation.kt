@@ -53,14 +53,8 @@ internal fun filterBoardTasks(
     boardTaskMatches(task, query, workspaceId) && (status.isBlank() || task.status == status)
 }
 
-internal fun sortBoardTasks(tasks: List<BoardTask>): List<BoardTask> =
-    tasks.sortedWith(
-        compareBy<BoardTask> { task ->
-            BOARD_TASK_STATUSES.indexOf(task.status).takeIf { it >= 0 } ?: 99
-        }
-            .thenBy { it.sortOrder }
-            .thenByDescending { it.updatedAt },
-    )
+/** 顺序以 GET /api/wand-tasks 返回为准，客户端不再本地排序。 */
+internal fun sortBoardTasks(tasks: List<BoardTask>): List<BoardTask> = tasks
 
 internal fun groupedBoardTasks(tasks: List<BoardTask>): List<Pair<String, List<BoardTask>>> =
     BOARD_TASK_STATUSES.map { status -> status to tasks.filter { it.status == status } }
@@ -85,8 +79,6 @@ internal data class BoardTaskCardModel(
     val workspaceName: String?,
     val priority: String?,
     val agentLabel: String?,
-    /** 该卡片上的 Agent 胶囊是否有会话在跑；为真时胶囊尾部画三点。 */
-    val agentRunning: Boolean,
     val labels: List<String>,
     val processingLabel: String?,
     val sessions: List<BoardTaskSession>,
@@ -99,7 +91,6 @@ internal fun boardTaskCardModel(task: BoardTask, showWorkspace: Boolean): BoardT
         workspaceName = workspaceName.takeIf { showWorkspace && it.isNotEmpty() },
         priority = task.priority.takeIf { it.isNotBlank() && it != "none" },
         agentLabel = boardTaskAgentLabels(task.sessions, task.agent),
-        agentRunning = task.sessions.any { boardSessionRunning(it.status) },
         labels = task.labels.filter { it.isNotBlank() }.take(2),
         processingLabel = boardTaskProcessingLabel(task),
         sessions = task.sessions.take(3),

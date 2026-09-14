@@ -273,3 +273,46 @@ internal fun stampLiveTurnTime(turn: ConversationTurn, now: String = Instant.now
     if (!turn.createdAt.isNullOrBlank()) return turn
     return turn.copy(createdAt = now)
 }
+
+/**
+ * 服务端旧包可能不下发 createdAt/completedAt。客户端在会话已打开后
+ * 为新追加的用户消息、正在回复的助手、以及回复结束补齐本地时钟，
+ * 首屏历史不做假时间。
+ */
+internal fun enrichConversationTimes(
+    previous: List<ConversationTurn>,
+    incoming: List<ConversationTurn>,
+    wasResponding: Boolean,
+    nowResponding: Boolean,
+    now: String = Instant.now().toString(),
+): List<ConversationTurn> {
+    if (incoming.isEmpty()) return incoming
+    val lastIncoming = incoming.last()
+    val lastPrevious = previous.lastOrNull()
+    val appendedUser = lastIncoming.role == "user" && previous.isNotEmpty() && (
+        incoming.size > previous.size || lastPrevious?.role != "user"
+    )
+    var changed = false
+    val out = incoming.mapIndexed { index, turn ->
+        val prev = previous.getOrNull(index)
+        var createdAt = turn.createdAt?.takeIf { it.isNotBlank() } ?: prev?.createdAt
+        var completedAt = turn.completedAt?.takeIf { it.isNotBlank() } ?: prev?.completedAt
+        val isLast = index == incoming.lastIndex
+        if (createdAt.isNullOrBlank() && isLast) {
+            if (nowResponding || (turn.role == "user" && appendedUser)) {
+                createdAt = now
+            }
+        }
+        if (isLast && turn.role == "assistant" && wasResponding && !nowResponding) {
+            if (completedAt.isNullOrBlank()) completedAt = now
+            if (createdAt.isNullOrBlank()) createdAt = now
+        }
+        if (createdAt == turn.createdAt && completedAt == turn.completedAt) {
+            turn
+        } else {
+            changed = true
+            turn.copy(createdAt = createdAt, completedAt = completedAt)
+        }
+    }
+    return if (changed) out else incoming
+}

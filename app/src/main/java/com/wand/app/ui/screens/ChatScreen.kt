@@ -177,7 +177,6 @@ import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import java.time.Instant
 
 private enum class ChatScrollMode {
     StickToBottom,
@@ -186,6 +185,13 @@ private enum class ChatScrollMode {
 
 /** LazyColumn 中正向手指位移表示内容被拉向更早的消息。 */
 internal fun shouldPauseBottomFollow(userScrollDeltaY: Float): Boolean = userScrollDeltaY > 0f
+
+/** 状态坞只承接流式状态 / 子 Agent；完成时间和用量留在各轮消息里，避免右下角再显一遍。 */
+internal fun shouldShowStructuredActivityDock(
+    isStructured: Boolean,
+    isResponding: Boolean,
+    hasSubagentActivities: Boolean,
+): Boolean = isStructured && (isResponding || hasSubagentActivities)
 
 internal fun shouldRefreshQuickCommitStatus(isLoading: Boolean, isResponding: Boolean): Boolean {
     return !isLoading && !isResponding
@@ -310,29 +316,10 @@ fun ChatScreen(
     val subagentActivities = remember(store.messages, store.isResponding) {
         collectSubagentActivities(store.messages, store.isResponding)
     }
-    var holdCompletedClock by remember(sessionId) { mutableStateOf("") }
-    var sawResponding by remember(sessionId) { mutableStateOf(false) }
-    LaunchedEffect(sessionId, store.isResponding) {
-        if (store.isResponding) {
-            sawResponding = true
-        } else if (sawResponding) {
-            val fromTurn = store.messages.lastOrNull { it.role == "assistant" }
-                ?.let(::conversationTurnClock)
-                ?.takeIf { it.isNotBlank() }
-            holdCompletedClock = fromTurn ?: formatChatClock(Instant.now().toString())
-        }
-    }
-    val completedClock = if (store.isResponding) {
-        ""
-    } else {
-        holdCompletedClock.ifBlank {
-            store.messages.lastOrNull { it.role == "assistant" }
-                ?.let(::conversationTurnClock)
-                .orEmpty()
-        }
-    }
-    val showActivityDock = store.isStructured && (
-        store.isResponding || subagentActivities.isNotEmpty() || completedClock.isNotBlank()
+    val showActivityDock = shouldShowStructuredActivityDock(
+        isStructured = store.isStructured,
+        isResponding = store.isResponding,
+        hasSubagentActivities = subagentActivities.isNotEmpty(),
     )
     // 顶栏用量：避免 ChatScreen 每次重组都对全部消息线性扫描。
     val lastAssistantUsage = remember(store.messages) {
@@ -345,12 +332,14 @@ fun ChatScreen(
     val activityDockListPadding = when {
         !showActivityDock -> 4.dp
         subagentActivities.isEmpty() -> 28.dp
-        else -> 62.dp
+        store.isResponding -> 62.dp
+        else -> 36.dp
     }
     val activityDockFabPadding = when {
         !showActivityDock -> 12.dp
         subagentActivities.isEmpty() -> 38.dp
-        else -> 70.dp
+        store.isResponding -> 70.dp
+        else -> 44.dp
     }
 
     // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
@@ -817,7 +806,6 @@ fun ChatScreen(
                         usage = lastAssistantUsage,
                         taskTitle = store.currentTaskTitle,
                         sessionRunning = store.isResponding,
-                        completedClock = completedClock,
                         onExpandedChange = { activityDockExpanded = it },
                     )
                 }

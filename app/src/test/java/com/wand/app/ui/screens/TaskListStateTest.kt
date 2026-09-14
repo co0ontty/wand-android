@@ -104,6 +104,34 @@ class TaskListStateTest {
     }
 
     @Test
+    fun renameDirectoryWritesTheWorkspaceNameAndRefreshesTheList() = runBlocking {
+        val port = FakeWorkspacePort().apply {
+            groups = listOf(group("ws-1", "/repo"), group("cwd:/loose", "/loose").copy(synthetic = true))
+        }
+        val state = TaskListState(port)
+        assertTrue(state.load())
+
+        assertTrue(state.renameDirectory(port.groups[0], "  核心工作区 "))
+        assertTrue(state.renameDirectory(port.groups[1], "临时目录"))
+
+        assertEquals(listOf("ws-1" to "核心工作区"), port.renamedWorkspaces)
+        assertEquals(listOf("/loose" to "临时目录"), port.renamedDirectories)
+        // 合成目录不能走项目接口。
+        assertEquals(1, port.renamedWorkspaces.size)
+    }
+
+    @Test
+    fun invalidDirectoryNameNeverCallsMutationPort() = runBlocking {
+        val port = FakeWorkspacePort().apply { groups = listOf(group("ws-1", "/repo")) }
+        val state = TaskListState(port)
+
+        assertFalse(state.renameDirectory(port.groups[0], "   "))
+
+        assertTrue(port.renamedWorkspaces.isEmpty())
+        assertTrue(port.renamedDirectories.isEmpty())
+    }
+
+    @Test
     fun renameAndDeleteRefreshTheSameAggregateSource() = runBlocking {
         val port = FakeWorkspacePort().apply { groups = listOf(group("ws-1", "/repo")) }
         val state = TaskListState(port)
@@ -322,6 +350,8 @@ class TaskListStateTest {
         val taskRequests = mutableListOf<TaskRequest>()
         val standaloneRequests = mutableListOf<StandaloneRequest>()
         val renamedTasks = mutableListOf<Pair<String, String>>()
+        val renamedWorkspaces = mutableListOf<Pair<String, String>>()
+        val renamedDirectories = mutableListOf<Pair<String, String?>>()
         val clearedTaskIds = mutableListOf<String>()
         val deletedTaskIds = mutableListOf<String>()
         val createdWindowBindings = mutableListOf<WorkspaceBinding>()
@@ -387,6 +417,15 @@ class TaskListStateTest {
         override suspend fun renameWorkspaceTask(taskId: String, name: String): WorkspaceTask {
             renamedTasks += taskId to name
             return task(taskId, name)
+        }
+
+        override suspend fun renameWorkspace(workspaceId: String, name: String): Workspace {
+            renamedWorkspaces += workspaceId to name
+            return workspace(workspaceId, "/repo").copy(name = name)
+        }
+
+        override suspend fun renameSessionDirectory(cwd: String, name: String?) {
+            renamedDirectories += cwd to name
         }
 
         override suspend fun clearWorkspaceTaskSessions(taskId: String): Int {

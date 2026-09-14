@@ -98,6 +98,42 @@ class ChatPresentationTest {
     }
 
     @Test
+    fun structuredActivityDockDoesNotStayOpenJustToRepeatCompletionTime() {
+        assertEquals(
+            false,
+            shouldShowStructuredActivityDock(
+                isStructured = true,
+                isResponding = false,
+                hasSubagentActivities = false,
+            ),
+        )
+        assertEquals(
+            true,
+            shouldShowStructuredActivityDock(
+                isStructured = true,
+                isResponding = true,
+                hasSubagentActivities = false,
+            ),
+        )
+        assertEquals(
+            true,
+            shouldShowStructuredActivityDock(
+                isStructured = true,
+                isResponding = false,
+                hasSubagentActivities = true,
+            ),
+        )
+        assertEquals(
+            false,
+            shouldShowStructuredActivityDock(
+                isStructured = false,
+                isResponding = true,
+                hasSubagentActivities = true,
+            ),
+        )
+    }
+
+    @Test
     fun chatClockUsesTimeOfDayForSameDay() {
         val zone = ZoneOffset.UTC
         val today = java.time.ZonedDateTime.now(zone).toLocalDate().atTime(9, 8, 7).atZone(zone)

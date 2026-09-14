@@ -47,37 +47,15 @@ internal fun flattenUnnamedTasksIntoStandalone(group: TaskDirectoryGroup): TaskD
 }
 
 
-/** 目录位置按创建时间固定：新建在前，打开/运行不会改位置。 */
+/** 目录顺序以 GET /api/tasks 返回为准。 */
 internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
     groups
         .map(::flattenUnnamedTasksIntoStandalone)
         .filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
-        .mapIndexed { index, group -> IndexedDirectoryGroup(group = group, index = index) }
-        .sortedWith { left, right ->
-            val created = compareNullableTimestamp(
-                directoryCreatedAt(right.group),
-                directoryCreatedAt(left.group),
-            )
-            if (created != 0) created else left.index - right.index
-        }
-        .map { it.group }
 
-/** 目录内任务按创建时间固定：新建在前，打开不会改位置。 */
+/** 目录内任务顺序以 GET /api/tasks 返回为准。 */
 internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =
     tasks
-        .mapIndexed { index, task -> IndexedTaskSummary(task = task, index = index) }
-        .sortedWith { left, right ->
-            val created = compareNullableTimestamp(right.task.task.createdAt, left.task.task.createdAt)
-            if (created != 0) created else left.index - right.index
-        }
-        .map { it.task }
-
-internal fun directoryCreatedAt(group: TaskDirectoryGroup): String? {
-    group.createdAt?.takeIf { it.isNotBlank() }?.let { return it }
-    val times = group.tasks.mapNotNull { it.task.createdAt?.takeIf(String::isNotBlank) } +
-        group.standaloneSessions.mapNotNull { it.startedAt?.takeIf(String::isNotBlank) }
-    return times.minOrNull()
-}
 
 internal fun groupHasLiveActivity(group: TaskDirectoryGroup): Boolean =
     group.standaloneSessions.any(::sessionHasLiveActivity) ||
@@ -102,16 +80,6 @@ private fun compareNullableTimestamp(left: String?, right: String?): Int {
         else -> leftValue.compareTo(rightValue)
     }
 }
-
-private data class IndexedDirectoryGroup(
-    val group: TaskDirectoryGroup,
-    val index: Int,
-)
-
-private data class IndexedTaskSummary(
-    val task: WorkspaceTaskSummary,
-    val index: Int,
-)
 
 /** 只有多个目录时才显示展开控件；单个目录始终展开，避免空箭头占位。 */
 internal fun showsDirectoryDisclosure(directoryCount: Int): Boolean = directoryCount > 1

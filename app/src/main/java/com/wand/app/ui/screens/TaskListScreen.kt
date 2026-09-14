@@ -60,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.DirectoryListing
+import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
@@ -153,6 +154,8 @@ fun TaskListScreen(
     var targetError by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var renameDraft by remember { mutableStateOf("") }
+    var renameDirectoryTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
+    var renameDirectoryDraft by remember { mutableStateOf("") }
     var clearTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
@@ -602,6 +605,39 @@ fun TaskListScreen(
         }
     }
 
+    renameDirectoryTarget?.let { group ->
+        val name = renameDirectoryDraft.trim()
+        WandDialog(
+            title = "重命名目录",
+            onDismissRequest = { if (!state.mutationBusy) renameDirectoryTarget = null },
+            icon = WandIcons.rename,
+            confirm = WandDialogAction(
+                label = if (state.mutationBusy) "保存中…" else "保存",
+                enabled = !state.mutationBusy && name.isNotEmpty(),
+                onClick = {
+                    scope.launch {
+                        if (state.renameDirectory(group, name)) renameDirectoryTarget = null
+                    }
+                },
+            ),
+            dismiss = WandDialogAction("取消", onClick = { renameDirectoryTarget = null }),
+        ) {
+            WandTextField(
+                value = renameDirectoryDraft,
+                onValueChange = { renameDirectoryDraft = it; state.clearMutationError() },
+                modifier = Modifier.fillMaxWidth(),
+                label = "工作区名称",
+                singleLine = true,
+            )
+            Text(
+                "只改变 Wand 里的显示名，不会重命名磁盘上的文件夹。",
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textMuted,
+            )
+            MutationErrorText(state.mutationError)
+        }
+    }
+
     clearTarget?.let { summary ->
         WandDialog(
             title = "清空任务会话？",
@@ -952,6 +988,11 @@ fun TaskListScreen(
                                 onOpenSession(taskSessionRoute(session, group, task))
                             },
                             onNewTask = { beginNewTask(group.workspaceCwd, group.workspaceId.takeUnless { group.synthetic }) },
+                            onRenameDirectory = {
+                                renameDirectoryDraft = group.workspaceName
+                                renameDirectoryTarget = group
+                                state.clearMutationError()
+                            },
                             onNewWindow = { task ->
                                 selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
                                     ?: WorkspaceSessionTarget.Claude
@@ -1232,6 +1273,7 @@ private fun TaskDirectorySection(
     onOpenTask: (WorkspaceTaskSummary) -> Unit,
     onOpenSession: (WorkspaceSessionSummary, WorkspaceTaskSummary?) -> Unit,
     onNewTask: () -> Unit,
+    onRenameDirectory: () -> Unit,
     onNewWindow: (WorkspaceTaskSummary) -> Unit,
     onRename: (WorkspaceTaskSummary) -> Unit,
     onClear: (WorkspaceTaskSummary) -> Unit,
@@ -1300,6 +1342,14 @@ private fun TaskDirectorySection(
                     icon = WandIcons.commit,
                     contentDescription = "审查 Worktree",
                     onClick = onReview,
+                    variant = WandIconButtonVariant.Compact,
+                )
+            }
+            if (group.workspaceId != GLOBAL_WORKSPACE_ID) {
+                WandIconButton(
+                    icon = WandIcons.rename,
+                    contentDescription = "重命名目录 ${group.workspaceName}",
+                    onClick = onRenameDirectory,
                     variant = WandIconButtonVariant.Compact,
                 )
             }

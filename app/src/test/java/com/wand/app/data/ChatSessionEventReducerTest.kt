@@ -313,6 +313,53 @@ class ChatSessionEventReducerTest {
         assertEquals("hi!", turnText(next.messages.single()))
     }
 
+    @Test
+    fun enrichDoesNotInventTimesOnFirstHydrate() {
+        val incoming = listOf(textTurn("user", "hello"), textTurn("assistant", "world"))
+        val next = enrichConversationTimes(
+            previous = emptyList(),
+            incoming = incoming,
+            wasResponding = false,
+            nowResponding = false,
+            now = "2026-03-27T01:02:03Z",
+        )
+        assertTrue(next.all { it.createdAt == null && it.completedAt == null })
+        assertTrue(next === incoming)
+    }
+
+    @Test
+    fun enrichStampsAppendedUserAndCompletesAssistant() {
+        val user = textTurn("user", "hello")
+        val started = enrichConversationTimes(
+            previous = listOf(user),
+            incoming = listOf(user, textTurn("assistant", "...")),
+            wasResponding = false,
+            nowResponding = true,
+            now = "2026-03-27T01:02:03Z",
+        )
+        assertEquals("2026-03-27T01:02:03Z", started.last().createdAt)
+        assertNull(started.last().completedAt)
+
+        val sent = enrichConversationTimes(
+            previous = started,
+            incoming = started + textTurn("user", "next"),
+            wasResponding = true,
+            nowResponding = true,
+            now = "2026-03-27T01:03:00Z",
+        )
+        assertEquals("2026-03-27T01:03:00Z", sent.last().createdAt)
+
+        val done = enrichConversationTimes(
+            previous = started,
+            incoming = started,
+            wasResponding = true,
+            nowResponding = false,
+            now = "2026-03-27T01:02:09Z",
+        )
+        assertEquals("2026-03-27T01:02:03Z", done.last().createdAt)
+        assertEquals("2026-03-27T01:02:09Z", done.last().completedAt)
+    }
+
     private fun output(
         messages: MessageUpdate,
         changes: SessionChanges = SessionChanges(),

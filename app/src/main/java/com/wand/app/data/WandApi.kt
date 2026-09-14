@@ -630,6 +630,23 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         ) ?: throw WandApiException(500, "任务重命名响应无效。")
     }
 
+    override suspend fun renameWorkspace(workspaceId: String, name: String): Workspace =
+        Workspace.parse(
+            requestObject(
+                "PATCH",
+                "/api/workspaces/${encode(workspaceId)}",
+                JSONObject().put("name", name),
+            ),
+        ) ?: throw WandApiException(500, "重命名项目响应无效。")
+
+    override suspend fun renameSessionDirectory(cwd: String, name: String?) {
+        requestData(
+            "PUT",
+            "/api/session-directories/name",
+            JSONObject().put("path", cwd).put("name", name ?: JSONObject.NULL),
+        )
+    }
+
     override suspend fun deleteWorkspaceTask(taskId: String) {
         requestData("DELETE", "/api/workspace-tasks/${encode(taskId)}?cascade=1")
     }
