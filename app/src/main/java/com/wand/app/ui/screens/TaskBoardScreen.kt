@@ -74,10 +74,13 @@ import com.wand.app.data.Workspace
 import com.wand.app.data.boardAgentModelOptions
 import com.wand.app.data.groupBoardSessionsByAgent
 import com.wand.app.data.boardTaskEffortLabel
+import com.wand.app.data.boardTaskModeLabel
 import com.wand.app.data.boardTaskPriorityLabel
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
+import com.wand.app.data.normalizeBoardTaskAgentMode
 import com.wand.app.data.patchBoardTaskBody
+import com.wand.app.data.supportedBoardTaskModes
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.WandButton
@@ -120,6 +123,8 @@ fun TaskBoardScreen(
     var statusFilter by remember { mutableStateOf("") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var showCreate by remember { mutableStateOf(false) }
+    // 从哪一列点开的「新建」决定初始状态：待办 = 只创建，进行中 = 创建并指派。
+    var createStatus by remember { mutableStateOf("todo") }
     var busy by remember { mutableStateOf(false) }
     var lastAgent by remember { mutableStateOf(BoardTaskAgent.default()) }
 
@@ -220,7 +225,10 @@ fun TaskBoardScreen(
         floatingActionButton = {
             if (selected == null) {
                 FloatingActionButton(
-                    onClick = { showCreate = true },
+                    onClick = {
+                        createStatus = "todo"
+                        showCreate = true
+                    },
                     containerColor = WandColors.success,
                     contentColor = Color.White,
                     shape = CircleShape,
@@ -323,7 +331,10 @@ fun TaskBoardScreen(
                         }
                     },
                     onOpenSession = onOpenSession,
-                    onCreate = { showCreate = true },
+                    onCreateForStatus = { status ->
+                        createStatus = status
+                        showCreate = true
+                    },
                     modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
                 )
             }
@@ -345,6 +356,7 @@ fun TaskBoardScreen(
             models = models,
             lastAgent = lastAgent,
             defaultWorkspaceId = filterWorkspaceId,
+            initialStatus = createStatus,
             onDismiss = { showCreate = false },
             onCreate = { title, description, status, priority, workspaceId, agent ->
                 scope.launch {
@@ -354,7 +366,8 @@ fun TaskBoardScreen(
                         runCatching { api.saveBoardTaskAgentDefaults(agent) }
                         showCreate = false
                         selectedId = created.id
-                        if (description.isNotBlank()) {
+                        // 只有「进行中」列的新建才顺带第一次指派；「待办」列只创建任务。
+                        if (boardCreateDispatches(status) && description.isNotBlank()) {
                             runCatching { api.dispatchBoardTask(created.id, agent, description, workspaceId) }
                                 .onFailure { error = it.message ?: "任务已创建，但第一次指派失败。" }
                         }
@@ -389,7 +402,7 @@ private fun TaskBoardList(
     onToggleComplete: (BoardTask) -> Unit,
     onSwipeAction: (BoardTask, BoardTaskSwipeAction) -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
-    onCreate: () -> Unit,
+    onCreateForStatus: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val grouped = groupedBoardTasks(tasks)
@@ -456,7 +469,7 @@ private fun TaskBoardList(
                         "点右下角 +，用绿色勾选把事情做完。"
                     },
                     actionText = "新建任务",
-                    onAction = onCreate,
+                    onAction = { onCreateForStatus("todo") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(260.dp),
@@ -467,7 +480,7 @@ private fun TaskBoardList(
                 val sectionArchived = if (status == "done") archived else emptyList()
                 if (items.isEmpty() && sectionArchived.isEmpty()) return@forEach
                 item(key = "header-$status") {
-                    BoardSectionHeader(status = status, count = items.size)
+                    BoardSectionHeader(status = status, count = items.size, onAdd = onCreateForStatus)
                 }
                 items(items, key = { it.id }) { task ->
                     BoardTaskItem(
@@ -792,7 +805,7 @@ private fun BoardArchiveHeader(
 }
 
 @Composable
-private fun BoardSectionHeader(status: String, count: Int) {
+private fun BoardSectionHeader(status: String, count: Int, onAdd: (String) -> Unit) {
     val color = boardStatusColor(status)
     Row(
         modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
@@ -815,6 +828,13 @@ private fun BoardSectionHeader(status: String, count: Int) {
             count.toString(),
             color = WandColors.textMuted,
             style = MaterialTheme.typography.labelSmall,
+        )
+        Spacer(Modifier.weight(1f))
+        WandIconButton(
+            icon = WandIcons.add,
+            contentDescription = "在${boardTaskStatusLabel(status)}中新建任务",
+            onClick = { onAdd(status) },
+            variant = WandIconButtonVariant.Compact,
         )
     }
 }
@@ -1198,7 +1218,9 @@ private fun TaskBoardDetail(
             agentGroups.forEach { group ->
                 Text(
                     boardTaskProviderLabel(group.provider) +
-                        (group.agent?.let { " · ${if (it.model == "default") "默认模型" else it.model}" } ?: ""),
+                        (group.agent?.let {
+                            " · ${if (it.model == "default") "默认模型" else it.model} · ${boardTaskModeLabel(it.mode)}"
+                        } ?: ""),
                     color = WandColors.textPrimary,
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(top = 4.dp),
@@ -1294,7 +1316,11 @@ private fun TaskBoardDetail(
                     onSelect = { provider ->
                         val nextModels = boardAgentModelOptions(models, provider)
                         val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
-                        val next = agent.copy(provider = provider, model = model)
+                        val next = agent.copy(
+                            provider = provider,
+                            model = model,
+                            mode = normalizeBoardTaskAgentMode(provider, agent.mode),
+                        )
                         agent = next
                         onRemember(next)
                     },
@@ -1315,6 +1341,16 @@ private fun TaskBoardDetail(
                     options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
                     onSelect = {
                         val next = agent.copy(thinkingEffort = it)
+                        agent = next
+                        onRemember(next)
+                    },
+                    enabled = !busy,
+                )
+                BoardChoice(
+                    label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
+                    options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
+                    onSelect = {
+                        val next = agent.copy(mode = it)
                         agent = next
                         onRemember(next)
                     },
@@ -1361,21 +1397,24 @@ private fun CreateBoardTaskDialog(
     models: ModelsResponse?,
     lastAgent: BoardTaskAgent,
     defaultWorkspaceId: String,
+    initialStatus: String,
     onDismiss: () -> Unit,
     onCreate: (title: String, description: String, status: String, priority: String, workspaceId: String?, agent: BoardTaskAgent) -> Unit,
 ) {
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("todo") }
+    var status by remember { mutableStateOf(initialStatus) }
     var priority by remember { mutableStateOf("none") }
     var workspaceId by remember { mutableStateOf(defaultWorkspaceId) }
     var agent by remember { mutableStateOf(lastAgent) }
     val modelOptions = boardAgentModelOptions(models, agent.provider)
+    // 「进行中」列的新建代表已经决定要跑，所以创建后立刻派 Agent；其他列只落库。
+    val dispatches = boardCreateDispatches(status)
     WandDialog(
         title = "新建任务",
         onDismissRequest = onDismiss,
         confirm = WandDialogAction(
-            label = if (description.trim().isNotEmpty()) "创建并指派" else "创建任务",
+            label = if (dispatches && description.trim().isNotEmpty()) "创建并指派" else "创建任务",
             enabled = title.trim().isNotEmpty() || description.trim().isNotEmpty(),
             onClick = {
                 onCreate(title.trim(), description.trim(), status, priority, workspaceId.ifBlank { null }, agent)
@@ -1397,7 +1436,7 @@ private fun CreateBoardTaskDialog(
             value = description,
             onValueChange = { description = it },
             label = "描述",
-            placeholder = "将作为第一个 Agent 的指派内容",
+            placeholder = if (dispatches) "将作为第一个 Agent 的指派内容" else "只创建任务，不指派 Agent",
             minLines = 3,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1407,24 +1446,37 @@ private fun CreateBoardTaskDialog(
             options = listOf("" to "不指定目录（使用全局目录）") + workspaces.map { it.id to it.name },
             onSelect = { workspaceId = it },
         )
+        if (dispatches) {
+            BoardChoice(
+                label = "第一次指派 · ${boardTaskProviderLabel(agent.provider)}",
+                options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
+                onSelect = { provider ->
+                    val nextModels = boardAgentModelOptions(models, provider)
+                    val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
+                    agent = agent.copy(
+                        provider = provider,
+                        model = model,
+                        mode = normalizeBoardTaskAgentMode(provider, agent.mode),
+                    )
+                },
+            )
+            BoardChoice(
+                label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
+                options = modelOptions.map { it.id to it.label },
+                onSelect = { agent = agent.copy(model = it) },
+            )
+            BoardChoice(
+                label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
+                options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
+                onSelect = { agent = agent.copy(thinkingEffort = it) },
+            )
+        }
+        // 运行模式始终可选：只创建的任务也会把模式记进服务端全局默认，
+        // 否则下次派发退回标准模式，Agent 反过来「改不了东西」。
         BoardChoice(
-            label = "第一次指派 · ${boardTaskProviderLabel(agent.provider)}",
-            options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
-            onSelect = { provider ->
-                val nextModels = boardAgentModelOptions(models, provider)
-                val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
-                agent = agent.copy(provider = provider, model = model)
-            },
-        )
-        BoardChoice(
-            label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
-            options = modelOptions.map { it.id to it.label },
-            onSelect = { agent = agent.copy(model = it) },
-        )
-        BoardChoice(
-            label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
-            options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
-            onSelect = { agent = agent.copy(thinkingEffort = it) },
+            label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
+            options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
+            onSelect = { agent = agent.copy(mode = it) },
         )
         BoardChoice(
             label = "状态 · ${boardTaskStatusLabel(status)}",
@@ -1438,6 +1490,12 @@ private fun CreateBoardTaskDialog(
         )
     }
 }
+
+/**
+ * 新建任务是否顺带完成第一次指派。
+ * 「待办」列只创建任务；「进行中」列代表已经决定要跑，所以创建后立刻派给所选 Agent。
+ */
+internal fun boardCreateDispatches(status: String): Boolean = status == "doing"
 
 
 private fun boardSessionStatusLabel(status: String): String = when (status) {

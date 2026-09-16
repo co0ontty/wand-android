@@ -58,6 +58,8 @@ class TaskBoardModelsTest {
         assertEquals("high", task.priority)
         assertEquals(listOf("ui"), task.labels)
         assertEquals("codex", task.agent?.provider)
+        // 服务端未返回 mode：按 provider 支持范围夹取（codex 只有 full-access）。
+        assertEquals("full-access", task.agent?.mode)
         assertEquals("wand", task.workspace?.name)
         assertEquals(listOf("sess-1"), task.sessionIds)
         assertEquals("sess-1", task.sessions.single().id)
@@ -121,6 +123,27 @@ class TaskBoardModelsTest {
         assertEquals("紧急", boardTaskPriorityLabel("urgent"))
         assertEquals("无优先级", boardTaskPriorityLabel("none"))
         assertEquals("Pi", boardTaskProviderLabel("pi"))
+    }
+
+    @Test
+    fun agentModeRoundTripsAndClampsByProvider() {
+        val managed = BoardTaskAgent("claude", "default", "off", "managed")
+        assertEquals("managed", managed.toJson().getString("mode"))
+        assertEquals(managed, BoardTaskAgent.parse(managed.toJson()))
+
+        // 老服务端缺 mode：按标准模式读。
+        val legacy = BoardTaskAgent.parse(
+            JSONObject().put("provider", "claude").put("model", "default").put("thinkingEffort", "off"),
+        )
+        assertEquals("default", legacy?.mode)
+
+        // 非法 / provider 不支持的模式夹到该 provider 真正支持的值。
+        assertEquals("full-access", normalizeBoardTaskAgentMode("codex", "managed"))
+        assertEquals("default", normalizeBoardTaskAgentMode("claude", "yolo"))
+        assertEquals(listOf("full-access"), supportedBoardTaskModes("codex"))
+        assertEquals("托管", boardTaskModeLabel("managed"))
+        assertEquals("全权限", boardTaskModeLabel("full-access"))
+        assertEquals("标准", boardTaskModeLabel("default"))
     }
 
     @Test

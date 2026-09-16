@@ -7,14 +7,18 @@ data class BoardTaskAgent(
     val provider: String,
     val model: String,
     val thinkingEffort: String,
+    /** 派发时的执行模式：托管 / 全权限 / 标准。缺省时按标准模式处理。 */
+    val mode: String = "default",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("provider", provider)
         .put("model", model)
         .put("thinkingEffort", thinkingEffort)
+        .put("mode", mode)
 
     companion object {
-        fun default(): BoardTaskAgent = BoardTaskAgent("claude", "default", "off")
+        fun default(provider: String = "claude"): BoardTaskAgent =
+            BoardTaskAgent(provider, "default", "off", normalizeBoardTaskAgentMode(provider, "default"))
 
         fun parse(item: JSONObject?): BoardTaskAgent? {
             val provider = item?.str("provider")?.takeIf { it.isNotBlank() } ?: return null
@@ -22,6 +26,8 @@ data class BoardTaskAgent(
                 provider = provider,
                 model = item.str("model")?.takeIf { it.isNotBlank() } ?: "default",
                 thinkingEffort = item.str("thinkingEffort")?.takeIf { it.isNotBlank() } ?: "off",
+                // mode 是后加字段：老服务端不返回时按标准模式读，不因此整条配置退化成 null。
+                mode = normalizeBoardTaskAgentMode(provider, item.str("mode")),
             )
         }
     }
@@ -178,6 +184,25 @@ val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
 val BOARD_TASK_PROVIDERS = listOf("claude", "codex", "opencode", "grok", "qoder", "pi")
 val BOARD_TASK_EFFORTS = listOf("off", "standard", "deep", "max")
 
+/** 任务派发允许的执行模式；顺序即下拉顺序。Codex 只有 full-access 一个有效值。 */
+val BOARD_TASK_MODES = listOf("managed", "full-access", "default")
+
+fun supportedBoardTaskModes(provider: String): List<String> =
+    if (provider == "codex") listOf("full-access") else BOARD_TASK_MODES
+
+/** 把任意（含旧数据 / 其它客户端缺省的）模式夹到该 provider 真正支持的值。 */
+fun normalizeBoardTaskAgentMode(provider: String, mode: String?): String {
+    val supported = supportedBoardTaskModes(provider)
+    val value = mode?.trim().orEmpty()
+    return if (value in supported) value else supported.firstOrNull { it == "default" } ?: supported.first()
+}
+
+fun boardTaskModeLabel(mode: String): String = when (mode) {
+    "managed" -> "托管"
+    "full-access" -> "全权限"
+    else -> "标准"
+}
+
 fun boardTaskEffortLabel(effort: String): String = when (effort) {
     "standard" -> "标准"
     "deep" -> "深入"
@@ -222,6 +247,7 @@ fun groupBoardSessionsByAgent(
                 provider = session.provider,
                 model = session.model.ifBlank { "default" },
                 thinkingEffort = session.thinkingEffort.ifBlank { "off" },
+                mode = normalizeBoardTaskAgentMode(session.provider, null),
             )
         } else {
             null
