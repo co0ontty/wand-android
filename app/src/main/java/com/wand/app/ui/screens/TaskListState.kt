@@ -335,40 +335,6 @@ class TaskListState(
         }
     }
 
-    suspend fun createUngroupedSession(
-        cwd: String,
-        target: WorkspaceSessionTarget,
-        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
-        workspaceId: String? = null,
-    ): SessionSnapshot? = mutationMutex.withLock {
-        val normalizedCwd = cwd.trim()
-        if (normalizedCwd.isEmpty()) {
-            mutationError = "请选择工作目录"
-            return@withLock null
-        }
-        mutationBusy = true
-        mutationError = null
-        try {
-            val session = port.createWorkspaceTaskWindow(
-                target,
-                WorkspaceBinding(
-                    workspaceId = workspaceId?.trim()?.takeIf { it.isNotEmpty() },
-                    workspaceTaskId = null,
-                    cwd = normalizedCwd,
-                ),
-                kind,
-            )
-            load(silent = true)
-            session
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "创建终端失败"
-            null
-        } finally {
-            mutationBusy = false
-        }
-    }
-
     suspend fun createTaskWindow(
         taskId: String,
         target: WorkspaceSessionTarget,

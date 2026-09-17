@@ -26,27 +26,6 @@ enum class HomeListMode(val storageValue: String) {
     }
 }
 
-internal fun isUnnamedTaskName(name: String): Boolean {
-    val trimmed = name.trim()
-    return trimmed.isEmpty() || trimmed == UNNAMED_TASK_NAME
-}
-
-/** 未命名任务不单独占一行，会话并入该目录的未分组终端。 */
-internal fun flattenUnnamedTasksIntoStandalone(group: TaskDirectoryGroup): TaskDirectoryGroup {
-    val named = ArrayList<WorkspaceTaskSummary>(group.tasks.size)
-    val extraStandalone = ArrayList<WorkspaceSessionSummary>()
-    for (task in group.tasks) {
-        if (isUnnamedTaskName(task.name)) extraStandalone += task.sessions
-        else named += task
-    }
-    if (named.size == group.tasks.size) return group
-    return group.copy(
-        tasks = named,
-        standaloneSessions = group.standaloneSessions + extraStandalone,
-    )
-}
-
-
 /** 目录顺序以 GET /api/tasks 返回为准。 */
 internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
     groups

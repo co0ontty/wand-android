@@ -97,21 +97,6 @@ internal fun boardTaskCardModel(task: BoardTask, showWorkspace: Boolean): BoardT
     )
 }
 
-internal fun isSyncedWorkspaceDescription(description: String): Boolean {
-    val lines = description.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
-    if (lines.isEmpty()) return true
-    return lines.all(::isSyncedWorkspaceDescriptionLine)
-}
-
-internal fun isPlaceholderBoardTask(task: BoardTask): Boolean {
-    if (task.sessions.isNotEmpty()) return false
-    if (task.priority != "none" && task.priority.isNotBlank()) return false
-    if (task.agent != null) return false
-    if (task.labels.any { it.isNotBlank() }) return false
-    if (!isUnnamedTaskName(task.title)) return false
-    return isSyncedWorkspaceDescription(task.description)
-}
-
 private fun isSyncedWorkspaceDescriptionLine(line: String): Boolean =
     line.startsWith("项目：") || line.startsWith("目录：") || line.startsWith("分支：")
 
