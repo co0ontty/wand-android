@@ -66,6 +66,7 @@ class TaskListState(
     private val loadMutex = Mutex()
     private val mutationMutex = Mutex()
     private val creationDefaultsMutex = Mutex()
+    private var creationChoiceRevision = 0L
     private var syncing = false
     private var consumedNewTaskRequest = 0L
     private var groupsRevision: String? = null
@@ -181,12 +182,15 @@ class TaskListState(
 
     suspend fun loadCreationDefaults(): Boolean = creationDefaultsMutex.withLock {
         creationDefaultsLoading = true
+        val choiceRevision = creationChoiceRevision
         return try {
             defaultCwd = port.taskDefaultCwd()?.trim()?.takeIf { it.isNotEmpty() }
             recentPaths = port.recentTaskPaths()
                 .filter { it.path.isNotBlank() }
                 .distinctBy { normalizeWorkspacePath(it.path) }
             runCatching { port.serverConfig() }.getOrNull()?.let { config ->
+                // A slow defaults request must not undo a choice made in the open dialog.
+                if (choiceRevision != creationChoiceRevision) return@let
                 defaultProvider = config.defaultProvider?.takeIf { it.isNotBlank() } ?: defaultProvider
                 defaultSessionKind = if (config.defaultSessionKind == "pty") {
                     WorkspaceSessionKind.Pty
@@ -427,6 +431,7 @@ class TaskListState(
         defaultSessionKind: WorkspaceSessionKind? = null,
         defaultTaskWorktree: Boolean? = null,
     ) {
+        creationChoiceRevision += 1
         if (defaultProvider != null) this.defaultProvider = defaultProvider
         if (defaultSessionKind != null) this.defaultSessionKind = defaultSessionKind
         if (defaultTaskWorktree != null) this.defaultTaskWorktree = defaultTaskWorktree

@@ -43,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -142,6 +143,8 @@ fun TaskListScreen(
     var newTaskName by remember { mutableStateOf("") }
     var newTaskTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
+    var newTaskDraftRevision by remember { mutableLongStateOf(0L) }
+    var targetDraftRevision by remember { mutableLongStateOf(0L) }
     var directoryPickerOpen by remember { mutableStateOf(false) }
     var directoryPickerPath by remember { mutableStateOf("") }
     var directoryListing by remember { mutableStateOf<DirectoryListing?>(null) }
@@ -202,9 +205,12 @@ fun TaskListScreen(
         newTaskName = ""
         newTaskTarget = WorkspaceSessionTarget.Claude
         newTaskKind = WorkspaceSessionKind.Structured
+        newTaskDraftRevision += 1
+        val defaultsRevision = newTaskDraftRevision
         newTaskOpen = true
         scope.launch {
             state.loadCreationDefaults()
+            if (!newTaskOpen || defaultsRevision != newTaskDraftRevision) return@launch
             if (taskCwdDraft.isBlank()) {
                 taskCwdDraft = state.defaultCwd.orEmpty()
             }
@@ -281,16 +287,20 @@ fun TaskListScreen(
                 onClick = {
                     if (state.mutationBusy || cwd.isEmpty()) return@WandDialogAction
                     if (newTaskGrouped && !canCreateTask) return@WandDialogAction
+                    // Freeze the submitted choices before any network suspension.
+                    val submittedTarget = newTaskTarget
+                    val submittedKind = newTaskKind
+                    newTaskDraftRevision += 1
                     scope.launch {
                         state.rememberCreationChoice(
-                            defaultProvider = newTaskTarget.raw.takeUnless { newTaskTarget.isShell },
-                            defaultSessionKind = newTaskKind,
+                            defaultProvider = submittedTarget.raw.takeUnless { submittedTarget.isShell },
+                            defaultSessionKind = submittedKind,
                         )
                         if (!newTaskGrouped) {
                             val snapshot = state.createUngroupedSession(
                                 cwd = cwd,
-                                target = newTaskTarget,
-                                kind = newTaskKind,
+                                target = submittedTarget,
+                                kind = submittedKind,
                                 workspaceId = newTaskWorkspaceId,
                             )
                             if (snapshot != null) {
@@ -312,7 +322,7 @@ fun TaskListScreen(
                         )
                         if (result != null) {
                             newTaskOpen = false
-                            val snapshot = state.createTaskWindow(result.task.id, newTaskTarget, newTaskKind)
+                            val snapshot = state.createTaskWindow(result.task.id, submittedTarget, submittedKind)
                             if (snapshot != null) {
                                 onOpenSession(
                                     TaskSessionRoute(
@@ -441,6 +451,7 @@ fun TaskListScreen(
                                 RoundedCornerShape(20.dp),
                             )
                             .clickable(enabled = !state.mutationBusy) {
+                                newTaskDraftRevision += 1
                                 newTaskTarget = option
                                 if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
                             }
@@ -479,6 +490,7 @@ fun TaskListScreen(
                     selected = newTaskKind,
                     onSelect = {
                         if (state.mutationBusy) return@WandChoiceStrip
+                        newTaskDraftRevision += 1
                         newTaskKind = it
                         state.rememberCreationChoice(defaultSessionKind = it)
                     },
@@ -793,10 +805,12 @@ fun TaskListScreen(
                 creating = targetCreating,
                 error = targetError,
                 onSelect = {
+                    targetDraftRevision += 1
                     selectedTarget = it
                     if (!it.isShell) state.rememberCreationChoice(defaultProvider = it.raw)
                 },
                 onSelectKind = {
+                    targetDraftRevision += 1
                     selectedKind = it
                     state.rememberCreationChoice(defaultSessionKind = it)
                 },
@@ -804,9 +818,12 @@ fun TaskListScreen(
                     if (targetCreating) return@WorkspaceTargetSheet
                     targetCreating = true
                     targetError = null
+                    val submittedTarget = selectedTarget
+                    val submittedKind = selectedKind
+                    targetDraftRevision += 1
                     scope.launch {
                         try {
-                            val snapshot = state.createTaskWindow(task.id, selectedTarget, selectedKind)
+                            val snapshot = state.createTaskWindow(task.id, submittedTarget, submittedKind)
                             if (snapshot == null) {
                                 targetError = state.mutationError ?: "创建工作窗口失败"
                                 return@launch
@@ -999,8 +1016,11 @@ fun TaskListScreen(
                                 selectedKind = state.defaultSessionKind
                                 targetError = null
                                 pendingTarget = group to task
+                                targetDraftRevision += 1
+                                val defaultsRevision = targetDraftRevision
                                 scope.launch {
                                     state.loadCreationDefaults()
+                                    if (pendingTarget?.second?.id != task.id || defaultsRevision != targetDraftRevision) return@launch
                                     selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
                                         ?: selectedTarget
                                     selectedKind = state.defaultSessionKind

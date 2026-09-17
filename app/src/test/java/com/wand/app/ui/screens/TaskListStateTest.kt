@@ -15,8 +15,17 @@ import com.wand.app.data.WorkspaceTaskDetail
 import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.ServerConfigInfo
 import com.wand.app.data.layoutSessionIds
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -27,6 +36,30 @@ import org.junit.Test
 import org.json.JSONObject
 
 class TaskListStateTest {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun lateDefaultsCannotReplaceExplicitStructuredChoiceBeforeCreation() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val defaults = CompletableDeferred<ServerConfigInfo>()
+        val port = FakeWorkspacePort().apply { pendingConfig = defaults }
+        val state = TaskListState(port)
+        try {
+            val loading = async { state.loadCreationDefaults() }
+            testScheduler.runCurrent()
+            state.rememberCreationChoice("codex", WorkspaceSessionKind.Structured)
+            defaults.complete(ServerConfigInfo.parse(JSONObject()
+                .put("defaultProvider", "claude").put("defaultSessionKind", "pty")))
+            assertTrue(loading.await())
+            assertEquals("codex", state.defaultProvider)
+            assertEquals(WorkspaceSessionKind.Structured, state.defaultSessionKind)
+            assertNotNull(state.createTaskWindow("task-1", WorkspaceSessionTarget.Codex, state.defaultSessionKind))
+            assertEquals(WorkspaceSessionTarget.Codex to WorkspaceSessionKind.Structured, port.createdWindowChoices.single())
+        } finally {
+            state.shutdown()
+            Dispatchers.resetMain()
+        }
+    }
+
     @Test
     fun loadPublishesGroupsAndFailureKeepsCachedSnapshot() = runBlocking {
         val cached = group("ws-1", "/repo")
@@ -355,9 +388,18 @@ class TaskListStateTest {
         val clearedTaskIds = mutableListOf<String>()
         val deletedTaskIds = mutableListOf<String>()
         val createdWindowBindings = mutableListOf<WorkspaceBinding>()
+        val createdWindowChoices = mutableListOf<Pair<WorkspaceSessionTarget, WorkspaceSessionKind>>()
+        var pendingConfig: CompletableDeferred<ServerConfigInfo>? = null
         val savedLayouts = mutableListOf<Pair<String, TaskWindowLayout?>>()
         var taskDefault: String? = null
         var recent: List<RecentPath> = emptyList()
+
+        override suspend fun serverConfig(): ServerConfigInfo = pendingConfig?.await()
+            ?: ServerConfigInfo.parse(JSONObject())
+
+        override suspend fun updateCreationDefaults(
+            defaultProvider: String?, defaultSessionKind: String?, defaultTaskWorktree: Boolean?,
+        ) = Unit
 
         override suspend fun listTaskGroups(): List<TaskDirectoryGroup> {
             listGroupsCalls += 1
@@ -456,6 +498,7 @@ class TaskListStateTest {
             kind: WorkspaceSessionKind,
         ): SessionSnapshot {
             createdWindowBindings += binding
+            createdWindowChoices += target to kind
             return SessionSnapshot.parse(JSONObject().put("id", "created-session"))
         }
     }
