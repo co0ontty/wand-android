@@ -50,8 +50,6 @@ internal fun flattenUnnamedTasksIntoStandalone(group: TaskDirectoryGroup): TaskD
 /** 目录顺序以 GET /api/tasks 返回为准。 */
 internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
     groups
-        .map(::flattenUnnamedTasksIntoStandalone)
-        .filter { it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
 
 /** 目录内任务顺序以 GET /api/tasks 返回为准。 */
 internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =
@@ -81,13 +79,14 @@ private fun compareNullableTimestamp(left: String?, right: String?): Int {
     }
 }
 
-/** 只有多个目录时才显示展开控件；单个目录始终展开，避免空箭头占位。 */
-internal fun showsDirectoryDisclosure(directoryCount: Int): Boolean = directoryCount > 1
+/** Even a single workspace can be collapsed; the disclosure never changes meaning. */
+@Suppress("UNUSED_PARAMETER")
+internal fun showsDirectoryDisclosure(directoryCount: Int): Boolean = true
 
 /** 任务下没有终端时不显示箭头；空状态直接展示，无需先展开。 */
 internal fun showsTaskSessionDisclosure(sessionCount: Int): Boolean = sessionCount > 0
 
-/** 目录默认展开。单个目录不可收起。 */
+/** 目录默认展开，尊重用户折叠选择。 */
 internal fun isDirectoryExpanded(userCollapsed: Boolean, directoryCount: Int): Boolean =
     !showsDirectoryDisclosure(directoryCount) || !userCollapsed
 

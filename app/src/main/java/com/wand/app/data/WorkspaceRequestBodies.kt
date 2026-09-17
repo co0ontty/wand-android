@@ -31,6 +31,7 @@ internal fun createWorkspaceTaskWindowRequest(
     target: WorkspaceSessionTarget,
     binding: WorkspaceBinding,
     kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+    prompt: String? = null,
 ): WorkspaceTaskWindowRequest {
     val body = JSONObject().put("cwd", binding.cwd).apply {
         binding.workspaceId?.trim()?.takeIf { it.isNotEmpty() }?.let { put("workspaceId", it) }
@@ -42,10 +43,13 @@ internal fun createWorkspaceTaskWindowRequest(
     }
     val provider = target.raw
     body.put("provider", provider)
+    val initialPrompt = prompt?.trim()?.takeIf { it.isNotEmpty() }
     if (kind == WorkspaceSessionKind.Structured) {
+        initialPrompt?.let { body.put("prompt", it) }
         body.put("runner", structuredRunnerFor(provider))
         return WorkspaceTaskWindowRequest("/api/structured-sessions", body)
     }
+    initialPrompt?.let { body.put("initialInput", it) }
     body.put("command", WandProvider.cliCommandFor(provider))
     return WorkspaceTaskWindowRequest("/api/commands", body)
 }

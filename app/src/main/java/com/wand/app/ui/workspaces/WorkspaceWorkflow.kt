@@ -13,6 +13,8 @@ import com.wand.app.data.orderWorkspaceSessions
 import com.wand.app.data.reconcileTaskWindowLayout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,6 +72,7 @@ class WorkspaceWorkflow(
     private val _targetState = MutableStateFlow<WorkspaceTargetState>(WorkspaceTargetState.Closed)
     val targetState: StateFlow<WorkspaceTargetState> = _targetState.asStateFlow()
 
+    private val refreshMutex = Mutex()
     private var taskLoadJob: Job? = null
     /** 任务加载的代际：每次 loadTask 递增，回调比较 generation 丢弃过期结果。 */
     private var taskGeneration = 0
@@ -96,6 +99,20 @@ class WorkspaceWorkflow(
                 if (generation != taskGeneration) return@launch
                 _taskState.value = WorkspaceTaskState.Error(e.message ?: "无法加载任务")
             }
+        }
+    }
+
+    /** Background invalidations must not dismiss the creation sheet or flash a loading screen. */
+    suspend fun refreshTask(taskId: String): Unit = refreshMutex.withLock {
+        if (_taskState.value is WorkspaceTaskState.Loading || _targetState.value is WorkspaceTargetState.Creating) return
+        val generation = taskGeneration
+        try {
+            val detail = port.workspaceTask(taskId)
+            if (generation != taskGeneration || _targetState.value is WorkspaceTargetState.Creating) return
+            applyTaskDetail(detail, (_taskState.value as? WorkspaceTaskState.Content)?.selectedSessionId)
+        } catch (cause: Exception) {
+            if (cause is kotlinx.coroutines.CancellationException) throw cause
+            // Keep the last usable snapshot; explicit refresh still surfaces server failures.
         }
     }
 
@@ -153,7 +170,7 @@ class WorkspaceWorkflow(
     ) {
         if (_targetState.value is WorkspaceTargetState.Creating) return
         val requestTaskId = taskId
-        val requestGeneration = taskGeneration
+        val requestGeneration = ++taskGeneration
         _targetState.value = WorkspaceTargetState.Creating
         createJob?.cancel()
         createJob = scope.launch {
@@ -218,7 +235,7 @@ class WorkspaceWorkflow(
     ) {
         val content = _taskState.value as? WorkspaceTaskState.Content ?: return
         val taskId = content.detail.id
-        val generation = taskGeneration
+        val generation = ++taskGeneration
         scope.launch {
             try {
                 port.deleteWorkspaceSessions(listOf(sessionId))

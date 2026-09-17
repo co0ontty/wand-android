@@ -330,6 +330,7 @@ private fun ReadyContent(
         }
     }
     LaunchedEffect(taskState.groups, actions.connection.serverId) {
+        nav.syncTaskMembership(taskState.groups)
         com.wand.app.WandShortcuts.update(
             context,
             actions.connection.serverId,
@@ -515,6 +516,15 @@ private fun SessionDetailScreen(
         )
         is Screen.TaskBoard -> TaskBoardScreen(
             api = api,
+            workspaceApi = api,
+            onOpenBoundSession = { route ->
+                nav.push(if (route.structured) Screen.Chat(route.sessionId,
+                    workspaceId = route.workspaceId, taskId = route.taskId,
+                    workspaceName = route.workspaceName, taskName = route.taskName)
+                else Screen.PtyTerminal(route.sessionId,
+                    workspaceId = route.workspaceId, taskId = route.taskId,
+                    workspaceName = route.workspaceName, taskName = route.taskName))
+            },
             onBack = { nav.pop() },
             onOpenSession = { sessionId, isStructured ->
                 nav.push(

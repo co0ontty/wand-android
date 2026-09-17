@@ -1,7 +1,7 @@
 package com.wand.app.data
 
 /** 工作空间接口。WandApi 实现该端口；测试用 fake 实现。 */
-interface WorkspacePort {
+interface WorkspacePort : TaskChangeSource {
     /** GET /api/workspaces —— 列出所有项目（按最近打开排序）。 */
     suspend fun listWorkspaces(): List<Workspace>
 
@@ -29,7 +29,7 @@ interface WorkspacePort {
 
     /**
      * POST /api/workspaces/:id/tasks —— 创建任务。
-     * [worktree] 为 null 时交由服务端默认（git 仓库自动隔离）；
+     * [worktree] 为 null 时交由服务端默认（仅逻辑分组，不建目录）；
      * 显式 false 跳过隔离，会话直接跑在项目目录。
      */
     suspend fun createWorkspaceTask(
@@ -118,6 +118,11 @@ interface WorkspacePort {
         throw UnsupportedOperationException("删除会话接口不可用")
     }
 
+    /** Exclusive reassignment; preserves the running CLI, history and cwd. */
+    suspend fun moveWorkspaceSession(taskId: String, sessionId: String) {
+        throw UnsupportedOperationException("当前服务不支持移动会话，请更新服务端")
+    }
+
     /** GET /api/workspace-tasks/:taskId —— 任务详情（含会话列表与派生字段）。 */
     suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail
 
@@ -141,5 +146,6 @@ interface WorkspacePort {
         target: WorkspaceSessionTarget,
         binding: WorkspaceBinding,
         kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+        prompt: String? = null,
     ): SessionSnapshot
 }

@@ -19,7 +19,7 @@ private val TaskSessionSwipeMinDistance = 72.dp
 /**
  * 可被左右滑动切换的「兄弟会话」列表：
  * - 任务会话 → 同任务下的全部工作窗口；
- * - 未分组会话 → 同目录下的未分组会话（含侧栏合并展示的未命名任务会话）。
+ * - 未分组会话 → 同目录下的未分组会话。未命名任务仍保留自身边界。
  *
  * 顺序与侧栏展示一致，滑动方向据此判定。
  */
@@ -28,6 +28,14 @@ internal fun siblingSessionsFor(
     taskId: String?,
     sessionId: String?,
 ): List<WorkspaceSessionSummary> {
+    // The live hierarchy wins over a route restored before a session was moved.
+    if (!sessionId.isNullOrBlank()) {
+        groups.asSequence().flatMap { it.tasks.asSequence() }
+            .firstOrNull { task -> task.sessions.any { it.id == sessionId } }
+            ?.let { return orderWorkspaceSessions(it.sessions) }
+        groups.firstOrNull { group -> group.standaloneSessions.any { it.id == sessionId } }
+            ?.let { return orderWorkspaceSessions(it.standaloneSessions) }
+    }
     if (!taskId.isNullOrBlank()) {
         return groups.asSequence()
             .flatMap { it.tasks.asSequence() }
@@ -37,14 +45,6 @@ internal fun siblingSessionsFor(
             .orEmpty()
     }
     if (sessionId.isNullOrBlank()) return emptyList()
-    // 侧栏把未命名任务的会话并入「未分组终端」，这里必须用同一份扁平化结果，
-    // 否则未命名任务里的会话拿不到兄弟列表，滑动失效。
-    groups.map(::flattenUnnamedTasksIntoStandalone).forEach { candidate ->
-        if (candidate.standaloneSessions.any { it.id == sessionId }) {
-            // 与任务工作窗口一致：按 startedAt 升序，左滑前进到更新的会话。
-            return orderWorkspaceSessions(candidate.standaloneSessions)
-        }
-    }
     return emptyList()
 }
 

@@ -73,6 +73,8 @@ import com.wand.app.ui.workspaces.WorkspaceTargetState
 import com.wand.app.ui.workspaces.WorkspaceTaskState
 import com.wand.app.ui.workspaces.WorkspaceWorkflow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import androidx.lifecycle.repeatOnLifecycle
 
 /**
  * 任务详情宿主页。空任务显示欢迎态（项目名 / 任务名 / cwd / 唯一主操作「选择 Agent 或空白终端」），
@@ -95,7 +97,20 @@ fun WorkspaceTaskScreen(
     onTaskChanged: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    val workflow = remember(taskId) { WorkspaceWorkflow(api, scope) }
+    val workflow = remember(api, taskId) { WorkspaceWorkflow(api, scope) }
+    var movingSession by remember(taskId) { mutableStateOf<WorkspaceSessionSummary?>(null) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(workflow, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            launch { api.taskChanges.collect { workflow.refreshTask(taskId) } }
+            launch { while (true) { delay(6_000); workflow.refreshTask(taskId) } }
+        }
+    }
+    movingSession?.let { session ->
+        SessionMoveSheet(api, session.id, session.title ?: "CLI 会话",
+            onDismiss = { movingSession = null },
+            onMoved = { scope.launch { workflow.refreshTask(taskId); onTaskChanged() } })
+    }
     val taskState by workflow.taskState.collectAsState()
     val targetState by workflow.targetState.collectAsState()
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
@@ -345,6 +360,7 @@ fun WorkspaceTaskScreen(
                         }
                     },
                     onDeleteSession = { deleteSessionError = null; deleteSessionTarget = it },
+                    onMoveSession = { movingSession = it },
                     onAddWindow = { openSheet() },
                 )
             }
@@ -484,6 +500,7 @@ private fun TaskSessionList(
     state: WorkspaceTaskState.Content,
     onSelectSession: (WorkspaceSessionSummary) -> Unit,
     onDeleteSession: (WorkspaceSessionSummary) -> Unit,
+    onMoveSession: (WorkspaceSessionSummary) -> Unit,
     onAddWindow: () -> Unit,
 ) {
     Box(
@@ -524,6 +541,7 @@ private fun TaskSessionList(
                     ),
                     onClick = { onSelectSession(session) },
                     onDelete = { onDeleteSession(session) },
+                    onMove = { onMoveSession(session) },
                 )
             }
         }
@@ -545,6 +563,7 @@ private fun SessionSummaryRow(
     parentNames: Collection<String> = emptyList(),
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onMove: () -> Unit,
 ) {
     val provider = session.provider
     val icon = BrandLogos.painterForProvider(provider)
@@ -606,6 +625,8 @@ private fun SessionSummaryRow(
                     text = { Text("打开") },
                     onClick = { menuOpen = false; onClick() },
                 )
+                DropdownMenuItem(text = { Text("移动到任务") },
+                    onClick = { menuOpen = false; onMove() })
                 DropdownMenuItem(
                     text = { Text("删除终端", color = WandColors.danger) },
                     onClick = { menuOpen = false; onDelete() },

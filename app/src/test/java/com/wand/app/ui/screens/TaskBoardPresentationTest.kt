@@ -115,25 +115,10 @@ class TaskBoardPresentationTest {
     }
 
     @Test
-    fun placeholderHidesUnnamedSyncedWorkspaceTasks() {
-        val emptyUnnamed = task(
-            title = "未命名任务",
-            description = "项目：wand\n目录：/tmp/wand",
-        )
-        val blankUnnamed = task(title = "  ", description = "")
-        assertTrue(isPlaceholderBoardTask(emptyUnnamed))
-        assertTrue(isPlaceholderBoardTask(blankUnnamed))
-        assertFalse(
-            isPlaceholderBoardTask(
-                task(title = "未命名任务", description = "项目：wand\n目录：/tmp/wand", sessions = listOf(session())),
-            ),
-        )
-        assertFalse(isPlaceholderBoardTask(task(title = "修登录", description = "")))
-        assertFalse(
-            isPlaceholderBoardTask(
-                task(title = "未命名任务", description = "把登录页的错误提示修好"),
-            ),
-        )
+    fun unnamedAndEmptyTasksRemainAvailableInTheBoard() {
+        val tasks = listOf(task(title = "未命名任务", description = "项目：wand\n目录：/tmp/wand"),
+            task(title = "", description = ""))
+        assertEquals(tasks, filterBoardTasks(tasks, "", "", ""))
     }
 
     @Test

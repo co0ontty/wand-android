@@ -110,6 +110,41 @@ class NavState {
         }
     }
 
+    /** Refresh only navigation metadata after reassignment; never replace the session itself. */
+    fun syncTaskMembership(groups: List<com.wand.app.data.TaskDirectoryGroup>) {
+        val tasks = groups.flatMap { group -> group.tasks.map { task ->
+            task.id to Screen.WorkspaceTask(task.task.workspaceId, task.id, group.workspaceName, task.name)
+        } }.toMap()
+        val routes = groups.flatMap { group ->
+            group.tasks.flatMap { task -> task.sessions.map { session ->
+                session.id to Screen.Chat(session.id, group.workspaceName, task.name, task.task.workspaceId, task.id)
+            } } + group.standaloneSessions.map { session ->
+                session.id to Screen.Chat(session.id, group.workspaceName, workspaceId = group.workspaceId.takeUnless { group.synthetic })
+            }
+        }.toMap()
+        stack.indices.forEach { index ->
+            val screen = stack[index]
+            if (screen is Screen.WorkspaceTask) {
+                val next = tasks[screen.taskId] ?: return@forEach
+                if (next != screen) stack[index] = next
+                return@forEach
+            }
+            val id = when (screen) {
+                is Screen.Chat -> screen.sessionId
+                is Screen.PtyTerminal -> screen.sessionId
+                else -> null
+            }
+            val route = routes[id] ?: return@forEach
+            val next = when (screen) {
+                is Screen.Chat -> route
+                is Screen.PtyTerminal -> screen.copy(workspaceId = route.workspaceId, taskId = route.taskId,
+                    workspaceName = route.workspaceName, taskName = route.taskName)
+                else -> screen
+            }
+            if (next != screen) stack[index] = next
+        }
+    }
+
     fun closeSession(sessionId: String) {
         val index = stack.indexOfFirst { screen ->
             when (screen) {

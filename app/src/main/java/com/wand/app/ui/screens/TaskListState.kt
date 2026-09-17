@@ -47,8 +47,6 @@ class TaskListState(
         private set
     var defaultSessionKind by mutableStateOf(WorkspaceSessionKind.Structured)
         private set
-    var defaultTaskWorktree by mutableStateOf(true)
-        private set
     var creationDefaultsLoading by mutableStateOf(false)
         private set
     var newTaskRequest by mutableLongStateOf(0L)
@@ -74,6 +72,7 @@ class TaskListState(
     fun startSync() {
         if (syncing) return
         syncing = true
+        scope.launch { port.taskChanges.collect { load(silent = true) } }
         scope.launch {
             load(silent = groups.isNotEmpty())
             while (true) {
@@ -117,7 +116,7 @@ class TaskListState(
     /** Keep the selected branch visible after returning from a task or session detail. */
     fun expandPathToSelection(taskId: String?, sessionId: String?) {
         if (taskId == null && sessionId == null) return
-        groups.map(::flattenUnnamedTasksIntoStandalone).forEach { group ->
+        groups.forEach { group ->
             val selectedTask = group.tasks.firstOrNull { task ->
                 task.id == taskId || task.sessions.any { it.id == sessionId }
             }
@@ -197,7 +196,6 @@ class TaskListState(
                 } else {
                     WorkspaceSessionKind.Structured
                 }
-                defaultTaskWorktree = config.defaultTaskWorktree != false
             }
             true
         } catch (error: Exception) {
@@ -215,8 +213,7 @@ class TaskListState(
         worktree: Boolean,
         workspaceId: String? = null,
     ): TaskCreationResult? = mutationMutex.withLock {
-        // 任务名称是可选字段：留空时服务端会先用「未命名任务」，
-        // 看板再按会话内容自动补标题（见 wand-task-sync）。
+        // Task names belong to the container, never to a session's prompt.
         val normalizedName = name.trim()
         val normalizedCwd = cwd.trim()
         if (!isValidOptionalTaskName(normalizedName)) {
@@ -226,21 +223,32 @@ class TaskListState(
         mutationBusy = true
         mutationError = null
         try {
-            val task = if (!workspaceId.isNullOrBlank()) {
+            val workspaces = port.listWorkspaces()
+            val project = when {
+                workspaceId == com.wand.app.data.GLOBAL_WORKSPACE_ID -> null
+                !workspaceId.isNullOrBlank() -> workspaces.firstOrNull { it.id == workspaceId }
+                    ?: throw IllegalStateException("工作区已不存在，请重新选择目录")
+                normalizedCwd.isNotEmpty() -> workspaces.firstOrNull {
+                    normalizeWorkspacePath(it.cwd) == normalizeWorkspacePath(normalizedCwd)
+                } ?: port.createWorkspace(
+                    normalizedCwd.trimEnd('/').substringAfterLast('/').ifBlank { "工作区" }, normalizedCwd,
+                )
+                else -> null
+            }
+            val task = if (project != null) {
                 port.createWorkspaceTask(
-                    workspaceId = workspaceId,
-                    name = normalizedName,
+                    workspaceId = project.id,
+                    name = normalizedName.ifEmpty { "新任务" },
                     worktree = worktree,
-                    cwd = normalizedCwd.ifEmpty { null },
                 )
             } else {
                 port.createStandaloneTask(
-                    name = normalizedName,
+                    name = normalizedName.ifEmpty { "新任务" },
                     cwd = normalizedCwd.ifEmpty { null },
                     worktree = if (normalizedCwd.isEmpty()) false else worktree,
                 )
             }
-            val workspace = port.listWorkspaces().firstOrNull { it.id == task.workspaceId }
+            val workspace = project
                 ?: Workspace(
                     id = task.workspaceId,
                     name = "",
@@ -365,6 +373,7 @@ class TaskListState(
         taskId: String,
         target: WorkspaceSessionTarget,
         kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+        prompt: String? = null,
     ): SessionSnapshot? = mutationMutex.withLock {
         mutationBusy = true
         mutationError = null
@@ -374,6 +383,7 @@ class TaskListState(
                 target,
                 WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd),
                 kind,
+                prompt,
             )
             val reconciled = reconcileTaskWindowLayout(
                 detail.task.layout,
@@ -434,7 +444,6 @@ class TaskListState(
         creationChoiceRevision += 1
         if (defaultProvider != null) this.defaultProvider = defaultProvider
         if (defaultSessionKind != null) this.defaultSessionKind = defaultSessionKind
-        if (defaultTaskWorktree != null) this.defaultTaskWorktree = defaultTaskWorktree
         scope.launch {
             runCatching {
                 port.updateCreationDefaults(
@@ -466,7 +475,7 @@ class TaskListState(
         }
 
         /**
-         * 任务名称是可选字段：空串合法（服务端按会话内容自动命名），
+         * 任务名称是可选字段：空串合法（使用“新任务”），
          * 只拦截超长和控制字符。
          */
         internal fun isValidOptionalTaskName(name: String): Boolean {

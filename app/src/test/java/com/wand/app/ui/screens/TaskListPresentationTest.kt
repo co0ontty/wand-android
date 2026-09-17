@@ -126,7 +126,7 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun siblingSessionsForStandaloneIncludesFlattenedUnnamedTaskSessions() {
+    fun siblingSessionsPreserveUnnamedTaskBoundary() {
         val loose = session("pty", null).copy(id = "loose-1")
         val unnamed = task().copy(
             task = task().task.copy(id = "task-unnamed", name = "未命名任务"),
@@ -138,8 +138,8 @@ class TaskListPresentationTest {
         )
 
         assertEquals(
-            listOf("loose-1", "unnamed-1"),
-            siblingSessionsFor(groups, taskId = null, sessionId = "unnamed-1").map { it.id },
+            listOf("unnamed-1"),
+            siblingSessionsFor(groups, taskId = "task-unnamed", sessionId = "unnamed-1").map { it.id },
         )
     }
 
@@ -176,7 +176,7 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun unnamedTasksFlattenIntoDirectoryStandaloneSessions() {
+    fun unnamedTasksKeepTheirIdentityAndSessions() {
         val named = task()
         val unnamedSession = session("pty", null).copy(id = "loose-1", title = "Loose")
         val unnamed = task().copy(
@@ -190,14 +190,20 @@ class TaskListPresentationTest {
             standaloneSessions = listOf(existingStandalone),
         )
 
-        val flattened = flattenUnnamedTasksIntoStandalone(group)
-        assertEquals(listOf("task-1"), flattened.tasks.map { it.id })
-        assertEquals(listOf("legacy-1", "loose-1"), flattened.standaloneSessions.map { it.id })
+        val tree = directoryTreeGroups(listOf(group)).single()
+        assertEquals(listOf("task-1", "task-unnamed"), tree.tasks.map { it.id })
+        assertEquals(listOf("loose-1"), tree.tasks.last().sessions.map { it.id })
 
         assertEquals(
-            listOf("legacy-1", "loose-1"),
+            listOf("legacy-1"),
             directoryTreeGroups(listOf(group)).single().standaloneSessions.map { it.id },
         )
+    }
+
+    @Test
+    fun directoryTreeKeepsEmptyWorkspaces() {
+        val empty = group().copy(tasks = emptyList(), standaloneSessions = emptyList())
+        assertEquals(listOf(empty), directoryTreeGroups(listOf(empty)))
     }
 
     @Test
@@ -299,9 +305,9 @@ class TaskListPresentationTest {
 
     @Test
     fun treeDisclosureHidesNeedlessCaretsAndKeepsTerminalsOpen() {
-        assertFalse(showsDirectoryDisclosure(1))
+        assertTrue(showsDirectoryDisclosure(1))
         assertTrue(showsDirectoryDisclosure(2))
-        assertTrue(isDirectoryExpanded(userCollapsed = true, directoryCount = 1))
+        assertFalse(isDirectoryExpanded(userCollapsed = true, directoryCount = 1))
         assertFalse(isDirectoryExpanded(userCollapsed = true, directoryCount = 2))
         assertTrue(isDirectoryExpanded(userCollapsed = false, directoryCount = 2))
 
@@ -393,6 +399,39 @@ class TaskListPresentationTest {
         assertEquals(HomeListMode.Sessions, HomeListMode.Tasks.next)
         assertEquals("board", HomeListMode.Tasks.storageValue)
         assertEquals("sessions", HomeListMode.Sessions.storageValue)
+    }
+
+    @Test
+    fun moveTargetsIncludeEmptyAndUnnamedTasksAndNeverMergeMatchingNames() {
+        val current = task().copy(sessions = listOf(session("pty", "pty")), totalSessions = 1)
+        val empty = task().copy(task = task().task.copy(id = "empty"))
+        val unnamed = task().copy(task = task().task.copy(id = "unnamed", name = "未命名任务"))
+        val groups = listOf(group().copy(tasks = listOf(current, empty, unnamed)))
+        val targets = sessionMoveTargets(groups, "session-1", "")
+        assertEquals(listOf("task-1", "empty", "unnamed"), targets.map { it.id })
+        assertEquals(listOf(true, false, false), targets.map { it.current })
+        assertEquals(2, sessionMoveTargets(groups, "session-1", "fix").size)
+        assertEquals(3, sessionMoveTargets(groups, "session-1", " REPO ").size)
+        assertTrue(sessionMoveTargets(groups, "session-1", "missing").isEmpty())
+        assertFalse(sessionMoveTargets(groups, "ungrouped-session", "").any { it.current })
+    }
+
+    @Test
+    fun movingUpdatesNavigationAndSiblingsWithoutReplacingSession() {
+        val moved = session("pty", "pty")
+        val destination = task().copy(task = task().task.copy(id = "destination", name = "Target"), sessions = listOf(moved))
+        val groups = listOf(group().copy(tasks = listOf(task(), destination)))
+        val nav = com.wand.app.ui.NavState()
+        nav.push(Screen.PtyTerminal("session-1", taskId = "task-1"))
+        nav.syncTaskMembership(groups)
+        val screen = nav.current as Screen.PtyTerminal
+        assertEquals("session-1", screen.sessionId)
+        assertEquals("destination", screen.taskId)
+        assertEquals("Target", screen.taskName)
+        assertEquals("workspace-1", screen.workspaceId)
+        assertEquals(listOf(moved), siblingSessionsFor(groups, "task-1", "session-1"))
+        nav.syncTaskMembership(emptyList())
+        assertEquals(screen, nav.current)
     }
 
     private fun group() = TaskDirectoryGroup(

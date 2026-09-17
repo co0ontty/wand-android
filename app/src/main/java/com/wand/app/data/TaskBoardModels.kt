@@ -99,6 +99,7 @@ data class BoardTask(
     val sessionIds: List<String>,
     val sessions: List<BoardTaskSession>,
     val workspace: BoardTaskWorkspace?,
+    val workspaceTaskId: String? = null,
 ) {
     companion object {
         fun parse(item: JSONObject): BoardTask? {
@@ -133,6 +134,7 @@ data class BoardTask(
                 } ?: emptyList(),
                 sessions = BoardTaskSession.parseList(item.arr("sessions")),
                 workspace = BoardTaskWorkspace.parse(item.obj("workspace")),
+                workspaceTaskId = item.str("workspaceTaskId")?.takeIf { it.isNotBlank() },
             )
         }
 
@@ -211,7 +213,11 @@ fun boardTaskEffortLabel(effort: String): String = when (effort) {
 }
 
 fun boardTaskProviderLabel(provider: String): String =
-    WandProvider.fromId(provider)?.displayName ?: provider.ifBlank { "Agent" }
+    WandProvider.fromId(provider)?.displayName ?: when (provider) {
+        "shell", "session" -> "终端"
+        "" -> "Agent"
+        else -> provider
+    }
 
 data class BoardAgentGroup(
     val provider: String,
@@ -325,7 +331,7 @@ fun boardAgentModelOptions(models: ModelsResponse?, provider: String): List<Mode
     ) + catalog
 }
 
-interface TaskBoardPort {
+interface TaskBoardPort : TaskChangeSource {
     suspend fun listBoardTasks(workspaceId: String? = null): List<BoardTask>
     /** 单条任务：新建后用来确认后台自动标题是否已生成。 */
     suspend fun getBoardTask(id: String): BoardTask?

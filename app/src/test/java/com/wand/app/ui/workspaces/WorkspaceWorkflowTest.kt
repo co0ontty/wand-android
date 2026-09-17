@@ -92,6 +92,26 @@ class WorkspaceWorkflowTest {
         assertEquals(0, fake.saveLayoutCalls.size)
     }
 
+    @Test
+    fun backgroundRefreshKeepsSheetAndSelectionThenRemovesMovedSessions() = runBlocking {
+        val fake = FakeWorkspacePort().apply { taskDetail = taskDetailWithSessions(sessions = listOf("s1", "s2")) }
+        val workflow = WorkspaceWorkflow(fake, testScope())
+        workflow.loadTask("task-1")
+        mainDispatcher.scheduler.advanceUntilIdle()
+        workflow.selectSession("s2")
+        workflow.openTargetSheet()
+        val sheet = workflow.targetState.value
+        workflow.refreshTask("task-1")
+        assertEquals(sheet, workflow.targetState.value)
+        assertEquals("s2", (workflow.taskState.value as WorkspaceTaskState.Content).selectedSessionId)
+        fake.taskDetail = taskDetailWithSessions(sessions = listOf("s1"))
+        workflow.refreshTask("task-1")
+        assertEquals(listOf("s1"), (workflow.taskState.value as WorkspaceTaskState.Content).orderedSessions.map { it.id })
+        assertEquals(sheet, workflow.targetState.value)
+        assertTrue(fake.createCalls.isEmpty())
+        assertTrue(fake.saveLayoutCalls.isEmpty())
+    }
+
     // MARK: - 已有会话恢复
 
     @Test
@@ -286,6 +306,7 @@ class WorkspaceWorkflowTest {
             target: WorkspaceSessionTarget,
             binding: WorkspaceBinding,
             kind: WorkspaceSessionKind,
+            prompt: String?,
         ): SessionSnapshot {
             createCalls += target to binding
             return SessionSnapshot(

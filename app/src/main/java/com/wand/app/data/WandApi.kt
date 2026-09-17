@@ -1,5 +1,7 @@
 package com.wand.app.data
 
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -25,6 +27,8 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
+    private val taskMutations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val taskChanges = taskMutations.asSharedFlow()
 
     // MARK: - 基础请求
 
@@ -106,6 +110,7 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             }
             throw WandApiException(code, message)
         }
+        if (changesTaskHierarchy(method, path)) taskMutations.tryEmit(Unit)
         return text
     }
 
@@ -667,6 +672,10 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         return response.int("deleted") ?: 0
     }
 
+    override suspend fun moveWorkspaceSession(taskId: String, sessionId: String) {
+        requestObject("POST", "/api/workspace-tasks/${encode(taskId)}/sessions", JSONObject().put("sessionId", sessionId))
+    }
+
     override suspend fun workspaceTask(taskId: String): WorkspaceTaskDetail {
         val detail = WorkspaceTaskDetail.parse(requestObject("GET", "/api/workspace-tasks/${encode(taskId)}"))
             ?: throw WandApiException(404, "未找到该任务。")
@@ -691,8 +700,9 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         target: WorkspaceSessionTarget,
         binding: WorkspaceBinding,
         kind: WorkspaceSessionKind,
+        prompt: String?,
     ): SessionSnapshot {
-        val request = createWorkspaceTaskWindowRequest(target, binding, kind)
+        val request = createWorkspaceTaskWindowRequest(target, binding, kind, prompt)
         return SessionSnapshot.parse(requestObject("POST", request.path, request.body))
     }
 

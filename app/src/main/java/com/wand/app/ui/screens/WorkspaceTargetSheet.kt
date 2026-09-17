@@ -76,7 +76,7 @@ fun WorkspaceTargetSheet(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "在当前任务的同一 worktree 中选择 Agent，或直接启动空白终端。",
+                "在当前任务的工作目录中启动 Agent，或直接打开空白终端。",
                 style = MaterialTheme.typography.bodySmall,
                 color = WandColors.textSecondary,
                 modifier = Modifier.padding(top = 4.dp),

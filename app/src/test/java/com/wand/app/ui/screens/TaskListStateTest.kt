@@ -88,22 +88,33 @@ class TaskListStateTest {
         assertSame(existing, result?.workspace)
         assertTrue(port.createdWorkspaces.isEmpty())
         assertTrue(port.standaloneRequests.isEmpty())
-        assertEquals(TaskRequest("ws-existing", "修复恢复流程", true, "/repo/"), port.taskRequests.single())
+        assertEquals(TaskRequest("ws-existing", "修复恢复流程", true), port.taskRequests.single())
         assertNull(state.mutationError)
     }
 
     @Test
-    fun createTaskWithoutProjectUsesStandaloneEndpoint() = runBlocking {
+    fun createTaskInNewDirectoryCreatesWorkspaceWithoutWorktree() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
 
         val result = state.createTask("新任务", "/work/wand", worktree = false)
 
+        assertEquals(listOf("wand" to "/work/wand"), port.createdWorkspaces)
+        assertEquals(TaskRequest("ws-1", "新任务", false), port.taskRequests.single())
+        assertTrue(port.standaloneRequests.isEmpty())
+        assertEquals("ws-1", result?.workspace?.id)
+        assertEquals("/work/wand", result?.workspace?.cwd)
+    }
+
+    @Test
+    fun createTaskInExistingDirectoryReusesWorkspaceWithoutMergingNames() = runBlocking {
+        val port = FakeWorkspacePort().apply { workspaces = mutableListOf(workspace("existing", "/repo")) }
+        val state = TaskListState(port)
+        state.createTask("Same", "/repo/", false)
+        state.createTask("Same", "/repo", false)
         assertTrue(port.createdWorkspaces.isEmpty())
-        assertTrue(port.taskRequests.isEmpty())
-        assertEquals(StandaloneRequest("新任务", "/work/wand", false), port.standaloneRequests.single())
-        assertEquals("wand-global", result?.workspace?.id)
-        assertEquals("/work/wand", result?.task?.cwd)
+        assertEquals(2, port.taskRequests.size)
+        assertTrue(port.taskRequests.all { it.workspaceId == "existing" && it.worktree == false })
     }
 
     @Test
@@ -275,43 +286,33 @@ class TaskListStateTest {
     }
 
     @Test
-    fun emptyTaskNameCreatesUnnamedTaskForAutoTitle() = runBlocking {
+    fun emptyTaskNameCreatesStableNameIndependentOfSessionPrompt() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
 
-        // 名称可选：空名也允许创建，服务端先用「未命名任务」占位，
-        // 看板再按会话内容自动补标题。
+        // An unnamed creation is explicit; session content cannot rename the task.
         val result = state.createTask("", "/work/wand", worktree = false)
 
         assertNotNull(result)
-        assertEquals(1, port.standaloneRequests.size)
+        assertEquals("新任务", port.taskRequests.single().name)
         assertNull(state.mutationError)
     }
 
     @Test
-    fun createUngroupedSessionOmitsTaskBinding() = runBlocking {
+    fun createTaskSessionForwardsPromptWithoutRenamingTask() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
-
-        val session = state.createUngroupedSession(
-            cwd = " /repo ",
-            target = WorkspaceSessionTarget.Claude,
-            kind = WorkspaceSessionKind.Pty,
-            workspaceId = "ws-1",
-        )
-
+        val session = state.createTaskWindow("task-1", WorkspaceSessionTarget.Claude,
+            WorkspaceSessionKind.Structured, prompt = "Investigate tests")
         assertEquals("created-session", session?.id)
-        assertEquals(
-            WorkspaceBinding("ws-1", null, "/repo"),
-            port.createdWindowBindings.single(),
-        )
-        assertTrue(port.standaloneRequests.isEmpty())
-        assertTrue(port.taskRequests.isEmpty())
+        assertEquals("task-1", port.createdWindowBindings.single().workspaceTaskId)
+        assertEquals(listOf("Investigate tests"), port.createdWindowPrompts)
+        assertTrue(port.renamedTasks.isEmpty())
         assertNull(state.mutationError)
     }
 
     @Test
-    fun unnamedTaskSelectionExpandsStandaloneSection() = runBlocking {
+    fun unnamedTaskSelectionExpandsItsTaskNotStandaloneSection() = runBlocking {
         val unnamedSession = WorkspaceSessionSummary(
             id = "unnamed-session",
             provider = "claude",
@@ -339,10 +340,12 @@ class TaskListStateTest {
         assertTrue(state.isDirectoryCollapsed(group.id))
         assertTrue(state.isStandaloneCollapsed(group.id))
 
+        state.toggleTask(unnamedTask.id)
         state.expandPathToSelection(taskId = unnamedTask.id, sessionId = unnamedSession.id)
 
         assertFalse(state.isDirectoryCollapsed(group.id))
-        assertFalse(state.isStandaloneCollapsed(group.id))
+        assertFalse(state.isTaskCollapsed(unnamedTask.id))
+        assertTrue(state.isStandaloneCollapsed(group.id))
     }
 
     @Test
@@ -388,6 +391,7 @@ class TaskListStateTest {
         val clearedTaskIds = mutableListOf<String>()
         val deletedTaskIds = mutableListOf<String>()
         val createdWindowBindings = mutableListOf<WorkspaceBinding>()
+        val createdWindowPrompts = mutableListOf<String?>()
         val createdWindowChoices = mutableListOf<Pair<WorkspaceSessionTarget, WorkspaceSessionKind>>()
         var pendingConfig: CompletableDeferred<ServerConfigInfo>? = null
         val savedLayouts = mutableListOf<Pair<String, TaskWindowLayout?>>()
@@ -496,8 +500,10 @@ class TaskListStateTest {
             target: WorkspaceSessionTarget,
             binding: WorkspaceBinding,
             kind: WorkspaceSessionKind,
+            prompt: String?,
         ): SessionSnapshot {
             createdWindowBindings += binding
+            createdWindowPrompts += prompt
             createdWindowChoices += target to kind
             return SessionSnapshot.parse(JSONObject().put("id", "created-session"))
         }
