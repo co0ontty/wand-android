@@ -38,6 +38,7 @@ interface WorkspacePort : TaskChangeSource {
         baseRef: String? = null,
         worktree: Boolean? = null,
         cwd: String? = null,
+        description: String? = null,
     ): WorkspaceTaskCreation {
         throw UnsupportedOperationException("创建任务接口不可用")
     }
@@ -47,6 +48,7 @@ interface WorkspacePort : TaskChangeSource {
         name: String,
         cwd: String? = null,
         worktree: Boolean? = null,
+        description: String? = null,
     ): WorkspaceTaskCreation {
         throw UnsupportedOperationException("创建独立任务接口不可用")
     }

@@ -273,8 +273,14 @@ fun TaskListScreen(
         val context = androidx.compose.ui.platform.LocalContext.current
         val cwd = taskCwdDraft.trim()
         val groupedName = newTaskName.trim()
-        // Task identity is independent from its first session prompt.
-        val canCreateTask = cwd.isNotEmpty() && TaskListState.isValidOptionalTaskName(groupedName)
+        // 任务身份不再依赖首个会话提示词：名称留空时由提示词自动命名。
+        val taskPrompt = if (!startFirstSession || newTaskTarget.isShell) {
+            null
+        } else {
+            newTaskPrompt.trim().ifEmpty { null }
+        }
+        val canCreateTask = cwd.isNotEmpty() && TaskListState.isValidOptionalTaskName(groupedName) &&
+            (groupedName.isNotEmpty() || taskPrompt != null)
         WandDialog(
             title = "新建任务",
             onDismissRequest = { if (!state.mutationBusy) newTaskOpen = false },
@@ -298,12 +304,12 @@ fun TaskListScreen(
                             cwd = cwd,
                             worktree = newTaskWorktree,
                             workspaceId = newTaskWorkspaceId,
+                            description = taskPrompt,
                         )
                         if (result != null) {
                             newTaskOpen = false
                             val snapshot = if (startFirstSession) state.createTaskWindow(
-                                result.task.id, submittedTarget, submittedKind,
-                                newTaskPrompt.trim().takeIf { it.isNotEmpty() && !submittedTarget.isShell },
+                                result.task.id, submittedTarget, submittedKind, taskPrompt,
                             ) else null
                             if (snapshot != null) {
                                 onOpenSession(
@@ -343,7 +349,7 @@ fun TaskListScreen(
             WandTextField(value = newTaskName,
                 onValueChange = { newTaskName = it; state.clearMutationError() },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                label = "任务名称", placeholder = "留空使用“新任务”", singleLine = true,
+                label = "任务名称", placeholder = "留空按提示词自动命名", singleLine = true,
                 enabled = !state.mutationBusy)
             Row(
                 modifier = Modifier
@@ -428,7 +434,7 @@ fun TaskListScreen(
                         label = "首个会话的提示词（可选）", placeholder = "希望 CLI 帮你完成什么？",
                         minLines = 2, enabled = !state.mutationBusy,
                         modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
-                    Text("提示词只发送给会话，不会替换任务名称。", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                    Text("任务名称留空时按此提示词自动命名，仍可随时改名。", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
                 }
                 Text(
                     "首次打开的工具",

@@ -212,10 +212,13 @@ class TaskListState(
         cwd: String,
         worktree: Boolean,
         workspaceId: String? = null,
+        description: String? = null,
     ): TaskCreationResult? = mutationMutex.withLock {
         // Task names belong to the container, never to a session's prompt.
         val normalizedName = name.trim()
         val normalizedCwd = cwd.trim()
+        // 首个会话的提示词：任务没起名时交给服务端据它总结标题。
+        val normalizedDescription = description?.trim().orEmpty()
         if (!isValidOptionalTaskName(normalizedName)) {
             mutationError = "任务名称无效或过长"
             return@withLock null
@@ -240,12 +243,14 @@ class TaskListState(
                     workspaceId = project.id,
                     name = normalizedName.ifEmpty { "新任务" },
                     worktree = worktree,
+                    description = normalizedDescription.ifEmpty { null },
                 )
             } else {
                 port.createStandaloneTask(
                     name = normalizedName.ifEmpty { "新任务" },
                     cwd = normalizedCwd.ifEmpty { null },
                     worktree = if (normalizedCwd.isEmpty()) false else worktree,
+                    description = normalizedDescription.ifEmpty { null },
                 )
             }
             val workspace = project

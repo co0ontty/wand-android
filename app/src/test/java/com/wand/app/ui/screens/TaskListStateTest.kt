@@ -286,15 +286,16 @@ class TaskListStateTest {
     }
 
     @Test
-    fun emptyTaskNameCreatesStableNameIndependentOfSessionPrompt() = runBlocking {
+    fun emptyTaskNameForwardsPromptSoServerCanNameIt() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
 
-        // An unnamed creation is explicit; session content cannot rename the task.
-        val result = state.createTask("", "/work/wand", worktree = false)
+        // 没起名时把首个提示词交给服务端总结标题；占位名只作为兜底回传，服务端会据提示词改写。
+        val result = state.createTask("", "/work/wand", worktree = false, description = "帮我重构会话恢复流程")
 
         assertNotNull(result)
         assertEquals("新任务", port.taskRequests.single().name)
+        assertEquals("帮我重构会话恢复流程", port.taskRequests.single().description)
         assertNull(state.mutationError)
     }
 
@@ -428,8 +429,9 @@ class TaskListStateTest {
             baseRef: String?,
             worktree: Boolean?,
             cwd: String?,
+            description: String?,
         ): WorkspaceTaskCreation {
-            taskRequests += TaskRequest(workspaceId, name, worktree, cwd)
+            taskRequests += TaskRequest(workspaceId, name, worktree, cwd, description)
             return WorkspaceTaskCreation(
                 id = "task-${taskRequests.size}",
                 workspaceId = workspaceId,
@@ -444,8 +446,9 @@ class TaskListStateTest {
             name: String,
             cwd: String?,
             worktree: Boolean?,
+            description: String?,
         ): WorkspaceTaskCreation {
-            standaloneRequests += StandaloneRequest(name, cwd, worktree)
+            standaloneRequests += StandaloneRequest(name, cwd, worktree, description)
             return WorkspaceTaskCreation(
                 id = "task-standalone-${standaloneRequests.size}",
                 workspaceId = "wand-global",
@@ -514,12 +517,14 @@ class TaskListStateTest {
         val name: String,
         val worktree: Boolean?,
         val cwd: String? = null,
+        val description: String? = null,
     )
 
     private data class StandaloneRequest(
         val name: String,
         val cwd: String?,
         val worktree: Boolean?,
+        val description: String? = null,
     )
 
     companion object {

@@ -594,8 +594,9 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         baseRef: String?,
         worktree: Boolean?,
         cwd: String?,
+        description: String?,
     ): WorkspaceTaskCreation {
-        val body = createWorkspaceTaskRequestBody(name, baseRef, worktree, cwd)
+        val body = createWorkspaceTaskRequestBody(name, baseRef, worktree, cwd, description)
         return WorkspaceTaskCreation.parse(
             requestObject("POST", "/api/workspaces/${encode(workspaceId)}/tasks", body),
         ) ?: throw WandApiException(500, "任务创建响应无效。")
@@ -605,8 +606,9 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         name: String,
         cwd: String?,
         worktree: Boolean?,
+        description: String?,
     ): WorkspaceTaskCreation {
-        val body = createStandaloneTaskRequestBody(name, cwd, worktree)
+        val body = createStandaloneTaskRequestBody(name, cwd, worktree, description)
         return WorkspaceTaskCreation.parse(
             requestObject("POST", "/api/tasks", body),
         ) ?: throw WandApiException(500, "任务创建响应无效。")
