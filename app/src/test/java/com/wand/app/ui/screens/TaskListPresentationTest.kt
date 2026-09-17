@@ -201,6 +201,23 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun directoryTreeHidesCompletedTasksWithoutChangingStoredMembership() {
+        val child = session("pty", "pty")
+        val completed = task().copy(task = task().task.copy(status = WorkspaceTaskStatus.Done), sessions = listOf(child))
+        val active = task().copy(task = task().task.copy(id = "active"))
+        val loose = child.copy(id = "loose", status = "exited")
+        val source = group().copy(tasks = listOf(completed, active), standaloneSessions = listOf(loose))
+        val visible = directoryTreeGroups(listOf(source)).single()
+        assertEquals(listOf("active"), visible.tasks.map { it.id })
+        assertEquals(listOf(loose), visible.standaloneSessions)
+        assertEquals(2, source.tasks.size)
+        assertEquals(listOf(child), source.tasks.first().sessions)
+        val reopened = completed.copy(task = completed.task.copy(status = WorkspaceTaskStatus.Active))
+        assertEquals(listOf(reopened), directoryTreeGroups(listOf(source.copy(tasks = listOf(reopened)))).single().tasks)
+        assertTrue(directoryTreeGroups(listOf(source.copy(tasks = listOf(completed)))).single().tasks.isEmpty())
+    }
+
+    @Test
     fun directoryTreeKeepsEmptyWorkspaces() {
         val empty = group().copy(tasks = emptyList(), standaloneSessions = emptyList())
         assertEquals(listOf(empty), directoryTreeGroups(listOf(empty)))

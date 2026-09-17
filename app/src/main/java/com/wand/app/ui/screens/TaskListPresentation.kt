@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.workspaceProviderLabel
 
@@ -28,7 +29,10 @@ enum class HomeListMode(val storageValue: String) {
 
 /** 目录顺序以 GET /api/tasks 返回为准。 */
 internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
-    groups
+    groups.map { group ->
+        // Presentation only: retain completed tasks in the board and session navigation.
+        group.copy(tasks = group.tasks.filter { it.status != WorkspaceTaskStatus.Done })
+    }
 
 /** 目录内任务顺序以 GET /api/tasks 返回为准。 */
 internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =
