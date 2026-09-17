@@ -500,8 +500,10 @@ data class TaskDirectoryGroup(
     val tasks: List<WorkspaceTaskSummary>,
     val standaloneSessions: List<WorkspaceSessionSummary>,
     val createdAt: String? = null,
+    val global: Boolean = false,
 ) {
     val id: String get() = workspaceId
+    val isGlobal: Boolean get() = global || workspaceId == GLOBAL_WORKSPACE_ID
 
     companion object {
         fun parse(o: JSONObject): TaskDirectoryGroup? {
@@ -515,6 +517,7 @@ data class TaskDirectoryGroup(
                 standaloneSessions = o.arr("standaloneSessions")
                     ?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
                 createdAt = o.str("createdAt"),
+                global = o.bool("global") ?: false,
             )
         }
 

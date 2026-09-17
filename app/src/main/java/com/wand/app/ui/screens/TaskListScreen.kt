@@ -1354,6 +1354,10 @@ private fun TaskDirectorySection(
                         StatusDot("running", modifier = Modifier.padding(start = 7.dp).size(7.dp))
                     }
                 }
+                if (group.isGlobal) {
+                    Text("可在任务看板选择工作区", style = MaterialTheme.typography.labelSmall,
+                        color = WandColors.textMuted)
+                }
             }
             if (canCollapseDirectory) {
                 TreeDisclosureCaret(
@@ -1378,7 +1382,7 @@ private fun TaskDirectorySection(
                     variant = WandIconButtonVariant.Compact,
                 )
             }
-            Box(
+            if (!group.isGlobal) Box(
                 modifier = Modifier
                     .size(32.dp)
                     .clip(CircleShape)

@@ -1168,7 +1168,7 @@ private fun TaskBoardDetail(
     val modelOptions = boardAgentModelOptions(models, agent.provider)
     val done = task.status == "done" || task.status == "archived"
     val workspaceChoices = buildList {
-        add("" to "不指定项目（使用全局目录）")
+        add("" to "未归属工作区（使用临时目录）")
         val seen = workspaces.map { it.id }.toSet()
         workspaces.forEach { add(it.id to it.name) }
         val current = task.workspace
@@ -1238,7 +1238,7 @@ private fun TaskBoardDetail(
                 enabled = !busy,
             )
             BoardChoice(
-                label = "项目 · ${task.workspace?.name ?: "未指定项目"}",
+                label = "工作区 · ${task.workspace?.name ?: "未归属工作区"}",
                 options = workspaceChoices,
                 onSelect = { onPatch(patchBoardTaskBody(workspaceId = it.ifBlank { null })) },
                 enabled = !busy,
@@ -1486,8 +1486,8 @@ private fun CreateBoardTaskDialog(
         )
         Spacer(Modifier.height(8.dp))
         BoardChoice(
-            label = "目录 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "不指定目录"}",
-            options = listOf("" to "不指定目录（使用全局目录）") + workspaces.map { it.id to it.name },
+            label = "工作区 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "未归属工作区"}",
+            options = listOf("" to "未归属工作区（使用临时目录）") + workspaces.map { it.id to it.name },
             onSelect = { workspaceId = it },
         )
         if (dispatches) {

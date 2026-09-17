@@ -218,6 +218,22 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun legacyGlobalTasksUseNamedFallbackAfterRealDirectories() {
+        val global = group().copy(workspaceId = "wand-global", workspaceName = "全局")
+        val project = group()
+        val visible = directoryTreeGroups(listOf(global, project))
+        assertEquals(listOf(project.workspaceId, global.workspaceId), visible.map { it.workspaceId })
+        assertEquals("未归属工作区", visible.last().workspaceName)
+        assertEquals("全局", global.workspaceName)
+        assertEquals(global.tasks, visible.last().tasks)
+        assertTrue(directoryTreeGroups(listOf(global.copy(tasks = emptyList()))).isEmpty())
+        val done = task().copy(task = task().task.copy(status = WorkspaceTaskStatus.Done))
+        assertTrue(directoryTreeGroups(listOf(global.copy(tasks = listOf(done)))).isEmpty())
+        val loose = session("pty", "pty")
+        assertEquals(listOf(loose), directoryTreeGroups(listOf(global.copy(tasks = emptyList(), standaloneSessions = listOf(loose)))).single().standaloneSessions)
+    }
+
+    @Test
     fun directoryTreeKeepsEmptyWorkspaces() {
         val empty = group().copy(tasks = emptyList(), standaloneSessions = emptyList())
         assertEquals(listOf(empty), directoryTreeGroups(listOf(empty)))

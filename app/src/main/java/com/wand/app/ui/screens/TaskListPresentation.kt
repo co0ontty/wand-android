@@ -31,8 +31,12 @@ enum class HomeListMode(val storageValue: String) {
 internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
     groups.map { group ->
         // Presentation only: retain completed tasks in the board and session navigation.
-        group.copy(tasks = group.tasks.filter { it.status != WorkspaceTaskStatus.Done })
-    }
+        group.copy(
+            workspaceName = if (group.isGlobal) "未归属工作区" else group.workspaceName,
+            tasks = group.tasks.filter { it.status != WorkspaceTaskStatus.Done },
+        )
+    }.filter { !it.isGlobal || it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
+        .sortedBy { it.isGlobal }
 
 /** 目录内任务顺序以 GET /api/tasks 返回为准。 */
 internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =
