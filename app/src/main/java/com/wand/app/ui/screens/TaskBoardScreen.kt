@@ -133,6 +133,8 @@ fun TaskBoardScreen(
     var filterWorkspaceId by remember { mutableStateOf(linkedWorkspaceId.orEmpty()) }
     var statusFilter by remember { mutableStateOf("") }
     var selectedId by remember { mutableStateOf<String?>(null) }
+    // 有没有卡片处于划开状态。只报布尔量：逐帧的划开位留在列表内部维护。
+    var boardSwipeOpen by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     // 从哪一列点开的「新建」决定初始状态：待办 = 只创建，进行中 = 创建并指派。
     var createStatus by remember { mutableStateOf("todo") }
@@ -258,7 +260,8 @@ fun TaskBoardScreen(
             }
         },
         floatingActionButton = {
-            if (selected == null) {
+            // 划开状态时不摆悬浮按钮：它正好压在右下的滑动动作按钮上，会吃掉那一下点击。
+            if (selected == null && !boardSwipeOpen) {
                 FloatingActionButton(
                     onClick = {
                         createStatus = "todo"
@@ -340,6 +343,7 @@ fun TaskBoardScreen(
                     query = query,
                     filterWorkspaceId = filterWorkspaceId,
                     statusFilter = statusFilter,
+                    onSwipeOpenChange = { boardSwipeOpen = it },
                     onQueryChange = { query = it },
                     onFilterWorkspace = { filterWorkspaceId = it },
                     onStatusFilter = { statusFilter = it },
@@ -447,20 +451,29 @@ private fun TaskBoardList(
     onSwipeAction: (BoardTask, BoardTaskSwipeAction) -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onCreateForStatus: (String) -> Unit,
+    onSwipeOpenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val grouped = groupedBoardTasks(tasks)
     val archived = boardArchivedTasks(tasks)
     var archiveCollapsed by remember { mutableStateOf(true) }
     // 同一时刻只允许一张卡划开：新划开的卡接管，旧卡在自身 LaunchedEffect 里收起。
+    // 这份状态必须留在列表内部：手势每帧都会改它，上提到屏幕层会让整屏逐帧重组，卡片就直接拖不动了。
+    // 只把「有没有张开」这个布尔量报上去，用来给右下角悬浮按钮让位。
     var swipedTaskId by remember { mutableStateOf<String?>(null) }
+    fun setSwipedTaskId(id: String?) {
+        swipedTaskId = id
+        onSwipeOpenChange(id != null)
+    }
     // 划出的动作不直接改任务，先经过二次确认，避免误触直接改状态。
     var pendingSwipe by remember { mutableStateOf<Pair<BoardTask, BoardTaskSwipeAction>?>(null) }
     val listState = rememberLazyListState()
     // 列表一滚动就收掉已划开的卡，不给「停在待点状态」的机会。
     LaunchedEffect(listState.isScrollInProgress) {
-        if (listState.isScrollInProgress) swipedTaskId = null
+        if (listState.isScrollInProgress) setSwipedTaskId(null)
     }
+    // 筛选条件变了就把划开状态收掉：被筛走的卡片会让悬浮按钮一直不复位。
+    LaunchedEffect(statusFilter, filterWorkspaceId, query) { setSwipedTaskId(null) }
     val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
     val showWorkspace = filterWorkspaceId.isBlank()
     LazyColumn(
@@ -531,12 +544,12 @@ private fun TaskBoardList(
                         task = task,
                         showWorkspace = showWorkspace,
                         revealed = swipedTaskId == task.id,
-                        onRevealedChange = { open -> swipedTaskId = if (open) task.id else null },
+                        onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
                         onOpen = { onOpen(task) },
                         onToggleComplete = { onToggleComplete(task) },
                         onOpenSession = onOpenSession,
                         onSwipeAction = { action ->
-                            swipedTaskId = null
+                            setSwipedTaskId(null)
                             pendingSwipe = task to action
                         },
                     )
@@ -555,12 +568,12 @@ private fun TaskBoardList(
                                 task = task,
                                 showWorkspace = showWorkspace,
                                 revealed = swipedTaskId == task.id,
-                                onRevealedChange = { open -> swipedTaskId = if (open) task.id else null },
+                                onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
                                 onOpen = { onOpen(task) },
                                 onToggleComplete = { onToggleComplete(task) },
                                 onOpenSession = onOpenSession,
                                 onSwipeAction = { action ->
-                                    swipedTaskId = null
+                                    setSwipedTaskId(null)
                                     pendingSwipe = task to action
                                 },
                             )
@@ -574,12 +587,12 @@ private fun TaskBoardList(
                     task = task,
                     showWorkspace = showWorkspace,
                     revealed = swipedTaskId == task.id,
-                    onRevealedChange = { open -> swipedTaskId = if (open) task.id else null },
+                    onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
                     onOpen = { onOpen(task) },
                     onToggleComplete = { onToggleComplete(task) },
                     onOpenSession = onOpenSession,
                     onSwipeAction = { action ->
-                        swipedTaskId = null
+                        setSwipedTaskId(null)
                         pendingSwipe = task to action
                     },
                 )
