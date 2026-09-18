@@ -21,6 +21,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -573,7 +574,15 @@ private fun AgentBubbleRail(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
-        modifier = modifier.fillMaxWidth().padding(horizontal = 3.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 3.dp)
+            // 标签和气泡右侧的空白也要能点：不可点的死区正是「子 Agent 点不开」的来源。
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClickLabel = if (expanded) "收起 Agent 卡片" else "查看 Agent 卡片",
+            ) { onStackClick() },
     ) {
         Text(
             "Agent:",
