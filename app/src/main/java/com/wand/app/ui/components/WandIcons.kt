@@ -31,7 +31,9 @@ import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.History
@@ -46,6 +48,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SignalCellularAlt
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Stop
@@ -221,7 +224,15 @@ object WandIcons {
     /** 空态大图标 / 会话列表空态。 */
     val sparkle: ImageVector = Icons.Outlined.AutoAwesome
 
-    /** 聊天会话（runner 类型徽章）。 */}
+    /** 任务卡优先级芯片：信号格数表达「高 / 中 / 低」，与 Web 优先级图标同形。 */
+    val priority: ImageVector = Icons.Outlined.SignalCellularAlt
+
+    /** 任务卡里程碑芯片（旗杆标记里程碑）。 */
+    val milestone: ImageVector = Icons.Outlined.Flag
+
+    /** 任务卡截止日期芯片。 */
+    val due: ImageVector = Icons.Outlined.Event
+}
 
 /**
  * Git 分支三节点图标（对称 Web 的 branch SVG 与 iOS 的 SF Symbol）。

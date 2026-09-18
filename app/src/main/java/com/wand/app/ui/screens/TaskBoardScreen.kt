@@ -23,11 +23,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -50,11 +52,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
@@ -903,6 +910,21 @@ private fun BoardTaskItem(
     }
 }
 
+private val BoardCardChipShape = RoundedCornerShape(8.dp)
+private val BoardCardBlockShape = RoundedCornerShape(8.dp)
+
+/** 任务卡上元信息芯片的统一几何：22dp 高、8dp 圆角、11sp 文本。 */
+private val BoardCardChipHeight = 22.dp
+
+/**
+ * 任务卡：标题行 / 摘要 / 元信息 / 会话 / 状态五段纵向排列，段与段之间留 10dp。
+ *
+ * - 勾选圈、标题、任务编号一行：编号贴右，扫一眼就能对上号；
+ * - 元信息统一成 8dp 细边框小芯片（弹丸只留给状态圆点，不再把每个属性都胶囊化）；
+ * - 会话不再是一排同名胶囊：左侧一根分组细线 + 每行「工具徽标 + 会话标题 + 运行跳动点」，
+ *   点得到具体那一个终端，超出的会话折成「+N 个会话」；
+ * - 状态行（正在处理 / 等待验收）压到卡片底部当页脚，顺序对齐 Web 任务卡。
+ */
 @Composable
 private fun BoardTaskCard(
     task: BoardTask,
@@ -913,92 +935,195 @@ private fun BoardTaskCard(
 ) {
     val done = task.status == "done" || task.status == "archived"
     val model = boardTaskCardModel(task, showWorkspace)
-    val hasChips = model.workspaceName != null ||
-        model.priority != null ||
-        model.agentLabel != null ||
-        model.labels.isNotEmpty()
-    WandCard(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
+    WandCard(
+        onClick = onOpen,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BoardStatusCheck(status = task.status, onClick = onToggleComplete)
+            BoardStatusCheck(
+                status = task.status,
+                onClick = onToggleComplete,
+                modifier = Modifier.padding(top = 2.dp),
+            )
             Text(
                 model.title,
                 color = if (done) WandColors.textMuted else WandColors.textPrimary,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+                lineHeight = 21.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 textDecoration = if (done) TextDecoration.LineThrough else TextDecoration.None,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(onClick = onOpen),
+                modifier = Modifier.weight(1f),
             )
-        }
-        Column(modifier = Modifier.clickable(onClick = onOpen)) {
-            if (hasChips) {
-                FlowRow(
-                    modifier = Modifier.padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    model.workspaceName?.let { name ->
-                        BoardChip(label = name, icon = WandIcons.folder)
-                    }
-                    model.priority?.let { priority ->
-                        BoardChip(
-                            label = boardTaskPriorityLabel(priority),
-                            color = boardPriorityColor(priority),
-                        )
-                    }
-                    model.agentLabel?.let { label ->
-                        BoardChip(label = label)
-                    }
-                    model.labels.forEach { label ->
-                        BoardChip(label = label)
-                    }
-                }
-            }
-            model.processingLabel?.let { label ->
-                BoardProcessingRow(
-                    label = label,
-                    running = task.sessions.any { boardSessionRunning(it.status) },
-                    modifier = Modifier.padding(top = 8.dp),
+            model.identifier?.let { identifier ->
+                Text(
+                    identifier,
+                    color = WandColors.textMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.4.sp,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 3.dp),
                 )
             }
-            if (model.sessions.isNotEmpty()) {
-                FlowRow(
-                    modifier = Modifier.padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    model.sessions.forEach { session ->
-                        val running = boardSessionRunning(session.status)
-                        Row(
-                            modifier = Modifier
-                                .clip(WandShapes.full)
-                                .background(WandColors.surfaceSoft.copy(alpha = 0.8f))
-                                .clickable { onOpenSession(session.id, session.isStructured) }
-                                .padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(
-                                painter = BrandLogos.painterForProvider(session.provider),
-                                contentDescription = null,
-                                tint = BrandLogos.tintForProvider(session.provider, WandColors.textPrimary),
-                                modifier = Modifier.size(12.dp),
-                            )
-                            Text(
-                                boardTaskProviderLabel(session.provider),
-                                color = if (running) WandColors.textPrimary else WandColors.textSecondary,
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                            if (running) BoardAgentDots()
-                        }
-                    }
+        }
+        model.body?.let { body ->
+            Text(
+                body,
+                color = WandColors.textSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                lineHeight = 18.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+        if (model.hasChips) {
+            FlowRow(
+                modifier = Modifier.padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                model.workspaceName?.let { name ->
+                    BoardMetaChip(label = name, icon = WandIcons.folder)
                 }
+                model.milestoneName?.let { name ->
+                    BoardMetaChip(label = name, icon = WandIcons.milestone)
+                }
+                model.priority?.let { priority ->
+                    val color = boardPriorityColor(priority)
+                    BoardMetaChip(
+                        label = boardTaskPriorityLabel(priority),
+                        icon = WandIcons.priority,
+                        color = color,
+                        containerColor = color.copy(alpha = 0.14f),
+                        borderColor = color.copy(alpha = 0.32f),
+                    )
+                }
+                model.labels.forEach { label ->
+                    BoardMetaChip(label = label)
+                }
+                if (model.extraLabelCount > 0) {
+                    Text(
+                        "+${model.extraLabelCount}",
+                        color = WandColors.textMuted,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .height(BoardCardChipHeight)
+                            .padding(horizontal = 2.dp)
+                            .wrapContentHeight(Alignment.CenterVertically),
+                    )
+                }
+                model.due?.let { due ->
+                    val color = if (due.overdue) WandColors.danger else WandColors.textSecondary
+                    BoardMetaChip(
+                        label = due.label,
+                        icon = WandIcons.due,
+                        color = color,
+                        containerColor = if (due.overdue) WandColors.dangerSoft else null,
+                        borderColor = if (due.overdue) WandColors.danger.copy(alpha = 0.32f) else null,
+                    )
+                }
+                model.agentLabel?.let { label ->
+                    BoardMetaChip(label = label)
+                }
+            }
+        }
+        if (model.sessions.isNotEmpty() || model.extraSessionCount > 0) {
+            BoardTaskSessions(
+                sessions = model.sessions,
+                extraCount = model.extraSessionCount,
+                onOpenSession = onOpenSession,
+                onOpenTask = onOpen,
+            )
+        }
+        model.processingLabel?.let { label ->
+            BoardProcessingRow(
+                label = label,
+                running = model.running,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 会话区：左侧一根分组细线，行内是「工具徽标 + 会话标题 + 运行跳动点」。
+ * 同一任务里多个同名工具的会话靠标题区分，不再是一排认不出来的同名胶囊。
+ */
+@Composable
+private fun BoardTaskSessions(
+    sessions: List<BoardTaskCardSession>,
+    extraCount: Int,
+    onOpenSession: (String, Boolean) -> Unit,
+    onOpenTask: () -> Unit,
+) {
+    val railColor = WandColors.borderStrong
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .drawBehind {
+                drawRoundRect(
+                    color = railColor,
+                    topLeft = Offset.Zero,
+                    size = Size(2.dp.toPx(), size.height),
+                    cornerRadius = CornerRadius(1.dp.toPx()),
+                )
+            },
+    ) {
+        Column(
+            modifier = Modifier.padding(start = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            sessions.forEach { session ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(26.dp)
+                        .clip(BoardCardBlockShape)
+                        .clickable { onOpenSession(session.id, session.isStructured) }
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        painter = BrandLogos.painterForProvider(session.provider),
+                        contentDescription = null,
+                        tint = BrandLogos.tintForProvider(session.provider, WandColors.textPrimary),
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Text(
+                        session.label,
+                        color = if (session.running) WandColors.textPrimary else WandColors.textSecondary,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (session.running) BoardAgentDots()
+                }
+            }
+            if (extraCount > 0) {
+                Text(
+                    "+$extraCount 个会话",
+                    color = WandColors.textMuted,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(BoardCardBlockShape)
+                        .clickable(onClick = onOpenTask)
+                        .padding(horizontal = 6.dp, vertical = 5.dp),
+                )
             }
         }
     }
@@ -1008,12 +1133,13 @@ private fun BoardTaskCard(
 private fun BoardStatusCheck(
     status: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val done = status == "done" || status == "archived"
     val doing = status == "doing"
     val green = WandColors.success
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(18.dp)
             .clip(CircleShape)
             .border(1.5.dp, if (done) green else green.copy(alpha = 0.55f), CircleShape)
@@ -1038,27 +1164,36 @@ private fun BoardStatusCheck(
     }
 }
 
+/**
+ * 元信息芯片：8dp 圆角细边框，不是胶囊——胶囊只有状态圆点和计数才用。
+ * 语义色芯片（优先级 / 逾期）靠弱底色 + 同色文字区分，不额外造一套图标。
+ */
 @Composable
-private fun BoardChip(
+private fun BoardMetaChip(
     label: String,
     icon: ImageVector? = null,
     color: Color = WandColors.textSecondary,
+    containerColor: Color? = null,
+    borderColor: Color? = null,
 ) {
     Row(
         modifier = Modifier
-            .clip(WandShapes.full)
-            .border(0.5.dp, WandColors.border, WandShapes.full)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .height(BoardCardChipHeight)
+            .clip(BoardCardChipShape)
+            .background(containerColor ?: Color.Transparent)
+            .border(0.5.dp, borderColor ?: WandColors.border, BoardCardChipShape)
+            .padding(horizontal = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(12.dp))
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(11.dp))
         }
         Text(
             label,
             color = color,
             style = MaterialTheme.typography.labelSmall,
+            fontSize = 11.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

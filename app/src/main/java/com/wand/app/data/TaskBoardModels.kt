@@ -50,6 +50,19 @@ data class BoardTaskWorkspace(
     }
 }
 
+/** 任务所属里程碑；名字由服务端 DTO 解好，卡片直接显示。 */
+data class BoardTaskMilestone(
+    val id: String,
+    val name: String,
+) {
+    companion object {
+        fun parse(item: JSONObject?): BoardTaskMilestone? {
+            val id = item?.str("id")?.takeIf { it.isNotBlank() } ?: return null
+            return BoardTaskMilestone(id = id, name = item.str("name") ?: id)
+        }
+    }
+}
+
 data class BoardTaskSession(
     val id: String,
     val provider: String,
@@ -99,6 +112,7 @@ data class BoardTask(
     val sessionIds: List<String>,
     val sessions: List<BoardTaskSession>,
     val workspace: BoardTaskWorkspace?,
+    val milestone: BoardTaskMilestone?,
     val workspaceTaskId: String? = null,
 ) {
     companion object {
@@ -134,6 +148,7 @@ data class BoardTask(
                 } ?: emptyList(),
                 sessions = BoardTaskSession.parseList(item.arr("sessions")),
                 workspace = BoardTaskWorkspace.parse(item.obj("workspace")),
+                milestone = BoardTaskMilestone.parse(item.obj("milestone")),
                 workspaceTaskId = item.str("workspaceTaskId")?.takeIf { it.isNotBlank() },
             )
         }

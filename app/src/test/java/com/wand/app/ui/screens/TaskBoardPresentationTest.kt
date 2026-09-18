@@ -2,8 +2,10 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskAgent
+import com.wand.app.data.BoardTaskMilestone
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.BoardTaskWorkspace
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -138,11 +140,13 @@ class TaskBoardPresentationTest {
         )
         assertEquals("修登录", slim.title)
         assertNull(slim.workspaceName)
+        assertNull(slim.milestoneName)
         assertNull(slim.priority)
         assertNull(slim.agentLabel)
         assertTrue(slim.labels.isEmpty())
         assertNull(slim.processingLabel)
         assertTrue(slim.sessions.isEmpty())
+        assertFalse(slim.hasChips)
 
         val rich = boardTaskCardModel(
             task(
@@ -150,6 +154,7 @@ class TaskBoardPresentationTest {
                 priority = "high",
                 workspaceName = "wand",
                 workspaceId = "ws-1",
+                milestoneName = "  1.2 看板重构  ",
                 labels = listOf("bug", "login", "extra"),
                 agent = BoardTaskAgent("claude", "default", "off"),
                 status = "doing",
@@ -158,11 +163,82 @@ class TaskBoardPresentationTest {
             showWorkspace = true,
         )
         assertEquals("wand", rich.workspaceName)
+        assertEquals("1.2 看板重构", rich.milestoneName)
         assertEquals("high", rich.priority)
         assertEquals("Claude", rich.agentLabel)
         assertEquals(listOf("bug", "login"), rich.labels)
         assertEquals("正在处理...", rich.processingLabel)
         assertEquals(3, rich.sessions.size)
+        assertTrue(rich.hasChips)
+    }
+
+    @Test
+    fun cardCapsLabelsAndSessionsWithExplicitOverflow() {
+        val model = boardTaskCardModel(
+            task(
+                labels = listOf("bug", "login", "extra"),
+                sessions = listOf(session(), session(id = "s2"), session(id = "s3"), session(id = "s4")),
+            ),
+            showWorkspace = false,
+        )
+        assertEquals(listOf("bug", "login"), model.labels)
+        assertEquals(1, model.extraLabelCount)
+        assertEquals(BOARD_TASK_CARD_SESSION_LIMIT, model.sessions.size)
+        assertEquals(1, model.extraSessionCount)
+    }
+
+    @Test
+    fun cardCarriesIdentifierDueStampAndRunningFlag() {
+        val model = boardTaskCardModel(
+            task(
+                identifier = "WAND-42",
+                status = "doing",
+                dueDate = "2026-03-14",
+                sessions = listOf(session(status = "running"), session(id = "s2", status = "idle")),
+            ),
+            showWorkspace = true,
+            today = LocalDate.parse("2026-03-20"),
+        )
+        assertEquals("WAND-42", model.identifier)
+        assertEquals("逾期 · 3/14", model.due?.label)
+        assertEquals(true, model.due?.overdue)
+        assertTrue(model.running)
+        assertEquals(listOf(true, false), model.sessions.map { it.running })
+    }
+
+    @Test
+    fun closedTasksAndMalformedDatesNeverReadAsOverdue() {
+        val today = LocalDate.parse("2026-03-20")
+        assertFalse(boardTaskIsOverdue("2026-03-14", "done", today))
+        assertFalse(boardTaskIsOverdue("2026-03-14", "archived", today))
+        assertTrue(boardTaskIsOverdue("2026-03-14", "doing", today))
+        assertFalse(boardTaskIsOverdue("2026-03-20", "todo", today))
+        assertNull(boardTaskCardDue("下周三", "todo", today))
+        assertNull(boardTaskCardDue(null, "todo", today))
+        assertEquals("3/25", boardTaskCardDue("2026-03-25", "todo", today)?.label)
+        assertEquals(false, boardTaskCardDue("2026-03-25", "todo", today)?.overdue)
+    }
+
+    @Test
+    fun cardOnlyFallsBackToDescriptionWhenNothingIsRunning() {
+        val bare = task(description = "项目：wand\n把登录页修好\n目录：/tmp")
+        assertEquals("把登录页修好", boardTaskCardBody(bare))
+        // 自动标题就是描述首行生成的，卡片不能再把这行当摘要重复一遍。
+        assertEquals(
+            "第二行补充",
+            boardTaskCardBody(bare.copy(title = "把登录页修好", titleSource = "auto", description = "把登录页修好\n第二行补充")),
+        )
+        assertNull(boardTaskCardBody(bare.copy(sessions = listOf(session()))))
+        assertNull(boardTaskCardBody(bare.copy(agent = BoardTaskAgent("claude", "default", "off"))))
+    }
+
+    @Test
+    fun sessionRowLabelFallsBackToProviderName() {
+        assertEquals("session-1", boardSessionCardLabel(session()))
+        assertEquals("Claude", boardSessionCardLabel(session().copy(title = "")))
+        assertEquals("Claude", boardSessionCardLabel(session().copy(title = "claude")))
+        assertEquals("修自动填充", boardSessionCardLabel(session().copy(title = "修自动填充")))
+        assertEquals("终端", boardSessionCardLabel(session(provider = "shell").copy(title = "")))
     }
 
     private fun task(
@@ -174,6 +250,7 @@ class TaskBoardPresentationTest {
         identifier: String = "WAND-1",
         workspaceId: String? = null,
         workspaceName: String? = null,
+        milestoneName: String? = null,
         sortOrder: Int = 0,
         updatedAt: String = "2026-01-02",
         createdAt: String = "2026-01-01",
@@ -200,6 +277,7 @@ class TaskBoardPresentationTest {
         sessionIds = sessions.map { it.id },
         sessions = sessions,
         workspace = workspaceName?.let { BoardTaskWorkspace(workspaceId ?: "workspace", it, "/tmp") },
+        milestone = milestoneName?.let { BoardTaskMilestone("milestone-1", it) },
     )
 
     private fun session(
