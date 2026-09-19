@@ -122,6 +122,12 @@ class AppNavTest {
     fun roundTrip_taskBoardScreen() {
         assertEquals(Screen.TaskBoard(), roundTrip(Screen.TaskBoard()))
         assertEquals(Screen.TaskBoard("ws-9"), roundTrip(Screen.TaskBoard("ws-9")))
+        // 宽屏把看板任务详情放在右侧主区，taskId 必须能跟着栈一起恢复。
+        assertEquals(Screen.TaskBoard(taskId = "task-7"), roundTrip(Screen.TaskBoard(taskId = "task-7")))
+        assertEquals(
+            Screen.TaskBoard("ws-9", "task-7"),
+            roundTrip(Screen.TaskBoard("ws-9", "task-7")),
+        )
     }
 
     @Test

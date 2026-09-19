@@ -30,6 +30,8 @@ sealed class Screen {
     ) : Screen()
     data class TaskBoard(
         val workspaceId: String? = null,
+        /** 非空时表示直接在右侧主区打开该看板任务的详情，而不是列表。 */
+        val taskId: String? = null,
     ) : Screen()
     data object Settings : Screen()
     /**
@@ -226,10 +228,10 @@ class NavState {
                 MISSIONS_KEY + FIELD_SEP + taskId.orEmpty() + FIELD_SEP + cwd.orEmpty() +
                     FIELD_SEP + taskName.orEmpty()
             }
-            is Screen.TaskBoard -> if (workspaceId.isNullOrBlank()) {
+            is Screen.TaskBoard -> if (workspaceId.isNullOrBlank() && taskId.isNullOrBlank()) {
                 TASK_BOARD_KEY
             } else {
-                TASK_BOARD_KEY + FIELD_SEP + workspaceId
+                TASK_BOARD_KEY + FIELD_SEP + workspaceId.orEmpty() + FIELD_SEP + taskId.orEmpty()
             }
             Screen.Settings -> SETTINGS_KEY
             // 结构化分隔：用 \u0001 作为不可打印分隔符，避免任务名中的 `:`
@@ -264,9 +266,13 @@ class NavState {
                 )
             }
             this == TASK_BOARD_KEY -> Screen.TaskBoard()
-            startsWith(TASK_BOARD_KEY + FIELD_SEP) -> Screen.TaskBoard(
-                workspaceId = removePrefix(TASK_BOARD_KEY + FIELD_SEP).takeIf(String::isNotBlank),
-            )
+            startsWith(TASK_BOARD_KEY + FIELD_SEP) -> {
+                val parts = removePrefix(TASK_BOARD_KEY + FIELD_SEP).split(FIELD_SEP, limit = 2)
+                Screen.TaskBoard(
+                    workspaceId = parts.getOrNull(0)?.takeIf(String::isNotBlank),
+                    taskId = parts.getOrNull(1)?.takeIf(String::isNotBlank),
+                )
+            }
             this == SETTINGS_KEY -> Screen.Settings
             // 旧版项目根页升级后统一恢复到任务根页。
             this == WORKSPACES_KEY -> Screen.SessionList

@@ -9,16 +9,25 @@ data class BoardTaskAgent(
     val thinkingEffort: String,
     /** 派发时的执行模式：托管 / 全权限 / 标准。缺省时按标准模式处理。 */
     val mode: String = "default",
+    /** 派发出来的会话是结构化对话还是 PTY 终端。缺省 / 老服务端不返回时按结构化处理。 */
+    val kind: String = "structured",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("provider", provider)
         .put("model", model)
         .put("thinkingEffort", thinkingEffort)
         .put("mode", mode)
+        .put("kind", kind)
 
     companion object {
         fun default(provider: String = "claude"): BoardTaskAgent =
-            BoardTaskAgent(provider, "default", "off", normalizeBoardTaskAgentMode(provider, "default"))
+            BoardTaskAgent(
+                provider,
+                "default",
+                "off",
+                normalizeBoardTaskAgentMode(provider, "default"),
+                normalizeBoardTaskAgentKind(null),
+            )
 
         fun parse(item: JSONObject?): BoardTaskAgent? {
             val provider = item?.str("provider")?.takeIf { it.isNotBlank() } ?: return null
@@ -26,8 +35,9 @@ data class BoardTaskAgent(
                 provider = provider,
                 model = item.str("model")?.takeIf { it.isNotBlank() } ?: "default",
                 thinkingEffort = item.str("thinkingEffort")?.takeIf { it.isNotBlank() } ?: "off",
-                // mode 是后加字段：老服务端不返回时按标准模式读，不因此整条配置退化成 null。
+                // mode / kind 是后加字段：老服务端不返回时按标准模式 / 结构化读，不因此整条配置退化成 null。
                 mode = normalizeBoardTaskAgentMode(provider, item.str("mode")),
+                kind = normalizeBoardTaskAgentKind(item.str("kind")),
             )
         }
     }
@@ -164,7 +174,13 @@ data class BoardDispatchResult(
     val sessionId: String,
     val provider: String,
     val cwd: String,
+    /** 派发出来的会话形态："pty" / "structured"；老服务端不返回时留空，调用方回落到结构化。 */
+    val sessionKind: String = "",
 ) {
+    /** 应当以哪种页面打开新会话：PTY 走终端页，其余走 Chat。 */
+    val isStructured: Boolean
+        get() = sessionKind != "pty" && sessionKind != "shell"
+
     companion object {
         fun parse(item: JSONObject): BoardDispatchResult {
             val session = item.obj("session")
@@ -174,6 +190,7 @@ data class BoardDispatchResult(
                 sessionId = session?.str("id") ?: "",
                 provider = session?.str("provider") ?: "",
                 cwd = session?.str("cwd") ?: "",
+                sessionKind = session?.str("sessionKind") ?: "",
             )
         }
     }
@@ -204,8 +221,20 @@ val BOARD_TASK_EFFORTS = listOf("off", "standard", "deep", "max")
 /** 任务派发允许的执行模式；顺序即下拉顺序。Codex 只有 full-access 一个有效值。 */
 val BOARD_TASK_MODES = listOf("managed", "full-access", "default")
 
+/** 任务派发允许的会话形态；顺序即下拉顺序。 */
+val BOARD_TASK_KINDS = listOf("structured", "pty")
+
 fun supportedBoardTaskModes(provider: String): List<String> =
     if (provider == "codex") listOf("full-access") else BOARD_TASK_MODES
+
+/** 把任意（含旧数据 / 其它客户端缺省的）会话形态收敛成合法值。 */
+fun normalizeBoardTaskAgentKind(kind: String?): String =
+    if (kind?.trim() == "pty") "pty" else "structured"
+
+fun boardTaskKindLabel(kind: String): String = when (kind) {
+    "pty" -> "PTY 终端"
+    else -> "结构化对话"
+}
 
 /** 把任意（含旧数据 / 其它客户端缺省的）模式夹到该 provider 真正支持的值。 */
 fun normalizeBoardTaskAgentMode(provider: String, mode: String?): String {
@@ -269,6 +298,8 @@ fun groupBoardSessionsByAgent(
                 model = session.model.ifBlank { "default" },
                 thinkingEffort = session.thinkingEffort.ifBlank { "off" },
                 mode = normalizeBoardTaskAgentMode(session.provider, null),
+                // 会话形态按会话自身的 sessionKind 还原，PTY 会话在「再指派」时不会被误当结构化。
+                kind = if (session.sessionKind == "pty") "pty" else "structured",
             )
         } else {
             null

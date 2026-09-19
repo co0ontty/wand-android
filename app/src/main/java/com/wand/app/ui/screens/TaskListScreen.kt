@@ -126,6 +126,11 @@ fun TaskListScreen(
     onOpenTask: (workspaceId: String, taskId: String, workspaceName: String, taskName: String) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit,
     onOpenBoardSession: (sessionId: String, isStructured: Boolean) -> Unit = { _, _ -> },
+    /**
+     * 看板卡片点选：由上层在右侧主区（宽屏）/ 新页（窄屏）打开详情，
+     * 侧栏不自己压一层详情顶栏。
+     */
+    onOpenBoardTaskDetail: (taskId: String) -> Unit,
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onTaskRenamed: (taskId: String, taskName: String) -> Unit = { _, _ -> },
     onTaskClosed: (taskId: String) -> Unit = {},
@@ -910,10 +915,10 @@ fun TaskListScreen(
                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
                         TaskBoardScreen(
                             api = boardApi,
-                            workspaceApi = api,
                             onOpenBoundSession = onOpenSession,
                             onBack = {},
                             onOpenSession = onOpenBoardSession,
+                            onOpenTaskDetail = onOpenBoardTaskDetail,
                             embedded = true,
                             refreshNonce = boardRefreshNonce,
                         )

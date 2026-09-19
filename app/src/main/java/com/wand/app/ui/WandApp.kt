@@ -96,6 +96,7 @@ import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.TaskBoardScreen
+import com.wand.app.ui.screens.TaskBoardTaskScreen
 import com.wand.app.ui.screens.PtyTerminalScreen
 import com.wand.app.ui.screens.SettingsScreen
 import com.wand.app.ui.screens.SharedTaskListExpansionStore
@@ -403,6 +404,10 @@ private fun ReadyContent(
             { workspaceId, taskId, workspaceName, taskName ->
                 openDetail(Screen.WorkspaceTask(workspaceId, taskId, workspaceName, taskName))
             }
+        // 看板卡片在侧栏只负责选中，详情交给右侧主区（窄屏则推入新页）。
+        val openBoardTaskDetail: (String) -> Unit = { taskId ->
+            openDetail(Screen.TaskBoard(taskId = taskId))
+        }
         val openBoardSession: (String, Boolean) -> Unit = { sessionId, structured ->
             openDetail(if (structured) Screen.Chat(sessionId) else Screen.PtyTerminal(sessionId))
         }
@@ -426,6 +431,7 @@ private fun ReadyContent(
                 onOpenSettings = openSettings,
                 onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                 onOpenWorkspaceTask = openWorkspaceTask,
+                onOpenBoardTaskDetail = openBoardTaskDetail,
                 showDetailBack = showDetailBack,
             )
         } else {
@@ -442,6 +448,7 @@ private fun ReadyContent(
                 onOpenRestoredSession = openSnapshot,
                 onOpenSettings = openSettings,
                 onOpenWorkspaceTask = openWorkspaceTask,
+                onOpenBoardTaskDetail = openBoardTaskDetail,
             )
         }
     }
@@ -514,26 +521,51 @@ private fun SessionDetailScreen(
             linkedTaskName = screen.taskName,
             linkedCwd = screen.cwd,
         )
-        is Screen.TaskBoard -> TaskBoardScreen(
-            api = api,
-            workspaceApi = api,
-            onOpenBoundSession = { route ->
-                nav.push(if (route.structured) Screen.Chat(route.sessionId,
-                    workspaceId = route.workspaceId, taskId = route.taskId,
-                    workspaceName = route.workspaceName, taskName = route.taskName)
-                else Screen.PtyTerminal(route.sessionId,
-                    workspaceId = route.workspaceId, taskId = route.taskId,
-                    workspaceName = route.workspaceName, taskName = route.taskName))
-            },
-            onBack = { nav.pop() },
-            onOpenSession = { sessionId, isStructured ->
-                nav.push(
-                    if (isStructured) Screen.Chat(sessionId) else Screen.PtyTerminal(sessionId),
-                )
-            },
-            linkedWorkspaceId = screen.workspaceId,
-            embedded = embedded,
-        )
+        is Screen.TaskBoard -> if (screen.taskId != null) {
+            // 平板 / 折叠屏：看板卡片详情单独占右侧主区，侧栏只留列表与唯一一条顶栏。
+            TaskBoardTaskScreen(
+                api = api,
+                workspaceApi = api,
+                taskId = screen.taskId,
+                showBack = showBack,
+                onBack = { nav.pop() },
+                onTaskGone = { nav.pop() },
+                onOpenSession = { route ->
+                    nav.push(
+                        if (route.structured) Screen.Chat(route.sessionId,
+                            workspaceId = route.workspaceId, taskId = route.taskId,
+                            workspaceName = route.workspaceName, taskName = route.taskName)
+                        else Screen.PtyTerminal(route.sessionId,
+                            workspaceId = route.workspaceId, taskId = route.taskId,
+                            workspaceName = route.workspaceName, taskName = route.taskName),
+                    )
+                },
+            )
+        } else {
+            TaskBoardScreen(
+                api = api,
+                onOpenBoundSession = { route ->
+                    nav.push(if (route.structured) Screen.Chat(route.sessionId,
+                        workspaceId = route.workspaceId, taskId = route.taskId,
+                        workspaceName = route.workspaceName, taskName = route.taskName)
+                    else Screen.PtyTerminal(route.sessionId,
+                        workspaceId = route.workspaceId, taskId = route.taskId,
+                        workspaceName = route.workspaceName, taskName = route.taskName))
+                },
+                onBack = { nav.pop() },
+                onOpenSession = { sessionId, isStructured ->
+                    nav.push(
+                        if (isStructured) Screen.Chat(sessionId) else Screen.PtyTerminal(sessionId),
+                    )
+                },
+                // 全屏工作台也走同一套详情页，列表与详情各占一屏，不再叠两条顶栏。
+                onOpenTaskDetail = { taskId -> nav.push(Screen.TaskBoard(taskId = taskId)) },
+                linkedWorkspaceId = screen.workspaceId,
+                // 这里不是侧栏内嵌那种收窄列表，顶栏要留（标题 + 返回）；
+                // 侧栏实例由 TaskListScreen 自己传 embedded = true。
+                embedded = false,
+            )
+        }
         is Screen.Settings -> SettingsScreen(
             api = api,
             connection = actions.connection,
@@ -595,6 +627,7 @@ private fun SinglePaneContent(
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
+    onOpenBoardTaskDetail: (String) -> Unit,
 ) {
     val reduceMotion = reduceMotionEnabled()
     val frame = SinglePaneFrame(nav.current, nav.stack.size)
@@ -662,6 +695,7 @@ private fun SinglePaneContent(
                 onOpenTask = onOpenWorkspaceTask,
                 onOpenSession = onOpenSession,
                 onOpenBoardSession = onOpenBoardSession,
+                onOpenBoardTaskDetail = onOpenBoardTaskDetail,
                 onOpenRestoredSession = onOpenRestoredSession,
                 onTaskRenamed = nav::renameWorkspaceTask,
                 onTaskClosed = nav::closeWorkspaceTask,
@@ -713,6 +747,7 @@ private fun WideReadyContent(
     onOpenSettings: () -> Unit,
     onToggleSidebarCollapsed: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
+    onOpenBoardTaskDetail: (String) -> Unit,
     showDetailBack: Boolean,
 ) {
     val density = LocalDensity.current.density
@@ -788,9 +823,10 @@ private fun WideReadyContent(
                                 onHomeListModeChange = onHomeListModeChange,
                                 selectedSessionId = selectedSessionId,
                                 selectedTaskId = nav.current.taskIdOrNull(),
-                                                onOpenTask = onOpenWorkspaceTask,
+                                onOpenTask = onOpenWorkspaceTask,
                                 onOpenSession = onOpenSession,
                                 onOpenBoardSession = onOpenBoardSession,
+                                onOpenBoardTaskDetail = onOpenBoardTaskDetail,
                                 onOpenRestoredSession = onOpenRestoredSession,
                                 onTaskRenamed = nav::renameWorkspaceTask,
                                 onTaskClosed = nav::closeWorkspaceTask,
@@ -1227,7 +1263,7 @@ private fun Screen.transitionKey(): String = when (this) {
     is Screen.Chat -> "chat:$sessionId"
     is Screen.PtyTerminal -> "pty:$sessionId"
     is Screen.Missions -> "missions:${taskId.orEmpty()}"
-    is Screen.TaskBoard -> "task-board:${workspaceId.orEmpty()}"
+    is Screen.TaskBoard -> "task-board:${workspaceId.orEmpty()}:${taskId.orEmpty()}"
     Screen.Settings -> "settings"
     is Screen.WorkspaceTask -> "workspace-task:$taskId"
 }

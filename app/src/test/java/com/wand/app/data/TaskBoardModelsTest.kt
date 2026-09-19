@@ -147,6 +147,58 @@ class TaskBoardModelsTest {
     }
 
     @Test
+    fun agentKindRoundTripsAndFallsBackToStructured() {
+        val pty = BoardTaskAgent("qoder", "default", "off", "managed", "pty")
+        assertEquals("pty", pty.toJson().getString("kind"))
+        assertEquals(pty, BoardTaskAgent.parse(pty.toJson()))
+
+        // 老服务端缺 kind：按结构化读，不整条退化成 null。
+        val legacy = BoardTaskAgent.parse(
+            JSONObject().put("provider", "claude").put("model", "default").put("thinkingEffort", "off"),
+        )
+        assertEquals("structured", legacy?.kind)
+        assertEquals("structured", normalizeBoardTaskAgentKind("telepathy"))
+        assertEquals("pty", normalizeBoardTaskAgentKind("pty"))
+        assertEquals("PTY 终端", boardTaskKindLabel("pty"))
+        assertEquals("结构化对话", boardTaskKindLabel("structured"))
+        assertEquals(listOf("structured", "pty"), BOARD_TASK_KINDS)
+        // 默认 Agent 永远是结构化，且 toJson 会带上 kind 让老服务端忽略、新服务端生效。
+        assertEquals("structured", BoardTaskAgent.default().kind)
+        assertEquals("structured", BoardTaskAgent.default().toJson().getString("kind"))
+    }
+
+    @Test
+    fun agentGroupKeepsPtySessionsAsTerminals() {
+        val groups = groupBoardSessionsByAgent(
+            listOf(
+                BoardTaskSession("s1", "qoder", "pty", "跑构建", "running", "/repo", "default", "off"),
+            ),
+        )
+        assertEquals("pty", groups[0].agent?.kind)
+    }
+
+    @Test
+    fun dispatchResultReadsSessionKind() {
+        val pty = BoardDispatchResult.parse(
+            JSONObject()
+                .put("ok", true)
+                .put("taskId", "t1")
+                .put(
+                    "session",
+                    JSONObject().put("id", "s1").put("provider", "qoder").put("cwd", "/repo").put("sessionKind", "pty"),
+                ),
+        )
+        assertEquals("s1", pty.sessionId)
+        assertFalse(pty.isStructured)
+
+        // 老服务端不返回 sessionKind 时仍走结构化聊天。
+        val legacy = BoardDispatchResult.parse(
+            JSONObject().put("session", JSONObject().put("id", "s2").put("provider", "claude")),
+        )
+        assertTrue(legacy.isStructured)
+    }
+
+    @Test
     fun sessionsGroupByTheAgentsThatRan() {
         val claude = BoardTaskAgent("claude", "opus", "deep")
         val groups = groupBoardSessionsByAgent(

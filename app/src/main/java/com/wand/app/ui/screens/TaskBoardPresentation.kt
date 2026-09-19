@@ -68,6 +68,13 @@ internal fun boardArchivedTasks(tasks: List<BoardTask>): List<BoardTask> =
 internal fun boardTaskToggledStatus(status: String): String =
     if (status == "done" || status == "archived") "todo" else "done"
 
+/**
+ * 派发成功后应当自动打开的会话 id。
+ * 服务端没给会话（只建了任务 / 会话还没落地）时返回 null，调用方据此决定要不要跳转。
+ */
+internal fun boardDispatchSessionId(sessionId: String?): String? =
+    sessionId?.trim()?.takeIf { it.isNotEmpty() }
+
 internal fun boardTaskCardTitle(task: BoardTask): String {
     val title = task.title.trim()
     if (title.isNotEmpty()) return title

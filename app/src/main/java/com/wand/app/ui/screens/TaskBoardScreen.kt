@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.BOARD_TASK_EFFORTS
+import com.wand.app.data.BOARD_TASK_KINDS
 import com.wand.app.data.BOARD_TASK_PRIORITIES
 import com.wand.app.data.BOARD_TASK_PROVIDERS
 import com.wand.app.data.BOARD_TASK_DETAIL_STATUSES
@@ -81,6 +82,7 @@ import com.wand.app.data.Workspace
 import com.wand.app.data.boardAgentModelOptions
 import com.wand.app.data.groupBoardSessionsByAgent
 import com.wand.app.data.boardTaskEffortLabel
+import com.wand.app.data.boardTaskKindLabel
 import com.wand.app.data.boardTaskModeLabel
 import com.wand.app.data.boardTaskPriorityLabel
 import com.wand.app.data.boardTaskProviderLabel
@@ -115,10 +117,14 @@ import org.json.JSONObject
 @Composable
 fun TaskBoardScreen(
     api: TaskBoardPort,
-    workspaceApi: com.wand.app.data.WorkspacePort,
     onOpenBoundSession: ((TaskSessionRoute) -> Unit)? = null,
     onBack: () -> Unit,
     onOpenSession: (sessionId: String, isStructured: Boolean) -> Unit,
+    /**
+     * 卡片点选 / 新建成功后进入详情。看板只负责列表，详情固定由
+     * [TaskBoardTaskScreen] 占一屏：侧栏（或全屏列表）不会再多堆一层详情顶栏。
+     */
+    onOpenTaskDetail: (taskId: String) -> Unit,
     linkedWorkspaceId: String? = null,
     embedded: Boolean = false,
     refreshNonce: Int = 0,
@@ -132,15 +138,12 @@ fun TaskBoardScreen(
     var query by remember { mutableStateOf("") }
     var filterWorkspaceId by remember { mutableStateOf(linkedWorkspaceId.orEmpty()) }
     var statusFilter by remember { mutableStateOf("") }
-    var selectedId by remember { mutableStateOf<String?>(null) }
-    // 有没有卡片处于划开状态。只报布尔量：逐帧的划开位留在列表内部维护。
     var boardSwipeOpen by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     // 从哪一列点开的「新建」决定初始状态：待办 = 只创建，进行中 = 创建并指派。
     var createStatus by remember { mutableStateOf("todo") }
     var busy by remember { mutableStateOf(false) }
     var lastAgent by remember { mutableStateOf(BoardTaskAgent.default()) }
-    var movingSession by remember { mutableStateOf<com.wand.app.data.BoardTaskSession?>(null) }
     val refreshMutex = remember(api) { kotlinx.coroutines.sync.Mutex() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
@@ -213,11 +216,6 @@ fun TaskBoardScreen(
         }
     }
 
-    movingSession?.let { session ->
-        SessionMoveSheet(workspaceApi, session.id, session.title.ifBlank { "CLI 会话" },
-            onDismiss = { movingSession = null }, onMoved = { scope.launch { refresh() } })
-    }
-    val selected = tasks.firstOrNull { it.id == selectedId }
     val scoped = filterBoardTasks(
         tasks,
         query,
@@ -229,39 +227,28 @@ fun TaskBoardScreen(
     val stats = boardTaskStats(scoped)
     val projectName = workspaces.firstOrNull { it.id == filterWorkspaceId }?.name ?: "全部任务"
 
-    val showChrome = !embedded || selected != null
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            if (showChrome) {
+            if (!embedded) {
                 WandDetailTopBar(
-                    title = if (selected != null) selected.title.ifBlank { "任务详情" } else "工作台",
-                    subtitle = if (selected != null) {
-                        selected.identifier.ifBlank { boardTaskStatusLabel(selected.status) }
-                    } else {
-                        "任务管理 · ${stats.remaining} 项未完成"
-                    },
-                    leading = {
-                        WandDetailBackButton(onClick = {
-                            if (selected != null) selectedId = null else onBack()
-                        })
-                    },
+                    title = "工作台",
+                    subtitle = "任务管理 · ${stats.remaining} 项未完成",
+                    leading = { WandDetailBackButton(onClick = onBack) },
                     actions = {
-                        if (selected == null) {
-                            WandIconButton(
-                                icon = WandIcons.refresh,
-                                contentDescription = "刷新任务",
-                                onClick = { scope.launch { refresh() } },
-                                variant = WandIconButtonVariant.Toolbar,
-                            )
-                        }
+                        WandIconButton(
+                            icon = WandIcons.refresh,
+                            contentDescription = "刷新任务",
+                            onClick = { scope.launch { refresh() } },
+                            variant = WandIconButtonVariant.Toolbar,
+                        )
                     },
                 )
             }
         },
         floatingActionButton = {
             // 划开状态时不摆悬浮按钮：它正好压在右下的滑动动作按钮上，会吃掉那一下点击。
-            if (selected == null && !boardSwipeOpen) {
+            if (!boardSwipeOpen) {
                 FloatingActionButton(
                     onClick = {
                         createStatus = "todo"
@@ -283,54 +270,6 @@ fun TaskBoardScreen(
             contentAlignment = Alignment.TopCenter,
         ) {
             when {
-                selected != null -> TaskBoardDetail(
-                    task = selected,
-                    workspaces = workspaces,
-                    models = models,
-                    lastAgent = lastAgent,
-                    busy = busy,
-                    onPatch = { body -> patchTask(selected.id, body) },
-                    onRemember = { agent ->
-                        lastAgent = agent
-                        scope.launch { runCatching { api.saveBoardTaskAgentDefaults(agent) } }
-                    },
-                    onDispatch = { agent, prompt ->
-                        lastAgent = agent
-                        scope.launch {
-                            busy = true
-                            try {
-                                runCatching { api.saveBoardTaskAgentDefaults(agent) }
-                                api.updateBoardTask(selected.id, patchBoardTaskBody(agent = agent, workspaceId = selected.workspaceId))
-                                val result = api.dispatchBoardTask(selected.id, agent, prompt, selected.workspaceId)
-                                refresh()
-                                if (result.sessionId.isNotBlank()) {
-                                    openSession(result.sessionId, true)
-                                }
-                            } catch (e: Exception) {
-                                error = e.message
-                            } finally {
-                                busy = false
-                            }
-                        }
-                    },
-                    onDelete = {
-                        scope.launch {
-                            busy = true
-                            try {
-                                api.deleteBoardTask(selected.id)
-                                selectedId = null
-                                refresh()
-                            } catch (e: Exception) {
-                                error = e.message
-                            } finally {
-                                busy = false
-                            }
-                        }
-                    },
-                    onOpenSession = ::openSession,
-                    onMoveSession = { movingSession = it },
-                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
-                )
                 loading && tasks.isEmpty() -> CircularProgressIndicator(
                     color = WandColors.success,
                     modifier = Modifier.align(Alignment.Center).size(26.dp),
@@ -347,7 +286,7 @@ fun TaskBoardScreen(
                     onQueryChange = { query = it },
                     onFilterWorkspace = { filterWorkspaceId = it },
                     onStatusFilter = { statusFilter = it },
-                    onOpen = { selectedId = it.id },
+                    onOpen = { task -> onOpenTaskDetail(task.id) },
                     onToggleComplete = { task ->
                         patchTask(task.id, patchBoardTaskBody(status = boardTaskToggledStatus(task.status)))
                     },
@@ -384,7 +323,7 @@ fun TaskBoardScreen(
                     shape = WandShapes.sm,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(start = 16.dp, end = 16.dp, bottom = if (selected == null) 88.dp else 16.dp),
+                        .padding(start = 16.dp, end = 16.dp, bottom = 88.dp),
                 ) { Text(message, color = WandColors.danger, modifier = Modifier.padding(12.dp)) }
             }
         }
@@ -410,15 +349,23 @@ fun TaskBoardScreen(
                         lastAgent = agent
                         runCatching { api.saveBoardTaskAgentDefaults(agent) }
                         showCreate = false
-                        selectedId = created.id
+                        onOpenTaskDetail(created.id)
                         // 只有「进行中」列的新建才顺带第一次指派；「待办」列只创建任务。
                         var dispatchError: String? = null
+                        var dispatchedSessionId: String? = null
+                        var dispatchedStructured = true
                         if (boardCreateDispatches(status) && description.isNotBlank()) {
                             runCatching { api.dispatchBoardTask(created.id, agent, description, workspaceId) }
+                                .onSuccess {
+                                    dispatchedSessionId = boardDispatchSessionId(it.sessionId)
+                                    dispatchedStructured = it.isStructured
+                                }
                                 .onFailure { dispatchError = it.message ?: "任务已创建，但第一次指派失败。" }
                         }
                         refresh()
                         if (dispatchError != null) error = dispatchError
+                        // 创建并指派成功后直接落到新 Agent 的会话，不让用户再自己找一遍。
+                        dispatchedSessionId?.let { openSession(it, dispatchedStructured) }
                         if (title.isBlank() && created.titleSource == "auto") {
                             scope.launch { awaitGeneratedBoardTaskTitle(created.id, created.title) }
                         }
@@ -1293,8 +1240,9 @@ private fun BoardProcessingRow(
     }
 }
 
+/** 看板任务详情正文。内嵌列表（手机）与宽屏右侧详情页共用同一份实现。 */
 @Composable
-private fun TaskBoardDetail(
+internal fun TaskBoardDetailPane(
     task: BoardTask,
     workspaces: List<Workspace>,
     models: ModelsResponse?,
@@ -1533,6 +1481,16 @@ private fun TaskBoardDetail(
                     enabled = !busy,
                 )
                 BoardChoice(
+                    label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
+                    options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
+                    onSelect = {
+                        val next = agent.copy(kind = it)
+                        agent = next
+                        onRemember(next)
+                    },
+                    enabled = !busy,
+                )
+                BoardChoice(
                     label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
                     options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
                     onSelect = {
@@ -1553,20 +1511,18 @@ private fun TaskBoardDetail(
                 )
             }
         } else {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(WandShapes.sm)
-                    .clickable(enabled = !busy) {
-                        composePrompt = ""
-                        composeOpen = true
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(WandIcons.add,
-                    contentDescription = if (task.sessions.isEmpty()) "启动首个会话" else "再指派一个 Agent",
-                    tint = WandColors.textSecondary)
-            }
+            // 有会话时默认收起派发表单，但入口必须一眼可见：整行主按钮，不再是一个 36dp 的 +。
+            WandButton(
+                label = "再指派一个 Agent",
+                onClick = {
+                    composePrompt = ""
+                    composeOpen = true
+                },
+                enabled = !busy,
+                icon = WandIcons.add,
+                variant = WandButtonVariant.Secondary,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         WandButton(
             label = "归档",
@@ -1663,6 +1619,13 @@ private fun CreateBoardTaskDialog(
                 onSelect = { agent = agent.copy(thinkingEffort = it) },
             )
         }
+        // 会话类型始终可选：只创建的任务也会把形态记进服务端全局默认，
+        // 否则下次派发退回结构化，用户在 PTY 下拉里的选择会静默丢失。
+        BoardChoice(
+            label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
+            options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
+            onSelect = { agent = agent.copy(kind = it) },
+        )
         // 运行模式始终可选：只创建的任务也会把模式记进服务端全局默认，
         // 否则下次派发退回标准模式，Agent 反过来「改不了东西」。
         BoardChoice(

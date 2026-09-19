@@ -241,6 +241,33 @@ class TaskBoardPresentationTest {
         assertEquals("终端", boardSessionCardLabel(session(provider = "shell").copy(title = "")))
     }
 
+    @Test
+    fun onlyDoingColumnDispatchesOnCreate() {
+        // 「进行中」建卡即派 Agent；「待办」只建任务，不能悄悄起会话。
+        assertTrue(boardCreateDispatches("doing"))
+        assertFalse(boardCreateDispatches("todo"))
+        assertFalse(boardCreateDispatches("done"))
+        assertFalse(boardCreateDispatches("archived"))
+    }
+
+    @Test
+    fun dispatchSessionIdOnlyWhenServerReturnedOne() {
+        assertEquals("session-9", boardDispatchSessionId("session-9"))
+        assertEquals("session-9", boardDispatchSessionId("  session-9  "))
+        assertNull(boardDispatchSessionId(null))
+        assertNull(boardDispatchSessionId(""))
+        assertNull(boardDispatchSessionId("   "))
+    }
+
+    @Test
+    fun detailTitleFallsBackToDescriptionLikeTheCard() {
+        assertEquals("Fix login", boardTaskDetailTitle(task(title = "Fix login")))
+        assertEquals(
+            "从描述生成",
+            boardTaskDetailTitle(task(title = "  ", description = "从描述生成\n项目：wand")),
+        )
+    }
+
     private fun task(
         id: String = "task-1",
         title: String = "Fix login",
