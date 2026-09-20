@@ -8,8 +8,14 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -110,6 +116,7 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.WandTerminal
 import com.wand.app.ui.theme.glassSurface
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.terminal.DefaultTerminalShortcuts
 import com.wand.app.ui.terminal.TerminalKeyBinding
 import com.wand.app.ui.terminal.TerminalModifier
@@ -538,7 +545,21 @@ private fun PtyBottomBar(
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
-            AnimatedVisibility(visible = inputDrawerOpen) {
+            AnimatedVisibility(
+                visible = inputDrawerOpen,
+                enter = if (reduceMotionEnabled()) {
+                    EnterTransition.None
+                } else {
+                    fadeIn(WandMotion.tweenEnter()) +
+                        expandVertically(WandMotion.tweenEnter(), expandFrom = Alignment.Top)
+                },
+                exit = if (reduceMotionEnabled()) {
+                    ExitTransition.None
+                } else {
+                    fadeOut(WandMotion.tweenExit()) +
+                        shrinkVertically(WandMotion.tweenExit(), shrinkTowards = Alignment.Top)
+                },
+            ) {
                 PtyInputDrawer(
                     draft = draft,
                     onDraftChange = onDraftChange,
@@ -825,12 +846,16 @@ private fun TerminalShortcutKey(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // 快捷键是终端页点得最频繁的控件，按压反馈统一走 WandMotion，不再用默认弹簧。
+    val motionEnabled = !reduceMotionEnabled()
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.92f else 1f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.settleSpringSpec()),
         label = "shortcutKeyScale",
     )
     val background by animateColorAsState(
         targetValue = if (pressed) WandColors.surfaceSoft else WandColors.surfaceSoft.copy(alpha = 0.70f),
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenPress()),
         label = "shortcutKeyBackground",
     )
     val modifiers = TerminalModifier.entries.filter { it in shortcut.binding.modifiers }

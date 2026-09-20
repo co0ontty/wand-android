@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -101,6 +102,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.components.wandCardSurface
@@ -173,6 +175,18 @@ fun GitChangesButton(
         QuickCommitEntryPhase.Done -> WandColors.running.copy(alpha = 0.12f)
         QuickCommitEntryPhase.Idle -> WandColors.surface.copy(alpha = 0.58f)
     }
+    // 阶段切换（Idle ↔ Loading ↔ Done）时底色与图标色一起过渡，内部图标已由 AnimatedContent 交叠。
+    val motionEnabled = !reduceMotionEnabled()
+    val tintTone by animateColorAsState(
+        targetValue = activeTint,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "quickCommitEntryTint",
+    )
+    val containerTone by animateColorAsState(
+        targetValue = activeBackground,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "quickCommitEntryContainer",
+    )
     val accessibilityState = when (quickCommit.entryPhase) {
         QuickCommitEntryPhase.Loading -> "正在准备快捷提交"
         QuickCommitEntryPhase.Done -> "快捷提交完成"
@@ -189,8 +203,8 @@ fun GitChangesButton(
             enabled = !quickCommit.entryLocked,
             total = total,
             ahead = ahead,
-            activeTint = activeTint,
-            activeBackground = activeBackground,
+            activeTint = tintTone,
+            activeBackground = containerTone,
             accessibilityState = accessibilityState,
             onClick = onClick,
         )
@@ -207,7 +221,7 @@ fun GitChangesButton(
                 stateDescription = accessibilityState
             }
             .clip(RoundedCornerShape(14.dp))
-            .background(activeBackground)
+            .background(containerTone)
             .border(0.55.dp, WandColors.border.copy(alpha = 0.68f), RoundedCornerShape(14.dp))
             .clickable(
                 enabled = !quickCommit.entryLocked,
@@ -233,7 +247,7 @@ fun GitChangesButton(
                 QuickCommitEntryPhase.Loading -> {
                     CircularProgressIndicator(
                         strokeWidth = 1.8.dp,
-                        color = activeTint,
+                        color = tintTone,
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -242,7 +256,7 @@ fun GitChangesButton(
                     Icon(
                         WandIcons.check,
                         contentDescription = null,
-                        tint = activeTint,
+                        tint = tintTone,
                         modifier = Modifier.size(17.dp),
                     )
                 }
@@ -255,7 +269,7 @@ fun GitChangesButton(
                         Icon(
                             WandIcons.commit,
                             contentDescription = null,
-                            tint = activeTint,
+                            tint = tintTone,
                             modifier = Modifier.size(15.dp),
                         )
                         Text(

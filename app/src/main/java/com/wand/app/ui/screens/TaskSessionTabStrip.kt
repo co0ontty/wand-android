@@ -1,5 +1,7 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,7 +56,9 @@ import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandTerminal
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.workspaces.WorkspaceTargetState
 import com.wand.app.ui.workspaces.WorkspaceTaskState
 import com.wand.app.ui.workspaces.WorkspaceWorkflow
@@ -431,6 +435,29 @@ private fun TaskSessionTab(
     val activity = live.activityStatus()
     val isRunning = activity == "running" || activity == "thinking"
     val a11yLabel = if (isSelected) "当前工作窗口 $label" else "切换到 $label"
+    // 高亮切换是这条切换条上唯一的状态变化：底、描边、文字和标题宽度一起过渡，
+    // 否则点一下就会同时硬切四处颜色并让标题段宽跳一下。
+    val motionEnabled = !reduceMotionEnabled()
+    val fill by animateColorAsState(
+        targetValue = if (isSelected) palette.selectedFill else palette.chipFill,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "sessionTabFill",
+    )
+    val stroke by animateColorAsState(
+        targetValue = if (isSelected) palette.selectedBorder else palette.chipBorder,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "sessionTabStroke",
+    )
+    val titleTone by animateColorAsState(
+        targetValue = if (isSelected) palette.selectedText else palette.text,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "sessionTabTitleTone",
+    )
+    val titleMaxDp by animateDpAsState(
+        targetValue = sessionTabTitleMaxDp(isSelected).dp,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "sessionTabTitleMax",
+    )
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     LaunchedEffect(isSelected) {
         if (isSelected) bringIntoViewRequester.bringIntoView()
@@ -441,10 +468,10 @@ private fun TaskSessionTab(
             .bringIntoViewRequester(bringIntoViewRequester)
             .height(SessionTabHeight)
             .clip(shape)
-            .background(if (isSelected) palette.selectedFill else palette.chipFill)
+            .background(fill)
             .border(
                 width = 1.dp,
-                color = if (isSelected) palette.selectedBorder else palette.chipBorder,
+                color = stroke,
                 shape = shape,
             )
             .clickable(onClick = onClick)
@@ -469,10 +496,10 @@ private fun TaskSessionTab(
             label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (isSelected) palette.selectedText else palette.text,
+            color = titleTone,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = sessionTabTitleMaxDp(isSelected).dp),
+            modifier = Modifier.widthIn(max = titleMaxDp),
         )
         if (isRunning) {
             Box(

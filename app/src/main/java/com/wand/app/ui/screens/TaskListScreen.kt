@@ -3,6 +3,8 @@ package com.wand.app.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
@@ -455,15 +457,38 @@ fun TaskListScreen(
                     WorkspaceSessionTarget.OPTIONS.forEach { option ->
                         val selected = newTaskTarget == option
                         val logoProvider = option.raw.takeUnless { option.isShell }
+                        // 新建任务面板里的 provider 胶囊：选中底 / 描边 / 文字跟其他选择控件一样过渡。
+                        val choiceFill by animateColorAsState(
+                            targetValue = if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.62f),
+                            animationSpec = WandMotion.respectMotion(
+                                !reduceMotionEnabled(),
+                                WandMotion.tweenFast(),
+                            ),
+                            label = "newTaskTargetFill",
+                        )
+                        val choiceStroke by animateColorAsState(
+                            targetValue = if (selected) WandColors.brand.copy(alpha = 0.7f) else WandColors.border.copy(alpha = 0.5f),
+                            animationSpec = WandMotion.respectMotion(
+                                !reduceMotionEnabled(),
+                                WandMotion.tweenFast(),
+                            ),
+                            label = "newTaskTargetStroke",
+                        )
+                        val choiceText by animateColorAsState(
+                            targetValue = if (selected) WandColors.brand else WandColors.textPrimary,
+                            animationSpec = WandMotion.respectMotion(
+                                !reduceMotionEnabled(),
+                                WandMotion.tweenFast(),
+                            ),
+                            label = "newTaskTargetText",
+                        )
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(
-                                    if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.62f),
-                                )
+                                .background(choiceFill)
                                 .border(
                                     1.dp,
-                                    if (selected) WandColors.brand.copy(alpha = 0.7f) else WandColors.border.copy(alpha = 0.5f),
+                                    choiceStroke,
                                     RoundedCornerShape(20.dp),
                                 )
                                 .clickable(enabled = !state.mutationBusy) {
@@ -486,7 +511,7 @@ fun TaskListScreen(
                                 option.label,
                                 modifier = Modifier.padding(start = 6.dp),
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (selected) WandColors.brand else WandColors.textPrimary,
+                                color = choiceText,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -1223,15 +1248,27 @@ private fun HomeListModeChip(
 
 @Composable
 private fun ManageCheck(checked: Boolean) {
+    // 多选模式下的勾选框：底与描边跟着选中过渡，避免快速多选时整列硬闪。
+    val motionEnabled = !reduceMotionEnabled()
+    val fill by animateColorAsState(
+        targetValue = if (checked) WandColors.brand else WandColors.surfaceSoft,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "manageCheckFill",
+    )
+    val stroke by animateColorAsState(
+        targetValue = if (checked) WandColors.brand else WandColors.border.copy(alpha = 0.7f),
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "manageCheckStroke",
+    )
     Box(
         modifier = Modifier
             .padding(end = 8.dp)
             .size(18.dp)
             .clip(RoundedCornerShape(5.dp))
-            .background(if (checked) WandColors.brand else WandColors.surfaceSoft)
+            .background(fill)
             .border(
                 width = 1.dp,
-                color = if (checked) WandColors.brand else WandColors.border.copy(alpha = 0.7f),
+                color = stroke,
                 shape = RoundedCornerShape(5.dp),
             ),
         contentAlignment = Alignment.Center,
@@ -1857,6 +1894,13 @@ private fun TreeDisclosureCaret(
     onClick: () -> Unit,
     label: String? = null,
 ) {
+    // 与卡片里的 ExpandChevron 共用同一套展开语义：箭头跟着状态转，不再硬切。
+    val motionEnabled = !reduceMotionEnabled()
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 0f else -90f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenNormal()),
+        label = "treeDisclosureCaret",
+    )
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -1871,9 +1915,7 @@ private fun TreeDisclosureCaret(
             WandIcons.expand,
             contentDescription = contentDescription,
             tint = WandColors.textMuted,
-            modifier = Modifier.size(16.dp).graphicsLayer {
-                rotationZ = if (expanded) 0f else -90f
-            },
+            modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = rotation },
         )
     }
 }

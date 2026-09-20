@@ -542,6 +542,8 @@ private fun TaskSessionList(
                     onClick = { onSelectSession(session) },
                     onDelete = { onDeleteSession(session) },
                     onMove = { onMoveSession(session) },
+                    // 新建 / 删除工作窗口时让行收放动画，而不是整列表瞬移。
+                    modifier = Modifier.animateItem(),
                 )
             }
         }
@@ -564,6 +566,7 @@ private fun SessionSummaryRow(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onMove: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val provider = session.provider
     val icon = BrandLogos.painterForProvider(provider)
@@ -571,7 +574,7 @@ private fun SessionSummaryRow(
     val iconTint = BrandLogos.tintForProvider(provider, accent)
     val label = listSessionLabel(session.withLiveTitle(), index, parentNames)
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .wandSelectedSurface(

@@ -5,12 +5,14 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.InfiniteRepeatableSpec
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -401,6 +403,14 @@ object WandMotion {
     /** 状态呼吸灯规格。配合 breathAlphaMin / breathScaleMax 使用。 */
     fun <T> breath(): InfiniteRepeatableSpec<T> =
         infiniteRepeatable(tween(breathDuration, easing = FastOutSlowInEasing), RepeatMode.Reverse)
+
+    /**
+     * 给 animateXxxAsState 用的有限规格：系统关闭动画时退化为瞬时。
+     * animateXxxAsState 没有「不动画」的开关，颜色 / 尺寸这类过渡统一从这里取规格，
+     * 保证「移除动画」的设备上只剩瞬时切换，和其他 AnimatedVisibility 的处理一致。
+     */
+    fun <T> respectMotion(enabled: Boolean, spec: FiniteAnimationSpec<T>): FiniteAnimationSpec<T> =
+        if (enabled) spec else snap()
 }
 
 /** 统一圆角（规范 1.2）。 */

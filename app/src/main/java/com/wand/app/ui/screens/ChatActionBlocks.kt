@@ -1,9 +1,9 @@
 package com.wand.app.ui.screens
 
-import android.animation.ValueAnimator
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -71,6 +71,7 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.WandTerminal
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.theme.glassSurface
 import kotlinx.coroutines.launch
@@ -294,15 +295,37 @@ private fun AskUserOptionRow(
         chosen -> WandColors.brand.copy(alpha = 0.16f)
         else -> WandColors.surface
     }
+    // 选项的选中/变暗/提交三个状态都是每帧可能的：底、描边、整体透明度一起过渡。
+    val motionEnabled = !reduceMotionEnabled()
+    val surfaceFill by animateColorAsState(
+        targetValue = fill,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "askOptionFill",
+    )
+    val indicatorFill by animateColorAsState(
+        targetValue = if (chosen) tint else Color.Transparent,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "askOptionIndicatorFill",
+    )
+    val indicatorStroke by animateColorAsState(
+        targetValue = if (chosen) tint.copy(alpha = 0.86f) else WandColors.borderStrong.copy(alpha = 0.72f),
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "askOptionIndicatorStroke",
+    )
+    val rowAlpha by animateFloatAsState(
+        targetValue = if (isAnswered && !chosen) 0.55f else 1f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "askOptionAlpha",
+    )
     Row(
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
             .clip(WandShapes.sm)
-            .background(fill)
+            .background(surfaceFill)
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
-            .graphicsLayer { alpha = if (isAnswered && !chosen) 0.55f else 1f }
+            .graphicsLayer { alpha = rowAlpha }
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         // indicator
@@ -312,10 +335,10 @@ private fun AskUserOptionRow(
                 .padding(top = 2.dp)
                 .size(16.dp)
                 .clip(if (multiSelect) RoundedCornerShape(3.dp) else CircleShape)
-                .background(if (chosen) tint else Color.Transparent)
+                .background(indicatorFill)
                 .border(
                     1.5.dp,
-                    if (chosen) tint.copy(alpha = 0.86f) else WandColors.borderStrong.copy(alpha = 0.72f),
+                    indicatorStroke,
                     if (multiSelect) RoundedCornerShape(3.dp) else CircleShape,
                 ),
         ) {
@@ -924,7 +947,8 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
     val activeTask = activeIndex?.let { todos[it].label() }
         ?: "准备中…"
     var expanded by remember { mutableStateOf(false) }
-    val motionEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    // 「执行中」呼吸走全应用统一的 reduceMotion，而不是另一套 ValueAnimator 开关。
+    val motionEnabled = !reduceMotionEnabled()
     val activityAlpha = if (motionEnabled) {
         val transition = rememberInfiniteTransition(label = "todoActivityBreath")
         val alpha by transition.animateFloat(

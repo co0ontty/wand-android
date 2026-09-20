@@ -88,7 +88,9 @@ fun SessionMoveSheet(
                         color = WandColors.textMuted, modifier = Modifier.padding(vertical = 16.dp))
                 }
                 items(targets, key = { it.id }) { target ->
+                    // 边搜边筛：被过滤掉的候选行淡出、剩下的滑位，列表不再瞬移。
                     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                        .animateItem()
                         .clickable(enabled = !busy && !target.current) { selectedId = target.id }
                         .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = selectedId == target.id, enabled = !busy && !target.current,

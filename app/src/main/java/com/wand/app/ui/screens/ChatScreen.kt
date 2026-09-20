@@ -1040,14 +1040,22 @@ private fun ConversationTurnScrubber(
             },
         contentAlignment = Alignment.CenterEnd,
     ) {
-        if (dragging && currentPreview.isNotBlank()) {
+        // 拖动气泡：淡入 + 缩放出现，松手后跟着淡出，不再是从无到有地闪一下。
+        AnimatedVisibility(
+            visible = dragging && currentPreview.isNotBlank(),
+            enter = fadeIn(WandMotion.tweenFast()) +
+                scaleIn(initialScale = 0.94f, animationSpec = WandMotion.tweenFast()),
+            exit = fadeOut(WandMotion.tweenFast()) +
+                scaleOut(targetScale = 0.94f, animationSpec = WandMotion.tweenFast()),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(
+                    x = (-44).dp,
+                    y = scrubberHeight * ((currentItem + 0.5f) / itemCount.toFloat()) - 22.dp,
+                ),
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(
-                        x = (-44).dp,
-                        y = scrubberHeight * ((currentItem + 0.5f) / itemCount.toFloat()) - 22.dp,
-                    )
                     .wrapContentWidth(align = Alignment.End, unbounded = true)
                     .widthIn(min = 120.dp, max = maxBubbleWidth)
                     .clip(RoundedCornerShape(14.dp))

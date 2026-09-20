@@ -1,6 +1,5 @@
 package com.wand.app.ui.screens
 
-import android.animation.ValueAnimator
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -124,6 +123,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
@@ -849,7 +849,8 @@ private fun GeneratedAgentLogo(
     val variant = remember(activity.id) { agentLogoVariant(activity.id) }
     val palette = agentGemPalette(activity, variant)
     val tint = agentIdentityColor(activity)
-    val motionEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    // 统一走 reduceMotion，和 StatusDot / WandMotion 呼吸灯保持同一套开关。
+    val motionEnabled = !reduceMotionEnabled()
     val haloAlpha: Float
     val haloScale: Float
     if (activity.running && animate && motionEnabled) {

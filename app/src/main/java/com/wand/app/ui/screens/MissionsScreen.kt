@@ -1,5 +1,13 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -66,7 +74,9 @@ import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandTerminal
+import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -110,6 +120,9 @@ fun MissionsScreen(
     var diffState by remember { mutableStateOf<Pair<MissionInfo, MissionAttempt>?>(null) }
     var diff by remember { mutableStateOf<MissionDiff?>(null) }
     var archiveTarget by remember { mutableStateOf<MissionInfo?>(null) }
+    // 报错横幅淡出时 error 已经为 null，留一份最后的消息给退出动画渲染。
+    var bannerMessage by remember { mutableStateOf("") }
+    LaunchedEffect(error) { error?.let { bannerMessage = it } }
 
     suspend fun refresh(showProgress: Boolean = false) {
         if (showProgress) loading = true
@@ -173,12 +186,26 @@ fun MissionsScreen(
                     onArchive = { archiveTarget = it },
                 )
             }
-            error?.let { message ->
+            // 报错横幅贴着底部滑入滑出；退出动画需要内容，所以留住最后一条可读消息。
+            AnimatedVisibility(
+                visible = error != null,
+                enter = fadeIn(WandMotion.tweenFast()) +
+                    slideInVertically(WandMotion.tweenFast()) { it / 3 },
+                exit = fadeOut(WandMotion.tweenFast()) +
+                    slideOutVertically(WandMotion.tweenFast()) { it / 3 },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            ) {
                 Surface(
                     color = WandColors.dangerSoft,
                     shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
-                ) { Text(message, color = WandColors.danger, modifier = Modifier.padding(12.dp)) }
+                    modifier = Modifier.padding(16.dp),
+                ) {
+                    Text(
+                        bannerMessage,
+                        color = WandColors.danger,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
             }
         }
     }
@@ -280,6 +307,8 @@ private fun MissionsList(
                 onOpenSession = onOpenSession,
                 onOpenDiff = onOpenDiff,
                 onArchive = onArchive,
+                // 每 4s 轮询一次：状态变化、任务增删都让卡片滑到新位置，不再整体跳一下。
+                modifier = Modifier.animateItem(),
             )
         }
         if (missions.isEmpty()) item { Text("创建任务后，每个 Provider 会在独立 worktree 中并行执行。", color = WandColors.textMuted, modifier = Modifier.padding(36.dp)) }
@@ -292,9 +321,10 @@ private fun MissionCard(
     onOpenSession: (String) -> Unit,
     onOpenDiff: (MissionInfo, MissionAttempt) -> Unit,
     onArchive: (MissionInfo) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    WandCard(contentPadding = PaddingValues(14.dp)) {
+    WandCard(modifier = modifier, contentPadding = PaddingValues(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(mission.title, color = WandColors.textPrimary, style = MaterialTheme.typography.titleMedium)
@@ -357,8 +387,20 @@ private fun MissionCard(
 @Composable
 private fun StatePill(state: String) {
     val (foreground, background) = missionStateColors(state)
-    Surface(color = background, shape = RoundedCornerShape(50)) {
-        Text(missionStateLabel(state), color = foreground, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+    // 轮询会把状态从「执行中」推到「已完成」：胶囊底与文字跟着过渡，不再凭空变色。
+    val motionEnabled = !reduceMotionEnabled()
+    val animatedForeground by animateColorAsState(
+        targetValue = foreground,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "missionStateText",
+    )
+    val animatedBackground by animateColorAsState(
+        targetValue = background,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "missionStateFill",
+    )
+    Surface(color = animatedBackground, shape = RoundedCornerShape(50)) {
+        Text(missionStateLabel(state), color = animatedForeground, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
 
@@ -454,6 +496,9 @@ private fun MissionDiffDialog(
     onSendReview: () -> Unit,
 ) {
     var target by remember(diff) { mutableStateOf<ReviewTarget?>(null) }
+    // target 清空后仍要画出退出动画，所以留一份最后选中的行。
+    var lastTarget by remember(diff) { mutableStateOf<ReviewTarget?>(null) }
+    LaunchedEffect(target) { target?.let { lastTarget = it } }
     var body by remember(diff) { mutableStateOf("") }
     val lines = remember(diff?.patch) { diff?.let { renderDiffLines(it.patch) } ?: emptyList() }
     val pending = mission.comments.count { it.attemptId == attempt.id && it.status == "pending" }
@@ -491,16 +536,29 @@ private fun MissionDiffDialog(
                             )
                         }
                     }
-                    target?.let { reviewTarget ->
-                        Column(Modifier.fillMaxWidth().background(WandColors.bgElevated).padding(12.dp)) {
-                            Text("${reviewTarget.file}:${reviewTarget.line ?: ""}", color = WandColors.textMuted, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                            WandTextField(body, { body = it }, placeholder = "写下具体、可执行的修改意见…", minLines = 2, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp))
-                            WandButton(
-                                label = "加入 Review",
-                                enabled = body.isNotBlank(),
-                                onClick = { onAddComment(reviewTarget.file, reviewTarget.line, reviewTarget.side, body.trim()); body = ""; target = null },
-                                modifier = Modifier.align(Alignment.End),
-                            )
+                    // 点一行 diff 打开评论框：贴底滑入，关掉后滑出，所以留住最后选中的行。
+                    // 带 expand/shrink，上方 diff 列表的高度跟着一起让位，不会在收尾时突然弹回。
+                    AnimatedVisibility(
+                        visible = target != null,
+                        enter = fadeIn(WandMotion.tweenFast()) +
+                            slideInVertically(WandMotion.tweenFast()) { it / 4 } +
+                            expandVertically(WandMotion.tweenFast(), expandFrom = Alignment.Bottom),
+                        exit = fadeOut(WandMotion.tweenFast()) +
+                            slideOutVertically(WandMotion.tweenFast()) { it / 4 } +
+                            shrinkVertically(WandMotion.tweenFast(), shrinkTowards = Alignment.Bottom),
+                    ) {
+                        val reviewTarget = target ?: lastTarget
+                        if (reviewTarget != null) {
+                            Column(Modifier.fillMaxWidth().background(WandColors.bgElevated).padding(12.dp)) {
+                                Text("${reviewTarget.file}:${reviewTarget.line ?: ""}", color = WandColors.textMuted, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                                WandTextField(body, { body = it }, placeholder = "写下具体、可执行的修改意见…", minLines = 2, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp))
+                                WandButton(
+                                    label = "加入 Review",
+                                    enabled = body.isNotBlank(),
+                                    onClick = { onAddComment(reviewTarget.file, reviewTarget.line, reviewTarget.side, body.trim()); body = ""; target = null },
+                                    modifier = Modifier.align(Alignment.End),
+                                )
+                            }
                         }
                     }
                 }

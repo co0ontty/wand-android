@@ -1,5 +1,6 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -499,6 +500,7 @@ private fun TaskBoardList(
                             setSwipedTaskId(null)
                             pendingSwipe = task to action
                         },
+                        modifier = Modifier.animateItem(),
                     )
                 }
                 if (status == "done" && sectionArchived.isNotEmpty()) {
@@ -523,6 +525,7 @@ private fun TaskBoardList(
                                     setSwipedTaskId(null)
                                     pendingSwipe = task to action
                                 },
+                                modifier = Modifier.animateItem(),
                             )
                         }
                     }
@@ -542,6 +545,7 @@ private fun TaskBoardList(
                         setSwipedTaskId(null)
                         pendingSwipe = task to action
                     },
+                    modifier = Modifier.animateItem(),
                 )
             }
         }
@@ -853,12 +857,14 @@ private fun BoardTaskItem(
     onToggleComplete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onSwipeAction: (BoardTaskSwipeAction) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     BoardTaskSwipeCard(
         status = task.status,
         revealed = revealed,
         onRevealedChange = onRevealedChange,
         onAction = onSwipeAction,
+        modifier = modifier,
     ) {
         BoardTaskCard(
             task = task,
@@ -1098,12 +1104,24 @@ private fun BoardStatusCheck(
     val done = status == "done" || status == "archived"
     val doing = status == "doing"
     val green = WandColors.success
+    // 勾选圈是看板上最高频的一次点按：底、描边和勾同步过渡，状态变化不再硬闪。
+    val motionEnabled = !reduceMotionEnabled()
+    val fill by animateColorAsState(
+        targetValue = if (done) green else Color.Transparent,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "boardStatusCheckFill",
+    )
+    val stroke by animateColorAsState(
+        targetValue = if (done) green else green.copy(alpha = 0.55f),
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "boardStatusCheckStroke",
+    )
     Box(
         modifier = modifier
             .size(18.dp)
             .clip(CircleShape)
-            .border(1.5.dp, if (done) green else green.copy(alpha = 0.55f), CircleShape)
-            .background(if (done) green else Color.Transparent)
+            .border(1.5.dp, stroke, CircleShape)
+            .background(fill)
             .clickable(role = Role.Checkbox, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -1170,29 +1188,34 @@ private const val BOARD_AGENT_DOT_STAGGER_MS = 150
 @Composable
 private fun BoardAgentDots(modifier: Modifier = Modifier) {
     val animate = !reduceMotionEnabled()
-    val transition = rememberInfiniteTransition(label = "boardAgentDots")
+    // 关闭动画时不要建无限循环：三点静止成实心，也不再每帧唤醒合成器。
+    val transition = if (animate) rememberInfiniteTransition(label = "boardAgentDots") else null
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         for (index in 0 until 3) {
-            val lift by transition.animateFloat(
-                initialValue = 0f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = keyframes {
-                        durationMillis = BOARD_AGENT_DOT_CYCLE_MS
-                        0f at 0
-                        1f at 120
-                        0f at 240
-                        0f at BOARD_AGENT_DOT_CYCLE_MS
-                    },
-                    initialStartOffset = StartOffset(index * BOARD_AGENT_DOT_STAGGER_MS),
-                ),
-                label = "boardAgentDotLift$index",
-            )
-            val raised = if (animate) lift else 0f
+            val raised = if (transition != null) {
+                val lift by transition.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = keyframes {
+                            durationMillis = BOARD_AGENT_DOT_CYCLE_MS
+                            0f at 0
+                            1f at 120
+                            0f at 240
+                            0f at BOARD_AGENT_DOT_CYCLE_MS
+                        },
+                        initialStartOffset = StartOffset(index * BOARD_AGENT_DOT_STAGGER_MS),
+                    ),
+                    label = "boardAgentDotLift$index",
+                )
+                lift
+            } else {
+                0f
+            }
             Box(
                 modifier = Modifier
                     .graphicsLayer { translationY = -3.dp.toPx() * raised }

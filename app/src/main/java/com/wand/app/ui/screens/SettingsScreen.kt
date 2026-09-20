@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.animateColorAsState
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -77,9 +78,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.rememberGlassBackdrop
+import com.wand.app.ui.theme.reduceMotionEnabled
 
 /**
  * 原生设置页 —— 对称 iOS SettingsView，并把原 WebView 桥（WandNative）的
@@ -806,6 +809,15 @@ private fun SttModelSection() {
             }
             val downloading = downloadingId == model.id
             val isSelected = selectedId == model.id
+            // 选中底跟其他侧栏行一样走淡入淡出，切换模型时不再整块硬闪。
+            val rowFill by animateColorAsState(
+                targetValue = if (isSelected) WandColors.brand.copy(alpha = 0.08f) else Color.Transparent,
+                animationSpec = WandMotion.respectMotion(
+                    !reduceMotionEnabled(),
+                    WandMotion.tweenFast(),
+                ),
+                label = "sttModelRowFill",
+            )
             val status = when {
                 downloading && sttState is SttModelManager.State.Downloading ->
                     "${sttState.percent}%"
@@ -817,7 +829,7 @@ private fun SttModelSection() {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(if (isSelected) WandColors.brand.copy(alpha = 0.08f) else Color.Transparent)
+                    .background(rowFill)
                     .selectable(
                         selected = isSelected,
                         role = Role.RadioButton,
