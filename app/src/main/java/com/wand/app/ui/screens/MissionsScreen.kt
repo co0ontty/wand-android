@@ -121,8 +121,9 @@ fun MissionsScreen(
     var diff by remember { mutableStateOf<MissionDiff?>(null) }
     var archiveTarget by remember { mutableStateOf<MissionInfo?>(null) }
     // 报错横幅淡出时 error 已经为 null，留一份最后的消息给退出动画渲染。
-    var bannerMessage by remember { mutableStateOf("") }
-    LaunchedEffect(error) { error?.let { bannerMessage = it } }
+    // 显示时直接用 error，只靠它兜退出那一帧，避免横幅先空一帧再补上文字。
+    var lastError by remember { mutableStateOf("") }
+    LaunchedEffect(error) { error?.let { lastError = it } }
 
     suspend fun refresh(showProgress: Boolean = false) {
         if (showProgress) loading = true
@@ -201,7 +202,7 @@ fun MissionsScreen(
                     modifier = Modifier.padding(16.dp),
                 ) {
                     Text(
-                        bannerMessage,
+                        error ?: lastError,
                         color = WandColors.danger,
                         modifier = Modifier.padding(12.dp),
                     )
