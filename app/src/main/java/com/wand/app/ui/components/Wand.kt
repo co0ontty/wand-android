@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,13 +35,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.lerp as lerpDp
+import com.wand.app.R
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
@@ -412,29 +414,23 @@ fun ToolbarIconButton(
     )
 }
 
-/** Wand 品牌标记：克制的品牌色圆角方块 + 白色星芒图标。 */
+/** 与桌面启动图标共用原始图层，保持像素猫的配色与安全区比例。 */
 @Composable
 fun WandBrandMark(size: Int = 64) {
-    val corner = RoundedCornerShape((size * 0.26f).dp)
     Box(
-        contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(size.dp)
-            .shadow(
-                elevation = 1.dp,
-                shape = corner,
-                ambientColor = WandColors.brand.copy(alpha = 0.10f),
-                spotColor = WandColors.brand.copy(alpha = 0.10f),
-            )
-            .clip(corner)
-            .background(WandColors.brand)
-            .border(0.7.dp, Color.White.copy(alpha = 0.18f), corner),
+            .clip(RoundedCornerShape((size * 24f / 108f).dp)),
     ) {
-        Icon(
-            WandIcons.sparkle,
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_background),
             contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size((size * 0.46f).dp),
+            modifier = Modifier.fillMaxSize(),
+        )
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
         )
     }
 }
