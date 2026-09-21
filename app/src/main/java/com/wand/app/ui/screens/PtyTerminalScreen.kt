@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.net.Uri
 import android.view.KeyEvent as AndroidKeyEvent
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -128,6 +129,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 private val TerminalBackground = WandTerminal.background
@@ -189,6 +191,10 @@ fun PtyTerminalScreen(
     )
     // A slow or reconnecting server must not replay seconds of stale key-repeat input after the
     // user has already released the key. Keep only a small, recent interaction window.
+    // 悬浮球拖动中：网页端通过 WandTerminal 桥把它翻成 true，兄弟会话左右滑动
+    // 手势在这期间完全让位，否则 Compose 会在 touch slop 后把触摸从 WebView 收回，
+    // 球拖到一半就不动了。
+    val floatingBallGestureActive = remember(sessionId) { AtomicBoolean(false) }
     val shortcutQueue = remember(sessionId) {
         Channel<TerminalShortcut>(capacity = 12, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     }
@@ -368,6 +374,7 @@ fun PtyTerminalScreen(
                             sessions = siblingSessions,
                             currentSessionId = sessionId,
                             onSelect = onSwitchSession,
+                            isSuppressed = { floatingBallGestureActive.get() },
                         )
                     } else {
                         Modifier
@@ -390,6 +397,7 @@ fun PtyTerminalScreen(
                         serverUrl = api.baseUrl,
                         token = api.token,
                         sessionId = sessionId,
+                        floatingBallGestureActive = floatingBallGestureActive,
                         onHardwareShortcut = { shortcutQueue.trySend(it) },
                         onReadyChange = { webViewReady = it },
                     )
@@ -927,6 +935,8 @@ private fun PtyTerminalWebView(
     serverUrl: String,
     token: String?,
     sessionId: String,
+    // 悬浮球拖动中标记：网页端通过 WandTerminal 桥写入，外壳的兄弟会话左右滑动手势据此让位。
+    floatingBallGestureActive: AtomicBoolean,
     onHardwareShortcut: (TerminalShortcut) -> Unit,
     onReadyChange: (Boolean) -> Unit,
 ) {
@@ -1044,6 +1054,7 @@ private fun PtyTerminalWebView(
             setAcceptThirdPartyCookies(view, true)
         }
         view.apply {
+            addJavascriptInterface(FloatingBallGestureBridge(floatingBallGestureActive), "WandTerminal")
             setOnKeyListener { _, _, event ->
                 val shortcut = terminalShortcutForHardwareEvent(event) ?: return@setOnKeyListener false
                 latestHardwareShortcut(shortcut)
@@ -1086,6 +1097,17 @@ private fun PtyTerminalWebView(
                 }
             },
     )
+}
+
+/**
+ * 网页端悬浮球手势的开/关广播。名字与网页端 `window.WandTerminal.setFloatingBallActive` 对应，
+ * 旧服务不认识这个桥，调用是 no-op。
+ */
+private class FloatingBallGestureBridge(private val active: AtomicBoolean) {
+    @JavascriptInterface
+    fun setFloatingBallActive(value: Boolean) {
+        active.set(value)
+    }
 }
 
 private fun disposePtyWebView(webView: WebView) {

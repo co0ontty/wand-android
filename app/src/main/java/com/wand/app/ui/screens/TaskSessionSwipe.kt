@@ -1,11 +1,15 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.TaskDirectoryGroup
@@ -95,32 +99,69 @@ private fun taskSessionScreenIdentity(screen: Screen): TaskSessionScreenIdentity
     else -> null
 }
 
-/** Adds left/right navigation to the sibling sessions without interfering with vertical scroll. */
+/**
+ * Adds left/right navigation to the sibling sessions without interfering with vertical scroll.
+ *
+ * 探测器自己实现而非用 detectHorizontalDragGestures：后者一越过 touch slop 就 consume，
+ * 一旦 consume，Compose 会把这条手势从内嵌 WebView（终端）上收回（WebView 收到 cancel），
+ * 于是「悬浮球拖到一半不动了」。这里只在横向位移够切换会话时才接管，其余时间不碰指针，
+ * 终端里的拖动（悬浮球 / 文本选择 / 滚动）保持完整。
+ *
+ * [isSuppressed] 为真时整条手势交还给网页：Android 外壳的网页端在悬浮球按下时
+ * 通过 WandTerminal 桥把它翻成 true，抬手复位。
+ */
 @Composable
 internal fun Modifier.taskSessionSwipe(
     sessions: List<WorkspaceSessionSummary>,
     currentSessionId: String,
     onSelect: (WorkspaceSessionSummary) -> Unit,
+    isSuppressed: () -> Boolean = { false },
 ): Modifier {
     if (sessions.size < 2) return this
     val latestOnSelect = rememberUpdatedState(onSelect)
+    val latestSuppressed = rememberUpdatedState(isSuppressed)
     val density = LocalDensity.current
     val minDistancePx = with(density) { TaskSessionSwipeMinDistance.toPx() }
     val sessionIds = remember(sessions) { sessions.map { it.id } }
     return pointerInput(sessionIds, currentSessionId, minDistancePx) {
-        var horizontalDrag = 0f
-        detectHorizontalDragGestures(
-            onHorizontalDrag = { _, dragAmount -> horizontalDrag += dragAmount },
-            onDragEnd = {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            var horizontal = 0f
+            var vertical = 0f
+            var claimed = false
+            var released = false
+            while (!released) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (change.changedToUpIgnoreConsumed()) {
+                    released = true
+                    continue
+                }
+                val delta = change.positionChange()
+                horizontal += delta.x
+                vertical += delta.y
+                if (claimed) {
+                    change.consume()
+                    continue
+                }
+                // 只有明确要切会话时才接管；斜向拖动（纵向分量更大）不接管。
+                if (abs(horizontal) >= minDistancePx && abs(horizontal) > abs(vertical)) {
+                    if (latestSuppressed.value()) {
+                        // 悬浮球正在被拖动：整条手势留给网页，抬手也不切会话。
+                        break
+                    }
+                    claimed = true
+                    change.consume()
+                }
+            }
+            if (claimed) {
                 taskSessionSwipeTarget(
                     sessions = sessions,
                     currentSessionId = currentSessionId,
-                    horizontalDrag = horizontalDrag,
+                    horizontalDrag = horizontal,
                     minDistance = minDistancePx,
                 )?.let(latestOnSelect.value)
-                horizontalDrag = 0f
-            },
-            onDragCancel = { horizontalDrag = 0f },
-        )
+            }
+        }
     }
 }
