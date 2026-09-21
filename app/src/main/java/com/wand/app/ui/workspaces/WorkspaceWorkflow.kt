@@ -1,16 +1,19 @@
 package com.wand.app.ui.workspaces
 
+import com.wand.app.data.PaneTab
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskWindowLayout
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTaskDetail
 import com.wand.app.data.activeWorkWindowTab
 import com.wand.app.data.addSessionWindow
 import com.wand.app.data.orderWorkspaceSessions
 import com.wand.app.data.reconcileTaskWindowLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.sync.Mutex
@@ -24,22 +27,20 @@ import kotlinx.coroutines.launch
 
 sealed class WorkspaceTaskState {
     data object Loading : WorkspaceTaskState()
-    /** 空任务欢迎态：保留 detail 以提供 cwd / workspaceId / taskName，但不自动创建会话。 */
+    /** 空任务欢迎态：保留 detail 以提供 cwd / taskName，但不自动创建会话。 */
     data class EmptySessions(val detail: WorkspaceTaskDetail) : WorkspaceTaskState() {
         val cwd: String get() = detail.cwd
-        val workspaceId: String get() = detail.workspaceId
-        val taskId: String get() = detail.id
         val taskName: String get() = detail.name
     }
     data class Content(
         val detail: WorkspaceTaskDetail,
         /** 排序后的会话（按创建顺序）。 */
-        val orderedSessions: List<com.wand.app.data.WorkspaceSessionSummary>,
+        val orderedSessions: List<WorkspaceSessionSummary>,
         /** 当前选中的会话 ID（null = 未选中 / 空任务）。 */
         val selectedSessionId: String?,
         /** 调和后的布局（保留 split / 非会话 tab）。 */
         val layout: TaskWindowLayout,
-    ) : WorkspaceTaskState() {    }
+    ) : WorkspaceTaskState()
     data class Error(val message: String) : WorkspaceTaskState()
 }
 
@@ -111,7 +112,7 @@ class WorkspaceWorkflow(
             if (generation != taskGeneration || _targetState.value is WorkspaceTargetState.Creating) return
             applyTaskDetail(detail, (_taskState.value as? WorkspaceTaskState.Content)?.selectedSessionId)
         } catch (cause: Exception) {
-            if (cause is kotlinx.coroutines.CancellationException) throw cause
+            if (cause is CancellationException) throw cause
             // Keep the last usable snapshot; explicit refresh still surfaces server failures.
         }
     }
@@ -127,7 +128,7 @@ class WorkspaceWorkflow(
         val preferred = preferredSessionId
             ?.takeIf { sessionIds.contains(it) }
             ?: layout.let { activeWorkWindowTab(it) }
-                ?.let { (it as? com.wand.app.data.PaneTab.Session)?.sessionId }
+                ?.let { (it as? PaneTab.Session)?.sessionId }
             ?: sessionIds.first()
         _taskState.value = WorkspaceTaskState.Content(
             detail = detail,
@@ -169,7 +170,6 @@ class WorkspaceWorkflow(
         onCreated: (SessionSnapshot) -> Unit,
     ) {
         if (_targetState.value is WorkspaceTargetState.Creating) return
-        val requestTaskId = taskId
         val requestGeneration = ++taskGeneration
         _targetState.value = WorkspaceTargetState.Creating
         createJob?.cancel()
@@ -177,22 +177,22 @@ class WorkspaceWorkflow(
             try {
                 val session = port.createWorkspaceTaskWindow(
                     target = target,
-                    binding = WorkspaceBinding(workspaceId, requestTaskId, cwd),
+                    binding = WorkspaceBinding(workspaceId, taskId, cwd),
                     kind = kind,
                 )
                 // 切任务丢弃延迟响应。
-                if (requestTaskId != currentTaskId() || requestGeneration != taskGeneration) return@launch
+                if (taskId != currentTaskId() || requestGeneration != taskGeneration) return@launch
                 // 先追加布局（尽力 PUT，失败不回滚已创建的会话）。
                 val baseLayout = (_taskState.value as? WorkspaceTaskState.Content)?.layout
                     ?: TaskWindowLayout.EMPTY
                 val nextLayout = addSessionWindow(baseLayout, session.id, activate = true)
-                runCatching { port.saveWorkspaceTaskLayout(requestTaskId, nextLayout) }
+                runCatching { port.saveWorkspaceTaskLayout(taskId, nextLayout) }
                 // 以任务详情为准重拉，补齐会话与布局（layout PUT 失败时下次刷新自愈）。
-                refreshTaskAfterCreate(requestTaskId, session.id)
+                refreshTaskAfterCreate(taskId, session.id)
                 _targetState.value = WorkspaceTargetState.Closed
                 onCreated(session)
             } catch (e: Exception) {
-                if (requestTaskId != currentTaskId() || requestGeneration != taskGeneration) return@launch
+                if (taskId != currentTaskId() || requestGeneration != taskGeneration) return@launch
                 _targetState.value = WorkspaceTargetState.Error(e.message ?: "无法新建工作窗口")
             }
         }
@@ -208,25 +208,20 @@ class WorkspaceWorkflow(
         }
     }
 
-    private fun currentTaskId(): String? = when (val s = _taskState.value) {
-        is WorkspaceTaskState.Content -> s.detail.id
-        is WorkspaceTaskState.EmptySessions -> s.detail.id
+    /** 当前任务详情（空任务与有会话任务共用），Loading / Error 时返回 null。 */
+    private fun currentDetail(): WorkspaceTaskDetail? = when (val s = _taskState.value) {
+        is WorkspaceTaskState.Content -> s.detail
+        is WorkspaceTaskState.EmptySessions -> s.detail
         else -> null
     }
+
+    private fun currentTaskId(): String? = currentDetail()?.id
 
     /** 当前任务的实际 cwd（创建工作窗口的唯一目录）。 */
-    fun currentTaskCwd(): String? = when (val s = _taskState.value) {
-        is WorkspaceTaskState.Content -> s.detail.cwd
-        is WorkspaceTaskState.EmptySessions -> s.detail.cwd
-        else -> null
-    }
+    fun currentTaskCwd(): String? = currentDetail()?.cwd
 
     /** 当前任务的 workspaceId（创建请求绑定用）。 */
-    fun currentWorkspaceId(): String? = when (val s = _taskState.value) {
-        is WorkspaceTaskState.Content -> s.detail.workspaceId
-        is WorkspaceTaskState.EmptySessions -> s.detail.workspaceId
-        else -> null
-    }
+    fun currentWorkspaceId(): String? = currentDetail()?.workspaceId
 
     fun deleteSession(
         sessionId: String,

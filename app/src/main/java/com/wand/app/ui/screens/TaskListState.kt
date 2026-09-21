@@ -158,6 +158,26 @@ class TaskListState(
         loadUnlocked(silent)
     }
 
+    /**
+     * 统一的变更流程：串行化 → 置 busy → 清旧错误 → 异常转用户可见文案。
+     * [block] 返回 null 表示本次变更失败（校验不过或异常），成功则返回结果。
+     * CancellationException 原样抛出，不会被当成失败文案。
+     */
+    private suspend fun <T> mutate(failureMessage: String, block: suspend () -> T?): T? =
+        mutationMutex.withLock {
+            mutationBusy = true
+            mutationError = null
+            try {
+                block()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                mutationError = error.message ?: failureMessage
+                null
+            } finally {
+                mutationBusy = false
+            }
+        }
+
     private suspend fun loadUnlocked(silent: Boolean): Boolean {
         if (!silent) loading = true
         return try {
@@ -191,11 +211,7 @@ class TaskListState(
                 // A slow defaults request must not undo a choice made in the open dialog.
                 if (choiceRevision != creationChoiceRevision) return@let
                 defaultProvider = config.defaultProvider?.takeIf { it.isNotBlank() } ?: defaultProvider
-                defaultSessionKind = if (config.defaultSessionKind == "pty") {
-                    WorkspaceSessionKind.Pty
-                } else {
-                    WorkspaceSessionKind.Structured
-                }
+                defaultSessionKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
             }
             true
         } catch (error: Exception) {
@@ -213,7 +229,7 @@ class TaskListState(
         worktree: Boolean,
         workspaceId: String? = null,
         description: String? = null,
-    ): TaskCreationResult? = mutationMutex.withLock {
+    ): TaskCreationResult? = mutate("创建任务失败") {
         // Task names belong to the container, never to a session's prompt.
         val normalizedName = name.trim()
         val normalizedCwd = cwd.trim()
@@ -221,93 +237,71 @@ class TaskListState(
         val normalizedDescription = description?.trim().orEmpty()
         if (!isValidOptionalTaskName(normalizedName)) {
             mutationError = "任务名称无效或过长"
-            return@withLock null
+            return@mutate null
         }
-        mutationBusy = true
-        mutationError = null
-        try {
-            val workspaces = port.listWorkspaces()
-            val project = when {
-                workspaceId == com.wand.app.data.GLOBAL_WORKSPACE_ID -> null
-                !workspaceId.isNullOrBlank() -> workspaces.firstOrNull { it.id == workspaceId }
-                    ?: throw IllegalStateException("工作区已不存在，请重新选择目录")
-                normalizedCwd.isNotEmpty() -> workspaces.firstOrNull {
-                    normalizeWorkspacePath(it.cwd) == normalizeWorkspacePath(normalizedCwd)
-                } ?: port.createWorkspace(
-                    normalizedCwd.trimEnd('/').substringAfterLast('/').ifBlank { "工作区" }, normalizedCwd,
-                )
-                else -> null
-            }
-            val task = if (project != null) {
-                port.createWorkspaceTask(
-                    workspaceId = project.id,
-                    name = normalizedName.ifEmpty { "新任务" },
-                    worktree = worktree,
-                    description = normalizedDescription.ifEmpty { null },
-                )
-            } else {
-                port.createStandaloneTask(
-                    name = normalizedName.ifEmpty { "新任务" },
-                    cwd = normalizedCwd.ifEmpty { null },
-                    worktree = if (normalizedCwd.isEmpty()) false else worktree,
-                    description = normalizedDescription.ifEmpty { null },
-                )
-            }
-            val workspace = project
-                ?: Workspace(
-                    id = task.workspaceId,
-                    name = "",
-                    cwd = task.cwd.ifEmpty { normalizedCwd },
-                    defaultProvider = null,
-                    layout = null,
-                    createdAt = null,
-                    lastOpenedAt = null,
-                )
-            load(silent = true)
-            TaskCreationResult(workspace, task)
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "创建任务失败"
-            null
-        } finally {
-            mutationBusy = false
+        val workspaces = port.listWorkspaces()
+        val project = when {
+            workspaceId == com.wand.app.data.GLOBAL_WORKSPACE_ID -> null
+            !workspaceId.isNullOrBlank() -> workspaces.firstOrNull { it.id == workspaceId }
+                ?: throw IllegalStateException("工作区已不存在，请重新选择目录")
+            normalizedCwd.isNotEmpty() -> workspaces.firstOrNull {
+                normalizeWorkspacePath(it.cwd) == normalizeWorkspacePath(normalizedCwd)
+            } ?: port.createWorkspace(
+                normalizedCwd.trimEnd('/').substringAfterLast('/').ifBlank { "工作区" }, normalizedCwd,
+            )
+            else -> null
         }
+        val task = if (project != null) {
+            port.createWorkspaceTask(
+                workspaceId = project.id,
+                name = normalizedName.ifEmpty { "新任务" },
+                worktree = worktree,
+                description = normalizedDescription.ifEmpty { null },
+            )
+        } else {
+            port.createStandaloneTask(
+                name = normalizedName.ifEmpty { "新任务" },
+                cwd = normalizedCwd.ifEmpty { null },
+                worktree = if (normalizedCwd.isEmpty()) false else worktree,
+                description = normalizedDescription.ifEmpty { null },
+            )
+        }
+        val workspace = project
+            ?: Workspace(
+                id = task.workspaceId,
+                name = "",
+                cwd = task.cwd.ifEmpty { normalizedCwd },
+                defaultProvider = null,
+                layout = null,
+                createdAt = null,
+                lastOpenedAt = null,
+            )
+        load(silent = true)
+        TaskCreationResult(workspace, task)
     }
 
-    suspend fun renameTask(taskId: String, name: String): WorkspaceTask? = mutationMutex.withLock {
+    suspend fun renameTask(taskId: String, name: String): WorkspaceTask? = mutate("重命名任务失败") {
         val normalizedName = name.trim()
         if (!isValidTaskName(normalizedName)) {
             mutationError = if (normalizedName.isEmpty()) "请输入任务名称" else "任务名称无效或过长"
-            return@withLock null
+            return@mutate null
         }
-        mutationBusy = true
-        mutationError = null
-        try {
-            val updated = port.renameWorkspaceTask(taskId, normalizedName)
-            load(silent = true)
-            updated
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "重命名任务失败"
-            null
-        } finally {
-            mutationBusy = false
-        }
+        val updated = port.renameWorkspaceTask(taskId, normalizedName)
+        load(silent = true)
+        updated
     }
 
     /**
      * 重命名目录（工作区显示名）：合成目录走目录接口，已有项目走项目接口，
      * 服务端会把两边名字写成同一个。
      */
-    suspend fun renameDirectory(group: TaskDirectoryGroup, name: String): Boolean = mutationMutex.withLock {
-        val normalizedName = name.trim()
-        if (!isValidTaskName(normalizedName)) {
-            mutationError = if (normalizedName.isEmpty()) "请输入工作区名称" else "工作区名称无效或过长"
-            return@withLock false
-        }
-        mutationBusy = true
-        mutationError = null
-        try {
+    suspend fun renameDirectory(group: TaskDirectoryGroup, name: String): Boolean =
+        mutate("重命名工作区失败") {
+            val normalizedName = name.trim()
+            if (!isValidTaskName(normalizedName)) {
+                mutationError = if (normalizedName.isEmpty()) "请输入工作区名称" else "工作区名称无效或过长"
+                return@mutate null
+            }
             if (group.synthetic) {
                 port.renameSessionDirectory(group.workspaceCwd, normalizedName)
             } else {
@@ -315,94 +309,48 @@ class TaskListState(
             }
             load(silent = true)
             true
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "重命名工作区失败"
-            false
-        } finally {
-            mutationBusy = false
-        }
-    }
+        } ?: false
 
-    suspend fun deleteTask(taskId: String): Boolean = mutationMutex.withLock {
-        mutationBusy = true
-        mutationError = null
-        try {
+    suspend fun deleteTask(taskId: String): Boolean =
+        mutate("删除任务失败") {
             port.deleteWorkspaceTask(taskId)
             load(silent = true)
             true
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "删除任务失败"
-            false
-        } finally {
-            mutationBusy = false
-        }
-    }
+        } ?: false
 
     suspend fun createTaskWindow(
         taskId: String,
         target: WorkspaceSessionTarget,
         kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
         prompt: String? = null,
-    ): SessionSnapshot? = mutationMutex.withLock {
-        mutationBusy = true
-        mutationError = null
-        try {
-            val detail = port.workspaceTask(taskId)
-            val session = port.createWorkspaceTaskWindow(
-                target,
-                WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd),
-                kind,
-                prompt,
-            )
-            val reconciled = reconcileTaskWindowLayout(
-                detail.task.layout,
-                detail.sessions.map { it.id },
-            )
-            val nextLayout = addSessionWindow(reconciled, session.id, activate = true)
-            runCatching { port.saveWorkspaceTaskLayout(detail.id, nextLayout) }
-            load(silent = true)
-            session
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "创建工作窗口失败"
-            null
-        } finally {
-            mutationBusy = false
-        }
+    ): SessionSnapshot? = mutate("创建工作窗口失败") {
+        val detail = port.workspaceTask(taskId)
+        val session = port.createWorkspaceTaskWindow(
+            target,
+            WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd),
+            kind,
+            prompt,
+        )
+        val reconciled = reconcileTaskWindowLayout(
+            detail.task.layout,
+            detail.sessions.map { it.id },
+        )
+        val nextLayout = addSessionWindow(reconciled, session.id, activate = true)
+        runCatching { port.saveWorkspaceTaskLayout(detail.id, nextLayout) }
+        load(silent = true)
+        session
     }
 
-    suspend fun clearTaskSessions(taskId: String): Int? = mutationMutex.withLock {
-        mutationBusy = true
-        mutationError = null
-        try {
-            val deleted = port.clearWorkspaceTaskSessions(taskId)
-            load(silent = true)
-            deleted
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "清空任务会话失败"
-            null
-        } finally {
-            mutationBusy = false
-        }
+    suspend fun clearTaskSessions(taskId: String): Int? = mutate("清空任务会话失败") {
+        val deleted = port.clearWorkspaceTaskSessions(taskId)
+        load(silent = true)
+        deleted
     }
 
-    suspend fun deleteSessions(sessionIds: List<String>): Int? = mutationMutex.withLock {
-        mutationBusy = true
-        mutationError = null
-        try {
-            val deleted = port.deleteWorkspaceSessions(sessionIds)
-            load(silent = true)
-            deleted
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            mutationError = error.message ?: "删除终端失败"
-            null
-        } finally {
-            mutationBusy = false
-        }
+    suspend fun deleteSessions(sessionIds: List<String>): Int? = mutate("删除终端失败") {
+        val deleted = port.deleteWorkspaceSessions(sessionIds)
+        load(silent = true)
+        deleted
     }
 
     suspend fun refreshAfterMutation(): Boolean = load(silent = true)

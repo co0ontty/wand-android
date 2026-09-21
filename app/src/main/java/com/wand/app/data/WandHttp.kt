@@ -208,37 +208,41 @@ object WandHttp {
             .build()
     }
 
+    /** endpoint client 的「只改超时/重定向」派生物；不改公共实例。 */
+    private fun timeoutClient(
+        baseUrl: String,
+        timeoutMs: Int,
+        followRedirects: Boolean,
+    ): OkHttpClient = clientFor(baseUrl).newBuilder()
+        .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        .followRedirects(followRedirects)
+        .followSslRedirects(followRedirects)
+        .build()
+
+    private fun executeSimple(client: OkHttpClient, request: Request): SimpleResponse =
+        client.newCall(request).execute().use { response ->
+            SimpleResponse(response.code, response.body?.string().orEmpty())
+        }
+
     @JvmStatic
     @JvmOverloads
     fun get(url: String, timeoutMs: Int, trustOriginBaseUrl: String? = null): SimpleResponse {
         // 连接探测必须跟随重定向：HttpURLConnection GET 默认跟随，关掉以后
         // http→https / 反代 301 会被当成「异常状态码」卡在连接页。
-        val origin = trustOriginBaseUrl ?: url
-        val client = clientFor(origin).newBuilder()
-            .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
-            .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
-            .build()
+        val client = timeoutClient(trustOriginBaseUrl ?: url, timeoutMs, followRedirects = true)
         val request = Request.Builder().url(url).get().build()
-        client.newCall(request).execute().use { response ->
-            return SimpleResponse(response.code, response.body?.string().orEmpty())
-        }
+        return executeSimple(client, request)
     }
 
     @JvmStatic
     fun postJson(url: String, json: String, timeoutMs: Int, trustOriginBaseUrl: String): SimpleResponse {
-        val client = clientFor(trustOriginBaseUrl).newBuilder()
-            .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
-            .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
+        val client = timeoutClient(trustOriginBaseUrl, timeoutMs, followRedirects = false)
         val request = Request.Builder()
             .url(url)
             .post(json.toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(request).execute().use { response ->
-            return SimpleResponse(response.code, response.body?.string().orEmpty())
-        }
+        return executeSimple(client, request)
     }
 
     /** 补全协议并规范化 host、默认端口与 base path；query/fragment 不属于 endpoint。 */

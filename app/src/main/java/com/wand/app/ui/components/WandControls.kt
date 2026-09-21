@@ -58,6 +58,14 @@ enum class WandButtonVariant {
     Success,
 }
 
+/** 实心变体的主色；Secondary/Text 走轮廓与文字色，不使用这里的值。 */
+@Composable
+private fun WandButtonVariant.solidColor(): Color = when (this) {
+    WandButtonVariant.Danger -> WandColors.danger
+    WandButtonVariant.Success -> WandColors.success
+    else -> WandColors.brand
+}
+
 /** 标准操作按钮。加载、禁用、图标和危险态的视觉都在此模块内部收口。 */
 @Composable
 fun WandButton(
@@ -95,48 +103,23 @@ fun WandButton(
         .defaultMinSize(minWidth = if (compact) 0.dp else 64.dp)
 
     when (variant) {
-        WandButtonVariant.Primary -> Button(
-            onClick = onClick,
-            enabled = enabled && !loading,
-            modifier = resolvedModifier,
-            shape = MaterialTheme.shapes.medium,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = WandColors.brand,
-                contentColor = Color.White,
-                disabledContainerColor = WandColors.brand.copy(alpha = 0.34f),
-                disabledContentColor = Color.White.copy(alpha = 0.82f),
-            ),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
-            content = content,
-        )
-        WandButtonVariant.Danger -> Button(
-            onClick = onClick,
-            enabled = enabled && !loading,
-            modifier = resolvedModifier,
-            shape = MaterialTheme.shapes.medium,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = WandColors.danger,
-                contentColor = Color.White,
-                disabledContainerColor = WandColors.danger.copy(alpha = 0.34f),
-                disabledContentColor = Color.White.copy(alpha = 0.82f),
-            ),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
-            content = content,
-        )
-        WandButtonVariant.Success -> Button(
-            onClick = onClick,
-            enabled = enabled && !loading,
-            modifier = resolvedModifier,
-            shape = MaterialTheme.shapes.medium,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = WandColors.success,
-                contentColor = Color.White,
-                disabledContainerColor = WandColors.success.copy(alpha = 0.34f),
-                disabledContentColor = Color.White.copy(alpha = 0.82f),
-            ),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
-            content = content,
-        )
+        WandButtonVariant.Primary, WandButtonVariant.Danger, WandButtonVariant.Success -> {
+            val accent = variant.solidColor()
+            Button(
+                onClick = onClick,
+                enabled = enabled && !loading,
+                modifier = resolvedModifier,
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accent,
+                    contentColor = Color.White,
+                    disabledContainerColor = accent.copy(alpha = 0.34f),
+                    disabledContentColor = Color.White.copy(alpha = 0.82f),
+                ),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+                content = content,
+            )
+        }
         WandButtonVariant.Secondary -> OutlinedButton(
             onClick = onClick,
             enabled = enabled && !loading,

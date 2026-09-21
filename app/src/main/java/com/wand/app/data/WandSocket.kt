@@ -60,8 +60,7 @@ class WandSocket(baseUrl: String) {
     fun connect() {
         closed = false
         openSocket()
-        handler.removeCallbacks(watchdogRunnable)
-        handler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS)
+        restartWatchdog()
     }
 
     /**
@@ -77,8 +76,7 @@ class WandSocket(baseUrl: String) {
         webSocket = null
         lastMessageAt = SystemClock.elapsedRealtime()
         openSocket()
-        handler.removeCallbacks(watchdogRunnable)
-        handler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS)
+        restartWatchdog()
     }
 
     fun close() {
@@ -92,8 +90,7 @@ class WandSocket(baseUrl: String) {
 
     fun subscribe(sessionId: String) {
         subscribedSessionId = sessionId
-        lastSeqBySession.remove(sessionId)
-        sendJson(JSONObject().put("type", "subscribe").put("sessionId", sessionId))
+        sendSubscribe(sessionId)
     }
 
     fun requestResync() {
@@ -106,6 +103,17 @@ class WandSocket(baseUrl: String) {
 
     /** OkHttp 接受 ws:// 形式也接受 http:// 形式的 WS 升级 URL；直接复用 http(s) base。 */
     private val wsUrl: String get() = "$baseUrl/ws"
+
+    private fun restartWatchdog() {
+        handler.removeCallbacks(watchdogRunnable)
+        handler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS)
+    }
+
+    /** 重新订阅一个会话：丢掉旧的 seq 基准，服务端随即推一份 init 快照。 */
+    private fun sendSubscribe(sessionId: String) {
+        lastSeqBySession.remove(sessionId)
+        sendJson(JSONObject().put("type", "subscribe").put("sessionId", sessionId))
+    }
 
     private fun openSocket() {
         if (closed) return
@@ -122,10 +130,7 @@ class WandSocket(baseUrl: String) {
                     reconnectDelayMs = 1_000L
                     onConnectionChange?.invoke(true)
                     // 重新订阅当前会话；服务端会推一份 init 快照，相当于天然 resync。
-                    subscribedSessionId?.let { id ->
-                        lastSeqBySession.remove(id)
-                        sendJson(JSONObject().put("type", "subscribe").put("sessionId", id))
-                    }
+                    subscribedSessionId?.let { id -> sendSubscribe(id) }
                 }
             }
 

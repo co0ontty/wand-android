@@ -66,29 +66,25 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
     private fun IOException.toApiException() =
         WandApiException(null, "网络错误：${message ?: "请求失败"}")
 
+    /** 网络层失败统一转成面向用户的 WandApiException。 */
+    private fun executeOrThrow(request: Request, timeoutSec: Int): Pair<Int, String> =
+        try {
+            execute(request, timeoutSec)
+        } catch (e: IOException) {
+            throw e.toApiException()
+        }
+
     /** 执行一次 HTTP 请求并处理 401 自动重登。 */
     private suspend fun executeWithRetry(request: Request, timeoutSec: Int = 30): Pair<Int, String> =
         withContext(Dispatchers.IO) {
-            var (code, text) = try {
-                execute(request, timeoutSec)
-            } catch (e: IOException) {
-                throw e.toApiException()
+            val (code, text) = executeOrThrow(request, timeoutSec)
+            if (code != 401 || token.isNullOrEmpty()) return@withContext code to text
+            try {
+                WandAuth.loginWithToken(baseUrl, token, client)
+            } catch (_: Exception) {
+                throw WandApiException(401, "登录已失效，请重新连接")
             }
-            if (code == 401 && !token.isNullOrEmpty()) {
-                try {
-                    WandAuth.loginWithToken(baseUrl, token, client)
-                } catch (_: Exception) {
-                    throw WandApiException(401, "登录已失效，请重新连接")
-                }
-                val retried = try {
-                    execute(request, timeoutSec)
-                } catch (e: IOException) {
-                    throw e.toApiException()
-                }
-                code = retried.first
-                text = retried.second
-            }
-            code to text
+            executeOrThrow(request, timeoutSec)
         }
 
     /** 带 401 自动重登的请求入口。返回响应 body 字符串。 */
@@ -102,40 +98,31 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         val (code, text) = executeWithRetry(request, timeoutSec)
         if (code !in 200..299) {
             if (code == 401) throw WandApiException(401, "登录已失效，请重新连接")
-            var message = "服务器返回 $code"
-            try {
-                val err = JSONObject(text).str("error")
-                if (!err.isNullOrEmpty()) message = err
-            } catch (_: Exception) {
-            }
+            val serverError = runCatching { JSONObject(text).str("error") }.getOrNull()
+            val message = serverError?.takeIf { it.isNotEmpty() } ?: "服务器返回 $code"
             throw WandApiException(code, message)
         }
         if (changesTaskHierarchy(method, path)) taskMutations.tryEmit(Unit)
         return text
     }
 
+    /** 服务端响应不是合法 JSON 时统一报错，不用每个封装函数各写一遍 try/catch。 */
+    private inline fun <T> parseResponse(text: String, parse: (String) -> T): T =
+        try {
+            parse(text)
+        } catch (e: Exception) {
+            throw WandApiException(null, "响应解析失败：${e.message}")
+        }
+
     private suspend fun requestObject(
         method: String,
         path: String,
         body: JSONObject? = null,
         timeoutSec: Int = 30,
-    ): JSONObject {
-        val text = requestData(method, path, body, timeoutSec)
-        return try {
-            JSONObject(text)
-        } catch (e: Exception) {
-            throw WandApiException(null, "响应解析失败：${e.message}")
-        }
-    }
+    ): JSONObject = parseResponse(requestData(method, path, body, timeoutSec)) { JSONObject(it) }
 
-    private suspend fun requestArray(method: String, path: String): JSONArray {
-        val text = requestData(method, path)
-        return try {
-            JSONArray(text)
-        } catch (e: Exception) {
-            throw WandApiException(null, "响应解析失败：${e.message}")
-        }
-    }
+    private suspend fun requestArray(method: String, path: String): JSONArray =
+        parseResponse(requestData(method, path)) { JSONArray(it) }
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
@@ -284,11 +271,7 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             .build()
         val (code, text) = executeWithRetry(request, timeoutSec = 60)
         if (code !in 200..299) throw WandApiException(code, "附件上传失败")
-        return try {
-            UploadedFile.parseList(JSONObject(text))
-        } catch (e: Exception) {
-            throw WandApiException(null, "响应解析失败：${e.message}")
-        }
+        return parseResponse(text) { UploadedFile.parseList(JSONObject(it)) }
     }
 
     // MARK: - 权限
@@ -326,32 +309,17 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
         if (model != null) {
-            when (modelProvider) {
-                "codex" -> {
-                    body.put("defaultCodexModel", model)
-                    body.put("defaultModels", JSONObject().put("codex", model))
-                }
-                "opencode" -> {
-                    body.put("defaultOpenCodeModel", model)
-                    body.put("defaultModels", JSONObject().put("opencode", model))
-                }
-                "qoder" -> {
-                    body.put("defaultQoderModel", model)
-                    body.put("defaultModels", JSONObject().put("qoder", model))
-                }
-                "grok" -> {
-                    body.put("defaultGrokModel", model)
-                    body.put("defaultModels", JSONObject().put("grok", model))
-                }
-                "pi" -> {
-                    body.put("defaultPiModel", model)
-                    body.put("defaultModels", JSONObject().put("pi", model))
-                }
-                else -> {
-                    body.put("defaultModel", model)
-                    body.put("defaultModels", JSONObject().put("claude", model))
-                }
+            // 老服务端只认 provider 专属字段，新服务端读 defaultModels 映射；两边同时写。
+            val (legacyKey, canonicalProvider) = when (modelProvider) {
+                "codex" -> "defaultCodexModel" to "codex"
+                "opencode" -> "defaultOpenCodeModel" to "opencode"
+                "qoder" -> "defaultQoderModel" to "qoder"
+                "grok" -> "defaultGrokModel" to "grok"
+                "pi" -> "defaultPiModel" to "pi"
+                else -> "defaultModel" to "claude"
             }
+            body.put(legacyKey, model)
+            body.put("defaultModels", JSONObject().put(canonicalProvider, model))
         }
         if (thinkingEffort != null) body.put("defaultThinkingEffort", thinkingEffort)
         if (defaultProvider != null) body.put("defaultProvider", defaultProvider)
@@ -550,23 +518,19 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
     override suspend fun listWorkspaces(): List<Workspace> =
         Workspace.parseList(requestArray("GET", "/api/workspaces"))
 
-    override suspend fun createWorkspace(name: String, cwd: String): Workspace {
-        val created = Workspace.parse(
+    override suspend fun createWorkspace(name: String, cwd: String): Workspace =
+        Workspace.parse(
             requestObject(
                 "POST",
                 "/api/workspaces",
                 JSONObject().put("name", name).put("cwd", cwd),
             ),
         ) ?: throw WandApiException(500, "创建项目响应无效。")
-        return created
-    }
 
-    override suspend fun workspaceWorktreeOverview(workspaceId: String): WorkspaceWorktreeOverview {
-        val parsed = WorkspaceWorktreeOverview.parse(
+    override suspend fun workspaceWorktreeOverview(workspaceId: String): WorkspaceWorktreeOverview =
+        WorkspaceWorktreeOverview.parse(
             requestObject("GET", "/api/workspaces/${encode(workspaceId)}/worktrees"),
         ) ?: throw WandApiException(500, "Worktree 概览响应无效。")
-        return parsed
-    }
 
     override suspend fun startWorktreeMergeAgent(
         workspace: Workspace,

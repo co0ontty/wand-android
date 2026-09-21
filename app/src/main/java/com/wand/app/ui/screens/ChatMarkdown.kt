@@ -465,6 +465,19 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
     val uriHandler = LocalUriHandler.current
     var pendingExternalLink by remember { mutableStateOf<String?>(null) }
     var serverFilePreview by remember { mutableStateOf<String?>(null) }
+    // 未识别的服务端文件（图片/文本以外）统一走「先下载再交给系统打开」这一条路。
+    fun openServerFile(path: String) {
+        scope.launch {
+            runCatching { WandServerFileLink.downloadAndOpen(context, baseUrl, path) }
+                .onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        "文件下载失败：${error.message ?: "未知错误"}",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+        }
+    }
     // 字符级解析循环不便宜；重组但文本未变时直接复用上一次的 AnnotatedString。
     // 流式输出期间每个 chunk 只在文本真正变化时重建一次，而不是每次重组都重建。
     val annotated = remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler) {
@@ -543,18 +556,8 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                                                 // 图片 / 文本类：应用内预览，不落盘、不跳出去。
                                                 serverFilePreview = serverPath
                                             } else {
-                                                // 未知二进制类型：保留下载 + 外部打开兑底。
-                                                scope.launch {
-                                                    runCatching {
-                                                        WandServerFileLink.downloadAndOpen(context, baseUrl, serverPath)
-                                                    }.onFailure { error ->
-                                                        Toast.makeText(
-                                                            context,
-                                                            "文件下载失败：${error.message ?: "未知错误"}",
-                                                            Toast.LENGTH_LONG,
-                                                        ).show()
-                                                    }
-                                                }
+                                                // 未知二进制类型：保留下载 + 外部打开兜底。
+                                                openServerFile(serverPath)
                                             }
                                         } else {
                                             // 外部链接不直接跳浏览器：先确认，避免误触离开会话。
@@ -633,16 +636,7 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
                 onDismiss = { serverFilePreview = null },
                 onOpenExternally = {
                     serverFilePreview = null
-                    scope.launch {
-                        runCatching { WandServerFileLink.downloadAndOpen(context, baseUrl, previewPath) }
-                            .onFailure { error ->
-                                Toast.makeText(
-                                    context,
-                                    "文件下载失败：${error.message ?: "未知错误"}",
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                            }
-                    }
+                    openServerFile(previewPath)
                 },
             )
         }

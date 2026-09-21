@@ -27,6 +27,16 @@ internal inline fun <T> JSONArray.parseEach(block: (JSONObject) -> T?): List<T> 
     return out
 }
 
+/** 逐项容错版：单项形状不认识（服务端新增变体）时跳过该项，不拖垮整个列表。 */
+internal inline fun <T> JSONArray.parseEachSafely(block: (JSONObject) -> T?): List<T> =
+    parseEach { obj ->
+        try {
+            block(obj)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
 internal fun JSONObject.str(key: String): String? =
     if (has(key) && !isNull(key)) optString(key) else null
 
@@ -40,8 +50,10 @@ internal fun JSONObject.obj(key: String): JSONObject? = optJSONObject(key)
 
 internal fun JSONObject.arr(key: String): JSONArray? = optJSONArray(key)
 
-internal fun JSONArray.nonEmptyStrings(): List<String> =
-    (0 until length()).mapNotNull { optString(it).takeIf { value -> value.isNotEmpty() } }
+internal fun JSONArray.stringItems(ignoreBlank: Boolean = false): List<String> =
+    (0 until length()).mapNotNull { index ->
+        optString(index).takeIf { if (ignoreBlank) it.isNotBlank() else it.isNotEmpty() }
+    }
 
 /**
  * 读取 tool_use input 里的数组字段，容忍服务端把数组拍成 JSON 字符串。
@@ -136,9 +148,10 @@ data class SemanticTaskItem(
 @Immutable
 sealed class ToolUseSemantic {
     @Immutable
-data class QuestionRequest(val questions: List<SemanticQuestion>) : ToolUseSemantic()
+    data class QuestionRequest(val questions: List<SemanticQuestion>) : ToolUseSemantic()
+
     @Immutable
-data class TaskList(val items: List<SemanticTaskItem>) : ToolUseSemantic()
+    data class TaskList(val items: List<SemanticTaskItem>) : ToolUseSemantic()
 
     companion object {
         fun parse(o: JSONObject?): ToolUseSemantic? {
@@ -182,11 +195,13 @@ data class TaskList(val items: List<SemanticTaskItem>) : ToolUseSemantic()
 @Immutable
 sealed class ContentBlock {
     @Immutable
-data class Text(val text: String, val subagent: SubagentMeta?) : ContentBlock()
+    data class Text(val text: String, val subagent: SubagentMeta?) : ContentBlock()
+
     @Immutable
-data class Thinking(val thinking: String, val subagent: SubagentMeta?) : ContentBlock()
+    data class Thinking(val thinking: String, val subagent: SubagentMeta?) : ContentBlock()
+
     @Immutable
-data class ToolUse(
+    data class ToolUse(
         val id: String,
         val name: String,
         val description: String?,
@@ -194,17 +209,19 @@ data class ToolUse(
         val subagent: SubagentMeta?,
         val semantic: ToolUseSemantic? = null,
     ) : ContentBlock()
+
     @Immutable
-data class ToolResult(
+    data class ToolResult(
         val toolUseId: String,
         val text: String,
         val isError: Boolean,
         val truncated: Boolean,
         val subagent: SubagentMeta?,
     ) : ContentBlock()
+
     /** 协议升级兜底：保留类型与原始载荷，UI 可明确提示而不是整块消失。 */
     @Immutable
-data class Unknown(val type: String, val payload: String) : ContentBlock()
+    data class Unknown(val type: String, val payload: String) : ContentBlock()
 
     companion object {
         fun parse(o: JSONObject): ContentBlock {
@@ -288,9 +305,7 @@ data class ConversationTurn(
     companion object {
         fun parse(o: JSONObject): ConversationTurn {
             // 逐块容错：单个块解析失败不拖垮整条消息。
-            val blocks = o.arr("content")?.parseEach {
-                try { ContentBlock.parse(it) } catch (_: Exception) { null }
-            } ?: emptyList()
+            val blocks = o.arr("content")?.parseEachSafely { ContentBlock.parse(it) } ?: emptyList()
             return ConversationTurn(
                 role = o.str("role") ?: "assistant",
                 content = blocks,
@@ -301,7 +316,7 @@ data class ConversationTurn(
         }
 
         fun parseList(arr: JSONArray?): List<ConversationTurn>? =
-            arr?.parseEach { try { parse(it) } catch (_: Exception) { null } }
+            arr?.parseEachSafely { parse(it) }
     }
 }
 
@@ -485,7 +500,7 @@ data class SessionSnapshot(
             messages = ConversationTurn.parseList(o.arr("messages")),
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
-            queuedMessages = o.arr("queuedMessages")?.nonEmptyStrings(),
+            queuedMessages = o.arr("queuedMessages")?.stringItems(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
             permissionBlocked = o.bool("permissionBlocked"),
@@ -501,7 +516,7 @@ data class SessionSnapshot(
         )
 
         fun parseList(arr: JSONArray): List<SessionSnapshot> =
-            arr.parseEach { try { parse(it) } catch (_: Exception) { null } }
+            arr.parseEachSafely { parse(it) }
     }
 }
 
@@ -812,7 +827,7 @@ internal data class WsData(
             messages = ConversationTurn.parseList(o.arr("messages")),
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
-            queuedMessages = o.arr("queuedMessages")?.nonEmptyStrings(),
+            queuedMessages = o.arr("queuedMessages")?.stringItems(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
             permissionBlocked = o.bool("permissionBlocked"),
@@ -821,12 +836,8 @@ internal data class WsData(
             providerCliExitCode = o.int("providerCliExitCode"),
             workspaceId = o.str("workspaceId")?.takeIf { it.isNotEmpty() },
             workspaceTaskId = o.str("workspaceTaskId")?.takeIf { it.isNotEmpty() },
-            lastMessage = o.obj("lastMessage")?.let {
-                try {
-                    ConversationTurn.parse(it)
-                } catch (_: Exception) {
-                    null
-                }
+            lastMessage = o.obj("lastMessage")?.let { obj ->
+                runCatching { ConversationTurn.parse(obj) }.getOrNull()
             },
             messageCount = o.int("messageCount"),
             incremental = o.bool("incremental"),

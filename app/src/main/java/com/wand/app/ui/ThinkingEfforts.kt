@@ -16,6 +16,16 @@ private val LEGACY_THINKING_LEVELS = listOf(
     ThinkingEffortOption("max", "高", "高", "高（max）"),
 )
 
+/** codex reasoning effort → (Android 档位 id, 标签)；未列出的档位按原样回落为 codex:<effort>。 */
+private val CODEX_EFFORT_PRESETS = mapOf(
+    "low" to ("standard" to "低"),
+    "medium" to ("deep" to "中"),
+    "high" to ("codex:high" to "高"),
+    "xhigh" to ("max" to "超高"),
+    "max" to ("codex:max" to "极高"),
+    "ultra" to ("codex:ultra" to "极限"),
+)
+
 fun thinkingEffortOptions(
     provider: String,
     selectedModel: String?,
@@ -31,21 +41,7 @@ fun thinkingEffortOptions(
     if (levels.isEmpty()) return LEGACY_THINKING_LEVELS
     return listOf(ThinkingEffortOption("off", "自动", "自", "自动（模型默认）")) + levels.mapNotNull { level ->
         val effort = level.effort.lowercase().takeIf { it.isNotBlank() } ?: return@mapNotNull null
-        val id = when (effort) {
-            "low" -> "standard"
-            "medium" -> "deep"
-            "xhigh" -> "max"
-            else -> "codex:$effort"
-        }
-        val label = when (effort) {
-            "low" -> "低"
-            "medium" -> "中"
-            "high" -> "高"
-            "xhigh" -> "超高"
-            "max" -> "极高"
-            "ultra" -> "极限"
-            else -> effort
-        }
+        val (id, label) = CODEX_EFFORT_PRESETS[effort] ?: ("codex:$effort" to effort)
         ThinkingEffortOption(id, label, label, "$label（$effort）")
     }
 }

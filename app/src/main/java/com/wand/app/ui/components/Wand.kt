@@ -96,13 +96,38 @@ fun Modifier.clickableWithoutRipple(
         )
 }
 
+/** 状态色调 → 品牌语义色。 */
 @Composable
-private fun statusColor(status: String): Color = when (wandStatusPresentation(status).tone) {
+private fun WandStatusTone.statusColor(): Color = when (this) {
     WandStatusTone.Success -> WandColors.success
     WandStatusTone.Permission -> WandColors.permission
     WandStatusTone.Danger -> WandColors.danger
     WandStatusTone.Warning -> WandColors.warning
     WandStatusTone.Neutral -> WandColors.textMuted
+}
+
+/** 呼吸图层（running / thinking / 等待输入）；不需要呼吸的色调不挂 graphicsLayer。 */
+@Composable
+private fun Modifier.statusBreath(): Modifier {
+    if (reduceMotionEnabled()) return this
+    val transition = rememberInfiniteTransition(label = "statusDot")
+    val alpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = WandMotion.breathAlphaMin,
+        animationSpec = WandMotion.breath(),
+        label = "dotAlpha",
+    )
+    val scale by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = WandMotion.breathScaleMax,
+        animationSpec = WandMotion.breath(),
+        label = "dotScale",
+    )
+    return graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+        this.alpha = alpha
+    }
 }
 
 /**
@@ -113,38 +138,30 @@ private fun statusColor(status: String): Color = when (wandStatusPresentation(st
  */
 @Composable
 fun StatusDot(status: String, modifier: Modifier = Modifier) {
-    val color = statusColor(status)
-    if (wandStatusPresentation(status).breathing && !reduceMotionEnabled()) {
-        val transition = rememberInfiniteTransition(label = "statusDot")
-        val alpha by transition.animateFloat(
-            initialValue = 1f,
-            targetValue = WandMotion.breathAlphaMin,
-            animationSpec = WandMotion.breath(),
-            label = "dotAlpha",
-        )
-        val scale by transition.animateFloat(
-            initialValue = 1f,
-            targetValue = WandMotion.breathScaleMax,
-            animationSpec = WandMotion.breath(),
-            label = "dotScale",
-        )
-        Box(
-            Modifier
-                .size(8.dp)
-                .then(modifier)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    this.alpha = alpha
-                }
-                .background(color, CircleShape),
-        )
-    } else {
-        Box(
-            Modifier
-                .size(8.dp)
-                .then(modifier)
-                .background(color, CircleShape),
+    val presentation = wandStatusPresentation(status)
+    Box(
+        Modifier
+            .size(8.dp)
+            .then(modifier)
+            .then(if (presentation.breathing) Modifier.statusBreath() else Modifier)
+            .background(presentation.tone.statusColor(), CircleShape),
+    )
+}
+
+/** 全屏居中占位骨架：LoadingState / ErrorState / EmptyState 共用。 */
+@Composable
+private fun CenteredPlaceholder(
+    modifier: Modifier,
+    spacing: Dp,
+    horizontalPadding: Dp = 32.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.padding(horizontal = horizontalPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(spacing),
+            content = content,
         )
     }
 }
@@ -152,45 +169,34 @@ fun StatusDot(status: String, modifier: Modifier = Modifier) {
 /** 全屏居中加载占位。 */
 @Composable
 fun LoadingState(modifier: Modifier = Modifier, text: String = "加载中…") {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(28.dp),
-                color = WandColors.brand,
-                strokeWidth = 3.dp,
-            )
-            Text(text, style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
-        }
+    CenteredPlaceholder(modifier = modifier, spacing = 12.dp, horizontalPadding = 0.dp) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(28.dp),
+            color = WandColors.brand,
+            strokeWidth = 3.dp,
+        )
+        Text(text, style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
     }
 }
 
 /** 全屏居中错误占位，可带重试按钮。 */
 @Composable
 fun ErrorState(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(horizontal = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Icon(
-                WandIcons.error,
-                contentDescription = null,
-                tint = WandColors.danger,
-                modifier = Modifier.size(40.dp),
-            )
-            Text(
-                message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textSecondary,
-                textAlign = TextAlign.Center,
-            )
-            if (onRetry != null) {
-                WandButton(label = "重试", onClick = onRetry)
-            }
+    CenteredPlaceholder(modifier = modifier, spacing = 12.dp) {
+        Icon(
+            WandIcons.error,
+            contentDescription = null,
+            tint = WandColors.danger,
+            modifier = Modifier.size(40.dp),
+        )
+        Text(
+            message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = WandColors.textSecondary,
+            textAlign = TextAlign.Center,
+        )
+        if (onRetry != null) {
+            WandButton(label = "重试", onClick = onRetry)
         }
     }
 }
@@ -205,41 +211,35 @@ fun EmptyState(
     actionText: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(horizontal = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = WandColors.textMuted.copy(alpha = 0.7f),
-                modifier = Modifier
-                    .size(48.dp)
-                    .padding(bottom = 4.dp),
-            )
+    CenteredPlaceholder(modifier = modifier, spacing = 8.dp) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = WandColors.textMuted.copy(alpha = 0.7f),
+            modifier = Modifier
+                .size(48.dp)
+                .padding(bottom = 4.dp),
+        )
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            color = WandColors.textSecondary,
+            textAlign = TextAlign.Center,
+        )
+        if (subtitle != null) {
             Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                color = WandColors.textSecondary,
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textMuted,
                 textAlign = TextAlign.Center,
             )
-            if (subtitle != null) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WandColors.textMuted,
-                    textAlign = TextAlign.Center,
-                )
-            }
-            if (actionText != null && onAction != null) {
-                WandButton(
-                    label = actionText,
-                    onClick = onAction,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
+        }
+        if (actionText != null && onAction != null) {
+            WandButton(
+                label = actionText,
+                onClick = onAction,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
     }
 }
@@ -333,6 +333,12 @@ fun WandCard(
     )
     val scale = 1f - 0.012f * pressDepth
     val (keyShadow, ambientShadow) = cardShadowColors()
+    val cardClick = onClick
+    val pressModifier = if (cardClick != null) {
+        Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = cardClick)
+    } else {
+        Modifier
+    }
 
     if (containerColor != null) {
         // 语义色覆盖：保留纯色底配方（semantic soft 底依赖确定底色，不叠表面微光以免冲淡语义色），
@@ -344,11 +350,7 @@ fun WandCard(
                 .layeredShadow(shape, 1.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
                 .clip(shape)
                 .background(bg)
-                .then(
-                    if (onClick != null) {
-                        Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
-                    } else Modifier
-                )
+                .then(if (onClick != null) pressModifier else Modifier)
                 .padding(contentPadding),
             content = content,
         )
@@ -367,11 +369,7 @@ fun WandCard(
             .clip(shape)
             .background(bg)
             .then(if (selected) Modifier.border(1.5.dp, stroke, shape) else Modifier)
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
-                } else Modifier
-            )
+            .then(if (onClick != null) pressModifier else Modifier)
             .padding(contentPadding),
         content = content,
     )

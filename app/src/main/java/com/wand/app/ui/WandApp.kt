@@ -2,6 +2,7 @@ package com.wand.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.snap
@@ -220,6 +221,33 @@ internal fun wideListPaneWidth(windowWidth: Dp): Dp =
             .coerceIn(ExpandedSidebarMinWidth, ExpandedSidebarMaxWidth)
     }
 
+/** 同一任务内切换会话时的横向滑动；不是同任务内切换时返回 null 由调用方挑其它转场。 */
+private fun taskSessionTransition(
+    initial: Screen,
+    target: Screen,
+    siblings: List<WorkspaceSessionSummary>,
+): ContentTransform? {
+    val direction = taskSessionTransitionDirection(initial, target, siblings) ?: return null
+    val sign = if (direction > 0) 1 else -1
+    return (slideInHorizontally(WandMotion.tweenNormal()) { sign * it / 3 } +
+        fadeIn(WandMotion.tweenNormal())) togetherWith
+        (slideOutHorizontally(WandMotion.tweenNormal()) { -sign * it / 3 } +
+            fadeOut(WandMotion.tweenFast()))
+}
+
+/** 栈内前进 / 后退的横向滑动。 */
+private fun stackNavTransition(forward: Boolean): ContentTransform {
+    val sign = if (forward) 1 else -1
+    return (slideInHorizontally(WandMotion.tweenEnter()) { sign * it / 5 } +
+        fadeIn(WandMotion.tweenEnter())) togetherWith
+        (slideOutHorizontally(WandMotion.tweenExit()) { -sign * it / 8 } +
+            fadeOut(WandMotion.tweenExit()))
+}
+
+/** 无方向感的固定淡入淡出。 */
+private fun fadeNavTransition(): ContentTransform =
+    fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
+
 @Composable
 private fun AuthProgress() {
     Column(
@@ -375,25 +403,7 @@ private fun ReadyContent(
             openDetail(session.detailScreen())
         }
         val openTaskSession: (TaskSessionRoute) -> Unit = { route ->
-            openDetail(
-                if (route.structured) {
-                    Screen.Chat(
-                        route.sessionId,
-                        route.workspaceName,
-                        route.taskName,
-                        route.workspaceId,
-                        route.taskId,
-                    )
-                } else {
-                    Screen.PtyTerminal(
-                        route.sessionId,
-                        route.workspaceName,
-                        route.taskName,
-                        route.workspaceId,
-                        route.taskId,
-                    )
-                },
-            )
+            openDetail(route.toScreen())
         }
         val openSettings: () -> Unit = {
             if (nav.current !is Screen.Settings) {
@@ -467,6 +477,15 @@ private fun SessionDetailScreen(
     onOpenMissionSession: (sessionId: String, screen: Screen.Missions) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    // 结构化聊天页与 PTY 终端页共用同一套「切换 / 删除任务内会话」回调。
+    val onCreateTaskSession: (SessionSnapshot) -> Unit = { session ->
+        scope.launch { taskState.refreshAfterMutation() }
+        switchSession(nav, session, screen)
+    }
+    val onDeleteTaskSession: (WorkspaceSessionSummary) -> Unit = { session ->
+        scope.launch { taskState.refreshAfterMutation() }
+        nav.closeSession(session.id)
+    }
     when (screen) {
         is Screen.SessionList -> Unit
         is Screen.Chat -> ChatScreen(
@@ -478,15 +497,9 @@ private fun SessionDetailScreen(
             taskId = screen.taskId,
             siblingSessions = siblingSessionsFor(taskState.groups, screen.taskId, screen.sessionId),
             onSwitchSession = { session -> switchSession(nav, session, screen) },
-            onCreateTaskSession = { session ->
-                scope.launch { taskState.refreshAfterMutation() }
-                switchSession(nav, session, screen)
-            },
+            onCreateTaskSession = onCreateTaskSession,
             isHapticEnabled = actions.settings.isHapticEnabled,
-            onDeleteTaskSession = { session ->
-                scope.launch { taskState.refreshAfterMutation() }
-                nav.closeSession(session.id)
-            },
+            onDeleteTaskSession = onDeleteTaskSession,
             drafts = sessionDrafts,
             showBack = showBack,
             onBack = { nav.pop() },
@@ -500,14 +513,8 @@ private fun SessionDetailScreen(
             taskId = screen.taskId,
             siblingSessions = siblingSessionsFor(taskState.groups, screen.taskId, screen.sessionId),
             onSwitchSession = { session -> switchSession(nav, session, screen) },
-            onCreateTaskSession = { session ->
-                scope.launch { taskState.refreshAfterMutation() }
-                switchSession(nav, session, screen)
-            },
-            onDeleteTaskSession = { session ->
-                scope.launch { taskState.refreshAfterMutation() }
-                nav.closeSession(session.id)
-            },
+            onCreateTaskSession = onCreateTaskSession,
+            onDeleteTaskSession = onDeleteTaskSession,
             isHapticEnabled = actions.settings.isHapticEnabled,
             showBack = showBack,
             onBack = { nav.pop() },
@@ -530,28 +537,12 @@ private fun SessionDetailScreen(
                 showBack = showBack,
                 onBack = { nav.pop() },
                 onTaskGone = { nav.pop() },
-                onOpenSession = { route ->
-                    nav.push(
-                        if (route.structured) Screen.Chat(route.sessionId,
-                            workspaceId = route.workspaceId, taskId = route.taskId,
-                            workspaceName = route.workspaceName, taskName = route.taskName)
-                        else Screen.PtyTerminal(route.sessionId,
-                            workspaceId = route.workspaceId, taskId = route.taskId,
-                            workspaceName = route.workspaceName, taskName = route.taskName),
-                    )
-                },
+                onOpenSession = { route -> nav.push(route.toScreen()) },
             )
         } else {
             TaskBoardScreen(
                 api = api,
-                onOpenBoundSession = { route ->
-                    nav.push(if (route.structured) Screen.Chat(route.sessionId,
-                        workspaceId = route.workspaceId, taskId = route.taskId,
-                        workspaceName = route.workspaceName, taskName = route.taskName)
-                    else Screen.PtyTerminal(route.sessionId,
-                        workspaceId = route.workspaceId, taskId = route.taskId,
-                        workspaceName = route.workspaceName, taskName = route.taskName))
-                },
+                onOpenBoundSession = { route -> nav.push(route.toScreen()) },
                 onBack = { nav.pop() },
                 onOpenSession = { sessionId, isStructured ->
                     nav.push(
@@ -636,47 +627,21 @@ private fun SinglePaneContent(
         modifier = Modifier.fillMaxSize(),
         contentKey = { it.screen.transitionKey() },
         transitionSpec = {
-            val taskSessionDirection = taskSessionTransitionDirection(
-                initial = initialState.screen,
-                target = targetState.screen,
-                sessions = siblingSessionsFor(
-                    taskState.groups,
-                    initialState.screen.taskIdOrNull(),
-                    initialState.screen.sessionIdOrNull(),
-                ),
-            )
             val spec = if (reduceMotion) {
                 fadeIn(snap()) togetherWith fadeOut(snap())
-            } else if (taskSessionDirection != null) {
-                val forward = taskSessionDirection > 0
-                if (forward) {
-                    (slideInHorizontally(WandMotion.tweenNormal()) { it / 3 } +
-                        fadeIn(WandMotion.tweenNormal())) togetherWith
-                        (slideOutHorizontally(WandMotion.tweenNormal()) { -it / 3 } +
-                            fadeOut(WandMotion.tweenFast()))
-                } else {
-                    (slideInHorizontally(WandMotion.tweenNormal()) { -it / 3 } +
-                        fadeIn(WandMotion.tweenNormal())) togetherWith
-                        (slideOutHorizontally(WandMotion.tweenNormal()) { it / 3 } +
-                            fadeOut(WandMotion.tweenFast()))
-                }
-            } else if (
-                usesHeavyDetailTransition(initialState.screen) ||
-                usesHeavyDetailTransition(targetState.screen)
-            ) {
-                fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
             } else {
-                val forward = targetState.depth >= initialState.depth
-                if (forward) {
-                    (slideInHorizontally(WandMotion.tweenEnter()) { it / 5 } +
-                        fadeIn(WandMotion.tweenEnter())) togetherWith
-                        (slideOutHorizontally(WandMotion.tweenExit()) { -it / 8 } +
-                            fadeOut(WandMotion.tweenExit()))
-                } else {
-                    (slideInHorizontally(WandMotion.tweenEnter()) { -it / 5 } +
-                        fadeIn(WandMotion.tweenEnter())) togetherWith
-                        (slideOutHorizontally(WandMotion.tweenExit()) { it / 8 } +
-                            fadeOut(WandMotion.tweenExit()))
+                taskSessionTransition(
+                    initial = initialState.screen,
+                    target = targetState.screen,
+                    siblings = siblingSessionsFor(
+                        taskState.groups,
+                        initialState.screen.taskIdOrNull(),
+                        initialState.screen.sessionIdOrNull(),
+                    ),
+                ) ?: when {
+                    usesHeavyDetailTransition(initialState.screen) ||
+                        usesHeavyDetailTransition(targetState.screen) -> fadeNavTransition()
+                    else -> stackNavTransition(targetState.depth >= initialState.depth)
                 }
             }
             spec.using(SizeTransform(clip = false) { _, _ -> snap() })
@@ -852,32 +817,18 @@ private fun WideReadyContent(
                 modifier = Modifier.fillMaxSize(),
                 contentKey = { it.transitionKey() },
                 transitionSpec = {
-                    val taskSessionDirection = taskSessionTransitionDirection(
-                        initial = initialState,
-                        target = targetState,
-                        sessions = siblingSessionsFor(
-                            taskState.groups,
-                            initialState.taskIdOrNull(),
-                            initialState.sessionIdOrNull(),
-                        ),
-                    )
                     val spec = if (reduceMotion) {
                         fadeIn(snap()) togetherWith fadeOut(snap())
-                    } else if (taskSessionDirection != null) {
-                        val forward = taskSessionDirection > 0
-                        if (forward) {
-                            (slideInHorizontally(WandMotion.tweenNormal()) { it / 3 } +
-                                fadeIn(WandMotion.tweenNormal())) togetherWith
-                                (slideOutHorizontally(WandMotion.tweenNormal()) { -it / 3 } +
-                                    fadeOut(WandMotion.tweenFast()))
-                        } else {
-                            (slideInHorizontally(WandMotion.tweenNormal()) { -it / 3 } +
-                                fadeIn(WandMotion.tweenNormal())) togetherWith
-                                (slideOutHorizontally(WandMotion.tweenNormal()) { it / 3 } +
-                                    fadeOut(WandMotion.tweenFast()))
-                        }
                     } else {
-                        fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
+                        taskSessionTransition(
+                            initial = initialState,
+                            target = targetState,
+                            siblings = siblingSessionsFor(
+                                taskState.groups,
+                                initialState.taskIdOrNull(),
+                                initialState.sessionIdOrNull(),
+                            ),
+                        ) ?: fadeNavTransition()
                     }
                     spec.using(SizeTransform(clip = false) { _, _ -> snap() })
                 },
@@ -1268,12 +1219,30 @@ private fun Screen.transitionKey(): String = when (this) {
     is Screen.WorkspaceTask -> "workspace-task:$taskId"
 }
 
+/** Chat / PTY 路由：同一份任务上下文下按会话形态选页面。 */
+private fun sessionScreen(
+    sessionId: String,
+    structured: Boolean,
+    workspaceName: String? = null,
+    taskName: String? = null,
+    workspaceId: String? = null,
+    taskId: String? = null,
+): Screen = if (structured) {
+    Screen.Chat(sessionId, workspaceName, taskName, workspaceId, taskId)
+} else {
+    Screen.PtyTerminal(sessionId, workspaceName, taskName, workspaceId, taskId)
+}
+
+private fun TaskSessionRoute.toScreen(): Screen =
+    sessionScreen(sessionId, structured, workspaceName, taskName, workspaceId, taskId)
+
 private fun SessionSnapshot.detailScreen(): Screen =
-    if (isStructured) {
-        Screen.Chat(id, workspaceId = workspaceId, taskId = workspaceTaskId)
-    } else {
-        Screen.PtyTerminal(id, workspaceId = workspaceId, taskId = workspaceTaskId)
-    }
+    sessionScreen(
+        sessionId = id,
+        structured = isStructured,
+        workspaceId = workspaceId,
+        taskId = workspaceTaskId,
+    )
 
 /**
  * 「其他终端」快捷切换（对齐 iOS sessionStrip）：按 sessionKind 路由到 Chat / PTY 页，
@@ -1311,23 +1280,14 @@ private fun switchSession(
         else -> return
     }
     nav.replaceTop(
-        if (isStructured) {
-            Screen.Chat(
-                sessionId,
-                context.workspaceName,
-                context.taskName,
-                context.workspaceId,
-                context.taskId,
-            )
-        } else {
-            Screen.PtyTerminal(
-                sessionId,
-                context.workspaceName,
-                context.taskName,
-                context.workspaceId,
-                context.taskId,
-            )
-        },
+        sessionScreen(
+            sessionId = sessionId,
+            structured = isStructured,
+            workspaceName = context.workspaceName,
+            taskName = context.taskName,
+            workspaceId = context.workspaceId,
+            taskId = context.taskId,
+        ),
     )
 }
 

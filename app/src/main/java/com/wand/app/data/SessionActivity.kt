@@ -51,9 +51,11 @@ fun effectiveSessionStatus(
         return if (status == "thinking") "thinking" else "running"
     }
     val normalized = status?.trim().orEmpty()
-    if (normalized == "running" || normalized == "initializing" || normalized == "thinking") return "idle"
-    return normalized.ifEmpty { "idle" }
+    return if (normalized.isEmpty() || normalized in BUSY_STATUSES) "idle" else normalized
 }
+
+/** 没有实时活动时仍需归一成 idle 的状态值。 */
+private val BUSY_STATUSES = setOf("running", "initializing", "thinking")
 
 fun SessionSnapshot.activityStatus(): String = effectiveSessionStatus(
     sessionKind = sessionKind,

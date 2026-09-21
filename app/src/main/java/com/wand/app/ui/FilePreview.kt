@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,12 +65,17 @@ object WandTextPreview {
     /** 预览拉取上限：超过即截断，避免把终端日志整个读进内存。 */
     const val MAX_BYTES = 512 * 1024
 
+    /** 无扩展名但按文件名就能认出是文本的常见条目。 */
+    private val BARE_TEXT_NAMES = setOf(
+        "dockerfile", "makefile", "gemfile", "rakefile", "license", "readme",
+    )
+
     /** 是否值得做应用内文本预览（按扩展名，大小写不敏感）。 */
     fun isPreviewableText(path: String?): Boolean {
         if (path.isNullOrBlank()) return false
         val clean = path.trim().substringBefore('?').substringBefore('#')
         val name = clean.substringAfterLast('/').lowercase()
-        if (name in setOf("dockerfile", "makefile", "gemfile", "rakefile", "license", "readme")) return true
+        if (name in BARE_TEXT_NAMES) return true
         val extension = name.substringAfterLast('.', "")
         return extension in TEXT_EXTENSIONS
     }
@@ -141,7 +147,7 @@ fun TextPreviewDialog(
                         .background(WandColors.surfaceSoft)
                         .clickableWithoutRipple { onDismiss() },
                 ) {
-                    androidx.compose.material3.Icon(
+                    Icon(
                         WandIcons.close,
                         contentDescription = "关闭",
                         tint = WandColors.textSecondary,

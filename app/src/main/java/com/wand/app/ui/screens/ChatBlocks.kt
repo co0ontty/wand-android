@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -2340,6 +2341,24 @@ private fun toolSourceLabel(name: String): String? = when {
  * 工具调用卡片（对齐 iOS ToolUseCard）：34dp 彩色图标框 + 中文工具名 + 参数摘要 +
  * 状态胶囊（处理中/完成/失败/待执行）+ 可折叠结果区。
  */
+/** 工具卡标题：普通形态与 todo 折叠形态共用同一套字号 / 配色（占满 Row 剩余宽度）。 */
+@Composable
+private fun RowScope.ToolCardTitle(
+    name: String,
+    isError: Boolean,
+    foldCompact: Boolean,
+) {
+    Text(
+        toolLabel(name),
+        fontSize = if (foldCompact) 11.sp else 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = if (isError) WandColors.danger else if (foldCompact) WandColors.textMuted else WandColors.textPrimary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f, fill = false),
+    )
+}
+
 @Composable
 fun ToolCard(
     use: ContentBlock.ToolUse,
@@ -2415,15 +2434,7 @@ fun ToolCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text(
-                        toolLabel(use.name),
-                        fontSize = if (foldCompact) 11.sp else 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isError) WandColors.danger else if (foldCompact) WandColors.textMuted else WandColors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
+                    ToolCardTitle(name = use.name, isError = isError, foldCompact = foldCompact)
                     if (summary.isNotEmpty()) {
                         Text(
                             "· $summary",
@@ -2445,15 +2456,7 @@ fun ToolCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            toolLabel(use.name),
-                            fontSize = if (foldCompact) 11.sp else 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isError) WandColors.danger else if (foldCompact) WandColors.textMuted else WandColors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
+                        ToolCardTitle(name = use.name, isError = isError, foldCompact = foldCompact)
                         sourceLabel?.let { source ->
                             Text(
                                 source,
@@ -2877,6 +2880,8 @@ private fun ToolResultBody(
     var truncated by remember(result.toolUseId, result.truncated) { mutableStateOf(result.truncated) }
     var loading by remember(result.toolUseId) { mutableStateOf(false) }
     var loadError by remember(result.toolUseId) { mutableStateOf<String?>(null) }
+    // 同一份错误语义在标签、配色与兜底文案里反复用到，先取出来。
+    val isError = result.isError
     val formatted = remember(fullText) { prettyStructuredText(fullText) }
     val displayLimit = 24_000
     val displayText = remember(formatted) {
@@ -2885,10 +2890,10 @@ private fun ToolResultBody(
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
         if (showSectionLabel) {
             Text(
-                if (result.isError) "错误输出" else "工具输出",
+                if (isError) "错误输出" else "工具输出",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = if (result.isError) WandColors.danger else WandColors.textMuted,
+                color = if (isError) WandColors.danger else WandColors.textMuted,
             )
         }
         if (displayText.isNotEmpty()) {
@@ -2897,7 +2902,7 @@ private fun ToolResultBody(
                     .fillMaxWidth()
                     .clip(WandShapes.sm)
                     .background(
-                        if (result.isError) WandColors.dangerSoft
+                        if (isError) WandColors.dangerSoft
                         else WandColors.textPrimary.copy(alpha = 0.045f)
                     )
                     .padding(10.dp),
@@ -2908,7 +2913,7 @@ private fun ToolResultBody(
                         fontSize = 11.sp,
                         lineHeight = 17.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = if (result.isError) WandColors.danger else WandColors.textPrimary,
+                        color = if (isError) WandColors.danger else WandColors.textPrimary,
                     )
                 }
             }
@@ -2959,9 +2964,9 @@ private fun ToolResultBody(
             }
         } else if (displayText.isEmpty()) {
             Text(
-                if (result.isError) "工具执行失败，未返回错误详情" else "工具已完成，没有文本输出",
+                if (isError) "工具执行失败，未返回错误详情" else "工具已完成，没有文本输出",
                 fontSize = 11.sp,
-                color = if (result.isError) WandColors.danger else WandColors.textMuted,
+                color = if (isError) WandColors.danger else WandColors.textMuted,
             )
         }
     }

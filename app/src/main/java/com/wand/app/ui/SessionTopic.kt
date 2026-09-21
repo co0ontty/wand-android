@@ -101,7 +101,7 @@ fun summarizeSessionTitleFromInput(
 ): String {
     val lines = input
         .splitToSequence('\n', '\r')
-        .map { collapseWhitespace(it.replace(Regex("^#+\\s*"), "")) }
+        .map { collapseWhitespace(it.replace(HEADING_PREFIX_REGEX, "")) }
         .filter { it.isNotEmpty() }
         .toList()
     val fallback = clipTitle(lines.firstOrNull().orEmpty())
@@ -120,8 +120,11 @@ fun sessionTopicBlocklist(
     workspaceName: String? = null,
     cwd: String? = null,
 ): List<String> = buildList {
-    collapseWhitespace(taskName.orEmpty()).takeIf { it.isNotEmpty() }?.let(::add)
-    collapseWhitespace(workspaceName.orEmpty()).takeIf { it.isNotEmpty() }?.let(::add)
+    fun addIfNamed(value: String?) {
+        collapseWhitespace(value.orEmpty()).takeIf { it.isNotEmpty() }?.let(::add)
+    }
+    addIfNamed(taskName)
+    addIfNamed(workspaceName)
     sessionCwdLeaf(cwd)?.let(::add)
 }.distinct()
 
@@ -132,17 +135,13 @@ fun sessionChromeTitle(
     blockedTitles: Collection<String> = emptyList(),
     fallback: String = "会话",
 ): String {
-    for (candidate in listOf(liveTitle, title)) {
-        val cleaned = collapseWhitespace(candidate.orEmpty())
-        if (cleaned.isNotEmpty() && !isGenericSessionTitle(cleaned, blockedTitles)) return cleaned
-    }
+    val candidates = listOf(liveTitle, title)
+        .map { collapseWhitespace(it.orEmpty()) }
+        .filter { it.isNotEmpty() }
+    candidates.firstOrNull { !isGenericSessionTitle(it, blockedTitles) }?.let { return it }
     val fromInput = summarizeSessionTitleFromInput(latestUserInput.orEmpty(), blockedTitles)
     if (fromInput.isNotEmpty() && !isGenericSessionTitle(fromInput, blockedTitles)) return fromInput
-    for (candidate in listOf(liveTitle, title)) {
-        val cleaned = collapseWhitespace(candidate.orEmpty())
-        if (cleaned.isNotEmpty()) return cleaned
-    }
-    return fallback
+    return candidates.firstOrNull() ?: fallback
 }
 
 fun latestUserInputText(messages: List<ConversationTurn>): String? {
@@ -167,6 +166,9 @@ fun applyProvisionalSessionTopic(
     return title
 }
 
+private val WHITESPACE_REGEX = Regex("\\s+")
+private val HEADING_PREFIX_REGEX = Regex("^#+\\s*")
+
 fun WorkspaceSessionSummary.withLiveTitle(): WorkspaceSessionSummary {
     val liveTitle = SessionTitleStore.titleOf(id)
     val liveBusy = SessionTitleStore.ptyBusyOf(id)
@@ -176,7 +178,7 @@ fun WorkspaceSessionSummary.withLiveTitle(): WorkspaceSessionSummary {
     return copy(title = nextTitle, ptyBusy = nextBusy)
 }
 
-private fun collapseWhitespace(value: String): String = value.replace(Regex("\\s+"), " ").trim()
+private fun collapseWhitespace(value: String): String = value.replace(WHITESPACE_REGEX, " ").trim()
 
 private fun clipTitle(value: String, maxLength: Int = SESSION_TITLE_MAX_LENGTH): String {
     if (value.length <= maxLength) return value

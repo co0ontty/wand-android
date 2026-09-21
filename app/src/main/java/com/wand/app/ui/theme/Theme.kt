@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.sp
  * - WandColors：亮/暗两套完整色板 + 语义色（屏幕代码统一从这里取色，禁止硬编码 Color(0x...)）
  * - WandMotion：统一动效时长 / 缓动 / 弹簧 / 呼吸动画规格
  * - WandShapes：统一圆角
- * 暖米色体系与 Web 端品牌对齐；旧字段（brand/textSecondary/textHint/border/danger/card/
+ * 暖米色体系与 Web 端品牌对齐；旧字段（brand/textSecondary/textHint/border/danger/
  * running/permission）保留兼容，指向新 token。
  */
 
@@ -75,7 +75,6 @@ private object LightTokens {
     val danger = Color(0xFFB24F45)
     val dangerSoft = Color(0xFFB24F45).copy(alpha = 0.14f)
     val permission = Color(0xFFC28A20)
-    val permissionSoft = Color(0xFFC28A20).copy(alpha = 0.12f)
     val info = Color(0xFF4A6FA5)
     val infoSoft = Color(0xFF4A6FA5).copy(alpha = 0.14f)
     val thinking = Color(0xFF6F6DA3)
@@ -106,7 +105,6 @@ private object DarkTokens {
     val danger = Color(0xFFE4887E)
     val dangerSoft = Color(0xFFE4887E).copy(alpha = 0.14f)
     val permission = Color(0xFFE6B75A)
-    val permissionSoft = Color(0xFFE6B75A).copy(alpha = 0.14f)
     val info = Color(0xFF8FB0DC)
     val infoSoft = Color(0xFF8FB0DC).copy(alpha = 0.14f)
     val thinking = Color(0xFFA8A5D4)
@@ -268,9 +266,6 @@ object WandColors {
     val permission: Color
         @Composable @ReadOnlyComposable get() = pick(LightTokens.permission, DarkTokens.permission)
 
-    val permissionSoft: Color
-        @Composable @ReadOnlyComposable get() = pick(LightTokens.permissionSoft, DarkTokens.permissionSoft)
-
     /** 信息（蓝，Subagent 标签用）。 */
     val info: Color
         @Composable @ReadOnlyComposable get() = pick(LightTokens.info, DarkTokens.info)
@@ -286,10 +281,6 @@ object WandColors {
         @Composable @ReadOnlyComposable get() = pick(LightTokens.thinkingSoft, DarkTokens.thinkingSoft)
 
     // —— 兼容旧字段 ——
-    /** 兼容旧字段：次级卡片底，等同 surfaceSoft。 */
-    val card: Color
-        @Composable @ReadOnlyComposable get() = surfaceSoft
-
     /** 兼容旧字段：运行中（绿），等同 success。 */
     val running: Color
         @Composable @ReadOnlyComposable get() = success
@@ -526,7 +517,6 @@ object WandSizes {
     val minTouchTarget = 48.dp
     val toolbarIcon = 21.dp
     val controlHeight = 50.dp
-    val divider = 0.5.dp
 }
 
 @Composable

@@ -1,13 +1,5 @@
 package com.wand.app.data
 
-private val allSessionModeIds = linkedSetOf(
-    "managed",
-    "full-access",
-    "auto-edit",
-    "default",
-    "native",
-)
-
 data class SessionModeOption(
     val id: String,
     val label: String,
@@ -21,6 +13,10 @@ val SESSION_MODE_OPTIONS = listOf(
     SessionModeOption("default", "标准", "逐步确认操作"),
     SessionModeOption("native", "原生", "原生结构化输出"),
 )
+
+/** 支持的模式全集；由上面这张表派生，不再维护第二份 id 列表。 */
+private val ALL_SESSION_MODE_IDS: Set<String> =
+    SESSION_MODE_OPTIONS.mapTo(linkedSetOf()) { it.id }
 
 fun sessionModeLabel(id: String): String =
     SESSION_MODE_OPTIONS.firstOrNull { it.id == id }?.label ?: "标准"
@@ -74,5 +70,5 @@ fun supportedSessionModeIds(provider: String?): Set<String> = when (provider) {
     "codex" -> setOf("full-access")
     "opencode", "grok", "pi" -> setOf("default", "full-access", "managed")
     "qoder" -> setOf("default", "full-access", "auto-edit", "managed")
-    else -> allSessionModeIds
+    else -> ALL_SESSION_MODE_IDS
 }

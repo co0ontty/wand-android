@@ -128,11 +128,7 @@ fun WorkspaceTaskScreen(
         workflow.loadTask(taskId)
         runCatching { api.serverConfig() }.getOrNull()?.let { config ->
             WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
-            selectedKind = if (config.defaultSessionKind == "pty") {
-                WorkspaceSessionKind.Pty
-            } else {
-                WorkspaceSessionKind.Structured
-            }
+            selectedKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
         }
     }
     // 离开页面时关闭 Sheet。
@@ -145,11 +141,7 @@ fun WorkspaceTaskScreen(
         scope.launch {
             runCatching { api.serverConfig() }.getOrNull()?.let { config ->
                 WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
-                selectedKind = if (config.defaultSessionKind == "pty") {
-                    WorkspaceSessionKind.Pty
-                } else {
-                    WorkspaceSessionKind.Structured
-                }
+                selectedKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
             }
             sheetState.show()
         }

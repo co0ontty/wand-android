@@ -52,6 +52,39 @@ val TerminalSpecialKeys = listOf(
     TerminalSpecialKey("space", "Space", "空格"),
 )
 
+// 下面三张表在 DefaultTerminalShortcuts 初始化时就会被读到，必须声明在它之前。
+
+/** 长按可重复发送的键（方向 / 删除 / 翻页）。 */
+private val REPEATABLE_KEYS = setOf(
+    "arrowLeft",
+    "arrowUp",
+    "arrowDown",
+    "arrowRight",
+    "backspace",
+    "delete",
+    "home",
+    "end",
+    "pageUp",
+    "pageDown",
+)
+
+// CSI 终键表：ESC [ <final>，带修饰键时为 ESC [ 1 ; <param> <final>。
+private val CSI_FINAL_KEYS = mapOf(
+    "arrowUp" to "A",
+    "arrowDown" to "B",
+    "arrowRight" to "C",
+    "arrowLeft" to "D",
+    "home" to "H",
+    "end" to "F",
+)
+
+// CSI 波浪号表：ESC [ <number> ~。
+private val CSI_TILDE_KEYS = mapOf(
+    "delete" to 3,
+    "pageUp" to 5,
+    "pageDown" to 6,
+)
+
 /**
  * 默认快捷键栏，按使用热度从高到低排列：
  *
@@ -62,60 +95,27 @@ val TerminalSpecialKeys = listOf(
  * 3. 光标导航组 ← / → / ↓ —— 行内编辑移动光标，↓ 翻下一条历史，频率最低。
  */
 val DefaultTerminalShortcuts: List<TerminalShortcut> = listOfNotNull(
-    buildTerminalShortcut(
-        TerminalKeyBinding("enter"),
-        id = "enter",
-        builtIn = true,
-        accessibilityLabel = "Enter",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("arrowUp"),
-        id = "arrow-up",
-        builtIn = true,
-        accessibilityLabel = "上方向键",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("tab"),
-        id = "tab",
-        builtIn = true,
-        accessibilityLabel = "Tab",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("escape"),
-        id = "escape",
-        builtIn = true,
-        accessibilityLabel = "Escape",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("c", setOf(TerminalModifier.Ctrl)),
-        id = "ctrl-c",
-        builtIn = true,
-        accessibilityLabel = "Control C",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("tab", setOf(TerminalModifier.Shift)),
-        id = "shift-tab",
-        builtIn = true,
-        accessibilityLabel = "Shift Tab",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("arrowLeft"),
-        id = "arrow-left",
-        builtIn = true,
-        accessibilityLabel = "左方向键",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("arrowRight"),
-        id = "arrow-right",
-        builtIn = true,
-        accessibilityLabel = "右方向键",
-    ),
-    buildTerminalShortcut(
-        TerminalKeyBinding("arrowDown"),
-        id = "arrow-down",
-        builtIn = true,
-        accessibilityLabel = "下方向键",
-    ),
+    builtInShortcut("enter", "enter", "Enter"),
+    builtInShortcut("arrowUp", "arrow-up", "上方向键"),
+    builtInShortcut("tab", "tab", "Tab"),
+    builtInShortcut("escape", "escape", "Escape"),
+    builtInShortcut("c", "ctrl-c", "Control C", setOf(TerminalModifier.Ctrl)),
+    builtInShortcut("tab", "shift-tab", "Shift Tab", setOf(TerminalModifier.Shift)),
+    builtInShortcut("arrowLeft", "arrow-left", "左方向键"),
+    builtInShortcut("arrowRight", "arrow-right", "右方向键"),
+    builtInShortcut("arrowDown", "arrow-down", "下方向键"),
+)
+
+private fun builtInShortcut(
+    key: String,
+    id: String,
+    accessibilityLabel: String,
+    modifiers: Set<TerminalModifier> = emptySet(),
+): TerminalShortcut? = buildTerminalShortcut(
+    TerminalKeyBinding(key, modifiers),
+    id = id,
+    builtIn = true,
+    accessibilityLabel = accessibilityLabel,
 )
 
 fun buildTerminalShortcut(
@@ -127,25 +127,13 @@ fun buildTerminalShortcut(
     val normalized = normalizeTerminalBinding(binding) ?: return null
     if (encodeTerminalKey(normalized) == null) return null
     val label = terminalShortcutLabel(normalized)
-    val repeatable = normalized.key in setOf(
-        "arrowLeft",
-        "arrowUp",
-        "arrowDown",
-        "arrowRight",
-        "backspace",
-        "delete",
-        "home",
-        "end",
-        "pageUp",
-        "pageDown",
-    )
     return TerminalShortcut(
         id = id,
         label = label,
         accessibilityLabel = accessibilityLabel ?: label.replace("+", " "),
         binding = normalized,
         builtIn = builtIn,
-        repeatable = repeatable,
+        repeatable = normalized.key in REPEATABLE_KEYS,
     )
 }
 
@@ -165,24 +153,13 @@ fun encodeTerminalKey(binding: TerminalKeyBinding): String? {
     val key = normalized.key
     val modifiers = normalized.modifiers
 
-    val csiFinal = mapOf(
-        "arrowUp" to "A",
-        "arrowDown" to "B",
-        "arrowRight" to "C",
-        "arrowLeft" to "D",
-        "home" to "H",
-        "end" to "F",
-    )[key]
+    val csiFinal = CSI_FINAL_KEYS[key]
     if (csiFinal != null) {
         val parameter = xtermModifierParameter(modifiers)
         return if (parameter == 1) "$Escape[$csiFinal" else "$Escape[1;${parameter}$csiFinal"
     }
 
-    val csiTilde = mapOf(
-        "delete" to 3,
-        "pageUp" to 5,
-        "pageDown" to 6,
-    )[key]
+    val csiTilde = CSI_TILDE_KEYS[key]
     if (csiTilde != null) {
         val parameter = xtermModifierParameter(modifiers)
         return if (parameter == 1) "$Escape[${csiTilde}~" else "$Escape[${csiTilde};${parameter}~"
@@ -254,27 +231,30 @@ private fun controlCharacter(key: Char): Char? {
 
 private fun applyShift(key: Char): Char {
     if (key in 'a'..'z') return key.uppercaseChar()
-    return mapOf(
-        '`' to '~',
-        '1' to '!',
-        '2' to '@',
-        '3' to '#',
-        '4' to '$',
-        '5' to '%',
-        '6' to '^',
-        '7' to '&',
-        '8' to '*',
-        '9' to '(',
-        '0' to ')',
-        '-' to '_',
-        '=' to '+',
-        '[' to '{',
-        ']' to '}',
-        '\\' to '|',
-        ';' to ':',
-        '\'' to '"',
-        ',' to '<',
-        '.' to '>',
-        '/' to '?',
-    )[key] ?: key
+    return SHIFTED_PRINTABLE[key] ?: key
 }
+
+/** 美式键盘 Shift 后的符号映射（Terminal 快捷键栏只用得到这一套）。 */
+private val SHIFTED_PRINTABLE = mapOf(
+    '`' to '~',
+    '1' to '!',
+    '2' to '@',
+    '3' to '#',
+    '4' to '$',
+    '5' to '%',
+    '6' to '^',
+    '7' to '&',
+    '8' to '*',
+    '9' to '(',
+    '0' to ')',
+    '-' to '_',
+    '=' to '+',
+    '[' to '{',
+    ']' to '}',
+    '\\' to '|',
+    ';' to ':',
+    '\'' to '"',
+    ',' to '<',
+    '.' to '>',
+    '/' to '?',
+)

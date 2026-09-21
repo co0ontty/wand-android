@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material.icons.outlined.WifiOff
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -165,7 +166,8 @@ object WandIcons {
     /** 外观与主题。 */
     val appearance: ImageVector = Icons.Outlined.Palette
 
-    /** 通知、音量与触感反馈。 */    val haptic: ImageVector = Icons.Outlined.Vibration
+    /** 通知、音量与触感反馈。 */
+    val haptic: ImageVector = Icons.Outlined.Vibration
 
     /** 设置页中的客户端能力。 */
     val keepAlive: ImageVector = Icons.Outlined.CloudSync
@@ -238,10 +240,10 @@ object WandIcons {
  * Git 分支三节点图标（对称 Web 的 branch SVG 与 iOS 的 SF Symbol）。
  * 工作空间任务标识统一使用该图形，替代旧的 commit 圆点直线图标。
  */
-@androidx.compose.runtime.Composable
+@Composable
 fun GitBranchIcon(
     tint: Color,
-    modifier: androidx.compose.ui.Modifier = Modifier.size(13.dp),
+    modifier: Modifier = Modifier.size(13.dp),
 ) {
     Canvas(modifier = modifier) {
         val s = size.minDimension / 24f

@@ -4,6 +4,7 @@ import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.wand.app.data.GitPushResult
 import com.wand.app.data.GitStatusResult
 import com.wand.app.data.WandApi
 import kotlinx.coroutines.delay
@@ -174,7 +175,7 @@ class QuickCommitStore(
                     oldCommitSubject = before?.lastCommitSubject.orEmpty(),
                     submoduleCount = r.submoduleCommitCount ?: 0,
                 )
-                val message = buildString {
+                val toastMessage = buildString {
                     append(outcome.summaryText())
                     if (push && outcome.pushError == null) append("，已推送")
                     outcome.pushError?.let { append("，推送失败：").append(it) }
@@ -182,14 +183,14 @@ class QuickCommitStore(
                 if (outcome.pushError == null) {
                     result = null
                     panelOpen = false
-                    onToast(message)
+                    onToast(toastMessage)
                     finishEntrySuccess()
                 } else {
                     // Commit/tag 已落地但 push 失败时，若面板仍开着则保留结果供用户补推；
                     // 用户已手动关闭时不重新弹出，失败信息会以 toast 呈现。
                     result = outcome
                     pushError = outcome.pushError
-                    failEntry(message)
+                    failEntry(toastMessage)
                 }
                 loadStatus(force = true)
             } catch (e: Exception) {
@@ -206,37 +207,17 @@ class QuickCommitStore(
 
     fun pushCommitsOnly() {
         if (inFlight) return
-        pushing = true
-        beginEntryLoading()
         error = null
-        pushError = null
-        scope.launch {
-            try {
-                val res = api.gitPush(
-                    sessionId = sessionId,
-                    pushCommits = true,
-                    pushTags = false,
-                    // 父仓库的待推 commit 可能引用尚未推到远端的 submodule HEAD。
-                    // 此时普通 git push 会被 --recurse-submodules=check 拒绝；快捷入口
-                    // 应先推声明的 submodule，再推父仓库，和「Sub + Push」一致。
-                    submodule = status?.hasSubmodule == true,
-                    tag = null,
-                )
-                if (!res.error.isNullOrEmpty()) {
-                    pushError = res.error
-                    failEntry(res.error)
-                } else {
-                    panelOpen = false
-                    onToast("已推送 commits")
-                    finishEntrySuccess()
-                    loadStatus(force = true)
-                }
-            } catch (e: Exception) {
-                val message = e.message ?: "推送失败"
-                pushError = message
-                failEntry(message)
-            }
-            pushing = false
+        pushCommits(
+            pushTags = false,
+            // 父仓库的待推 commit 可能引用尚未推到远端的 submodule HEAD。
+            // 此时普通 git push 会被 --recurse-submodules=check 拒绝；快捷入口
+            // 应先推声明的 submodule，再推父仓库，和「Sub + Push」一致。
+            submodule = status?.hasSubmodule == true,
+            tag = null,
+        ) {
+            panelOpen = false
+            onToast("已推送 commits")
         }
     }
 
@@ -244,6 +225,31 @@ class QuickCommitStore(
 
     fun pushOnly() {
         val r = result ?: return
+        pushCommits(
+            pushTags = r.tagName.isNotEmpty(),
+            submodule = r.includeSubmodule,
+            tag = r.tagName.ifEmpty { null },
+        ) { res ->
+            result = r.copy(pushed = true)
+            val parts = buildList {
+                if (res.pushedCommits == true) add("commits")
+                if (res.pushedTags == true) add("tags")
+            }
+            panelOpen = false
+            onToast("已推送 " + (if (parts.isEmpty()) "（无内容）" else parts.joinToString(" 和 ")))
+        }
+    }
+
+    /**
+     * 「仅推送」与「补推送」共用的 git push 流程：失败只置条内错误，成功交给
+     * [onSuccess] 收尾（关面板 / 更新结果）。
+     */
+    private fun pushCommits(
+        pushTags: Boolean,
+        submodule: Boolean,
+        tag: String?,
+        onSuccess: (GitPushResult) -> Unit,
+    ) {
         if (pushing) return
         pushing = true
         beginEntryLoading()
@@ -253,21 +259,15 @@ class QuickCommitStore(
                 val res = api.gitPush(
                     sessionId = sessionId,
                     pushCommits = true,
-                    pushTags = r.tagName.isNotEmpty(),
-                    submodule = r.includeSubmodule,
-                    tag = r.tagName.ifEmpty { null },
+                    pushTags = pushTags,
+                    submodule = submodule,
+                    tag = tag,
                 )
-                if (res.error != null && res.error.isNotEmpty()) {
+                if (!res.error.isNullOrEmpty()) {
                     pushError = res.error
                     failEntry(res.error)
                 } else {
-                    result = r.copy(pushed = true)
-                    val parts = buildList {
-                        if (res.pushedCommits == true) add("commits")
-                        if (res.pushedTags == true) add("tags")
-                    }
-                    panelOpen = false
-                    onToast("已推送 " + (if (parts.isEmpty()) "（无内容）" else parts.joinToString(" 和 ")))
+                    onSuccess(res)
                     finishEntrySuccess()
                     loadStatus(force = true)
                 }

@@ -125,7 +125,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private var confirmedMode = "default"
 
     val isStructured: Boolean get() = snapshot?.isStructured ?: true
-    val sessionEnded: Boolean get() = status in listOf("exited", "failed", "stopped")
+    val sessionEnded: Boolean get() = status in SESSION_ENDED_STATUSES
 
     // MARK: - 生命周期
 
@@ -187,25 +187,24 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             ChatSessionEventReducer.applySnapshot(
                 current = realtimeState(),
                 snapshot = snap,
-                pending = PendingSessionSettings(
-                    model = pendingModelMutations > 0,
-                    thinkingEffort = pendingThinkingMutations > 0,
-                    mode = pendingModeMutations > 0,
-                ),
+                pending = pendingSessionSettings(),
             ),
         )
     }
+
+    /** 是否有未落地的本地设置变更；有则不被快照反向覆盖。 */
+    private fun pendingSessionSettings() = PendingSessionSettings(
+        model = pendingModelMutations > 0,
+        thinkingEffort = pendingThinkingMutations > 0,
+        mode = pendingModeMutations > 0,
+    )
 
     private fun handle(event: SessionEvent) {
         if (event.sessionId != null && event.sessionId != sessionId) return
         val next = ChatSessionEventReducer.reduce(
             current = realtimeState(),
             event = event,
-            pending = PendingSessionSettings(
-                model = pendingModelMutations > 0,
-                thinkingEffort = pendingThinkingMutations > 0,
-                mode = pendingModeMutations > 0,
-            ),
+            pending = pendingSessionSettings(),
         )
         applyRealtimeState(next)
     }
@@ -367,11 +366,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     /** Read the catalog last persisted by the server; native clients never probe CLIs directly. */
     private suspend fun loadModels() {
-        val response = try {
-            api.models()
-        } catch (e: Exception) {
-            return
-        }
+        val response = runCatching { api.models() }.getOrNull() ?: return
         val provider = snapshot?.provider ?: "claude"
         availableModels = response.modelsFor(provider)
         defaultModel = response.defaultModelFor(provider)
@@ -379,11 +374,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     }
 
     private suspend fun loadCardDefaults() {
-        cardDefaults = try {
-            api.serverConfig().cardDefaults
-        } catch (_: Exception) {
-            CardExpandDefaults()
-        }
+        cardDefaults = runCatching { api.serverConfig().cardDefaults }
+            .getOrDefault(CardExpandDefaults())
     }
 
     // MARK: - 用户动作
@@ -663,6 +655,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 }
 
 internal enum class ChatRealtimeStartKind { Skip, FirstConnect, Reconnect }
+
+/** 会话已终结的服务端状态（与 SessionNotificationPolicy 的判定保持一致）。 */
+private val SESSION_ENDED_STATUSES = setOf("exited", "failed", "stopped")
 
 /** 详情页实时连接：页面仍可见时跳过；关过 socket 的同一 store 必须重连而不是被 started 挡住。 */
 internal fun chatRealtimeStartKind(active: Boolean, started: Boolean): ChatRealtimeStartKind {

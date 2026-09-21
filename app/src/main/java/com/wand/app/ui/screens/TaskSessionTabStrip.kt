@@ -108,11 +108,7 @@ fun TaskSessionTabStrip(
         scope.launch {
             runCatching { api.serverConfig() }.getOrNull()?.let { config ->
                 WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
-                selectedKind = if (config.defaultSessionKind == "pty") {
-                    WorkspaceSessionKind.Pty
-                } else {
-                    WorkspaceSessionKind.Structured
-                }
+                selectedKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
             }
             sheetState.show()
         }

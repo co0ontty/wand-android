@@ -307,8 +307,7 @@ object SessionWatcher {
     /** 从尾往前扫一段对话，更新进度通知用的最新用户/助手文本与 todos。 */
     private fun scanTurns(w: Watched, turns: List<ConversationTurn>) {
         val windowStart = maxOf(0, turns.size - SCAN_TAIL_WINDOW)
-        for (i in turns.indices.reversed()) {
-            if (i < windowStart) break
+        for (i in turns.lastIndex downTo windowStart) {
             val turn = turns[i]
             if (turn.role == "user") {
                 val text = firstText(turn)
@@ -324,43 +323,33 @@ object SessionWatcher {
                 updateTodos(w, turn)
                 if (turns.size == 1) break
             }
-            if (i == 0) break
         }
         // 全量列表时单独再扫一遍 todos（最近一次 TodoWrite 可能不在末条）。
         if (turns.size > 1) {
-            outer@ for (i in turns.indices.reversed()) {
-                if (i < windowStart) break@outer
-                for (block in turns[i].content.reversed()) {
-                    if (block is ContentBlock.ToolUse) {
-                        val semantic = block.semantic as? ToolUseSemantic.TaskList
-                        if (semantic != null) {
-                            setTodos(w, semantic.items)
-                            break@outer
-                        }
-                        if (block.name == "TodoWrite") {
-                            block.input.arrayField("todos")?.let { setTodosRaw(w, it) }
-                            break@outer
-                        }
-                    }
-                }
+            for (i in turns.lastIndex downTo windowStart) {
+                if (updateTodos(w, turns[i])) break
             }
         }
     }
 
-    private fun updateTodos(w: Watched, turn: ConversationTurn) {
+    /**
+     * 取这条 turn 里最近一次待办快照：优先语义化 TaskList，其次原始 TodoWrite 入参。
+     * 扫到待办块就停（无论入参里有没有 todos），返回 true 让调用方决定是否继续往前找。
+     */
+    private fun updateTodos(w: Watched, turn: ConversationTurn): Boolean {
         for (block in turn.content.reversed()) {
-            if (block is ContentBlock.ToolUse) {
-                val semantic = block.semantic as? ToolUseSemantic.TaskList
-                if (semantic != null) {
-                    setTodos(w, semantic.items)
-                    return
-                }
-                if (block.name == "TodoWrite") {
-                    block.input.arrayField("todos")?.let { setTodosRaw(w, it) }
-                    return
-                }
+            if (block !is ContentBlock.ToolUse) continue
+            val semantic = block.semantic as? ToolUseSemantic.TaskList
+            if (semantic != null) {
+                setTodos(w, semantic.items)
+                return true
+            }
+            if (block.name == "TodoWrite") {
+                block.input.arrayField("todos")?.let { setTodosRaw(w, it) }
+                return true
             }
         }
+        return false
     }
 
     /** 内容没变化就不替换：避免每个 output 事件都重建 JSONArray 触发下游重序列化。 */

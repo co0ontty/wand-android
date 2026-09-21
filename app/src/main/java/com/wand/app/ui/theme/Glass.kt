@@ -278,7 +278,7 @@ fun Modifier.glassSurface(
  * 卡片表面：实心底 + 极轻阴影，不再套 rim 描边。
  * 卡片平铺在页面背景上、不与滚动内容重叠，所以永远不走 backdrop 采样。
  *
- * @param tint 覆盖底色（语义弱底卡：permissionSoft / thinkingSoft…）。
+ * @param tint 覆盖底色（语义弱底卡：dangerSoft / thinkingSoft…）。
  * @param rimTint 语义强调色混入底色，不再画边。
  */
 @Composable

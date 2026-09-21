@@ -1248,6 +1248,11 @@ private fun LaunchSettingPicker(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    // 收起面板时一并清掉搜索词，下次打开不会残留上次的过滤条件。
+    fun closePicker() {
+        expanded = false
+        query = ""
+    }
     val visibleOptions = if (searchable) {
         options.filter { matchesModelSearch(query, it.first.orEmpty(), it.second) }
     } else {
@@ -1322,10 +1327,7 @@ private fun LaunchSettingPicker(
         }
         if (expanded) {
             WandBottomSheet(
-                onDismissRequest = {
-                    expanded = false
-                    query = ""
-                },
+                onDismissRequest = { closePicker() },
             ) {
                 NoOverscroll {
                     Column(
@@ -1366,53 +1368,52 @@ private fun LaunchSettingPicker(
                                 .fillMaxWidth()
                                 .verticalScroll(rememberScrollState()),
                         ) {
-                        if (visibleOptions.isEmpty()) {
-                            Text(
-                                "没有匹配的$label",
-                                fontSize = 14.sp,
-                                color = WandColors.textMuted,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
-                            )
-                        }
-                        visibleOptions.forEach { (id, optionLabel) ->
-                            val isSelected = selected == id
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 48.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(
-                                        if (isSelected) accentSoft else Color.Transparent,
-                                    )
-                                    .selectable(
-                                        selected = isSelected,
-                                        role = Role.RadioButton,
-                                    ) {
-                                        onSelect(id)
-                                        expanded = false
-                                        query = ""
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 13.dp),
-                            ) {
+                            if (visibleOptions.isEmpty()) {
                                 Text(
-                                    optionLabel,
+                                    "没有匹配的$label",
                                     fontSize = 14.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (isSelected) accent else WandColors.textPrimary,
-                                    modifier = Modifier.weight(1f),
+                                    color = WandColors.textMuted,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
                                 )
-                                if (isSelected) {
-                                    Icon(
-                                        WandIcons.check,
-                                        contentDescription = null,
-                                        tint = accent,
-                                        modifier = Modifier.size(18.dp),
+                            }
+                            visibleOptions.forEach { (id, optionLabel) ->
+                                val isSelected = selected == id
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (isSelected) accentSoft else Color.Transparent,
+                                        )
+                                        .selectable(
+                                            selected = isSelected,
+                                            role = Role.RadioButton,
+                                        ) {
+                                            onSelect(id)
+                                            closePicker()
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 13.dp),
+                                ) {
+                                    Text(
+                                        optionLabel,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (isSelected) accent else WandColors.textPrimary,
+                                        modifier = Modifier.weight(1f),
                                     )
+                                    if (isSelected) {
+                                        Icon(
+                                            WandIcons.check,
+                                            contentDescription = null,
+                                            tint = accent,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
                                 }
                             }
-                        }
                         }
                     }
                 }
@@ -1439,8 +1440,12 @@ private fun thinkingLabel(store: ChatStore, id: String): String {
 private fun thinkingShortLabel(store: ChatStore, id: String): String =
     thinkingLevels(store).firstOrNull { it.id == id }?.shortLabel ?: "自"
 
+/** 「default」是「跟随服务端默认」的占位值；解析成真正生效的模型 id（可能为空）。 */
+private fun effectiveModelId(store: ChatStore, id: String?): String? =
+    id?.takeIf { it != "default" } ?: store.defaultModel
+
 private fun modelDisplayLabel(store: ChatStore, id: String?): String {
-    val effectiveId = id?.takeIf { it != "default" } ?: store.defaultModel
+    val effectiveId = effectiveModelId(store, id)
     if (effectiveId.isNullOrBlank()) {
         return store.availableModels.firstOrNull { it.id == "default" }?.label ?: "跟随服务端默认"
     }
@@ -1448,10 +1453,8 @@ private fun modelDisplayLabel(store: ChatStore, id: String?): String {
 }
 
 /** 启动卡空间宝贵；当服务端 label 已是“人读名 · id”时去掉重复 id。 */
-private fun launchModelDisplayLabel(store: ChatStore, id: String?): String {
-    val effectiveId = id?.takeIf { it != "default" } ?: store.defaultModel
-    return compactModelDisplayLabel(modelDisplayLabel(store, id), effectiveId)
-}
+private fun launchModelDisplayLabel(store: ChatStore, id: String?): String =
+    compactModelDisplayLabel(modelDisplayLabel(store, id), effectiveModelId(store, id))
 
 internal fun compactModelDisplayLabel(label: String, modelId: String?): String {
     val id = modelId?.trim()?.takeIf { it.isNotEmpty() } ?: return label

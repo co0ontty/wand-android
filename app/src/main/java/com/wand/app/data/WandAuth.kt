@@ -28,20 +28,22 @@ object WandAuth {
     /** 解码连接码：base64(url#token)。 */
     @JvmStatic
     fun decodeConnectCode(input: String): Pair<String, String>? {
-        return try {
-            val cleaned = input.replace(Regex("\\s+"), "")
-            if (cleaned.isEmpty()) return null
-            val buf = Base64.decode(cleaned, Base64.DEFAULT or Base64.NO_WRAP or Base64.URL_SAFE)
-            val decoded = String(buf, Charsets.UTF_8)
-            val hashIdx = decoded.lastIndexOf('#')
-            if (hashIdx < 1) return null
-            val url = decoded.substring(0, hashIdx)
-            val token = decoded.substring(hashIdx + 1)
-            if (!url.startsWith("http") || token.length < 16) return null
-            url to token
+        val cleaned = input.replace(Regex("\\s+"), "")
+        if (cleaned.isEmpty()) return null
+        val decoded = try {
+            String(
+                Base64.decode(cleaned, Base64.DEFAULT or Base64.NO_WRAP or Base64.URL_SAFE),
+                Charsets.UTF_8,
+            )
         } catch (_: Exception) {
-            null
+            return null
         }
+        val hashIdx = decoded.lastIndexOf('#')
+        if (hashIdx < 1) return null
+        val url = decoded.substring(0, hashIdx)
+        val token = decoded.substring(hashIdx + 1)
+        if (!url.startsWith("http") || token.length < 16) return null
+        return url to token
     }
 
     /**
@@ -75,8 +77,6 @@ object WandAuth {
                         else -> throw AuthException("服务器返回异常状态码：${response.code}")
                     }
                 }
-            } catch (e: AuthException) {
-                throw e
             } catch (e: IOException) {
                 throw AuthException("无法连接到服务器：${e.message ?: "网络错误"}")
             }

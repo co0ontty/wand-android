@@ -84,7 +84,7 @@ data class BoardTaskSession(
     val thinkingEffort: String,
 ) {
     val isStructured: Boolean
-        get() = sessionKind != "pty" && sessionKind != "shell"
+        get() = !isTerminalSessionKind(sessionKind)
 
     companion object {
         fun parseList(array: JSONArray?): List<BoardTaskSession> = array?.parseEach { item ->
@@ -137,25 +137,13 @@ data class BoardTask(
                 description = item.str("description") ?: "",
                 status = item.str("status") ?: "todo",
                 priority = item.str("priority") ?: "none",
-                labels = item.arr("labels")?.let { array ->
-                    buildList {
-                        for (index in 0 until array.length()) {
-                            array.optString(index).takeIf { it.isNotBlank() }?.let(::add)
-                        }
-                    }
-                } ?: emptyList(),
+                labels = item.arr("labels")?.stringItems(ignoreBlank = true) ?: emptyList(),
                 dueDate = item.str("dueDate")?.takeIf { it.isNotBlank() },
                 sortOrder = item.int("sortOrder") ?: 0,
                 agent = BoardTaskAgent.parse(item.obj("agent")),
                 createdAt = item.str("createdAt") ?: "",
                 updatedAt = item.str("updatedAt") ?: "",
-                sessionIds = item.arr("sessionIds")?.let { array ->
-                    buildList {
-                        for (index in 0 until array.length()) {
-                            array.optString(index).takeIf { it.isNotBlank() }?.let(::add)
-                        }
-                    }
-                } ?: emptyList(),
+                sessionIds = item.arr("sessionIds")?.stringItems(ignoreBlank = true) ?: emptyList(),
                 sessions = BoardTaskSession.parseList(item.arr("sessions")),
                 workspace = BoardTaskWorkspace.parse(item.obj("workspace")),
                 milestone = BoardTaskMilestone.parse(item.obj("milestone")),
@@ -179,7 +167,7 @@ data class BoardDispatchResult(
 ) {
     /** 应当以哪种页面打开新会话：PTY 走终端页，其余走 Chat。 */
     val isStructured: Boolean
-        get() = sessionKind != "pty" && sessionKind != "shell"
+        get() = !isTerminalSessionKind(sessionKind)
 
     companion object {
         fun parse(item: JSONObject): BoardDispatchResult {
@@ -227,9 +215,15 @@ val BOARD_TASK_KINDS = listOf("structured", "pty")
 fun supportedBoardTaskModes(provider: String): List<String> =
     if (provider == "codex") listOf("full-access") else BOARD_TASK_MODES
 
+/** 会话形态判定：pty / shell 都算终端，其余（含老服务端缺省）按结构化处理。 */
+private fun isTerminalSessionKind(kind: String?): Boolean {
+    val normalized = kind?.trim().orEmpty()
+    return normalized == "pty" || normalized == "shell"
+}
+
 /** 把任意（含旧数据 / 其它客户端缺省的）会话形态收敛成合法值。 */
 fun normalizeBoardTaskAgentKind(kind: String?): String =
-    if (kind?.trim() == "pty") "pty" else "structured"
+    if (isTerminalSessionKind(kind)) "pty" else "structured"
 
 fun boardTaskKindLabel(kind: String): String = when (kind) {
     "pty" -> "PTY 终端"

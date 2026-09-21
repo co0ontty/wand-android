@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -424,6 +425,23 @@ private fun TaskBoardList(
     LaunchedEffect(statusFilter, filterWorkspaceId, query) { setSwipedTaskId(null) }
     val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
     val showWorkspace = filterWorkspaceId.isBlank()
+    // 分组行、归档行与筛选结果三个分支渲染的是同一条任务卡，只保留这一处构造。
+    val taskRow: @Composable LazyItemScope.(BoardTask) -> Unit = { task ->
+        BoardTaskItem(
+            task = task,
+            showWorkspace = showWorkspace,
+            revealed = swipedTaskId == task.id,
+            onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
+            onOpen = { onOpen(task) },
+            onToggleComplete = { onToggleComplete(task) },
+            onOpenSession = onOpenSession,
+            onSwipeAction = { action ->
+                setSwipedTaskId(null)
+                pendingSwipe = task to action
+            },
+            modifier = Modifier.animateItem(),
+        )
+    }
     LazyColumn(
         modifier = modifier,
         state = listState,
@@ -487,22 +505,7 @@ private fun TaskBoardList(
                 item(key = "header-$status") {
                     BoardSectionHeader(status = status, count = items.size, onAdd = onCreateForStatus)
                 }
-                items(items, key = { it.id }) { task ->
-                    BoardTaskItem(
-                        task = task,
-                        showWorkspace = showWorkspace,
-                        revealed = swipedTaskId == task.id,
-                        onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
-                        onOpen = { onOpen(task) },
-                        onToggleComplete = { onToggleComplete(task) },
-                        onOpenSession = onOpenSession,
-                        onSwipeAction = { action ->
-                            setSwipedTaskId(null)
-                            pendingSwipe = task to action
-                        },
-                        modifier = Modifier.animateItem(),
-                    )
-                }
+                items(items, key = { it.id }) { task -> taskRow(task) }
                 if (status == "done" && sectionArchived.isNotEmpty()) {
                     item(key = "archive-header") {
                         BoardArchiveHeader(
@@ -512,42 +515,12 @@ private fun TaskBoardList(
                         )
                     }
                     if (archiveOpen) {
-                        items(sectionArchived, key = { it.id }) { task ->
-                            BoardTaskItem(
-                                task = task,
-                                showWorkspace = showWorkspace,
-                                revealed = swipedTaskId == task.id,
-                                onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
-                                onOpen = { onOpen(task) },
-                                onToggleComplete = { onToggleComplete(task) },
-                                onOpenSession = onOpenSession,
-                                onSwipeAction = { action ->
-                                    setSwipedTaskId(null)
-                                    pendingSwipe = task to action
-                                },
-                                modifier = Modifier.animateItem(),
-                            )
-                        }
+                        items(sectionArchived, key = { it.id }) { task -> taskRow(task) }
                     }
                 }
             }
         } else {
-            items(tasks, key = { it.id }) { task ->
-                BoardTaskItem(
-                    task = task,
-                    showWorkspace = showWorkspace,
-                    revealed = swipedTaskId == task.id,
-                    onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
-                    onOpen = { onOpen(task) },
-                    onToggleComplete = { onToggleComplete(task) },
-                    onOpenSession = onOpenSession,
-                    onSwipeAction = { action ->
-                        setSwipedTaskId(null)
-                        pendingSwipe = task to action
-                    },
-                    modifier = Modifier.animateItem(),
-                )
-            }
+            items(tasks, key = { it.id }) { task -> taskRow(task) }
         }
     }
     pendingSwipe?.let { (task, action) ->
@@ -1284,7 +1257,6 @@ internal fun TaskBoardDetailPane(
     val hasAgents = task.sessions.isNotEmpty()
     var composeOpen by remember(task.id) { mutableStateOf(!hasAgents) }
     var composePrompt by remember(task.id) { mutableStateOf(if (hasAgents) "" else task.description) }
-    val modelOptions = boardAgentModelOptions(models, agent.provider)
     val done = task.status == "done" || task.status == "archived"
     val workspaceChoices = buildList {
         add("" to "未归属工作区（使用临时目录）")
@@ -1467,61 +1439,15 @@ internal fun TaskBoardDetailPane(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
-                BoardChoice(
-                    label = "CLI 工具 · ${boardTaskProviderLabel(agent.provider)}",
-                    options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
-                    onSelect = { provider ->
-                        val nextModels = boardAgentModelOptions(models, provider)
-                        val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
-                        val next = agent.copy(
-                            provider = provider,
-                            model = model,
-                            mode = normalizeBoardTaskAgentMode(provider, agent.mode),
-                        )
+                BoardAgentParamChoices(
+                    models = models,
+                    agent = agent,
+                    providerLabel = "CLI 工具",
+                    enabled = !busy,
+                    onChange = { next ->
                         agent = next
                         onRemember(next)
                     },
-                    enabled = !busy,
-                )
-                BoardChoice(
-                    label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
-                    options = modelOptions.map { it.id to it.label },
-                    onSelect = {
-                        val next = agent.copy(model = it)
-                        agent = next
-                        onRemember(next)
-                    },
-                    enabled = !busy,
-                )
-                BoardChoice(
-                    label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
-                    options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
-                    onSelect = {
-                        val next = agent.copy(thinkingEffort = it)
-                        agent = next
-                        onRemember(next)
-                    },
-                    enabled = !busy,
-                )
-                BoardChoice(
-                    label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
-                    options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
-                    onSelect = {
-                        val next = agent.copy(kind = it)
-                        agent = next
-                        onRemember(next)
-                    },
-                    enabled = !busy,
-                )
-                BoardChoice(
-                    label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
-                    options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
-                    onSelect = {
-                        val next = agent.copy(mode = it)
-                        agent = next
-                        onRemember(next)
-                    },
-                    enabled = !busy,
                 )
                 Spacer(Modifier.height(4.dp))
                 WandButton(
@@ -1576,7 +1502,6 @@ private fun CreateBoardTaskDialog(
     var priority by remember { mutableStateOf("none") }
     var workspaceId by remember { mutableStateOf(defaultWorkspaceId) }
     var agent by remember { mutableStateOf(lastAgent) }
-    val modelOptions = boardAgentModelOptions(models, agent.provider)
     // 「进行中」列的新建代表已经决定要跑，所以创建后立刻派 Agent；其他列只落库。
     val dispatches = boardCreateDispatches(status)
     WandDialog(
@@ -1618,39 +1543,18 @@ private fun CreateBoardTaskDialog(
             onSelect = { workspaceId = it },
         )
         if (dispatches) {
-            BoardChoice(
-                label = "第一次指派 · ${boardTaskProviderLabel(agent.provider)}",
-                options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
-                onSelect = { provider ->
-                    val nextModels = boardAgentModelOptions(models, provider)
-                    val model = if (nextModels.any { it.id == agent.model }) agent.model else nextModels.firstOrNull()?.id ?: "default"
-                    agent = agent.copy(
-                        provider = provider,
-                        model = model,
-                        mode = normalizeBoardTaskAgentMode(provider, agent.mode),
-                    )
-                },
-            )
-            BoardChoice(
-                label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
-                options = modelOptions.map { it.id to it.label },
-                onSelect = { agent = agent.copy(model = it) },
-            )
-            BoardChoice(
-                label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
-                options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
-                onSelect = { agent = agent.copy(thinkingEffort = it) },
+            BoardAgentParamChoices(
+                models = models,
+                agent = agent,
+                providerLabel = "第一次指派",
+                onChange = { agent = it },
             )
         }
-        // 会话类型始终可选：只创建的任务也会把形态记进服务端全局默认，
-        // 否则下次派发退回结构化，用户在 PTY 下拉里的选择会静默丢失。
         BoardChoice(
             label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
             options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
             onSelect = { agent = agent.copy(kind = it) },
         )
-        // 运行模式始终可选：只创建的任务也会把模式记进服务端全局默认，
-        // 否则下次派发退回标准模式，Agent 反过来「改不了东西」。
         BoardChoice(
             label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
             options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
@@ -1703,6 +1607,66 @@ private fun BoardFilterChip(
             .background(background)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
+    )
+}
+
+/**
+ * 指派参数五连：CLI 工具 / 模型 / 思考深度 / 会话类型 / 运行模式。
+ * 看板卡片的「再指派」表单与新建任务弹窗共用，避免两处下拉选项漂移。
+ *
+ * 会话类型与运行模式始终可选：只创建的任务也会把形态 / 模式记进服务端全局默认，
+ * 否则下次派发会退回结构化与标准模式，用户在下拉里的选择会静默丢失。
+ */
+@Composable
+private fun BoardAgentParamChoices(
+    models: ModelsResponse?,
+    agent: BoardTaskAgent,
+    providerLabel: String,
+    onChange: (BoardTaskAgent) -> Unit,
+    enabled: Boolean = true,
+) {
+    val modelOptions = boardAgentModelOptions(models, agent.provider)
+    BoardChoice(
+        label = "$providerLabel · ${boardTaskProviderLabel(agent.provider)}",
+        options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
+        onSelect = { provider ->
+            val nextModels = boardAgentModelOptions(models, provider)
+            val model = nextModels.firstOrNull { it.id == agent.model }?.id
+                ?: nextModels.firstOrNull()?.id
+                ?: "default"
+            onChange(
+                agent.copy(
+                    provider = provider,
+                    model = model,
+                    mode = normalizeBoardTaskAgentMode(provider, agent.mode),
+                ),
+            )
+        },
+        enabled = enabled,
+    )
+    BoardChoice(
+        label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
+        options = modelOptions.map { it.id to it.label },
+        onSelect = { onChange(agent.copy(model = it)) },
+        enabled = enabled,
+    )
+    BoardChoice(
+        label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
+        options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
+        onSelect = { onChange(agent.copy(thinkingEffort = it)) },
+        enabled = enabled,
+    )
+    BoardChoice(
+        label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
+        options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
+        onSelect = { onChange(agent.copy(kind = it)) },
+        enabled = enabled,
+    )
+    BoardChoice(
+        label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
+        options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
+        onSelect = { onChange(agent.copy(mode = it)) },
+        enabled = enabled,
     )
 }
 

@@ -356,14 +356,12 @@ class HomeActivity : AppCompatActivity() {
         val target = currentServerId?.let(store::getServerProfile)
             ?: store.activeServerProfile
         if (target == null) {
-            SessionWatcher.stop()
-            runCatching { stopService(Intent(this, WandForegroundService::class.java)) }
+            stopServerRuntime()
             switchServer()
             return
         }
         if (target.id != currentServerId) {
-            SessionWatcher.stop()
-            runCatching { stopService(Intent(this, WandForegroundService::class.java)) }
+            stopServerRuntime()
         }
         val replacement = Intent(this, HomeActivity::class.java).apply {
             putExtra(WandShortcuts.EXTRA_SERVER_ID, target.id)
@@ -387,8 +385,7 @@ class HomeActivity : AppCompatActivity() {
             val replacement = Intent(intent).setClass(this, HomeActivity::class.java).apply {
                 flags = 0
             }
-            SessionWatcher.stop()
-            runCatching { stopService(Intent(this, WandForegroundService::class.java)) }
+            stopServerRuntime()
             startActivity(replacement)
             finish()
         }
@@ -406,8 +403,7 @@ class HomeActivity : AppCompatActivity() {
 
     private fun switchServer(requestedServerId: String? = null) {
         // 换服务器 / 断开：停掉旧服务器的通知中枢，避免跨服务器串通知。
-        SessionWatcher.stop()
-        runCatching { stopService(Intent(this, WandForegroundService::class.java)) }
+        stopServerRuntime()
         val intent = Intent(this, ConnectActivity::class.java)
         intent.putExtra("skip_auto_connect", true)
         if (requestedServerId != null) {
@@ -435,10 +431,21 @@ class HomeActivity : AppCompatActivity() {
         }
         serverStore.removeServerProfile(serverId)
         WandWebSession.clearAsync()
-        runCatching { stopService(Intent(this, WandForegroundService::class.java)) }
+        stopKeepAliveService()
         // 移除当前服务器后清掉会话快捷项，避免长按图标还能直达已移除的连接。
         WandShortcuts.clear(this)
         switchServer()
+    }
+
+    /** 换服务器 / 断开 / 重进时统一收尾：先停通知中枢，再停前台保活服务。 */
+    private fun stopServerRuntime() {
+        SessionWatcher.stop()
+        stopKeepAliveService()
+    }
+
+    /** 前台保活服务可能本就没起来，停不掉无需处理。 */
+    private fun stopKeepAliveService() {
+        runCatching { stopService(Intent(this, WandForegroundService::class.java)) }
     }
 
     private fun setKeepAlive(enabled: Boolean, serverId: String) {

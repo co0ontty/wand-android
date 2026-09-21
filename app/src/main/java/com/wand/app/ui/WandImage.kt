@@ -117,6 +117,20 @@ object WandImage {
 }
 
 /**
+ * 取图状态：图像 loader 与请求模型都按 (baseUrl, path) 记忆。
+ * 内联缩略图与全屏预览共用，避免两处各拼一次请求。
+ */
+@Composable
+private fun rememberRemoteImage(path: String, baseUrl: String): Pair<ImageLoader, ImageRequest> {
+    val context = LocalContext.current
+    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
+    val model = remember(baseUrl, path) {
+        ImageRequest.Builder(context).data(WandImage.fileRawUrl(baseUrl, path)).build()
+    }
+    return loader to model
+}
+
+/**
  * 内联图片缩略图：经对应 endpoint 的 WandHttp client 加载，圆角 + Fit，点击放大到全屏预览。
  * 加载失败时整块隐藏（对齐网页 onerror → display:none），绝不崩溃或留占位。
  */
@@ -128,16 +142,14 @@ fun WandAsyncImage(
     maxWidth: Int = 240,
     maxHeight: Int = 200,
 ) {
-    val context = LocalContext.current
-    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
-    val url = remember(baseUrl, path) { WandImage.fileRawUrl(baseUrl, path) }
-    var failed by remember(url) { mutableStateOf(false) }
+    val (loader, model) = rememberRemoteImage(path, baseUrl)
+    var failed by remember(baseUrl, path) { mutableStateOf(false) }
     var showViewer by remember { mutableStateOf(false) }
 
     if (failed) return
 
     AsyncImage(
-        model = ImageRequest.Builder(context).data(url).build(),
+        model = model,
         imageLoader = loader,
         contentDescription = path.substringAfterLast('/'),
         contentScale = ContentScale.Fit,
@@ -171,9 +183,7 @@ fun FullscreenImageViewer(
     baseUrl: String,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
-    val url = remember(baseUrl, path) { WandImage.fileRawUrl(baseUrl, path) }
+    val (loader, model) = rememberRemoteImage(path, baseUrl)
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     Dialog(
@@ -208,7 +218,7 @@ fun FullscreenImageViewer(
                 },
         ) {
             AsyncImage(
-                model = ImageRequest.Builder(context).data(url).build(),
+                model = model,
                 imageLoader = loader,
                 contentDescription = path.substringAfterLast('/'),
                 contentScale = ContentScale.Fit,

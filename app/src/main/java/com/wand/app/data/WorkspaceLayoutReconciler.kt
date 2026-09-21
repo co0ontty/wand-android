@@ -66,10 +66,11 @@ private fun normalizeNode(
 }
 
 private fun uniqueWindowId(base: String, used: MutableSet<String>): String {
-    var candidate = if (base.isNotEmpty()) base else "window"
+    val prefix = base.ifEmpty { "window" }
+    var candidate = prefix
     var suffix = 2
     while (used.contains(candidate)) {
-        candidate = "${if (base.isNotEmpty()) base else "window"}-$suffix"
+        candidate = "$prefix-$suffix"
         suffix++
     }
     used.add(candidate)

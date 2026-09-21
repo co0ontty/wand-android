@@ -48,6 +48,12 @@ enum class WorkspaceSessionTarget(val raw: String, val label: String, val descri
 enum class WorkspaceSessionKind(val raw: String, val label: String, val description: String) {
     Structured("structured", "结构化", "智能对话模式"),
     Pty("pty", "PTY", "原始 CLI 终端");
+
+    companion object {
+        /** 服务端 config.defaultSessionKind → 枚举；未知 / 空一律按结构化。 */
+        fun fromRaw(raw: String?): WorkspaceSessionKind =
+            entries.firstOrNull { it.raw == raw } ?: Structured
+    }
 }
 
 /** 创建工作窗口时的归属上下文。未分组终端只带目录，不写 workspaceTaskId。 */
@@ -131,12 +137,8 @@ sealed class LayoutNode {
             val o = value as? JSONObject ?: return null
             return when (o.str("type")) {
                 "pane" -> {
-                    val rawTabs = o.arr("tabs") ?: JSONArray()
-                    val tabs = (0 until rawTabs.length()).mapNotNull { i ->
-                        rawTabs.optJSONObject(i)?.let { PaneTab.parse(it) }
-                    }
-                    val tabCount = maxOf(1, tabs.size)
-                    val active = (o.int("active") ?: 0).coerceIn(0, tabCount - 1)
+                    val tabs = o.arr("tabs")?.parseEach { PaneTab.parse(it) } ?: emptyList()
+                    val active = (o.int("active") ?: 0).coerceIn(0, maxOf(1, tabs.size) - 1)
                     Pane(tabs, active)
                 }
                 "split" -> {
@@ -193,13 +195,11 @@ data class TaskWindowLayout(
             if (o.str("type") != "windows") return null
             val arr = o.arr("windows") ?: return null
             val used = mutableSetOf<String>()
-            val windows = (0 until arr.length()).mapNotNull { i ->
-                val w = arr.optJSONObject(i) ?: return@mapNotNull null
-                val id = w.str("id")?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-                val safeId = if (id.length > 160) id.take(160) else id
-                if (used.contains(safeId)) return@mapNotNull null
-                used.add(safeId)
-                val layout = LayoutNode.parse(w.opt("layout")) ?: return@mapNotNull null
+            val windows = arr.parseEach { w ->
+                val id = w.str("id")?.trim()?.takeIf { it.isNotEmpty() } ?: return@parseEach null
+                val safeId = id.take(160)
+                if (!used.add(safeId)) return@parseEach null
+                val layout = LayoutNode.parse(w.opt("layout")) ?: return@parseEach null
                 val requestedActive = w.str("activeTabId")?.takeIf { it.isNotEmpty() }
                 val activeTabId = if (requestedActive != null && layoutHasTab(layout, requestedActive)) {
                     requestedActive
@@ -232,52 +232,25 @@ fun layoutSessionIds(node: LayoutNode): List<String> =
     layoutTabs(node).mapNotNull { (it as? PaneTab.Session)?.sessionId }
 
 /** 布局中是否存在指定 tab id。 */
-fun layoutHasTab(node: LayoutNode, tabId: String): Boolean {
-    if (node is LayoutNode.Pane) return node.tabs.any { it.id == tabId }
-    if (node is LayoutNode.Split) {
-        return layoutHasTab(node.children.first, tabId) ||
-            layoutHasTab(node.children.second, tabId)
-    }
-    return false
-}
+fun layoutHasTab(node: LayoutNode, tabId: String): Boolean =
+    layoutTabs(node).any { it.id == tabId }
 
 /** 找到布局里指定 id 的标签。 */
-fun findLayoutTab(node: LayoutNode, tabId: String): PaneTab? {
-    if (node is LayoutNode.Pane) {
-        return node.tabs.firstOrNull { it.id == tabId }
-    }
-    if (node is LayoutNode.Split) {
-        return findLayoutTab(node.children.first, tabId)
-            ?: findLayoutTab(node.children.second, tabId)
-    }
-    return null
-}
+fun findLayoutTab(node: LayoutNode, tabId: String): PaneTab? =
+    layoutTabs(node).firstOrNull { it.id == tabId }
 
-/** 取活动标签（优先按 active index / preferredTabId）。 */
+/** 取活动标签（优先按 preferredTabId，其次当前窗格的 active index）。 */
 fun activeLayoutTab(node: LayoutNode, preferredTabId: String? = null): PaneTab? {
-    if (preferredTabId != null) {
-        findLayoutTab(node, preferredTabId)?.let { return it }
-    }
-    if (node is LayoutNode.Pane) {
-        return node.tabs.getOrNull(node.active) ?: node.tabs.firstOrNull()
-    }
-    if (node is LayoutNode.Split) {
-        return activeLayoutTab(node.children.first)
+    preferredTabId?.let { findLayoutTab(node, it) }?.let { return it }
+    return when (node) {
+        is LayoutNode.Pane -> node.tabs.getOrNull(node.active) ?: node.tabs.firstOrNull()
+        is LayoutNode.Split -> activeLayoutTab(node.children.first)
             ?: activeLayoutTab(node.children.second)
     }
-    return null
 }
 
-/** 取一棵布局里的第一个标签 id（深度优先左侧）。 */
-fun firstLayoutTabId(node: LayoutNode): String? {
-    if (node is LayoutNode.Pane) {
-        return node.tabs.getOrNull(node.active)?.id ?: node.tabs.firstOrNull()?.id
-    }
-    if (node is LayoutNode.Split) {
-        return firstLayoutTabId(node.children.first) ?: firstLayoutTabId(node.children.second)
-    }
-    return null
-}
+/** 取一棵布局里的第一个标签 id（深度优先左侧，等于活动标签）。 */
+fun firstLayoutTabId(node: LayoutNode): String? = activeLayoutTab(node)?.id
 
 /** 任务窗口集合里当前活动 window。 */
 fun activeWorkWindow(layout: TaskWindowLayout?): WorkWindowLayout? {
@@ -450,6 +423,10 @@ data class WorkspaceTaskCreation(
     }
 }
 
+/** 任务列表里的会话摘要数组（task summary / detail 共用）。 */
+private fun JSONObject.sessionSummaries(): List<WorkspaceSessionSummary> =
+    arr("sessions")?.let(WorkspaceSessionSummary::parseList) ?: emptyList()
+
 /**
  * GET /api/tasks 聚合行：任务 + 运行期派生字段；目录信息在 TaskDirectoryGroup 上。
  * 对齐 web/iOS 同名模型。
@@ -479,7 +456,7 @@ data class WorkspaceTaskSummary(
                 cwd = o.str("cwd") ?: "",
                 isolated = o.bool("isolated") ?: false,
                 worktreeError = o.str("worktreeError"),
-                sessions = o.arr("sessions")?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
+                sessions = o.sessionSummaries(),
                 totalSessions = o.int("totalSessions")
                     ?: o.arr("sessions")?.length()
                     ?: 0,
@@ -573,7 +550,7 @@ data class WorkspaceTaskDetail(
                 cwd = o.str("cwd") ?: "",
                 isolated = o.bool("isolated") ?: false,
                 worktreeError = o.str("worktreeError"),
-                sessions = o.arr("sessions")?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
+                sessions = o.sessionSummaries(),
             )
         }
     }
@@ -587,23 +564,16 @@ data class WorkspaceTaskDetail(
 fun orderWorkspaceSessions(sessions: List<WorkspaceSessionSummary>): List<WorkspaceSessionSummary> {
     // 对齐 Web orderWorkspaceSessions：按 startedAt 升序（更早创建在前），缺失时间排后，
     // 时间相同或缺失时保留服务端原始相对顺序（稳定排序）。
-    val indexed = sessions.mapIndexed { index, session -> IndexedSession(session, index, session.startedAt) }
-    return indexed.sortedWith { a, b ->
-        val aHas = a.startedAt != null && a.startedAt.isNotEmpty()
-        val bHas = b.startedAt != null && b.startedAt.isNotEmpty()
+    return sessions.withIndex().sortedWith { a, b ->
+        val aTime = a.value.startedAt?.takeIf { it.isNotEmpty() }
+        val bTime = b.value.startedAt?.takeIf { it.isNotEmpty() }
         when {
-            aHas && bHas && a.startedAt != b.startedAt -> a.startedAt!!.compareTo(b.startedAt!!)
-            aHas != bHas -> if (aHas) -1 else 1
+            aTime != null && bTime != null && aTime != bTime -> aTime.compareTo(bTime)
+            (aTime != null) != (bTime != null) -> if (aTime != null) -1 else 1
             else -> a.index - b.index
         }
-    }.map { it.session }
+    }.map { it.value }
 }
-
-private data class IndexedSession(
-    val session: WorkspaceSessionSummary,
-    val index: Int,
-    val startedAt: String?,
-)
 
 data class WorkspaceWorktreeCommit(
     val hash: String,

@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.reduceMotionEnabled
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /**
@@ -97,15 +98,14 @@ fun TailMarqueePathText(
             return@LaunchedEffect
         }
         val tailOffset = -overflowPx.toFloat()
-        if (!motionEnabled || revealOnce || repeatTailReveal) {
-            if (motionEnabled) {
-                offset.snapTo(0f)
-            } else {
+        when {
+            !motionEnabled -> {
                 offset.snapTo(tailOffset)
                 return@LaunchedEffect
             }
-        } else {
-            offset.snapTo(tailOffset)
+            // 揭示模式都从根目录开始；旧版往返模式先贴右停留再回流。
+            revealOnce || repeatTailReveal -> offset.snapTo(0f)
+            else -> offset.snapTo(tailOffset)
         }
 
         val durationMillis = ((overflowPx / velocityPxPerSecond) * 1000f)
@@ -116,7 +116,7 @@ fun TailMarqueePathText(
         } else {
             0L
         }
-        kotlinx.coroutines.delay(initialDelayMillis + staggerMillis)
+        delay(initialDelayMillis + staggerMillis)
         if (revealOnce) {
             offset.animateTo(
                 targetValue = tailOffset,
@@ -134,9 +134,9 @@ fun TailMarqueePathText(
                         easing = LinearEasing,
                     ),
                 )
-                kotlinx.coroutines.delay(pauseMillis)
+                delay(pauseMillis)
                 offset.snapTo(0f)
-                kotlinx.coroutines.delay(initialDelayMillis + staggerMillis)
+                delay(initialDelayMillis + staggerMillis)
             }
         } else {
             while (true) {
@@ -144,12 +144,12 @@ fun TailMarqueePathText(
                     targetValue = 0f,
                     animationSpec = tween(durationMillis = durationMillis, easing = LinearEasing),
                 )
-                kotlinx.coroutines.delay(pauseMillis)
+                delay(pauseMillis)
                 offset.animateTo(
                     targetValue = tailOffset,
                     animationSpec = tween(durationMillis = durationMillis, easing = LinearEasing),
                 )
-                kotlinx.coroutines.delay(initialDelayMillis)
+                delay(initialDelayMillis)
             }
         }
     }
