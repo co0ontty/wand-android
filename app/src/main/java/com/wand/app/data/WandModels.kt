@@ -99,15 +99,61 @@ private fun structuredContentText(value: Any?): String = when (value) {
         }
     }.joinToString("\n")
     is JSONObject -> {
-        STRUCTURED_TEXT_KEYS.firstNotNullOfOrNull { key ->
-            structuredContentText(value.opt(key)).takeIf { it.isNotBlank() }
-        } ?: try {
-            value.toString(2)
-        } catch (_: Exception) {
-            value.toString()
+        // 图片 part 不抽文本也不 JSON 兑底（否则会把整段 base64 倒进正文）。
+        if (value.str("type") == "image" || value.str("type") == "image_url") {
+            ""
+        } else {
+            STRUCTURED_TEXT_KEYS.firstNotNullOfOrNull { key ->
+                structuredContentText(value.opt(key)).takeIf { it.isNotBlank() }
+            } ?: try {
+                value.toString(2)
+            } catch (_: Exception) {
+                value.toString()
+            }
         }
     }
     else -> value.toString()
+}
+
+/**
+ * 抽 tool_result 内联图片：服务端已归一化为 `{type:"image", source:{type:"url"|"base64", …}}`，
+ * 这里统一成可直接加载的源（站内相对 URL 或 data URI）。
+ */
+private fun structuredToolImages(value: Any?): List<String> {
+    if (value !is JSONArray) return emptyList()
+    val images = mutableListOf<String>()
+    for (i in 0 until value.length()) {
+        val part = value.optJSONObject(i) ?: continue
+        when (part.str("type")) {
+            "image" -> {
+                val source = part.obj("source")
+                if (source != null) {
+                    when (source.str("type")) {
+                        "url" -> source.str("url")?.takeIf { it.isNotBlank() }?.let(images::add)
+                        "base64" -> source.str("data")?.takeIf { it.isNotBlank() }?.let {
+                            images.add("data:${source.str("media_type") ?: "image/png"};base64,$it")
+                        }
+                    }
+                } else {
+                    part.str("url")?.takeIf { it.isNotBlank() }?.let(images::add)
+                    part.str("data")?.takeIf { it.isNotBlank() }?.let {
+                        val mime = part.str("mimeType") ?: part.str("mime_type") ?: "image/png"
+                        images.add("data:$mime;base64,$it")
+                    }
+                }
+            }
+            "image_url" -> {
+                val raw = part.opt("image_url")
+                val url = when (raw) {
+                    is String -> raw
+                    is JSONObject -> raw.str("url")
+                    else -> null
+                }
+                url?.takeIf { it.isNotBlank() }?.let(images::add)
+            }
+        }
+    }
+    return images
 }
 
 // MARK: - 会话消息块
@@ -217,6 +263,8 @@ sealed class ContentBlock {
         val isError: Boolean,
         val truncated: Boolean,
         val subagent: SubagentMeta?,
+        /** 结果内联图片（站内取图 URL 或 data URI）；服务端已归一化，跨端一致渲染。 */
+        val images: List<String> = emptyList(),
     ) : ContentBlock()
 
     /** 协议升级兜底：保留类型与原始载荷，UI 可明确提示而不是整块消失。 */
@@ -238,13 +286,15 @@ sealed class ContentBlock {
                     semantic = ToolUseSemantic.parse(o.obj("semantic")),
                 )
                 "tool_result" -> {
-                    val text = structuredContentText(o.opt("content"))
+                    val rawContent = o.opt("content")
+                    val text = structuredContentText(rawContent)
                     ToolResult(
                         toolUseId = o.str("tool_use_id") ?: "",
                         text = text,
                         isError = o.bool("is_error") ?: false,
                         truncated = o.bool("_truncated") ?: false,
                         subagent = subagent,
+                        images = structuredToolImages(rawContent),
                     )
                 }
                 else -> Unknown(

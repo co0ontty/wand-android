@@ -111,6 +111,7 @@ import com.wand.app.data.summaryText
 import com.wand.app.ui.AskUserSelectionState
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.WandAsyncImage
+import com.wand.app.ui.WandAsyncToolImage
 import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
 import com.wand.app.ui.parseUserAttachmentText
@@ -1650,7 +1651,7 @@ private fun explorationToolsOnly(turn: ConversationTurn): List<ExplorationToolIt
     for (item in pairToolBlocks(turn.content)) {
         when {
             item is DisplayItem.Exploration -> tools += item.tools
-            item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use) ->
+            item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use, item.result) ->
                 tools += ExplorationToolItem(item.use, item.result)
             else -> return null
         }
@@ -1678,8 +1679,10 @@ private fun isExplorationTool(name: String): Boolean {
  * 读图的 Read 单独成卡（缩略图常驻可见），不并入默认折叠的探索组，
  * 否则 body 整体折叠会把内联缩略图一起藏掉。
  */
-private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse): Boolean {
+private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse, result: ContentBlock.ToolResult? = null): Boolean {
     if (!isExplorationTool(use.name)) return false
+    // 结果带内联图片的工具单卡常驻（缩略图不能被折叠藏起来）。
+    if (!result?.images.isNullOrEmpty()) return false
     if (use.name == "Read" && readImagePath(use.input) != null) return false
     return true
 }
@@ -2090,7 +2093,7 @@ private fun collapseConsecutiveExplorationTools(paired: List<DisplayItem>): List
     }
 
     for (item in paired) {
-        if (item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use)) {
+        if (item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use, item.result)) {
             exploration.add(ExplorationToolItem(item.use, item.result))
         } else {
             flushExploration()
@@ -2516,11 +2519,20 @@ fun ToolCard(
                 }
             }
         }
-        // Read 读到图片：始终内联缩略图（对齐网页 inline-tool-image，不藏在展开区里），
-        // 点击放大。加载失败由 WandAsyncImage 自行隐藏。
-        if (use.name == "Read") {
+        // 工具结果内联图片（服务端归一化后的取图 URL / data URI）优先：常驻缩略图，
+        // 不藏在展开区里。没有内联图时退回 Read 按路径取图（对齐网页）。
+        val baseUrl = LocalServerBaseUrl.current
+        val resultImages = result?.images.orEmpty()
+        if (resultImages.isNotEmpty()) {
+            resultImages.forEach { source ->
+                WandAsyncToolImage(
+                    source = source,
+                    baseUrl = baseUrl,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                )
+            }
+        } else if (use.name == "Read") {
             val imgPath = readImagePath(use.input)
-            val baseUrl = LocalServerBaseUrl.current
             if (imgPath != null && baseUrl.isNotEmpty()) {
                 WandAsyncImage(
                     path = imgPath,

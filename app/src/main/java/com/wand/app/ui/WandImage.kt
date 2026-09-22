@@ -1,7 +1,10 @@
 package com.wand.app.ui
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -28,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -44,6 +50,8 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.wand.app.data.WandHttp
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
@@ -170,6 +178,74 @@ fun WandAsyncImage(
             baseUrl = baseUrl,
             onDismiss = { showViewer = false },
         )
+    }
+}
+
+/**
+ * 内联工具结果图片：服务端下发的站内取图 URL（/api/sessions/…/tool-images/…）
+ * 或 data URI。只读缩略图，与网页 `inline-tool-image` 对齐（加载失败整块隐藏）。
+ */
+@Composable
+fun WandAsyncToolImage(
+    source: String,
+    baseUrl: String,
+    modifier: Modifier = Modifier,
+    maxWidth: Int = 240,
+    maxHeight: Int = 200,
+) {
+    var failed by remember(source) { mutableStateOf(false) }
+    var decoded by remember(source) { mutableStateOf<ImageBitmap?>(null) }
+    val shapeModifier = modifier
+        .widthIn(max = maxWidth.dp)
+        .heightIn(max = maxHeight.dp)
+        .clip(WandShapes.sm)
+        .border(1.dp, WandColors.border, WandShapes.sm)
+
+    if (source.startsWith("data:")) {
+        LaunchedEffect(source) {
+            decoded = withContext(Dispatchers.IO) { decodeDataUriImage(source) }
+            if (decoded == null) failed = true
+        }
+        if (failed) return
+        val bitmap = decoded ?: return
+        Image(
+            bitmap = bitmap,
+            contentDescription = "工具返回图片",
+            contentScale = ContentScale.Fit,
+            modifier = shapeModifier,
+        )
+        return
+    }
+
+    val context = LocalContext.current
+    val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
+    val loader = remember(endpoint) { WandImage.imageLoader(context, endpoint) }
+    val absolute = if (source.startsWith("http://") || source.startsWith("https://")) {
+        source
+    } else {
+        endpoint + if (source.startsWith("/")) source else "/$source"
+    }
+    val model = remember(absolute) { ImageRequest.Builder(context).data(absolute).build() }
+    if (failed) return
+    AsyncImage(
+        model = model,
+        imageLoader = loader,
+        contentDescription = "工具返回图片",
+        contentScale = ContentScale.Fit,
+        onState = { state -> if (state is AsyncImagePainter.State.Error) failed = true },
+        modifier = shapeModifier,
+    )
+}
+
+/** 解析 data:image/…;base64,…. 失败返回 null（不崩溃）。 */
+private fun decodeDataUriImage(source: String): ImageBitmap? {
+    val comma = source.indexOf(',')
+    if (comma < 0) return null
+    return try {
+        val bytes = Base64.decode(source.substring(comma + 1), Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    } catch (_: Exception) {
+        null
     }
 }
 
