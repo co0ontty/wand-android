@@ -12,7 +12,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -24,6 +23,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -35,9 +36,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -48,12 +46,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
@@ -62,16 +62,28 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -99,29 +111,42 @@ import com.wand.app.ui.components.WandProviderMarkVariant
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
-import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.WandTerminal
-import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.terminal.DefaultTerminalShortcuts
+import com.wand.app.ui.terminal.TerminalKeyBinding
 import com.wand.app.ui.terminal.TerminalModifier
+import com.wand.app.ui.terminal.directPtyInput
+import com.wand.app.ui.terminal.normalizeTerminalScale
+import com.wand.app.ui.terminal.stepTerminalScale
+import com.wand.app.ui.terminal.terminalFontSp
+import com.wand.app.ui.terminal.encodeTerminalKey
+import com.wand.app.ui.terminal.terminalTypeface
 import com.wand.app.ui.terminal.TerminalSpecialKeys
 import com.wand.app.ui.terminal.TerminalShortcut
 import com.wand.app.ui.terminal.NativePtyTerminal
 import com.wand.app.ui.terminal.NativePtyTerminalSurface
+import com.wand.app.ui.terminal.TerminalPalette
+import com.wand.app.ui.terminal.terminalSoftKeyboardEnabled
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
-private val TerminalBackground = WandTerminal.background
+private val TerminalBackground = Color(TerminalPalette.backgroundArgb)
+private val TerminalForeground = Color(TerminalPalette.foregroundArgb)
+private val TerminalTray = Color(TerminalPalette.trayArgb)
+private val TerminalCapsule = Color(TerminalPalette.capsuleArgb)
+private val TerminalKey = Color(TerminalPalette.keyArgb)
+private val TerminalKeyPressed = Color(TerminalPalette.keyPressedArgb)
+private val TerminalMuted = Color(TerminalPalette.mutedArgb)
+private val TerminalHairline = Color(TerminalPalette.hairlineArgb)
 
 /**
- * PTY 会话原生壳：顶部用原生头部（返回 + provider 徽标 + 标题/工作目录），
- * 中间使用原生 libvterm/Compose 终端，直接消费 WS PTY 输出和 Render 快照；
- * 底部保留原生快捷键与输入抽屉，完全不加载网页。
+ * PTY 会话原生壳：顶部用原生头部，中间是 libvterm 终端。
+ * 软键盘确认的文字立刻写入 PTY，输入法组词留在键盘上方的一行里。
+ * 底部快捷键发送 Esc / Ctrl / 方向键；草稿框用于长文本、语音和附件。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -160,14 +185,44 @@ fun PtyTerminalScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    // 底部快捷栏左端的拉手：折叠时只露出快捷键栏，展开时在上方滑出输入抽屉
-    // （文本框 + 发送 + 按住说话）。默认折叠，给终端留出最大可视区，对称 iOS PtySessionView。
+    // 软键盘直接写 PTY。草稿抽屉默认收起，只在整段提示、语音或附件时打开。
     var inputDrawerOpen by remember(sessionId) { mutableStateOf(false) }
+    var keyboardRequested by remember(sessionId) { mutableStateOf(true) }
     var draft by remember(sessionId) { mutableStateOf("") }
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
     val scope = rememberCoroutineScope()
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val directKeyboard = terminalSoftKeyboardEnabled(
+        ready = terminal.ready.value,
+        composerOpen = inputDrawerOpen,
+        requested = keyboardRequested,
+    )
+    fun requestDirectKeyboard() {
+        inputDrawerOpen = false
+        if (keyboardRequested && !imeVisible) {
+            keyboardRequested = false
+            scope.launch {
+                delay(40)
+                keyboardRequested = true
+            }
+        } else {
+            keyboardRequested = true
+        }
+    }
     val context = LocalContext.current
+    val terminalScalePrefs = remember(context) {
+        context.getSharedPreferences("wand.terminal", android.content.Context.MODE_PRIVATE)
+    }
+    var terminalScale by remember {
+        mutableFloatStateOf(normalizeTerminalScale(terminalScalePrefs.getFloat("scale", 1f)))
+    }
+    fun updateTerminalScale(next: Float) {
+        val value = normalizeTerminalScale(next)
+        if (value == terminalScale) return
+        terminalScale = value
+        terminalScalePrefs.edit().putFloat("scale", value).apply()
+    }
     val attachmentPickers = rememberAttachmentPickerActions { uris ->
         scope.launchAttachmentUpload(
             context = context,
@@ -318,9 +373,24 @@ fun PtyTerminalScreen(
         },
         bottomBar = {
             PtyBottomBar(
-                backdrop = null,
                 inputDrawerOpen = inputDrawerOpen,
-                onToggleInputDrawer = { inputDrawerOpen = !inputDrawerOpen },
+                directKeyboard = directKeyboard,
+                onToggleKeyboard = {
+                    if (directKeyboard && imeVisible) {
+                        keyboardRequested = false
+                    } else {
+                        requestDirectKeyboard()
+                    }
+                },
+                onToggleInputDrawer = {
+                    val open = !inputDrawerOpen
+                    inputDrawerOpen = open
+                    if (open) {
+                        keyboardRequested = false
+                    } else {
+                        keyboardRequested = true
+                    }
+                },
                 draft = draft,
                 onDraftChange = { draft = it },
                 onSend = { sendPtyDraft() },
@@ -334,6 +404,12 @@ fun PtyTerminalScreen(
                 onPickFile = attachmentPickers.pickFile,
                 isHapticEnabled = isHapticEnabled,
                 onShortcut = { shortcutQueue.trySend(it) },
+                sessionId = sessionId,
+                onDirectInput = { text ->
+                    val sent = terminal.send(text)
+                    if (!sent) toast = "终端未就绪，输入未发送；请检查连接后重试"
+                    sent
+                },
                 voice = voiceInput.voice,
                 onMicDown = voiceInput.onMicDown,
             )
@@ -362,9 +438,19 @@ fun PtyTerminalScreen(
             ) {
                 NativePtyTerminalSurface(
                     terminal,
-                    onTap = { inputDrawerOpen = true },
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                    fontSize = terminalFontSp(terminalScale).sp,
+                    onTerminalTap = { requestDirectKeyboard() },
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                 )
+                if (terminal.ready.value) {
+                    TerminalScaleBar(
+                        scale = terminalScale,
+                        onShrink = { updateTerminalScale(stepTerminalScale(terminalScale, -0.25f)) },
+                        onReset = { updateTerminalScale(stepTerminalScale(terminalScale, 0f)) },
+                        onGrow = { updateTerminalScale(stepTerminalScale(terminalScale, 0.25f)) },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp),
+                    )
+                }
                 if (terminal.loading.value) {
                     Box(Modifier.fillMaxSize().background(TerminalBackground),
                         contentAlignment = Alignment.Center) {
@@ -376,7 +462,7 @@ fun PtyTerminalScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        Text("终端连接未就绪", color = WandTerminal.text)
+                        Text("终端连接未就绪", color = TerminalForeground)
                         Text(
                             "重试连接",
                             color = WandColors.brand,
@@ -474,8 +560,9 @@ private fun PtyTopBar(
 
 @Composable
 private fun PtyBottomBar(
-    backdrop: GlassBackdrop?,
     inputDrawerOpen: Boolean,
+    directKeyboard: Boolean,
+    onToggleKeyboard: () -> Unit,
     onToggleInputDrawer: () -> Unit,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -488,6 +575,8 @@ private fun PtyBottomBar(
     onPickFile: () -> Unit,
     isHapticEnabled: () -> Boolean,
     onShortcut: (TerminalShortcut) -> Unit,
+    sessionId: String,
+    onDirectInput: (String) -> Boolean,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
 ) {
@@ -497,12 +586,7 @@ private fun PtyBottomBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .glassSurface(
-                    backdrop,
-                    RoundedCornerShape(0.dp),
-                    WandGlass.regular.copy(refractionHeight = 0.dp, shadowElevation = 0.dp),
-                    edgeToEdge = true,
-                )
+                .background(TerminalTray)
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
@@ -521,39 +605,52 @@ private fun PtyBottomBar(
                         shrinkVertically(WandMotion.tweenExit(), shrinkTowards = Alignment.Top)
                 },
             ) {
-                PtyInputDrawer(
-                    draft = draft,
-                    onDraftChange = onDraftChange,
-                    onSend = onSend,
-                    uploading = uploadingAttachments,
-                    pendingAttachments = pendingAttachments,
-                    baseUrl = baseUrl,
-                    onRemoveAttachment = onRemoveAttachment,
-                    onPickPhoto = onPickPhoto,
-                    onPickFile = onPickFile,
-                    voice = voice,
-                    onMicDown = onMicDown,
-                )
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(WandColors.bgElevated),
+                ) {
+                    PtyInputDrawer(
+                        draft = draft,
+                        onDraftChange = onDraftChange,
+                        onSend = onSend,
+                        uploading = uploadingAttachments,
+                        pendingAttachments = pendingAttachments,
+                        baseUrl = baseUrl,
+                        onRemoveAttachment = onRemoveAttachment,
+                        onPickPhoto = onPickPhoto,
+                        onPickFile = onPickFile,
+                        voice = voice,
+                        onMicDown = onMicDown,
+                    )
+                }
             }
-            // 把快捷键收进一个连续的工具托盘：输入入口固定在左侧，只有快捷键区域横向滚动。
-            // 这样在窄屏上滑动查看按键时，输入抽屉不会跟着滚走，也不会显得像一排散落的按钮。
+            // 键盘和草稿固定在左侧，快捷键单独横向滚动，窄屏滑动时入口不会跟着走。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(WandColors.bgElevated.copy(alpha = 0.92f))
-                    .border(
-                        0.7.dp,
-                        WandColors.border.copy(alpha = 0.8f),
-                        RoundedCornerShape(14.dp),
-                    )
+                    .background(TerminalCapsule)
+                    .border(0.6.dp, TerminalHairline, RoundedCornerShape(14.dp))
                     .padding(horizontal = 5.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                // 输入入口保持固定，避免快捷键滚动后用户找不到发送文本的位置。
-                InputDrawerHandle(open = inputDrawerOpen, onClick = onToggleInputDrawer)
-                val edgeFade = WandColors.bgElevated.copy(alpha = 0.98f)
+                TerminalTrayButton(
+                    icon = WandIcons.keyboard,
+                    active = directKeyboard,
+                    label = if (directKeyboard) "收起键盘" else "直接输入到终端",
+                    onClick = onToggleKeyboard,
+                )
+                TerminalTrayButton(
+                    icon = WandIcons.edit,
+                    active = inputDrawerOpen,
+                    label = if (inputDrawerOpen) "收起整段输入" else "整段输入",
+                    onClick = onToggleInputDrawer,
+                )
+                val edgeFade = TerminalCapsule
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -600,19 +697,78 @@ private fun PtyBottomBar(
                     }
                 }
             }
+            if (directKeyboard) {
+                PtyDirectField(sessionId = sessionId, onSend = onDirectInput)
+            }
         }
     }
 }
 
-/// 输入抽屉的拉手：点击或上下拖动切换输入抽屉。
 @Composable
-private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
-    val targetColor = if (open) WandColors.brand else WandColors.textPrimary
-    val background = if (open) {
-        WandColors.brandSoft
-    } else {
-        WandColors.surfaceSoft.copy(alpha = 0.62f)
+private fun TerminalScaleBar(
+    scale: Float,
+    onShrink: () -> Unit,
+    onReset: () -> Unit,
+    onGrow: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(TerminalCapsule.copy(alpha = 0.94f))
+            .border(0.6.dp, TerminalHairline, RoundedCornerShape(10.dp))
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TerminalScaleButton("−", "缩小终端", onShrink)
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .height(28.dp)
+                .widthIn(min = 44.dp)
+                .clip(WandShapes.sm)
+                .clickable(
+                    onClickLabel = "恢复终端缩放",
+                    role = Role.Button,
+                    onClick = onReset,
+                ),
+        ) {
+            Text(
+                "${kotlin.math.round(scale * 100).toInt()}%",
+                color = TerminalForeground,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        TerminalScaleButton("+", "放大终端", onGrow)
     }
+}
+
+@Composable
+private fun TerminalScaleButton(label: String, description: String, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .height(28.dp)
+            .widthIn(min = 28.dp)
+            .clip(WandShapes.sm)
+            .clickable(onClickLabel = description, role = Role.Button, onClick = onClick),
+    ) {
+        Text(label, color = TerminalForeground, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun TerminalTrayButton(
+    icon: ImageVector,
+    active: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val background = if (active) WandColors.brand.copy(alpha = 0.22f) else TerminalKey
+    val border = if (active) WandColors.brand.copy(alpha = 0.7f) else TerminalHairline
+    val tint = if (active) WandColors.brand else TerminalForeground
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -620,44 +776,155 @@ private fun InputDrawerHandle(open: Boolean, onClick: () -> Unit) {
             .widthIn(min = 44.dp)
             .clip(WandShapes.sm)
             .background(background)
-            .border(0.6.dp, WandColors.border.copy(alpha = 0.85f), WandShapes.sm)
+            .border(0.6.dp, border, WandShapes.sm)
             .clickable(
-                onClickLabel = if (open) "收起输入框" else "展开输入框",
+                onClickLabel = label,
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 8.dp)
-            .pointerInput(open) {
-                var accumulated = 0f
-                detectVerticalDragGestures(
-                    onDragStart = { accumulated = 0f },
-                    onDragEnd = {
-                        if (accumulated < -12f && !open) onClick()
-                        else if (accumulated > 12f && open) onClick()
-                    },
-                ) { _, dragAmount ->
-                    accumulated += dragAmount
+            .padding(horizontal = 10.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+    }
+}
+
+/**
+ * Focus target for the soft keyboard. Committed text is written to the PTY immediately.
+ * An open IME composition stays in this line until the candidate is chosen.
+ */
+@Composable
+private fun PtyDirectField(
+    sessionId: String,
+    onSend: (String) -> Boolean,
+) {
+    val context = LocalContext.current
+    val typeface = remember { terminalTypeface(context.assets) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var value by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
+    var suppress by remember(sessionId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(sessionId) {
+        delay(60)
+        runCatching { focusRequester.requestFocus() }
+        delay(40)
+        keyboard?.show()
+    }
+    val composing = value.text.isNotEmpty()
+    fun sendDirect(text: String): Boolean {
+        if (text.isEmpty()) return true
+        return onSend(text)
+    }
+    fun sendDirectKey(key: String, fieldEmpty: Boolean): Boolean {
+        if (!fieldEmpty) return false
+        val bytes = encodeTerminalKey(TerminalKeyBinding(key)) ?: return false
+        sendDirect(bytes)
+        return true
+    }
+    BasicTextField(
+        value = value,
+        onValueChange = { next ->
+            if (suppress != null && next.text == suppress) {
+                suppress = null
+                value = TextFieldValue("")
+                return@BasicTextField
+            }
+            val step = directPtyInput(next.text, composing = next.composition != null)
+            if (step.send != null) {
+                if (sendDirect(step.send)) {
+                    value = TextFieldValue("")
+                } else {
+                    value = next
+                }
+                return@BasicTextField
+            }
+            value = next
+        },
+        textStyle = TextStyle(
+            fontFamily = FontFamily(typeface),
+            fontSize = 16.sp,
+            lineHeight = 22.sp,
+            color = TerminalForeground,
+        ),
+        cursorBrush = SolidColor(if (composing) Color(0xFFD88D60) else TerminalTray),
+        keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.None,
+            autoCorrectEnabled = false,
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.None,
+        ),
+        singleLine = true,
+        decorationBox = { inner ->
+            Box(
+                contentAlignment = Alignment.CenterStart,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+            ) {
+                inner()
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (composing) 36.dp else 1.dp)
+            .semantics { contentDescription = "终端输入" }
+            .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (event.isCtrlPressed) {
+                    val key = when (event.key) {
+                        Key.A -> "a"
+                        Key.C -> "c"
+                        Key.D -> "d"
+                        Key.E -> "e"
+                        Key.K -> "k"
+                        Key.L -> "l"
+                        Key.R -> "r"
+                        Key.U -> "u"
+                        Key.W -> "w"
+                        Key.Z -> "z"
+                        else -> null
+                    }
+                    val bytes = key?.let {
+                        encodeTerminalKey(TerminalKeyBinding(it, setOf(TerminalModifier.Ctrl)))
+                    }
+                    if (bytes != null) {
+                        value = TextFieldValue("")
+                        sendDirect(bytes)
+                        return@onPreviewKeyEvent true
+                    }
+                }
+                when (event.key) {
+                    Key.Enter -> {
+                        val pending = value.text
+                        value = TextFieldValue("")
+                        if (pending.isNotEmpty()) {
+                            suppress = pending
+                            sendDirect(pending)
+                        }
+                        sendDirect("\r")
+                        true
+                    }
+                    Key.Tab -> {
+                        sendDirect("\t")
+                        true
+                    }
+                    Key.Escape -> {
+                        value = TextFieldValue("")
+                        sendDirect("\u001b")
+                        true
+                    }
+                    Key.Backspace -> {
+                        if (value.text.isEmpty()) sendDirect("\u007f")
+                        value.text.isEmpty()
+                    }
+                    Key.DirectionUp -> sendDirectKey("arrowUp", value.text.isEmpty())
+                    Key.DirectionDown -> sendDirectKey("arrowDown", value.text.isEmpty())
+                    Key.DirectionLeft -> sendDirectKey("arrowLeft", value.text.isEmpty())
+                    Key.DirectionRight -> sendDirectKey("arrowRight", value.text.isEmpty())
+                    else -> false
                 }
             },
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Icon(
-                WandIcons.keyboard,
-                contentDescription = null,
-                tint = targetColor,
-                modifier = Modifier.size(16.dp),
-            )
-            Icon(
-                if (open) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
-                contentDescription = null,
-                tint = targetColor,
-                modifier = Modifier.size(15.dp),
-            )
-        }
-    }
+    )
 }
 
 /// 展开后的终端输入抽屉：多行文本框 + 按住说话 + 发送。显示在快捷键栏上方。
@@ -679,6 +946,8 @@ private fun PtyInputDrawer(
     val focusRequester = remember { FocusRequester() }
     val expanded = pendingAttachments.isNotEmpty()
     LaunchedEffect(Unit) {
+        // Let the terminal IME finish hiding before this field takes focus.
+        delay(80)
         runCatching { focusRequester.requestFocus() }
     }
     val plusMenu: @Composable () -> Unit = {
@@ -752,7 +1021,7 @@ private fun PtyInputDrawer(
                         ) {
                             if (draft.isEmpty()) {
                                 Text(
-                                    "输入终端命令",
+                                    "整段文字、语音或附件",
                                     fontSize = 16.sp,
                                     color = WandColors.textMuted,
                                     maxLines = 1,
@@ -815,7 +1084,7 @@ private fun TerminalShortcutKey(
         label = "shortcutKeyScale",
     )
     val background by animateColorAsState(
-        targetValue = if (pressed) WandColors.surfaceSoft else WandColors.surfaceSoft.copy(alpha = 0.70f),
+        targetValue = if (pressed) TerminalKeyPressed else TerminalKey,
         animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenPress()),
         label = "shortcutKeyBackground",
     )
@@ -835,7 +1104,7 @@ private fun TerminalShortcutKey(
             .widthIn(min = 44.dp)
             .clip(WandShapes.sm)
             .background(background)
-            .border(0.6.dp, WandColors.border.copy(alpha = 0.6f), WandShapes.sm)
+            .border(0.6.dp, TerminalHairline, WandShapes.sm)
             .clickable(
                 interactionSource = interaction,
                 indication = null,
@@ -853,7 +1122,7 @@ private fun TerminalShortcutKey(
                 if (index > 0) ShortcutKeyJoin()
                 Text(
                     modifierKey.label,
-                    color = WandColors.textMuted,
+                    color = TerminalMuted,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -862,7 +1131,7 @@ private fun TerminalShortcutKey(
             if (modifiers.isNotEmpty()) ShortcutKeyJoin()
             Text(
                 keyLabel,
-                color = WandColors.textPrimary,
+                color = TerminalForeground,
                 fontFamily = FontFamily.Monospace,
                 fontSize = if (symbolOnly) 15.sp else 13.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -877,7 +1146,7 @@ private fun TerminalShortcutKey(
 private fun ShortcutKeyJoin() {
     Text(
         "+",
-        color = WandColors.textMuted.copy(alpha = 0.55f),
+        color = TerminalMuted.copy(alpha = 0.7f),
         fontSize = 10.sp,
         fontWeight = FontWeight.Medium,
     )

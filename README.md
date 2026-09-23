@@ -2,8 +2,10 @@
 
 此目录用于放置 wand 的 Android 客户端工程。PTY 使用 Compose + libvterm 原生终端：
 订阅服务端 `/ws` 的 `terminalState` 快照与 PTY 原始输出，通过 `pty_input`、
-`pty_resize`、`pty_ack` 双向通信，不加载 WebView。终端仿真依赖
-`org.connectbot:termlib:0.0.10`（Apache-2.0；锁定与 Kotlin 2.2 / compileSdk 36 兼容的版本）。
+`pty_resize`、`pty_ack` 双向通信，不加载 WebView。软键盘的按键直接写入 PTY；
+底部草稿框用于整段提示、语音和附件。显示使用内置 JetBrains Mono（OFL）和暖色
+ANSI 调色板。终端仿真依赖 `org.connectbot:termlib:0.0.10`（Apache-2.0；锁定与
+Kotlin 2.2 / compileSdk 36 兼容的版本）。
 
 ## 约定
 

@@ -1,20 +1,19 @@
 package com.wand.app.ui.terminal
 
-import android.graphics.Typeface
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.PtyTerminalSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import com.wand.app.data.WsIncoming
-import com.wand.app.ui.theme.WandTerminal
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
@@ -67,8 +66,8 @@ internal class NativePtyTerminal(
     val emulator: TerminalEmulator = TerminalEmulatorFactory.create(
         initialRows = 24,
         initialCols = 80,
-        defaultForeground = WandTerminal.text,
-        defaultBackground = WandTerminal.background,
+        defaultForeground = Color(TerminalPalette.foregroundArgb),
+        defaultBackground = Color(TerminalPalette.backgroundArgb),
         onKeyboardInput = { data ->
             if (ready.value && !socket.sendPtyInput(String(data, Charsets.UTF_8), userInput = true)) {
                 onError("终端输入未发送，请检查连接后重试")
@@ -88,7 +87,13 @@ internal class NativePtyTerminal(
         },
         // OSC 52 must not copy remote data into the system clipboard.
         onClipboardCopy = {},
-    )
+    ).also { created ->
+        created.applyColorScheme(
+            TerminalPalette.ansi,
+            TerminalPalette.foregroundArgb,
+            TerminalPalette.backgroundArgb,
+        )
+    }
 
     fun start() {
         if (started) return
@@ -196,32 +201,30 @@ internal class NativePtyTerminal(
 @Composable
 internal fun NativePtyTerminalSurface(
     terminal: NativePtyTerminal,
-    onTap: () -> Unit,
+    fontSize: TextUnit,
+    onTerminalTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val emulator = remember(terminal) { terminal.emulator }
+    val typeface = remember { terminalTypeface(context.assets) }
     DisposableEffect(terminal) {
         terminal.start()
         onDispose { terminal.stop() }
     }
     Terminal(
         terminalEmulator = emulator,
-        modifier = modifier.fillMaxSize().pointerInput(onTap) {
-            // A gesture detector does not consume drags or long presses: preserve terminal
-            // scrollback and text selection while making a short tap open the native composer.
-            detectTapGestures(onTap = { onTap() })
-        },
-        // Termlib measures every cell from the width of "M". "sans-serif-mono" is not an
-        // Android font family and falls back to proportional sans-serif, leaving huge gaps
-        // between narrow glyphs. Use the platform's actual fixed-width terminal font.
-        typeface = Typeface.MONOSPACE,
-        // Keep output readable while fitting more columns/rows; pinch zoom remains available.
-        initialFontSize = 12.sp,
-        minFontSize = 10.sp,
-        maxFontSize = 20.sp,
-        backgroundColor = WandTerminal.background,
-        foregroundColor = WandTerminal.text,
+        modifier = modifier.fillMaxSize(),
+        typeface = typeface,
+        initialFontSize = fontSize,
+        minFontSize = TERMINAL_MIN_FONT_SP.sp,
+        maxFontSize = TERMINAL_MAX_FONT_SP.sp,
+        backgroundColor = Color(TerminalPalette.backgroundArgb),
+        foregroundColor = Color(TerminalPalette.foregroundArgb),
+        // Hardware keys reach the emulator when it is focused. The soft keyboard is a
+        // separate field so IME composition can commit straight into the PTY.
         keyboardEnabled = terminal.ready.value,
         showSoftKeyboard = false,
+        onTerminalTap = onTerminalTap,
     )
 }
