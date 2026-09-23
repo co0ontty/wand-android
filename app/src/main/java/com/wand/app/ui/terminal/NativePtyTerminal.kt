@@ -211,12 +211,14 @@ internal fun NativePtyTerminalSurface(
             // scrollback and text selection while making a short tap open the native composer.
             detectTapGestures(onTap = { onTap() })
         },
-        typeface = Typeface.create("sans-serif-mono", Typeface.NORMAL),
-        // 11sp rendered the full 80-column desktop screen in tiny, uneven glyphs on phones.
-        // A larger cell reflows the PTY through onResize instead of scaling a wide screenshot.
-        initialFontSize = 14.sp,
-        minFontSize = 13.sp,
-        maxFontSize = 22.sp,
+        // Termlib measures every cell from the width of "M". "sans-serif-mono" is not an
+        // Android font family and falls back to proportional sans-serif, leaving huge gaps
+        // between narrow glyphs. Use the platform's actual fixed-width terminal font.
+        typeface = Typeface.MONOSPACE,
+        // Keep output readable while fitting more columns/rows; pinch zoom remains available.
+        initialFontSize = 12.sp,
+        minFontSize = 10.sp,
+        maxFontSize = 20.sp,
         backgroundColor = WandTerminal.background,
         foregroundColor = WandTerminal.text,
         keyboardEnabled = terminal.ready.value,

@@ -360,7 +360,11 @@ fun PtyTerminalScreen(
                     .padding(padding)
                     .background(TerminalBackground),
             ) {
-                NativePtyTerminalSurface(terminal, onTap = { inputDrawerOpen = true })
+                NativePtyTerminalSurface(
+                    terminal,
+                    onTap = { inputDrawerOpen = true },
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                )
                 if (terminal.loading.value) {
                     Box(Modifier.fillMaxSize().background(TerminalBackground),
                         contentAlignment = Alignment.Center) {
@@ -536,15 +540,15 @@ private fun PtyBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(WandColors.bgElevated.copy(alpha = 0.92f))
                     .border(
                         0.7.dp,
                         WandColors.border.copy(alpha = 0.8f),
-                        RoundedCornerShape(18.dp),
+                        RoundedCornerShape(14.dp),
                     )
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                    .padding(horizontal = 5.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // 输入入口保持固定，避免快捷键滚动后用户找不到发送文本的位置。
@@ -553,11 +557,11 @@ private fun PtyBottomBar(
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(40.dp)
                         .drawWithContent {
                             drawContent()
                             // 滚动两端用托盘底色渐隐，提示这里还可以横向滑动。
-                            val fadeWidth = 22.dp.toPx()
+                            val fadeWidth = 16.dp.toPx()
                             if (shortcutScroll.value > 0) {
                                 drawRect(
                                     brush = Brush.horizontalGradient(
@@ -580,9 +584,9 @@ private fun PtyBottomBar(
                             }
                         }
                         .horizontalScroll(shortcutScroll)
-                        .padding(horizontal = 6.dp),
+                        .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     // 按使用热度分三组：高频执行（Enter/↑/Tab）· 中断控制（Esc/Ctrl+C/Shift+Tab）
                     // · 光标导航（←/→/↓），组间用细竖线分隔，最常用的永远在最顺手的位置。
@@ -839,7 +843,7 @@ private fun TerminalShortcutKey(
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = if (symbolOnly && modifiers.isEmpty()) 10.dp else 12.dp),
+            .padding(horizontal = if (symbolOnly && modifiers.isEmpty()) 8.dp else 10.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
