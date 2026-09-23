@@ -666,7 +666,6 @@ private fun SinglePaneContent(
                 onTaskClosed = nav::closeWorkspaceTask,
                 onSessionClosed = nav::closeSession,
                 onOpenSettings = onOpenSettings,
-                onOpenWeb = actions.navigation.openWeb,
                 onSwitchServer = actions.navigation.switchServer,
             )
         } else {
@@ -797,7 +796,6 @@ private fun WideReadyContent(
                                 onTaskClosed = nav::closeWorkspaceTask,
                                 onSessionClosed = nav::closeSession,
                                 onOpenSettings = onOpenSettings,
-                                onOpenWeb = actions.navigation.openWeb,
                                 onSwitchServer = actions.navigation.switchServer,
                                 onCollapseSidebar = onToggleSidebarCollapsed,
                             )

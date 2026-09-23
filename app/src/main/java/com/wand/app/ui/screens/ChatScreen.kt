@@ -1560,6 +1560,7 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop?) {
                         text = text,
                         onPromote = { store.promoteQueued(index) },
                         onDelete = { store.deleteQueued(index) },
+                        onEdit = { store.editQueued(index, it) },
                     )
                 }
                 // 全部清空：右对齐，提示性按钮。
@@ -1593,7 +1594,20 @@ private fun QueueItemRow(
     text: String,
     onPromote: () -> Unit,
     onDelete: () -> Unit,
+    onEdit: (String) -> Unit,
 ) {
+    var editing by remember { mutableStateOf(false) }
+    var draft by remember(text) { mutableStateOf(text) }
+    if (editing) WandDialog(
+        title = "编辑排队消息",
+        onDismissRequest = { editing = false },
+        confirm = WandDialogAction("保存", {
+            if (draft.isNotBlank()) { onEdit(draft); editing = false }
+        }),
+        dismiss = WandDialogAction("取消", { editing = false }),
+    ) {
+        WandTextField(value = draft, onValueChange = { draft = it }, label = "消息")
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1616,6 +1630,9 @@ private fun QueueItemRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        IconButton(onClick = { editing = true }, modifier = Modifier.size(28.dp)) {
+            Text("✎", fontSize = 18.sp, color = WandColors.brand)
+        }
         // 立即发送
         IconButton(
             onClick = onPromote,

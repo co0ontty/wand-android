@@ -6,7 +6,7 @@ import androidx.compose.runtime.saveable.listSaver
 import com.wand.app.data.WandApi
 import com.wand.app.ui.theme.WandAppearanceMode
 
-/** 原生界面的页面栈。结构化对话原生承载，PTY 套在原生头部里嵌一层终端 WebView。 */
+/** 原生界面的页面栈。结构化对话与 PTY 终端均原生承载。 */
 sealed class Screen {
     data object SessionList : Screen()
     data class Chat(
@@ -350,7 +350,6 @@ class HomeServerConnection(
 )
 
 class HomeNavigationActions(
-    val openWeb: () -> Unit,
     val switchServer: () -> Unit,
     val manageServers: () -> Unit,
     val reconnectServer: (serverId: String) -> Unit,

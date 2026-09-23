@@ -138,7 +138,6 @@ fun TaskListScreen(
     onTaskClosed: (taskId: String) -> Unit = {},
     onSessionClosed: (sessionId: String) -> Unit = {},
     onOpenSettings: () -> Unit,
-    onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
 ) {
@@ -922,7 +921,6 @@ fun TaskListScreen(
                         }
                     },
                     onOpenSettings = onOpenSettings,
-                    onOpenWeb = onOpenWeb,
                     onSwitchServer = onSwitchServer,
                     onOpenTaskBoard = { onHomeListModeChange(HomeListMode.Tasks) },
                     onCollapseSidebar = onCollapseSidebar,
@@ -1105,7 +1103,6 @@ private fun HomeOverviewCard(
     showNewTask: Boolean = true,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
     onOpenTaskBoard: () -> Unit = {},
     onCollapseSidebar: (() -> Unit)?,
@@ -1193,11 +1190,6 @@ private fun HomeOverviewCard(
                         text = { Text("设置") },
                         leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
                         onClick = { menuOpen = false; onOpenSettings() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("打开网页版") },
-                        leadingIcon = { Icon(WandIcons.web, contentDescription = null) },
-                        onClick = { menuOpen = false; onOpenWeb() },
                     )
                     DropdownMenuItem(
                         text = { Text("切换服务器") },

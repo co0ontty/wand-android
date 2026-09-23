@@ -195,6 +195,7 @@ fun WandAsyncToolImage(
 ) {
     var failed by remember(source) { mutableStateOf(false) }
     var decoded by remember(source) { mutableStateOf<ImageBitmap?>(null) }
+    var showViewer by remember(source) { mutableStateOf(false) }
     val shapeModifier = modifier
         .widthIn(max = maxWidth.dp)
         .heightIn(max = maxHeight.dp)
@@ -212,8 +213,9 @@ fun WandAsyncToolImage(
             bitmap = bitmap,
             contentDescription = "工具返回图片",
             contentScale = ContentScale.Fit,
-            modifier = shapeModifier,
+            modifier = shapeModifier.clickable { showViewer = true },
         )
+        if (showViewer) FullscreenImageViewer(source, baseUrl, { showViewer = false }, bitmap = bitmap)
         return
     }
 
@@ -233,8 +235,9 @@ fun WandAsyncToolImage(
         contentDescription = "工具返回图片",
         contentScale = ContentScale.Fit,
         onState = { state -> if (state is AsyncImagePainter.State.Error) failed = true },
-        modifier = shapeModifier,
+        modifier = shapeModifier.clickable { showViewer = true },
     )
+    if (showViewer) FullscreenImageViewer(absolute, baseUrl, { showViewer = false }, directUrl = true)
 }
 
 /** 解析 data:image/…;base64,…. 失败返回 null（不崩溃）。 */
@@ -258,8 +261,16 @@ fun FullscreenImageViewer(
     path: String,
     baseUrl: String,
     onDismiss: () -> Unit,
+    directUrl: Boolean = false,
+    bitmap: ImageBitmap? = null,
 ) {
-    val (loader, model) = rememberRemoteImage(path, baseUrl)
+    val context = LocalContext.current
+    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
+    val model = remember(baseUrl, path, directUrl) {
+        ImageRequest.Builder(context)
+            .data(if (directUrl) path else WandImage.fileRawUrl(baseUrl, path))
+            .build()
+    }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     Dialog(
@@ -293,21 +304,23 @@ fun FullscreenImageViewer(
                     }
                 },
         ) {
-            AsyncImage(
-                model = model,
-                imageLoader = loader,
-                contentDescription = path.substringAfterLast('/'),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    },
-            )
+            val imageModifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                }
+            if (bitmap != null) {
+                Image(bitmap = bitmap, contentDescription = "工具返回图片",
+                    contentScale = ContentScale.Fit, modifier = imageModifier)
+            } else {
+                AsyncImage(model = model, imageLoader = loader,
+                    contentDescription = path.substringAfterLast('/'),
+                    contentScale = ContentScale.Fit, modifier = imageModifier)
+            }
             // 关闭按钮：右上角安全区内的半透明圆钮（对齐 iOS xmark）。
             Box(
                 contentAlignment = Alignment.Center,

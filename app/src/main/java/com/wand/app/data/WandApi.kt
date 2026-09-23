@@ -202,6 +202,10 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         )
     }
 
+    suspend fun editQueued(id: String, index: Int, expectedText: String, text: String): SessionSnapshot =
+        SessionSnapshot.parse(requestObject("PATCH", "/api/structured-sessions/$id/queued/$index",
+            JSONObject().put("expectedText", expectedText).put("text", text)))
+
     /** 删除第 index 条排队消息。 */
     suspend fun deleteQueued(id: String, index: Int) {
         requestData("DELETE", "/api/structured-sessions/$id/queued/$index")

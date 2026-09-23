@@ -16,10 +16,9 @@ import android.util.DisplayMetrics;
 /**
  * 网络相关的共享工具。
  *
- * wand server 默认用自签名证书 (src/cert.ts), 浏览器侧靠 WebView 的
- * onReceivedSslError 放行; 而 APK 自己发起的 HttpURLConnection (更新检查 /
- * APK 下载 / 连接探测) 没有 WebView 兜底, 必须显式信任自签名链, 否则
- * 一律 SSLHandshakeException。这里集中处理, 供各 Activity 共用。
+ * wand server 默认用自签名证书 (src/cert.ts)。原生网络请求（更新检查 /
+ * APK 下载 / 连接探测）必须显式信任自签名链，否则会抛 SSLHandshakeException。
+ * 这里集中处理，供各 Activity 共用。
  */
 final class NetUtils {
 

@@ -10,14 +10,10 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.provider.Settings;
-import android.view.View;
 
 import com.wand.app.data.WandHttp;
-import android.widget.ProgressBar;
-import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
 
@@ -177,97 +173,8 @@ final class UpdateManager {
         });
     }
 
-    void downloadAndInstall(String downloadUrl, String fileName,
-                            String source, String latestVersion) {
-        downloadAndInstall(downloadUrl, fileName, source, latestVersion,
-                serverStore.isBetaChannel() ? "beta" : "stable", null);
-    }
-
-    void downloadAndInstall(String downloadUrl, String fileName,
-                            String source, String latestVersion, String channel) {
-        downloadAndInstall(downloadUrl, fileName, source, latestVersion, channel, null);
-    }
-
-    void downloadAndInstall(String downloadUrl, String fileName,
-                            String source, String latestVersion, String channel, String sha256) {
-        downloadAndInstall(downloadUrl, fileName, source, latestVersion, channel, sha256, 0);
-    }
-
-    void downloadAndInstall(String downloadUrl, String fileName,
-                            String source, String latestVersion, String channel, String sha256,
-                            long expectedSize) {
-        if (downloadUrl == null || downloadUrl.isEmpty()) {
-            Toast.makeText(activity, "下载地址为空", Toast.LENGTH_LONG).show();
-            return;
-        }
-        final String safeFileName = sanitizeApkFileName(fileName);
-
-        View progressView = activity.getLayoutInflater()
-                .inflate(R.layout.dialog_download_progress, null);
-        final ProgressBar progressBar = progressView.findViewById(R.id.progressBar);
-        final TextView progressPercent = progressView.findViewById(R.id.progressPercent);
-        final TextView progressBytes = progressView.findViewById(R.id.progressBytes);
-
-        final DownloadRequest[] request = {null};
-        final AlertDialog progress = new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
-                .setView(progressView)
-                .setNegativeButton(R.string.cancel_download, (d, w) -> {
-                    if (request[0] != null) request[0].cancel();
-                })
-                .setCancelable(false)
-                .create();
-        progress.show();
-
-        request[0] = download(
-                downloadUrl,
-                safeFileName,
-                latestVersion,
-                channel,
-                sha256,
-                expectedSize,
-                new DownloadListener() {
-                    @Override public void onProgress(long downloaded, long total, long bytesPerSecond) {
-                        String speedText = "  " + formatSize(bytesPerSecond) + "/s";
-                        if (total > 0) {
-                            int percent = (int) (downloaded * 100 / total);
-                            progressBar.setIndeterminate(false);
-                            progressBar.setProgress(percent);
-                            progressPercent.setText(percent + "%");
-                            progressBytes.setText(formatSize(downloaded) + " / "
-                                    + formatSize(total) + speedText);
-                        } else {
-                            progressBar.setIndeterminate(true);
-                            progressPercent.setText("大小未知");
-                            progressBytes.setText(formatSize(downloaded) + speedText);
-                        }
-                    }
-
-                    @Override public void onCompleted(File apkFile) {
-                        progress.dismiss();
-                        installApk(apkFile);
-                    }
-
-                    @Override public void onCancelled() {
-                        progress.dismiss();
-                    }
-
-                    @Override public void onFailed(String message) {
-                        progress.dismiss();
-                        new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
-                            .setTitle("下载失败")
-                            .setMessage(message)
-                            .setPositiveButton("重试", (d, w) ->
-                                    downloadAndInstall(downloadUrl, safeFileName, source, latestVersion, channel, sha256, expectedSize))
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .show();
-                    }
-                }
-        );
-    }
-
     /**
-     * 只下载，不直接弹窗或安装。HomeActivity 的 Compose 更新面板以此驱动进度状态；
-     * MainActivity 仍通过上面的兼容入口使用相同的网络和落盘逻辑。
+     * 只下载，不直接弹窗或安装。HomeActivity 的 Compose 更新面板以此驱动进度状态。
      *
      * 安全语义：
      * - 关闭自动重定向，手工逐跳处理；每跳用 WandHttp.requestClient 按 origin

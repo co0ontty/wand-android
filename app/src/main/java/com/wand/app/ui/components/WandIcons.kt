@@ -88,7 +88,7 @@ object WandIcons {
     /** grep / glob / search。 */
     val search: ImageVector = Icons.Outlined.Search
 
-    /** web / fetch / websearch；也用作「打开网页版」。 */
+    /** web / fetch / websearch 工具图标。 */
     val web: ImageVector = Icons.Outlined.Language
 
     /** 会话设置（模型 / 思考深度），对称 iOS slider.horizontal.3。 */

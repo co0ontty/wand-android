@@ -32,17 +32,13 @@ public class WandForegroundService extends Service {
             return START_NOT_STICKY;
         }
 
-        // 点通知回到原生主界面（HomeActivity）；WebView 仅作网页版兜底。
+        // 点通知回到原生主界面（HomeActivity）。
         Intent mainIntent = new Intent(this, HomeActivity.class);
         mainIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         if (intent != null) {
             String serverId = intent.getStringExtra(WandShortcuts.EXTRA_SERVER_ID);
-            String serverUrl = intent.getStringExtra("server_url");
             if (serverId != null) {
                 mainIntent.putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId);
-            } else {
-                // 兼容旧版 MainActivity 发起的保活 Intent。
-                if (serverUrl != null) mainIntent.putExtra("server_url", serverUrl);
             }
         }
         PendingIntent pi = PendingIntent.getActivity(this, 0, mainIntent,

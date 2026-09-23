@@ -25,7 +25,6 @@ import com.google.zxing.integration.android.IntentResult;
 import com.wand.app.data.ServerProfile;
 import com.wand.app.data.WandAuth;
 import com.wand.app.data.WandHttp;
-import com.wand.app.data.WandWebSession;
 
 import org.json.JSONObject;
 
@@ -46,10 +45,10 @@ public class ConnectActivity extends AppCompatActivity {
     private ConnectComposeView connectView;
     private ServerStore serverStore;
     // 跟踪当前是否处于自动连接阶段。后台连接探测线程跑完之后会
-    // runOnUiThread 决定下一步 (跳 WebView / 报错回表单), 我们在那里
+    // runOnUiThread 决定下一步 (进入原生首页 / 报错回表单), 我们在那里
     // 检查这面旗 — 用户如果已经点了"取消"/"管理服务器", autoConnecting
     // 会被翻成 false, 那次姗姗来迟的结果就必须被丢掉, 否则会出现
-    // "用户已经在表单里输地址了, 突然又被旧请求强制跳到 WebView" 的
+    // "用户已经在表单里输地址了, 突然又被旧请求强制跳到首页" 的
     // 体验事故 (尤其在 socket 已发出 → 用户点取消 → 服务器其实在
     // 这一秒内回复了这种 race 下很容易看见)。
     private boolean autoConnecting = false;
@@ -57,7 +56,7 @@ public class ConnectActivity extends AppCompatActivity {
     // 用 single-thread executor 替代裸 new Thread, 配合 Future 在 onDestroy
     // 时 cancel(true) 中断未完成的连接探测 / cookie 写入。用户秒退或快速
     // 切服务器场景下, 之前的 raw Thread 还在跑, runOnUiThread 在 Activity
-    // 已经 finish 之后调 setText / launchWebView 会触发 IllegalStateException
+    // 已经 finish 之后更新表单或导航会触发 IllegalStateException
     // (尤其在低端机网络慢的时候比较常见)。
     private ExecutorService networkExecutor;
     private Future<?> currentTask;
@@ -126,7 +125,7 @@ public class ConnectActivity extends AppCompatActivity {
         managementMode = getIntent().getBooleanExtra(EXTRA_MANAGEMENT_MODE, false);
         returnServerId = getIntent().getStringExtra(EXTRA_RETURN_SERVER_ID);
         profilesChanged = getIntent().getBooleanExtra(EXTRA_PROFILES_CHANGED, false);
-        // ConnectActivity is the server-management boundary. A previous native/WebView runtime
+        // ConnectActivity is the server-management boundary. A previous native runtime
         // must not keep reconnecting or emitting notifications while profiles are edited.
         if (!managementMode) {
             SessionWatcher.INSTANCE.stop();
@@ -169,7 +168,6 @@ public class ConnectActivity extends AppCompatActivity {
                 if (removedActive) {
                     SessionWatcher.INSTANCE.stop();
                     stopService(new Intent(ConnectActivity.this, WandForegroundService.class));
-                    clearWebViewCookies();
                     WandShortcuts.INSTANCE.clear(ConnectActivity.this);
                 }
                 if (managementMode && serverId.equals(returnServerId)) {
@@ -187,7 +185,6 @@ public class ConnectActivity extends AppCompatActivity {
                 markProfilesChanged();
                 SessionWatcher.INSTANCE.stop();
                 stopService(new Intent(ConnectActivity.this, WandForegroundService.class));
-                clearWebViewCookies();
                 WandShortcuts.INSTANCE.clear(ConnectActivity.this);
                 if (managementMode && returnServerId != null) {
                     detachRemovedRuntime();
@@ -667,7 +664,7 @@ public class ConnectActivity extends AppCompatActivity {
                 && !(error instanceof IllegalArgumentException);
     }
 
-    /** 连接成功后进入原生主界面（HomeActivity）；WebView（MainActivity）只作网页版兜底。 */
+    /** 连接成功后进入原生主界面（HomeActivity）。 */
     private void launchHome(ServerProfile profile) {
         SessionWatcher.INSTANCE.stop();
         stopService(new Intent(this, WandForegroundService.class));
@@ -754,10 +751,6 @@ public class ConnectActivity extends AppCompatActivity {
         cancelAutoConnectRetry();
         cancelCurrentTask();
         connectView.setConnecting(false);
-    }
-
-    private void clearWebViewCookies() {
-        WandWebSession.clearAsync();
     }
 
     private void showStatus(String message) {

@@ -26,12 +26,19 @@ class WandSocket(baseUrl: String) {
     /** 连接状态变化（true=已连上），主线程回调。 */
     var onConnectionChange: ((Boolean) -> Unit)? = null
 
+    /** 原生 PTY 专用原始帧；聊天订阅仍只收到类型化 SessionEvent。 */
+    internal var onPtyEvent: ((WsIncoming) -> Unit)? = null
+    internal var onPtyResync: (() -> Unit)? = null
+
     private val baseUrl = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
     private val handler = Handler(Looper.getMainLooper())
 
     private var webSocket: WebSocket? = null
+    private var connected = false
     private var subscribedSessionId: String? = null
+    private var ptyAck = false
+    private var awaitingPtySnapshot = false
     private val lastSeqBySession = mutableMapOf<String, Int>()
     private var lastMessageAt = SystemClock.elapsedRealtime()
     private var reconnectDelayMs = 1_000L
@@ -74,6 +81,11 @@ class WandSocket(baseUrl: String) {
         generation += 1
         webSocket?.cancel()
         webSocket = null
+        connected = false
+        if (ptyAck) {
+            awaitingPtySnapshot = true
+            onPtyResync?.invoke()
+        }
         lastMessageAt = SystemClock.elapsedRealtime()
         openSocket()
         restartWatchdog()
@@ -86,17 +98,53 @@ class WandSocket(baseUrl: String) {
         generation += 1
         webSocket?.close(1001, null)
         webSocket = null
+        connected = false
+        awaitingPtySnapshot = true
     }
 
-    fun subscribe(sessionId: String) {
+    fun subscribe(sessionId: String, ptyAck: Boolean = false) {
         subscribedSessionId = sessionId
+        this.ptyAck = ptyAck
+        awaitingPtySnapshot = ptyAck
         sendSubscribe(sessionId)
     }
 
     fun requestResync() {
         val id = subscribedSessionId ?: return
         lastSeqBySession.remove(id)
+        if (ptyAck) {
+            awaitingPtySnapshot = true
+            onPtyResync?.invoke()
+        }
         sendJson(JSONObject().put("type", "resync").put("sessionId", id))
+    }
+
+    /** 不重放未确认的键击；只有持有最新快照的连接才能发送 PTY 输入。 */
+    fun sendPtyInput(text: String, userInput: Boolean = true, shortcutKey: String? = null): Boolean {
+        val id = subscribedSessionId ?: return false
+        if (text.isEmpty() || !connected || (ptyAck && awaitingPtySnapshot)) return false
+        for (chunk in ptyInputChunks(text)) {
+            val payload = JSONObject().put("type", "pty_input").put("sessionId", id)
+                .put("data", chunk).put("userInput", userInput)
+            if (userInput && chunk == "\r") payload.put("shortcutKey", shortcutKey ?: "enter_text")
+            else if (shortcutKey != null) payload.put("shortcutKey", shortcutKey)
+            if (!sendJson(payload)) return false
+        }
+        return true
+    }
+
+    fun resizePty(cols: Int, rows: Int) {
+        val id = subscribedSessionId ?: return
+        if (!connected || cols !in 1..1000 || rows !in 1..1000 || awaitingPtySnapshot) return
+        sendJson(JSONObject().put("type", "pty_resize").put("sessionId", id)
+            .put("cols", cols).put("rows", rows))
+    }
+
+    fun acknowledgePty(bytes: Int) {
+        val id = subscribedSessionId ?: return
+        if (ptyAck && bytes > 0) {
+            sendJson(JSONObject().put("type", "pty_ack").put("sessionId", id).put("bytes", bytes))
+        }
     }
 
     // MARK: - 内部
@@ -112,7 +160,9 @@ class WandSocket(baseUrl: String) {
     /** 重新订阅一个会话：丢掉旧的 seq 基准，服务端随即推一份 init 快照。 */
     private fun sendSubscribe(sessionId: String) {
         lastSeqBySession.remove(sessionId)
-        sendJson(JSONObject().put("type", "subscribe").put("sessionId", sessionId))
+        if (ptyAck) awaitingPtySnapshot = true
+        sendJson(JSONObject().put("type", "subscribe").put("sessionId", sessionId)
+            .put("capabilities", JSONObject().put("ptyAck", ptyAck)))
     }
 
     private fun openSocket() {
@@ -128,6 +178,7 @@ class WandSocket(baseUrl: String) {
                     if (gen != generation || closed) return@post
                     lastMessageAt = SystemClock.elapsedRealtime()
                     reconnectDelayMs = 1_000L
+                    connected = true
                     onConnectionChange?.invoke(true)
                     // 重新订阅当前会话；服务端会推一份 init 快照，相当于天然 resync。
                     subscribedSessionId?.let { id -> sendSubscribe(id) }
@@ -173,13 +224,16 @@ class WandSocket(baseUrl: String) {
                 return
             }
             "resync_required" -> {
-                requestResync()
+                if (incoming.sessionId == null || incoming.sessionId == subscribedSessionId) {
+                    requestResync()
+                }
                 return
             }
             "init" -> {
                 val id = incoming.sessionId
                 val seq = incoming.seq
                 if (id != null && seq != null) lastSeqBySession[id] = seq
+                if (ptyAck && id == subscribedSessionId) awaitingPtySnapshot = false
             }
             "output" -> {
                 // seq 间隙说明服务端因背压丢过事件，主动要一份全量快照。
@@ -187,8 +241,13 @@ class WandSocket(baseUrl: String) {
                 val seq = incoming.seq
                 if (id != null && seq != null) {
                     val last = lastSeqBySession[id]
+                    if (ptyAck && id == subscribedSessionId &&
+                        (awaitingPtySnapshot || (last != null && seq <= last))) {
+                        acknowledgePty(incoming.ptyBytes ?: 0)
+                        return
+                    }
                     if (last != null && seq > last + 1) {
-                        lastSeqBySession[id] = seq
+                        if (ptyAck && id == subscribedSessionId) acknowledgePty(incoming.ptyBytes ?: 0)
                         requestResync()
                         return
                     }
@@ -196,12 +255,13 @@ class WandSocket(baseUrl: String) {
                 }
             }
         }
+        if (incoming.sessionId == null || incoming.sessionId == subscribedSessionId) {
+            onPtyEvent?.invoke(incoming)
+        }
         incoming.toSessionEvent()?.let { onEvent?.invoke(it) }
     }
 
-    private fun sendJson(payload: JSONObject) {
-        webSocket?.send(payload.toString())
-    }
+    private fun sendJson(payload: JSONObject): Boolean = webSocket?.send(payload.toString()) == true
 
     // MARK: - 重连与看门狗
 
@@ -211,6 +271,9 @@ class WandSocket(baseUrl: String) {
         onConnectionChange?.invoke(false)
         webSocket?.cancel()
         webSocket = null
+        connected = false
+        awaitingPtySnapshot = ptyAck
+        onPtyResync?.invoke()
         val delay = reconnectDelayMs
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(30_000L)
         handler.postDelayed({
@@ -220,6 +283,30 @@ class WandSocket(baseUrl: String) {
     }
 
     companion object {
+        /** Split at UTF-8 scalar boundaries below the server per-frame limit. */
+        internal fun ptyInputChunks(text: String, maxBytes: Int = 16 * 1024): List<String> {
+            if (text.isEmpty()) return emptyList()
+            val chunks = mutableListOf<String>()
+            val current = StringBuilder()
+            var bytes = 0
+            var offset = 0
+            while (offset < text.length) {
+                val codepoint = text.codePointAt(offset)
+                val part = String(Character.toChars(codepoint))
+                val size = part.toByteArray(Charsets.UTF_8).size
+                if (bytes + size > maxBytes.coerceAtLeast(4) && current.isNotEmpty()) {
+                    chunks.add(current.toString())
+                    current.clear()
+                    bytes = 0
+                }
+                current.append(part)
+                bytes += size
+                offset += Character.charCount(codepoint)
+            }
+            if (current.isNotEmpty()) chunks.add(current.toString())
+            return chunks
+        }
+
         private const val WATCHDOG_INTERVAL_MS = 10_000L
         private const val WATCHDOG_TIMEOUT_MS = 40_000L
     }

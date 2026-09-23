@@ -17,9 +17,7 @@ import java.io.IOException
  * appToken 走一次 POST /api/login，session cookie 由 WandHttp 的 CookieJar 承接，
  * 之后的 REST 请求与 /ws 升级请求自动携带。
  *
- * WebView CookieManager 是进程全局状态，且 cookie 不按端口隔离，因此 native 登录
- * 绝不向它镜像 cookie。真正承载 WebView 的页面会在加载前显式执行 clear → 当前
- * endpoint login → load。
+ * 原生终端与聊天都复用端点隔离的 WandHttp CookieJar，不再镜像 WebView cookie。
  */
 object WandAuth {
 

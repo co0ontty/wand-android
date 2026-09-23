@@ -772,6 +772,7 @@ internal data class WsIncoming(
     val t: Double?,
     val error: String?,
     val data: WsData?,
+    val ptyBytes: Int?,
 ) {
     companion object {
         fun parse(o: JSONObject): WsIncoming = WsIncoming(
@@ -781,6 +782,7 @@ internal data class WsIncoming(
             t = o.dbl("t"),
             error = o.str("error"),
             data = o.obj("data")?.let { WsData.parse(it) },
+            ptyBytes = o.int("ptyBytes"),
         )
     }
 }
@@ -829,6 +831,11 @@ internal data class WsData(
     val permissionRequest: PermissionRequestInfo?,
     // —— task 事件：data 本身就是任务对象（{title, …}），其余字段缺省 ——
     val taskTitle: String?,
+    val chunk: String? = null,
+    val output: String? = null,
+    val ptyCols: Int? = null,
+    val ptyRows: Int? = null,
+    val terminalState: PtyTerminalSnapshot? = null,
 ) {
     /** init 的 data 是完整快照 —— 转成 SessionSnapshot（messages 不带，避免双份内存）。 */
     fun toSnapshot(): SessionSnapshot? {
@@ -894,6 +901,11 @@ internal data class WsData(
             isResponding = o.bool("isResponding"),
             permissionRequest = PermissionRequestInfo.parse(o.obj("permissionRequest")),
             taskTitle = o.str("title"),
+            chunk = o.str("chunk"),
+            output = o.str("output"),
+            ptyCols = o.int("ptyCols"),
+            ptyRows = o.int("ptyRows"),
+            terminalState = PtyTerminalSnapshot.parse(o.obj("terminalState")),
         )
     }
 }

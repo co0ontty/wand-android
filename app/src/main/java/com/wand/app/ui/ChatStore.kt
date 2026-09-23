@@ -534,6 +534,18 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
     }
 
+    fun editQueued(index: Int, text: String) {
+        val original = queuedMessages.getOrNull(index) ?: return
+        if (text.isBlank()) { toast = "排队消息不能为空。"; return }
+        scope.launch {
+            try {
+                apply(api.editQueued(sessionId, index, original, text.trim()))
+            } catch (e: Exception) {
+                toast = e.message ?: "编辑排队消息失败"
+            }
+        }
+    }
+
     /** 删除第 index 条排队消息（乐观 + 失败回滚）。 */
     fun deleteQueued(index: Int) {
         val prev = queuedMessages

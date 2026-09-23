@@ -19,7 +19,6 @@ import androidx.compose.ui.Modifier
 import com.wand.app.data.ServerProfile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandHttp
-import com.wand.app.data.WandWebSession
 import com.wand.app.ui.HomeActions
 import com.wand.app.ui.HomeConnectionInfo
 import com.wand.app.ui.HomeNavigationActions
@@ -38,7 +37,7 @@ import java.util.concurrent.Executors
 
 /**
  * 原生主界面（Compose）：任务列表 / 聊天或终端 / 任务创建 / 设置。
- * 对称 iOS 端的 NativeRootView；WebView（MainActivity）只作「网页版」兜底入口。
+ * 对称 iOS 端的 NativeRootView，承载原生主界面。
  *
  * 由 ConnectActivity 在连接成功后启动。主路径只传稳定 server_id，URL 与凭据从
  * ServerStore 解析；server_url/app_token 仅保留为旧 Intent 的兼容入口。
@@ -220,7 +219,6 @@ class HomeActivity : AppCompatActivity() {
             ),
             servers = serverConnections,
             navigation = HomeNavigationActions(
-                openWeb = { openWebFallback(serverProfile.id) },
                 switchServer = { switchServer() },
                 manageServers = { manageServers(serverProfile.id) },
                 reconnectServer = { targetServerId ->
@@ -322,7 +320,7 @@ class HomeActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        // 安装未知来源权限授予后的续装回调（与 MainActivity 同款处理）。
+        // 安装未知来源权限授予后的续装回调。
         updateManager?.handleActivityResult(requestCode)
     }
 
@@ -391,16 +389,6 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    private fun openWebFallback(
-        serverId: String,
-        sessionId: String? = null,
-    ) {
-        val intent = Intent(this, MainActivity::class.java)
-        intent.putExtra(WandShortcuts.EXTRA_SERVER_ID, serverId)
-        if (!sessionId.isNullOrEmpty()) intent.putExtra("session_id", sessionId)
-        startActivity(intent)
-    }
-
     private fun switchServer(requestedServerId: String? = null) {
         // 换服务器 / 断开：停掉旧服务器的通知中枢，避免跨服务器串通知。
         stopServerRuntime()
@@ -430,7 +418,6 @@ class HomeActivity : AppCompatActivity() {
             WandHttp.resetClient(profile.baseUrl)
         }
         serverStore.removeServerProfile(serverId)
-        WandWebSession.clearAsync()
         stopKeepAliveService()
         // 移除当前服务器后清掉会话快捷项，避免长按图标还能直达已移除的连接。
         WandShortcuts.clear(this)

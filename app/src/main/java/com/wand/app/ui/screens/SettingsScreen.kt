@@ -223,7 +223,6 @@ fun SettingsScreen(
                         )
                         RowDivider()
                         ConnectionActionsRow(
-                            onOpenWeb = navigation.openWeb,
                             onSwitchServer = navigation.manageServers,
                         )
                         RowDivider()
@@ -722,7 +721,6 @@ private fun ServerConnectionRow(
 
 @Composable
 private fun ConnectionActionsRow(
-    onOpenWeb: () -> Unit,
     onSwitchServer: () -> Unit,
 ) {
     Row(
@@ -731,17 +729,6 @@ private fun ConnectionActionsRow(
             .heightIn(min = 54.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CompactConnectionAction(
-            label = "打开网页",
-            icon = WandIcons.web,
-            onClick = onOpenWeb,
-            modifier = Modifier.weight(1f),
-        )
-        Box(
-            modifier = Modifier
-                .size(width = 0.5.dp, height = 24.dp)
-                .background(WandColors.borderStrong.copy(alpha = 0.22f)),
-        )
         CompactConnectionAction(
             label = "管理服务器",
             icon = WandIcons.swapServer,

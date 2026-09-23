@@ -102,24 +102,16 @@ private fun taskSessionScreenIdentity(screen: Screen): TaskSessionScreenIdentity
 /**
  * Adds left/right navigation to the sibling sessions without interfering with vertical scroll.
  *
- * 探测器自己实现而非用 detectHorizontalDragGestures：后者一越过 touch slop 就 consume，
- * 一旦 consume，Compose 会把这条手势从内嵌 WebView（终端）上收回（WebView 收到 cancel），
- * 于是「悬浮球拖到一半不动了」。这里只在横向位移够切换会话时才接管，其余时间不碰指针，
- * 终端里的拖动（悬浮球 / 文本选择 / 滚动）保持完整。
- *
- * [isSuppressed] 为真时整条手势交还给网页：Android 外壳的网页端在悬浮球按下时
- * 通过 WandTerminal 桥把它翻成 true，抬手复位。
+ * 仅在横向位移足以切换会话时接管指针，其余时间不干扰终端文字选择与滚动。
  */
 @Composable
 internal fun Modifier.taskSessionSwipe(
     sessions: List<WorkspaceSessionSummary>,
     currentSessionId: String,
     onSelect: (WorkspaceSessionSummary) -> Unit,
-    isSuppressed: () -> Boolean = { false },
 ): Modifier {
     if (sessions.size < 2) return this
     val latestOnSelect = rememberUpdatedState(onSelect)
-    val latestSuppressed = rememberUpdatedState(isSuppressed)
     val density = LocalDensity.current
     val minDistancePx = with(density) { TaskSessionSwipeMinDistance.toPx() }
     val sessionIds = remember(sessions) { sessions.map { it.id } }
@@ -146,10 +138,6 @@ internal fun Modifier.taskSessionSwipe(
                 }
                 // 只有明确要切会话时才接管；斜向拖动（纵向分量更大）不接管。
                 if (abs(horizontal) >= minDistancePx && abs(horizontal) > abs(vertical)) {
-                    if (latestSuppressed.value()) {
-                        // 悬浮球正在被拖动：整条手势留给网页，抬手也不切会话。
-                        break
-                    }
                     claimed = true
                     change.consume()
                 }
