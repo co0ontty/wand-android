@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Groups
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SignalCellularAlt
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -135,6 +137,12 @@ object WandIcons {
 
     /** 目录 / 浏览。 */
     val folder: ImageVector = Icons.Outlined.FolderOpen
+
+    /** 直接落盘到系统「下载」目录。 */
+    val download: ImageVector = Icons.Outlined.FileDownload
+
+    /** 交给系统分享面板。 */
+    val share: ImageVector = Icons.Outlined.Share
 
     /** 最近路径。 */
     val history: ImageVector = Icons.Outlined.History

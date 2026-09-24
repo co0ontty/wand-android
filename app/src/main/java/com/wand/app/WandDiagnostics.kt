@@ -2,9 +2,13 @@ package com.wand.app
 
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
+import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.MediaStore
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -23,10 +27,16 @@ import java.util.concurrent.TimeUnit
  * 5. 当前进程 logcat 快照（尽力而为，无权限时留空）。
  *
  * 全部输出都过一遍 [WandLog.redact]，调用方不需要自己处理敏感字段。
+ *
+ * 导出有两条落盘路径，都不依赖「分享」这一环：
+ * [saveToDownloads] 直接写进系统「下载」目录（MediaStore，一次点击就出文件），
+ * [writeToUri] 是用户自选位置的 SAF 另存。分享用的缓存文件仍走 [exportToFile]。
  */
 object WandDiagnostics {
 
     private const val MAX_REPORT_CHARS = 1_200_000
+    /** 「下载」目录下的子目录名，和其他应用导出物区分开。 */
+    private const val DOWNLOAD_SUBDIR = "Wand"
     private const val MAX_EXIT_INFOS = 8
     private const val MAX_EXIT_TRACE_CHARS = 8_000
     private const val MAX_LOGCAT_CHARS = 120_000
@@ -80,17 +90,85 @@ object WandDiagnostics {
         }
     }
 
+    /** 导出文件名（带本地时间戳），下载/另存/分享三条路径共用同一个名字。 */
+    fun exportFileName(): String = "wand-android-log-${fileStamp()}.txt"
+
+    /**
+     * 一次点击直接落进系统「下载」目录：`下载/Wand/wand-android-log-*.txt`。
+     *
+     * 走 MediaStore.Downloads（API 29+，本项目 minSdk 33）不需要任何存储权限，
+     * 也不弹任何选择器；写完把 `IS_PENDING` 归零，文件对「文件」App 立即可见。
+     * 返回**给人看的**中文位置（如 `下载/Wand/xxx.txt`），MediaStore 里落的仍是
+     * 标准 `Download/Wand/`（Environment.DIRECTORY_DOWNLOADS），两名字对应同一目录。
+     */
+    fun saveToDownloads(context: Context): String {
+        val report = buildReport(context)
+        return saveReportToDownloads(context, report, exportFileName())
+    }
+
+    /** 复用调用方已拼好的报表文本，避免重复拼装 1MB 级文本。 */
+    fun saveReportToDownloads(
+        context: Context,
+        report: String,
+        fileName: String = exportFileName(),
+    ): String {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+            put(
+                MediaStore.Downloads.RELATIVE_PATH,
+                "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBDIR",
+            )
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val uri = resolver.insert(collection, values)
+            ?: throw IllegalStateException("系统下载目录不可写")
+        try {
+            resolver.openOutputStream(uri)?.use { output ->
+                output.write(report.toByteArray(Charsets.UTF_8))
+                output.flush()
+            } ?: throw IllegalStateException("无法写入下载目录")
+            resolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
+                null,
+                null,
+            )
+        } catch (e: Exception) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw e
+        }
+        return "下载/$DOWNLOAD_SUBDIR/$fileName"
+    }
+
+    /** 写进用户通过系统「另存为」选中的位置（SAF URI）。 */
+    fun writeToUri(context: Context, uri: Uri, report: String) {
+        context.contentResolver.openOutputStream(uri)?.use { output ->
+            output.write(report.toByteArray(Charsets.UTF_8))
+            output.flush()
+        } ?: throw IllegalStateException("无法写入所选位置")
+    }
+
     /**
      * 把报表写进 `cacheDir/exports`，返回可分享的文件。
      * 分享走 FileProvider（`<packageName>.fileprovider`，见 res/xml/file_paths.xml）。
      */
-    fun exportToFile(context: Context): File {
-        val report = buildReport(context)
+    fun exportToFile(context: Context): File =
+        writeCacheFile(context, buildReport(context), exportFileName())
+
+    /** 复用已拼好的报表文本写缓存文件（分享路径用）。 */
+    fun writeCacheFile(
+        context: Context,
+        report: String,
+        fileName: String = exportFileName(),
+    ): File {
         val dir = File(context.cacheDir, "exports")
         if (!dir.exists() && !dir.mkdirs()) {
             throw IllegalStateException("无法创建导出目录")
         }
-        val file = File(dir, "wand-android-log-${fileStamp()}.txt")
+        val file = File(dir, fileName)
         file.writeText(report, Charsets.UTF_8)
         // 只保留最近 5 份导出，避免 cache 目录无限增长。
         dir.listFiles { child -> child.name.endsWith(".txt") }

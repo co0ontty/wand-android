@@ -130,6 +130,31 @@ fun SettingsScreen(
         ActivityResultContracts.RequestPermission()
     ) { /* 授不授权都继续，前台服务无通知也能运行 */ }
 
+    // 系统「另存为」：选完位置后再拼报表写进去。用户中途取消（uri == null）什么都不做。
+    val saveLogLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        logScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val report = WandDiagnostics.buildReport(appContext)
+                    WandDiagnostics.writeToUri(appContext, uri, report)
+                }
+            }
+            result
+                .onSuccess {
+                    WandLog.i("ui", "用户另存运行日志到自选位置")
+                    snackbarHostState.showWandNotice("已保存到所选位置")
+                }
+                .onFailure { error ->
+                    snackbarHostState.showWandNotice(
+                        "保存失败：${error.message ?: "未知错误"}",
+                    )
+                }
+        }
+    }
+
     LaunchedEffect(Unit) {
         serverVersion = try {
             api.serverConfig().currentVersion
@@ -279,19 +304,58 @@ fun SettingsScreen(
 
                 SettingsSection(
                     title = "诊断",
-                    description = "导出运行与崩溃日志，方便排查偶发问题。",
+                    description = "导出运行与崩溃日志，方便排查偶发问题。" +
+                        "「保存到下载」一次点击就出文件，不需要再选分享对象。",
                 ) {
                     SettingsCard(modifier = Modifier.fillMaxWidth()) {
                         ActionRow(
-                            label = if (exportingLogs) "正在导出…" else "导出运行日志",
-                            icon = WandIcons.logs,
+                            label = if (exportingLogs) "正在导出…" else "保存到「下载」",
+                            icon = WandIcons.download,
                             iconTint = WandColors.info,
                             trailingText = remember(exportingLogs) { logSizeLabel() },
                             onClick = {
                                 if (exportingLogs) return@ActionRow
                                 exportingLogs = true
                                 logScope.launch {
-                                    WandLog.i("ui", "用户导出运行日志")
+                                    WandLog.i("ui", "用户保存运行日志到下载目录")
+                                    val result = runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            WandDiagnostics.saveToDownloads(appContext)
+                                        }
+                                    }
+                                    exportingLogs = false
+                                    result
+                                        .onSuccess { location ->
+                                            snackbarHostState.showWandNotice("已保存到 $location")
+                                        }
+                                        .onFailure { error ->
+                                            snackbarHostState.showWandNotice(
+                                                "保存失败：${error.message ?: "未知错误"}",
+                                            )
+                                        }
+                                }
+                            },
+                        )
+                        RowDivider()
+                        ActionRow(
+                            label = if (exportingLogs) "正在导出…" else "另存到其他位置…",
+                            icon = WandIcons.folder,
+                            iconTint = WandColors.textSecondary,
+                            onClick = {
+                                if (exportingLogs) return@ActionRow
+                                // 只在用户选完位置后再拼报表：拼一次 1MB 级文本，不必为没选中的弹窗付代价。
+                                saveLogLauncher.launch(WandDiagnostics.exportFileName())
+                            },
+                        )
+                        RowDivider()
+                        ActionRow(
+                            label = "分享日志文件",
+                            icon = WandIcons.share,
+                            iconTint = WandColors.textSecondary,
+                            onClick = {
+                                if (exportingLogs) return@ActionRow
+                                exportingLogs = true
+                                logScope.launch {
                                     val result = runCatching {
                                         withContext(Dispatchers.IO) {
                                             WandDiagnostics.exportToFile(appContext)
@@ -303,7 +367,6 @@ fun SettingsScreen(
                                             // 先弹系统分享面板：showWandNotice 会挂起到气泡消失，
                                             // 放在前面会让面板延迟几秒才出现。
                                             shareLogFile(appContext, file)
-                                            snackbarHostState.showWandNotice("已导出运行日志，请选择发送方式")
                                         }
                                         .onFailure { error ->
                                             snackbarHostState.showWandNotice(
