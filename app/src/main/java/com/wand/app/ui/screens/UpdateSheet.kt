@@ -89,7 +89,24 @@ sealed interface UpdatePresentation {
         val totalBytes: Long = 0,
         val bytesPerSecond: Long = 0,
     ) : UpdatePresentation
-    data class Ready(val update: AppUpdateInfo, val apkFile: File) : UpdatePresentation
+    data class Ready(
+        val update: AppUpdateInfo,
+        val apkFile: File,
+        /** 上一次安装没走到最后（用户取消 / 失败）时的提示，正常下载完成时为 null。 */
+        val notice: String? = null,
+    ) : UpdatePresentation
+    /**
+     * 已提包给系统安装器，正在等待用户确认 / 安装完成。
+     *
+     * 这个状态必须存在：以前点击「安装更新」后界面留在 [Ready]，用户被系统安装器
+     * 流程打断再回来时会看到同一个「安装更新」按钮，点下去像是「又让我安装一次」。
+     */
+    data class Installing(val update: AppUpdateInfo, val hint: String? = null) : UpdatePresentation
+    data class InstallFailed(
+        val update: AppUpdateInfo,
+        val apkFile: File?,
+        val message: String,
+    ) : UpdatePresentation
     data class Failed(val update: AppUpdateInfo, val message: String) : UpdatePresentation
     data class UpToDate(val message: String) : UpdatePresentation
 }
@@ -102,6 +119,8 @@ fun UpdateSheet(
     onDownload: (AppUpdateInfo) -> Unit,
     onCancelDownload: () -> Unit,
     onInstall: (File) -> Unit,
+    onRetryInstall: (AppUpdateInfo, File?) -> Unit,
+    onRelaunchApp: () -> Unit,
     onSkipVersion: (AppUpdateInfo) -> Unit,
 ) {
     if (presentation is UpdatePresentation.Hidden) return
@@ -171,6 +190,18 @@ fun UpdateSheet(
                             onInstall = { onInstall(targetPresentation.apkFile) },
                             onDismiss = onDismiss,
                         )
+                        is UpdatePresentation.Installing -> UpdateInstallingContent(
+                            state = targetPresentation,
+                            onRelaunchApp = onRelaunchApp,
+                        )
+                        is UpdatePresentation.InstallFailed -> UpdateInstallFailedContent(
+                            state = targetPresentation,
+                            onRetryInstall = {
+                                onRetryInstall(targetPresentation.update, targetPresentation.apkFile)
+                            },
+                            onRedownload = { onDownload(targetPresentation.update) },
+                            onDismiss = onDismiss,
+                        )
                         is UpdatePresentation.Failed -> UpdateFailureContent(
                             state = targetPresentation,
                             onRetry = { onDownload(targetPresentation.update) },
@@ -194,6 +225,8 @@ private fun UpdatePresentation.contentKey(): String = when (this) {
     is UpdatePresentation.Available -> "available"
     is UpdatePresentation.Downloading -> "downloading"
     is UpdatePresentation.Ready -> "ready"
+    is UpdatePresentation.Installing -> "installing"
+    is UpdatePresentation.InstallFailed -> "install-failed"
     is UpdatePresentation.Failed -> "failed"
     is UpdatePresentation.UpToDate -> "up-to-date"
 }
@@ -234,6 +267,8 @@ private fun UpdateSheetHeader(
                 when (presentation) {
                     is UpdatePresentation.Downloading -> "请保持此页面打开以查看下载状态"
                     is UpdatePresentation.Ready -> "安装前已完成本地校验"
+                    is UpdatePresentation.Installing -> "安装完成后应用会自动重启"
+                    is UpdatePresentation.InstallFailed -> "安装没有完成，可以重试"
                     else -> "Wand Android"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -458,6 +493,18 @@ private fun UpdateReadyContent(
             }
         }
         VersionBridge(state.update)
+        if (state.notice != null) {
+            Text(
+                state.notice,
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+                color = WandColors.warning,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wandCardSurface(WandShapes.md, tint = WandColors.warningSoft)
+                    .padding(14.dp),
+            )
+        }
         WandButton(
             label = "安装更新",
             onClick = onInstall,
@@ -467,6 +514,100 @@ private fun UpdateReadyContent(
         )
         WandButton(
             label = "稍后安装",
+            onClick = onDismiss,
+            variant = WandButtonVariant.Text,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
+    }
+}
+
+@Composable
+private fun UpdateInstallingContent(
+    state: UpdatePresentation.Installing,
+    onRelaunchApp: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+            UpdateOrb(icon = WandIcons.update, tint = WandColors.brand, active = true, indeterminate = true)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "正在安装 v${state.update.latestVersion}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    state.hint ?: "请在系统弹窗中确认更新，安装完成后应用会自动重启。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.textSecondary,
+                )
+            }
+        }
+        VersionBridge(state.update)
+        Text(
+            "如果已经看到「安装完成」但应用没有自动回来，点下面这个按钮可以直接重启到新版本。",
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            color = WandColors.textMuted,
+        )
+        WandButton(
+            label = "重新打开应用",
+            onClick = onRelaunchApp,
+            icon = WandIcons.refresh,
+            variant = WandButtonVariant.Secondary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun UpdateInstallFailedContent(
+    state: UpdatePresentation.InstallFailed,
+    onRetryInstall: () -> Unit,
+    onRedownload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val canRetry = state.apkFile?.isFile == true
+    Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+            UpdateOrb(icon = WandIcons.error, tint = WandColors.danger)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("安装未完成", style = MaterialTheme.typography.titleMedium, color = WandColors.textPrimary)
+                Text(
+                    if (canRetry) "安装包还在本机，可以直接重试。" else "本机安装包已清理，请重新下载。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.textSecondary,
+                )
+            }
+        }
+        Text(
+            state.message,
+            fontSize = 13.sp,
+            lineHeight = 19.sp,
+            color = WandColors.danger,
+            modifier = Modifier
+                .fillMaxWidth()
+                .wandCardSurface(WandShapes.md, tint = WandColors.dangerSoft)
+                .padding(14.dp),
+        )
+        if (canRetry) {
+            WandButton(
+                label = "重试安装",
+                onClick = onRetryInstall,
+                icon = WandIcons.update,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        WandButton(
+            label = if (canRetry) "重新下载" else "重新下载安装包",
+            onClick = onRedownload,
+            icon = WandIcons.refresh,
+            variant = if (canRetry) WandButtonVariant.Secondary else WandButtonVariant.Primary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        WandButton(
+            label = "关闭",
             onClick = onDismiss,
             variant = WandButtonVariant.Text,
             modifier = Modifier.align(Alignment.CenterHorizontally),
@@ -701,6 +842,8 @@ private fun UpdatePresentation.updateOrNull(): AppUpdateInfo? = when (this) {
     is UpdatePresentation.Available -> update
     is UpdatePresentation.Downloading -> update
     is UpdatePresentation.Ready -> update
+    is UpdatePresentation.Installing -> update
+    is UpdatePresentation.InstallFailed -> update
     is UpdatePresentation.Failed -> update
     UpdatePresentation.Hidden, UpdatePresentation.Checking, is UpdatePresentation.UpToDate -> null
 }

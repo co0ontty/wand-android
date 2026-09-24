@@ -35,6 +35,10 @@ public class ServerStore {
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
     private static final String KEY_HOME_LIST_MODE = "wand.homeListMode";
+    private static final String KEY_PENDING_INSTALL_VERSION = "update_pending_install_version";
+    private static final String KEY_PENDING_INSTALL_VERSION_CODE = "update_pending_install_version_code";
+    private static final String KEY_PENDING_INSTALL_AT = "update_pending_install_at_ms";
+    private static final String KEY_INSTALL_SUCCEEDED_AT = "update_install_succeeded_at_ms";
 
     private static final Object PROFILE_LOCK = new Object();
 
@@ -246,6 +250,51 @@ public class ServerStore {
 
     public void setDownloadedApkVersion(String version, String channel) {
         prefs.edit().putString(channelKey("downloaded_apk_version", channel), version).apply();
+    }
+
+    // MARK: - 更新安装状态
+    // 点「安装更新」后系统安装器会杀掉本进程；这几个时间戳/版本号让重启后的客户端
+    // 能判断「更新是否已经生效、当前进程是否还是安装前的旧代码」，从而自动回到前台
+    // 新版本，而不是停在「安装更新」的旧界面。
+
+    /** 记录一次发起的安装（提包给系统安装器之前调用）。 */
+    public void setPendingInstall(String version, long versionCode) {
+        prefs.edit()
+                .putString(KEY_PENDING_INSTALL_VERSION, version)
+                .putLong(KEY_PENDING_INSTALL_VERSION_CODE, versionCode)
+                .putLong(KEY_PENDING_INSTALL_AT, System.currentTimeMillis())
+                .apply();
+    }
+
+    public String getPendingInstallVersion() {
+        return prefs.getString(KEY_PENDING_INSTALL_VERSION, "");
+    }
+
+    public long getPendingInstallVersionCode() {
+        return prefs.getLong(KEY_PENDING_INSTALL_VERSION_CODE, 0L);
+    }
+
+    public long getPendingInstallAtMs() {
+        return prefs.getLong(KEY_PENDING_INSTALL_AT, 0L);
+    }
+
+    /** 系统安装器回报安装成功（可能发生在新进程里）。 */
+    public void markInstallSucceeded() {
+        prefs.edit().putLong(KEY_INSTALL_SUCCEEDED_AT, System.currentTimeMillis()).apply();
+    }
+
+    public long getInstallSucceededAtMs() {
+        return prefs.getLong(KEY_INSTALL_SUCCEEDED_AT, 0L);
+    }
+
+    /** 清空安装状态：成功接管、被取消或判定未生效后调用。 */
+    public void clearInstallState() {
+        prefs.edit()
+                .remove(KEY_PENDING_INSTALL_VERSION)
+                .remove(KEY_PENDING_INSTALL_VERSION_CODE)
+                .remove(KEY_PENDING_INSTALL_AT)
+                .remove(KEY_INSTALL_SUCCEEDED_AT)
+                .apply();
     }
 
     public String getAppToken() {

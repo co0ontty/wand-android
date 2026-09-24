@@ -12,6 +12,22 @@ class WandApplication : Application() {
         super.onCreate()
         // 诊断日志必须最先就位：崩溃处理器 / 落盘目录都要在第一帧之前准备好。
         WandLog.install(this)
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+
+            override fun onActivityResumed(activity: Activity) {
+                // 更新安装完成后我们安排了一次「把应用拉回前台」的闹钟。用户自己先打开了
+                // 应用时它会变成多余的一次重启，所以界面一恢复就撤销它。
+                UpdateInstallReceiver.cancelRelaunch(this@WandApplication)
+                // 安装已经生效、但当前还是安装前的进程时，必须重启才能加载新代码。
+                UpdateInstallReconciler.reconcile(activity)
+            }
+        })
         logStartup()
         WandAppearance.apply(
             WandAppearanceMode.fromStorageValue(ServerStore(this).appearanceMode),

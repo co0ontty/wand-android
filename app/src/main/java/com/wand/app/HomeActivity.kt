@@ -11,11 +11,15 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wand.app.data.ServerProfile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandHttp
@@ -84,6 +88,7 @@ class HomeActivity : AppCompatActivity() {
         }
         currentServerId = serverProfile.id
         serverStore.setActiveServerId(serverProfile.id)
+        WandLog.i("ui", "HomeActivity 打开 server=${serverProfile.id} url=${serverProfile.baseUrl}")
         serverProfilesSnapshot = serverStore.serverProfiles.toList()
         activeServerSnapshotId = serverStore.activeServerProfile?.id
         runtimeReady = true
@@ -116,6 +121,41 @@ class HomeActivity : AppCompatActivity() {
         com.wand.app.speech.SttModelManager.pruneInvalidArtifacts(this)
         var updatePresentation by mutableStateOf<UpdatePresentation>(UpdatePresentation.Hidden)
         var activeDownload: UpdateManager.DownloadRequest? = null
+        // 安装阶段（系统安装器接管后）需要知道「正在装哪个版本、安装包在哪」。
+        var pendingUpdate: AppUpdateInfo? = null
+        var pendingApkFile: java.io.File? = null
+        // 系统安装确认弹窗是否真的弹过。只有弹过之后回到前台才算「用户取消」——
+        // 授权「安装未知应用」时用户去设置页再回来，中间也会 resume，不能误判。
+        var installPromptShown = false
+
+        fun installUpdate(update: AppUpdateInfo?, apkFile: java.io.File?) {
+            if (update == null || apkFile == null || !apkFile.isFile) {
+                WandLog.w("update", "安装请求缺少版本或安装包，已丢弃")
+                return
+            }
+            pendingUpdate = update
+            pendingApkFile = apkFile
+            // 立即离开 [Ready]：安装由系统接管，旧界面不能再留一个可点的「安装更新」。
+            installPromptShown = false
+            updatePresentation = UpdatePresentation.Installing(update)
+            manager.installApk(apkFile)
+        }
+
+        /** 本机当前运行的版本是否已经达到「正在安装」的那个版本。 */
+        fun installAlreadyApplied(): Boolean {
+            val store = ServerStore(this@HomeActivity)
+            val info = try {
+                packageManager.getPackageInfo(packageName, 0)
+            } catch (_: Exception) {
+                return false
+            }
+            return UpdateInstallState.isApplied(
+                runningVersionName = info.versionName,
+                runningVersionCode = info.longVersionCode,
+                pendingVersionName = store.pendingInstallVersion,
+                pendingVersionCode = store.pendingInstallVersionCode,
+            )
+        }
 
         fun asUpdateInfo(
             currentVersion: String,
@@ -140,6 +180,7 @@ class HomeActivity : AppCompatActivity() {
         )
 
         fun startDownload(update: AppUpdateInfo) {
+            pendingUpdate = update
             updatePresentation = UpdatePresentation.Downloading(update)
             activeDownload = manager.download(
                 update.downloadUrl,
@@ -180,9 +221,31 @@ class HomeActivity : AppCompatActivity() {
             if (manual) updatePresentation = UpdatePresentation.Checking
             val found = UpdateManager.UpdateFoundCallback { current, latest, url, file, size,
                                                             source, notes, channel, sha256 ->
-                updatePresentation = UpdatePresentation.Available(
-                    asUpdateInfo(current, latest, url, file, size, source, notes, channel, sha256),
-                )
+                val info = asUpdateInfo(current, latest, url, file, size, source, notes, channel, sha256)
+                pendingUpdate = info
+                updatePresentation = UpdatePresentation.Available(info)
+            }
+            // 安装状态由系统安装器广播回报（同进程内直连 UI）。
+            UpdateInstallReceiver.setStatusListener { status, message ->
+                val info = pendingUpdate
+                WandLog.i("update", "安装状态 -> UI status=$status")
+                updatePresentation = when {
+                    status == android.content.pm.PackageInstaller.STATUS_SUCCESS ->
+                        info?.let { UpdatePresentation.Installing(it, "安装完成，正在重启到新版本…") }
+                            ?: updatePresentation
+                    status == android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                        // 系统确认弹窗已经出现：此后回到前台而版本没变，就是用户取消了。
+                        installPromptShown = true
+                        info?.let { UpdatePresentation.Installing(it, "请在系统弹窗中确认更新…") }
+                            ?: updatePresentation
+                    }
+                    info != null -> UpdatePresentation.InstallFailed(
+                        update = info,
+                        apkFile = pendingApkFile,
+                        message = message ?: "安装没有完成",
+                    )
+                    else -> UpdatePresentation.Hidden
+                }
             }
             if (manual) {
                 manager.checkForUpdate(found) { message ->
@@ -265,6 +328,31 @@ class HomeActivity : AppCompatActivity() {
                 applyEdgeToEdge(resolvedDark)
             }
             WandTheme(appearanceMode = appearanceMode) {
+                // 系统安装弹窗被取消（或安装没生效）后回到界面：不能一直挂着「正在安装」。
+                // 安装成功时本进程会被系统杀掉，走不到这里。
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+                        val current = updatePresentation
+                        val cancelled = current is UpdatePresentation.Installing &&
+                            installPromptShown &&
+                            !installAlreadyApplied()
+                        if (cancelled) {
+                            val info = pendingUpdate
+                            val apkFile = pendingApkFile
+                            WandLog.w("update", "系统安装未生效（用户取消或安装失败），退回可重试状态")
+                            installPromptShown = false
+                            updatePresentation = if (info != null && apkFile != null) {
+                                UpdatePresentation.Ready(info, apkFile, "上次安装没有完成，可以重试。")
+                            } else {
+                                UpdatePresentation.Hidden
+                            }
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
                 Box(Modifier.fillMaxSize()) {
                     WandApp(
                         api = api,
@@ -292,8 +380,11 @@ class HomeActivity : AppCompatActivity() {
                         onDismiss = { updatePresentation = UpdatePresentation.Hidden },
                         onDownload = ::startDownload,
                         onCancelDownload = { activeDownload?.cancel() },
-                        onInstall = { apkFile ->
-                            manager.installApk(apkFile)
+                        onInstall = { apkFile -> installUpdate(pendingUpdate, apkFile) },
+                        onRetryInstall = { update, apkFile -> installUpdate(update, apkFile) },
+                        onRelaunchApp = {
+                            // 安装已经完成但应用没有自己回来：手动重启到新版本。
+                            UpdateInstallReconciler.relaunchIntoNewProcess(this@HomeActivity)
                         },
                         onSkipVersion = { update ->
                             serverStore.setSkippedVersion(update.latestVersion, update.channel)
@@ -326,6 +417,8 @@ class HomeActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // 安装状态回调指向本 Activity 的 Compose 状态，销毁时必须断开。
+        UpdateInstallReceiver.setStatusListener(null)
         updateExecutor?.shutdownNow()
         updateExecutor = null
     }
@@ -361,6 +454,7 @@ class HomeActivity : AppCompatActivity() {
         if (target.id != currentServerId) {
             stopServerRuntime()
         }
+        WandLog.i("ui", "onResume 检测到服务器变化，重建 HomeActivity → ${target.id}")
         val replacement = Intent(this, HomeActivity::class.java).apply {
             putExtra(WandShortcuts.EXTRA_SERVER_ID, target.id)
             putExtra(WandShortcuts.EXTRA_FORCE_SERVER_RELOAD, true)
@@ -444,7 +538,8 @@ class HomeActivity : AppCompatActivity() {
             } else {
                 stopService(serviceIntent)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            WandLog.w("ui", "切换后台保活失败 enabled=$enabled", e)
         }
     }
 }

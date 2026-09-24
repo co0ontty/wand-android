@@ -100,3 +100,18 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 
 脱敏：`WandLog.redact` 兜底清掉 `token` / `password` / `apiKey` / `Authorization` / `Cookie`
 与 `Bearer` 凭据；**会话 id 故意保留**，它是排查故障的锚点。任何新增打点都不得主动传凭据。
+
+## 更新安装与自动重启
+
+点「安装更新」后由系统安装器接管，Android 会杀掉 Wand 进程，用户只看到系统安装器的「完成」页。
+客户端用一组持久化状态把这段流程接起来（`ServerStore` 的 `update_*` 键 + `UpdateInstallState`）：
+
+1. 提交安装会话之前记录「待安装版本」（读 APK 自身 versionName/versionCode）与时间；
+2. 界面立即从「已下载」切到**正在安装**，旧界面不再留一个可点的「安装更新」；
+3. `UpdateInstallReceiver` 收到 `STATUS_SUCCESS` 后安排一次自动拉起：先直接 `startActivity`，
+   再用 `AlarmManager` + `PendingIntent.getActivity` 兜底（后台启动限制会静默拦下前者，而闹钟
+   由系统代发 PendingIntent，属于豁免路径）。任意 Activity 恢复时撤销这次闹钟，避免重复重启；
+4. 恢复前台时 `UpdateInstallReconciler` 判定：版本已生效但当前仍是安装前的进程 → 重启进程；
+   已生效且是新进程 → 清状态；超过宽限期仍未生效（用户取消 / 失败）→ 清状态并退回可重试界面。
+
+失败与取消都会记录到诊断日志（含 PackageInstaller 状态码），排查「更新后没重启」时先导日志。

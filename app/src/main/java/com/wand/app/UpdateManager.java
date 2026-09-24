@@ -121,15 +121,19 @@ final class UpdateManager {
                 String apiUrl = serverUrl + "/api/android-apk-update?currentVersion=" +
                         java.net.URLEncoder.encode(currentVersion, "UTF-8") +
                         "&channel=" + channel;
+                WandLog.i(TAG, "检查更新 current=" + currentVersion + " channel=" + channel);
                 WandHttp.SimpleResponse response = WandHttp.get(apiUrl, 10_000, serverUrl);
                 int code = response.getCode();
                 if (code != 200) {
+                    WandLog.w(TAG, "检查更新失败 HTTP " + code);
                     notifyNoUpdate(noUpdateCallback, "检查更新失败：服务器返回 " + code);
                     return;
                 }
 
                 JSONObject data = new JSONObject(response.getBody());
                 if (!data.optBoolean("updateAvailable", false)) {
+                    WandLog.i(TAG, "已是最新：current=" + currentVersion
+                            + " latest=" + data.optString("latestVersion", "?"));
                     notifyNoUpdate(noUpdateCallback,
                             "beta".equals(channel) ? "已是最新 Beta 版本。" : "已是最新正式版。");
                     return;
@@ -145,13 +149,17 @@ final class UpdateManager {
                 String sha256 = data.optString("sha256", "");
 
                 if (latestVersion.isEmpty() || downloadUrl.isEmpty()) {
+                    WandLog.w(TAG, "更新响应缺少版本或下载地址");
                     notifyNoUpdate(noUpdateCallback, "没有可用的更新包。");
                     return;
                 }
                 if (latestVersion.equals(serverStore.getSkippedVersion(channel))) {
+                    WandLog.i(TAG, "版本已被跳过 latest=" + latestVersion);
                     notifyNoUpdate(noUpdateCallback, "这个版本已被跳过。");
                     return;
                 }
+                WandLog.i(TAG, "发现新版本 " + latestVersion + " （" + formatSize(size)
+                        + "，source=" + source + "）");
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
                     callback.onUpdateFound(currentVersion, latestVersion,
@@ -159,6 +167,7 @@ final class UpdateManager {
                 });
 
             } catch (Exception e) {
+                WandLog.e(TAG, "检查更新异常", e);
                 notifyNoUpdate(noUpdateCallback,
                         NetworkErrorHelper.describeError(e, "check_update"));
             }
@@ -210,6 +219,9 @@ final class UpdateManager {
             return request;
         }
         final String safeFileName = sanitizeApkFileName(fileName);
+        WandLog.i(TAG, "开始下载更新包 " + safeFileName + "（预期 " + formatSize(expectedSize)
+                + "，sha256=" + (expectedSha256 == null || expectedSha256.isEmpty() ? "无" : "有")
+                + "）");
         executor.execute(() -> {
             // 旧客户端仍可能直连 GitHub CDN；新服务端会改走 wand 同源代理。
             // 跨境链路或代理中途 reset 时，截断包由完整性校验拦下后在这里整体重下。
@@ -223,9 +235,12 @@ final class UpdateManager {
                 } catch (Exception e) {
                     lastFailure = e;
                     if (request.isCancelled()) {
+                        WandLog.i(TAG, "用户取消下载 " + safeFileName);
                         postDownloadCancelled(listener);
                         return;
                     }
+                    WandLog.w(TAG, "下载失败 attempt=" + attempt + "/" + MAX_DOWNLOAD_ATTEMPTS
+                            + "：" + e.getMessage(), e);
                     if (attempt < MAX_DOWNLOAD_ATTEMPTS) {
                         try {
                             Thread.sleep(DOWNLOAD_RETRY_DELAY_MS * attempt);
@@ -290,6 +305,7 @@ final class UpdateManager {
                         throw new Exception("服务器重定向缺少目标地址");
                     }
                     currentUrl = java.net.URI.create(currentUrl).resolve(location).toString();
+                    WandLog.i(TAG, "下载重定向 → " + hostOf(currentUrl));
                     continue;
                 }
                 break;
@@ -381,6 +397,7 @@ final class UpdateManager {
                 serverStore.setDownloadedApkVersion(versionToRecord, channel);
             }
             postDownloadCompleted(listener, outputFile);
+            WandLog.i(TAG, "下载完成 " + fileName + "（" + formatSize(outputFile.length()) + "）");
             return outputFile;
         } catch (Exception e) {
             if (partFile != null && partFile.exists()) {
@@ -447,7 +464,9 @@ final class UpdateManager {
     }
 
     void installApk(File apkFile) {
+        WandLog.i(TAG, "请求安装更新包 " + (apkFile != null ? apkFile.getName() : "null"));
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
+            WandLog.w(TAG, "缺少「安装未知应用」权限，先引导授权");
             pendingInstallFile = apkFile;
             new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
                 .setTitle(R.string.install_permission_title)
@@ -467,8 +486,10 @@ final class UpdateManager {
         pendingInstallFile = null;
         if (toInstall == null) return true;
         if (activity.getPackageManager().canRequestPackageInstalls()) {
+            WandLog.i(TAG, "安装权限已授予，继续安装");
             doInstallApk(toInstall);
         } else {
+            WandLog.w(TAG, "安装权限被拒绝，取消安装");
             Toast.makeText(activity, R.string.install_permission_denied, Toast.LENGTH_LONG).show();
         }
         return true;
@@ -492,13 +513,16 @@ final class UpdateManager {
 
     private void doInstallApk(File apkFile) {
         if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
+            WandLog.e(TAG, "安装包不存在或已损坏：" + apkFile);
             showInstallFailure("安装包不存在或已损坏，请重新下载。");
             return;
         }
         if (executor == null || executor.isShutdown()) {
+            WandLog.w(TAG, "安装执行器已关闭，回退到 VIEW Intent 安装");
             try {
                 installWithViewIntent(apkFile);
             } catch (Exception e) {
+                WandLog.e(TAG, "VIEW Intent 安装失败", e);
                 showInstallFailure(e.getMessage());
             }
             return;
@@ -508,11 +532,13 @@ final class UpdateManager {
             try {
                 installWithSession(apkFile);
             } catch (Exception sessionError) {
+                WandLog.w(TAG, "PackageInstaller 会话安装失败，回退到 VIEW Intent", sessionError);
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
                     try {
                         installWithViewIntent(apkFile);
                     } catch (Exception fallback) {
+                        WandLog.e(TAG, "回退安装也失败", fallback);
                         showInstallFailure(fallback.getMessage());
                     }
                 });
@@ -545,7 +571,11 @@ final class UpdateManager {
                     sessionId,
                     callback,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+            // 先记下「正在安装哪个版本」：系统安装器会杀掉本进程，重启后的客户端靠它
+            // 判断更新是否已生效，以及当前进程是不是安装前的旧代码（需要重启）。
+            recordPendingInstall(apkFile, sessionId);
             session.commit(pending.getIntentSender());
+            WandLog.i(TAG, "已提交安装会话 sessionId=" + sessionId);
         } catch (Exception e) {
             try { session.abandon(); } catch (Exception ignored) {}
             throw e;
@@ -562,8 +592,48 @@ final class UpdateManager {
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         intent.setClipData(ClipData.newRawUri("", apkUri));
         grantInstallUriPermission(apkUri);
+        recordPendingInstall(apkFile, -1);
+        WandLog.i(TAG, "通过系统安装器打开安装包 " + apkFile.getName());
         activity.startActivity(intent);
     }
+
+    /**
+     * 记录本次安装请求（版本名 / versionCode / 时间），并落到持久化存储供重启后判定。
+     * versionCode 直接读 APK 自身元数据，不依赖服务端下发的字符串。
+     */
+    private void recordPendingInstall(File apkFile, int sessionId) {
+        long versionCode = 0L;
+        String versionName = null;
+        try {
+            android.content.pm.PackageInfo archive = activity.getPackageManager()
+                    .getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
+            if (archive != null) {
+                versionName = archive.versionName;
+                versionCode = archive.getLongVersionCode();
+            }
+        } catch (Exception e) {
+            WandLog.w(TAG, "读取安装包版本信息失败", e);
+        }
+        if (versionName == null || versionName.isEmpty()) {
+            versionName = extractVersionFromFileName(apkFile.getName());
+        }
+        serverStore.setPendingInstall(versionName, versionCode);
+        WandLog.i(TAG, "记录待安装版本 " + versionName + " (" + versionCode + ")"
+                + (sessionId >= 0 ? " sessionId=" + sessionId : ""));
+    }
+
+    /** 安装包所在目录的 host（日志里不打印可能带签名的完整下载地址）。 */
+    private static String hostOf(String url) {
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            return uri.getHost() != null ? uri.getHost() : url;
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    /** TAG 常量，与服务端日志约定一致。 */
+    private static final String TAG = "update";
 
     private void grantInstallUriPermission(Uri apkUri) {
         int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
@@ -591,6 +661,10 @@ final class UpdateManager {
     }
 
     private void showInstallFailure(String message) {
+        WandLog.e(TAG, "安装失败：" + message);
+        UpdateInstallReceiver.notifyStatus(
+                android.content.pm.PackageInstaller.STATUS_FAILURE,
+                message != null ? message : "无法启动系统安装器");
         if (activity.isDestroyed()) return;
         new MaterialAlertDialogBuilder(activity, R.style.Theme_Wand_Dialog)
             .setTitle("安装失败")
