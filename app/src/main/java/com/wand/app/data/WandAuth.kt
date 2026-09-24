@@ -1,6 +1,7 @@
 package com.wand.app.data
 
 import android.util.Base64
+import com.wand.app.WandLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -69,19 +70,30 @@ object WandAuth {
             try {
                 client.newCall(request).execute().use { response ->
                     when (response.code) {
-                        200 -> Unit
-                        401 -> throw AuthException(
-                            "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
-                            retryable = false,
-                        )
-                        429 -> throw AuthException("登录尝试次数过多，请稍后再试")
-                        else -> throw AuthException("服务器返回异常状态码：${response.code}")
+                        200 -> WandLog.i(AUTH_TAG, "登录成功 $normalized")
+                        401 -> {
+                            WandLog.w(AUTH_TAG, "登录被拒 401 $normalized（连接码可能已过期）")
+                            throw AuthException(
+                                "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
+                                retryable = false,
+                            )
+                        }
+                        429 -> {
+                            WandLog.w(AUTH_TAG, "登录限流 429 $normalized")
+                            throw AuthException("登录尝试次数过多，请稍后再试")
+                        }
+                        else -> {
+                            WandLog.w(AUTH_TAG, "登录异常状态码 ${response.code} $normalized")
+                            throw AuthException("服务器返回异常状态码：${response.code}")
+                        }
                     }
                 }
             } catch (e: IOException) {
+                WandLog.e(AUTH_TAG, "登录网络错误 $normalized：${e.message}", e)
                 throw AuthException("无法连接到服务器：${e.message ?: "网络错误"}")
             }
         }
     }
 
+    private const val AUTH_TAG = "auth"
 }

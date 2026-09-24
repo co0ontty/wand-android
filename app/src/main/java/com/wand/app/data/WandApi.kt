@@ -1,5 +1,6 @@
 package com.wand.app.data
 
+import com.wand.app.WandLog
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
@@ -58,8 +59,17 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
                 .readTimeout(timeoutSec.toLong(), TimeUnit.SECONDS)
                 .build()
         }
+        // 用 System.nanoTime 而不是 SystemClock：REST 客户端是被 JVM 单测直接驱动的。
+        val startedAt = System.nanoTime()
         requestClient.newCall(request).execute().use { response ->
-            return response.code to (response.body?.string() ?: "")
+            val text = response.body?.string() ?: ""
+            val elapsed = (System.nanoTime() - startedAt) / 1_000_000
+            if (response.code in 200..299) {
+                WandLog.d(TAG, "${request.method} ${request.url.encodedPath} → ${response.code} (${elapsed}ms)")
+            } else {
+                WandLog.w(TAG, "${request.method} ${request.url.encodedPath} → ${response.code} (${elapsed}ms) ${text.take(300)}")
+            }
+            return response.code to text
         }
     }
 
@@ -71,6 +81,7 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         try {
             execute(request, timeoutSec)
         } catch (e: IOException) {
+            WandLog.e(TAG, "网络错误 ${request.method} ${request.url.encodedPath}：${e.message}", e)
             throw e.toApiException()
         }
 
@@ -79,9 +90,11 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         withContext(Dispatchers.IO) {
             val (code, text) = executeOrThrow(request, timeoutSec)
             if (code != 401 || token.isNullOrEmpty()) return@withContext code to text
+            WandLog.i(TAG, "收到 401，用 appToken 重新登录后重试")
             try {
                 WandAuth.loginWithToken(baseUrl, token, client)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                WandLog.w(TAG, "重新登录失败：${e.message}", e)
                 throw WandApiException(401, "登录已失效，请重新连接")
             }
             executeOrThrow(request, timeoutSec)
@@ -100,6 +113,7 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             if (code == 401) throw WandApiException(401, "登录已失效，请重新连接")
             val serverError = runCatching { JSONObject(text).str("error") }.getOrNull()
             val message = serverError?.takeIf { it.isNotEmpty() } ?: "服务器返回 $code"
+            WandLog.w(TAG, "$method $path 失败：$message")
             throw WandApiException(code, message)
         }
         if (changesTaskHierarchy(method, path)) taskMutations.tryEmit(Unit)
@@ -111,6 +125,7 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         try {
             parse(text)
         } catch (e: Exception) {
+            WandLog.e(TAG, "响应解析失败：${e.message} ${text.take(200)}", e)
             throw WandApiException(null, "响应解析失败：${e.message}")
         }
 
@@ -701,3 +716,6 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         )
     }
 }
+
+/** 诊断日志 tag：与设置页导出日志里的分类对应。 */
+private const val TAG = "api"

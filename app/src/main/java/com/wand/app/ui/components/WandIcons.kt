@@ -181,6 +181,9 @@ object WandIcons {
     /** 检查更新。 */
     val update: ImageVector = Icons.Outlined.SystemUpdate
 
+    /** 运行时日志与诊断。 */
+    val logs: ImageVector = Icons.Outlined.Terminal
+
     /** 行尾右箭头。 */
     val chevronRight: ImageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight
 

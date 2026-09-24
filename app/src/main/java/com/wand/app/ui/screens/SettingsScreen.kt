@@ -1,6 +1,8 @@
 package com.wand.app.ui.screens
 
 import android.Manifest
+import android.content.ClipData
+import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -38,6 +40,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -46,6 +49,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +64,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import com.wand.app.WandDiagnostics
+import com.wand.app.WandLog
 import com.wand.app.data.WandApi
 import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SpeechNativeLibrary
@@ -75,7 +81,10 @@ import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
+import com.wand.app.ui.components.WandSnackbarHost
+import com.wand.app.ui.components.showWandNotice
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.core.content.FileProvider
 import com.wand.app.ui.theme.WandAppearanceMode
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
@@ -84,6 +93,9 @@ import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import com.wand.app.ui.theme.reduceMotionEnabled
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 原生设置页 —— 对称 iOS SettingsView，并把原 WebView 桥（WandNative）的
@@ -108,7 +120,11 @@ fun SettingsScreen(
     var keepAlive by remember { mutableStateOf(settings.isKeepAlive()) }
     var betaChannel by remember { mutableStateOf(settings.isBetaChannel()) }
     var appearanceMode by remember { mutableStateOf(settings.getAppearanceMode()) }
+    var exportingLogs by remember { mutableStateOf(false) }
     val motionEnabled = rememberSettingsMotionEnabled()
+    val appContext = LocalContext.current.applicationContext
+    val logScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -150,6 +166,7 @@ fun SettingsScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Color.Transparent,
+        snackbarHost = { WandSnackbarHost(snackbarHostState) },
         topBar = {
             WandDetailTopBar(
                 title = "设置",
@@ -258,6 +275,45 @@ fun SettingsScreen(
                             settings.setBetaChannel(it)
                         },
                     )
+                }
+
+                SettingsSection(
+                    title = "诊断",
+                    description = "导出运行与崩溃日志，方便排查偶发问题。",
+                ) {
+                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                        ActionRow(
+                            label = if (exportingLogs) "正在导出…" else "导出运行日志",
+                            icon = WandIcons.logs,
+                            iconTint = WandColors.info,
+                            trailingText = remember(exportingLogs) { logSizeLabel() },
+                            onClick = {
+                                if (exportingLogs) return@ActionRow
+                                exportingLogs = true
+                                logScope.launch {
+                                    WandLog.i("ui", "用户导出运行日志")
+                                    val result = runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            WandDiagnostics.exportToFile(appContext)
+                                        }
+                                    }
+                                    exportingLogs = false
+                                    result
+                                        .onSuccess { file ->
+                                            // 先弹系统分享面板：showWandNotice 会挂起到气泡消失，
+                                            // 放在前面会让面板延迟几秒才出现。
+                                            shareLogFile(appContext, file)
+                                            snackbarHostState.showWandNotice("已导出运行日志，请选择发送方式")
+                                        }
+                                        .onFailure { error ->
+                                            snackbarHostState.showWandNotice(
+                                                "导出失败：${error.message ?: "未知错误"}",
+                                            )
+                                        }
+                                }
+                            },
+                        )
+                    }
                 }
 
                 SettingsSection(
@@ -479,6 +535,45 @@ private fun SettingBlockHeader(
                 )
             }
         }
+    }
+}
+
+private fun logSizeLabel(): String {
+    val bytes = WandLog.fileBytes()
+    return when {
+        bytes <= 0L -> "暂无"
+        bytes < 1024 -> "${bytes} B"
+        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+        else -> String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / 1048576.0)
+    }
+}
+
+/** 用系统分享面板把导出的日志文件发出去（FileProvider 授权 + 显式 ClipData）。 */
+private fun shareLogFile(context: android.content.Context, file: java.io.File) {
+    try {
+        val uri = FileProvider.getUriForFile(
+            context,
+            context.packageName + ".fileprovider",
+            file,
+        )
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .putExtra(Intent.EXTRA_SUBJECT, "Wand Android 运行日志")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // 部分接收方（尤其国内 IM）只看 clipData 里的 URI，必须显式带上。
+        send.clipData = android.content.ClipData.newUri(context.contentResolver, "wand-log", uri)
+        context.startActivity(
+            Intent.createChooser(send, "导出运行日志")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    } catch (e: Exception) {
+        WandLog.e("ui", "分享日志文件失败", e)
+        android.widget.Toast.makeText(
+            context,
+            "无法打开分享面板，日志已保存在 ${file.name}",
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
     }
 }
 

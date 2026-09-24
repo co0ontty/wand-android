@@ -3,7 +3,7 @@ package com.wand.app.data
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Log
+import com.wand.app.WandLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -124,6 +124,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
 
     fun requestResync() {
         val id = subscribedSessionId ?: return
+        WandLog.i(TAG, "请求重发全量快照 session=$id")
         lastSeqBySession.remove(id)
         if (ptyAck) {
             awaitingPtySnapshot = true
@@ -197,12 +198,12 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                 } catch (error: Exception) {
                     if (closed || gen != generation) return@launch
                     if (error is WandAuth.AuthException && !error.retryable) {
-                        Log.w(TAG, "WebSocket authentication rejected")
+                        WandLog.w(TAG, "WebSocket 鉴权被拒")
                         onConnectionChange?.invoke(false)
                         onAuthenticationFailure?.invoke(error.message ?: "登录已失效，请重新连接")
                         return@launch
                     }
-                    Log.w(TAG, "WebSocket session refresh failed: ${error.javaClass.simpleName}")
+                    WandLog.w(TAG, "WebSocket 重新登录失败：${error.javaClass.simpleName}", error)
                     scheduleReconnect(authRequired = true)
                 }
             }
@@ -220,6 +221,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                     lastMessageAt = SystemClock.elapsedRealtime()
                     reconnectDelayMs = 1_000L
                     connected = true
+                    WandLog.i(TAG, "WebSocket 已连接 $wsUrl")
                     onConnectionChange?.invoke(true)
                     // 重新订阅当前会话；服务端会推一份 init 快照，相当于天然 resync。
                     subscribedSessionId?.let { id -> sendSubscribe(id) }
@@ -238,7 +240,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 handler.post {
                     if (gen != generation || closed) return@post
-                    Log.w(TAG, "WebSocket failed: ${t.javaClass.simpleName}, HTTP ${response?.code ?: 0}")
+                    WandLog.w(TAG, "WebSocket 断开：${t.javaClass.simpleName} HTTP ${response?.code ?: 0}", t)
                     scheduleReconnect(authRequired = response?.code == 401)
                 }
             }
@@ -247,7 +249,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                 handler.post {
                     if (gen != generation || closed) return@post
                     val unauthorized = code == 1008 && reason == "Unauthorized"
-                    Log.w(TAG, "WebSocket closed: code=$code, auth=$unauthorized")
+                    WandLog.w(TAG, "WebSocket 关闭 code=$code auth=$unauthorized")
                     scheduleReconnect(authRequired = unauthorized)
                 }
             }
@@ -278,6 +280,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                 val seq = incoming.seq
                 if (id != null && seq != null) lastSeqBySession[id] = seq
                 if (ptyAck && id == subscribedSessionId) awaitingPtySnapshot = false
+                WandLog.d(TAG, "收到 init session=$id seq=$seq")
             }
             "output" -> {
                 // seq 间隙说明服务端因背压丢过事件，主动要一份全量快照。
@@ -291,6 +294,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                         return
                     }
                     if (last != null && seq > last + 1) {
+                        WandLog.w(TAG, "事件序号出现间隙 session=$id seq=$last→$seq，触发 resync")
                         if (ptyAck && id == subscribedSessionId) acknowledgePty(incoming.ptyBytes ?: 0)
                         requestResync()
                         return
@@ -321,6 +325,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
         awaitingPtySnapshot = ptyAck
         onPtyResync?.invoke()
         val delay = reconnectDelayMs
+        WandLog.i(TAG, "WebSocket 将在 ${delay}ms 后重连（authRequired=$authRequired）")
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(30_000L)
         val scheduledGeneration = generation
         handler.postDelayed({
@@ -331,7 +336,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     }
 
     companion object {
-        private const val TAG = "WandSocket"
+        private const val TAG = "ws"
         /** Split at UTF-8 scalar boundaries below the server per-frame limit. */
         internal fun ptyInputChunks(text: String, maxBytes: Int = 16 * 1024): List<String> {
             if (text.isEmpty()) return emptyList()

@@ -17,6 +17,7 @@ import com.wand.app.data.SessionEvent
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
+import com.wand.app.wlog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -144,15 +145,25 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 ensureScope()
                 socket.onEvent = { event -> handle(event) }
                 socket.onConnectionChange = { up -> connected = up }
-                socket.onAuthenticationFailure = { message -> loadError = message }
+                socket.onAuthenticationFailure = { message ->
+                    wlog("chat", "socket 鉴权失败 session=$sessionId：$message")
+                    loadError = message
+                }
                 // 实时连接不能被 REST / 模型目录 / 卡片默认值挡住。旧逻辑等三段请求收尾才
                 // connect，页面看起来已经打开、红条却一直挂着；退回再进才重新建连。
                 connectSocket()
+                wlog("chat", "打开会话 session=$sessionId")
                 scope.launch {
                     try {
                         val snap = api.getSession(sessionId)
+                        wlog(
+                            "chat",
+                            "REST 快照 session=$sessionId msgs=${snap.messages?.size ?: -1} " +
+                                "status=${snap.status} structured=${snap.isStructured}",
+                        )
                         apply(snap)
                     } catch (e: Exception) {
+                        wlog("chat", "REST 快照失败 session=$sessionId：${e.message}", e)
                         loadError = e.message ?: "加载失败"
                     }
                     loadModels()
@@ -418,6 +429,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     sendPtyChatInput(trimmed)
                 }
             } catch (e: Exception) {
+                wlog("chat", "发送失败 session=$sessionId：${e.message}", e)
                 toast = e.message ?: "发送失败"
                 if (isStructured) {
                     if (queueing) queuedMessages = previousQueue else messages = previousMessages
@@ -493,6 +505,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     sendPtyChatInput(answerText)
                 }
             } catch (e: Exception) {
+                wlog("chat", "回答提问失败 session=$sessionId：${e.message}", e)
                 toast = e.message ?: "发送失败"
                 val rollback = askUserSelections[toolUseId] ?: AskUserSelectionState()
                 askUserSelections = askUserSelections + (toolUseId to rollback.copy(submitted = false))

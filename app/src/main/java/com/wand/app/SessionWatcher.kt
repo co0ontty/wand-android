@@ -50,6 +50,8 @@ import org.json.JSONObject
  */
 object SessionWatcher {
 
+    private const val TAG = "watcher"
+
     private const val LIST_REFRESH_MIN_INTERVAL_MS = 5_000L
 
     /** 单个被观察会话的轻量状态（只存进度通知需要的字段，不存完整消息）。 */
@@ -115,12 +117,17 @@ object SessionWatcher {
 
         val ws = WandSocket(baseUrl, token)
         ws.onEvent = { event -> handle(event) }
-        ws.onConnectionChange = { up -> if (up) refreshSessions() }
+        ws.onConnectionChange = { up ->
+            WandLog.i(TAG, "通知中枢连接状态 up=$up server=$serverId")
+            if (up) refreshSessions()
+        }
         socket = ws
+        WandLog.i(TAG, "启动通知中枢 server=$serverId")
         ws.connect()
     }
 
     fun stop() {
+        if (socket != null) WandLog.i(TAG, "停止通知中枢 server=$serverId")
         socket?.close()
         socket = null
         scope?.cancel()
@@ -178,8 +185,9 @@ object SessionWatcher {
                     w.archived = snap.archived ?: false
                     w.permissionBlocked = snap.hasPendingPermission
                 }
-            } catch (_: Exception) {
-                // 静默：下一次重连 / started 事件还会再试。
+            } catch (e: Exception) {
+                // 下一次重连 / started 事件还会再试；只记日志，不打扰用户。
+                WandLog.w(TAG, "刷新会话列表失败：${e.message}", e)
             }
         }
     }

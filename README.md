@@ -77,3 +77,26 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 ## 后续演进
 
 后续可扩展为从 GitHub Release 自动拉取最新 APK 到运行时目录，再继续复用同一个下载入口。
+
+## 诊断日志导出
+
+设置页「诊断 → 导出运行日志」把关键运行日志拼成一份文本，通过系统分享面板发出去（微信 /
+邮件 / 保存到文件都行）。日志落在 `filesDir/logs/wand.log`（512 KB 轮转一代，最多 2 份），
+崩溃时同步写盘；导出文件写在 `cacheDir/exports/`，只保留最近 5 份。
+
+报表内容（`WandDiagnostics.buildReport`）：
+
+| 段落 | 来源 | 用途 |
+|------|------|------|
+| 环境头 | 版本 / versionCode / 机型 / 系统 / 进程启动时间 / 服务器 origin | 判断「哪个版本、什么设备、连的哪台服务」 |
+| 历史异常退出 | `ActivityManager.getHistoricalProcessExitReasons` | Java 崩溃、原生崩溃（含 tombstone）、ANR 的原因、时间与 trace —— 崩溃后进程已死，这是唯一能拿回现场的地方 |
+| 运行时日志 | `WandLog` 落盘文件 + 内存环 | 网络 / WebSocket / 更新安装 / 会话加载等关键事件时间线 |
+| logcat 快照 | 当前进程 `logcat -d --pid` | 补足原生库与系统侧日志；无权限时该段留空 |
+
+打点位置：`WandApi`（每个 REST 请求的方法、路径、状态码、耗时与错误）、`WandAuth`（登录结果）、
+`WandSocket`（连接、重连、resync、序号间隙）、`SessionWatcher`（通知中枢连接与列表刷新）、
+`ChatStore`（会话打开、快照、发送失败）、`ConnectActivity`（连接探测）、`UpdateManager` /
+`UpdateInstallReceiver`（检查、下载、安装状态回调）。
+
+脱敏：`WandLog.redact` 兜底清掉 `token` / `password` / `apiKey` / `Authorization` / `Cookie`
+与 `Bearer` 凭据；**会话 id 故意保留**，它是排查故障的锚点。任何新增打点都不得主动传凭据。
