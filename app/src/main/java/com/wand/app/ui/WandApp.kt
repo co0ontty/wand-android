@@ -4,7 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,33 +11,22 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,30 +48,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.WandApi
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
+import com.wand.app.data.WandApiException
 import com.wand.app.data.WorkspaceSessionSummary
-import com.wand.app.data.TaskDirectoryGroup
-import com.wand.app.data.WorkspaceTaskSummary
-import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandButton
@@ -103,12 +84,17 @@ import com.wand.app.ui.screens.SettingsScreen
 import com.wand.app.ui.screens.SharedTaskListExpansionStore
 import com.wand.app.ui.screens.TaskListScreen
 import com.wand.app.ui.screens.TaskListState
-import com.wand.app.ui.screens.collapsedRailTasks
+import com.wand.app.ui.screens.CollapsedDirectoryRail
+import com.wand.app.ui.screens.DirectoryPeekOverlay
 import com.wand.app.ui.screens.TaskSessionRoute
+import com.wand.app.ui.screens.collapsedRailDirectories
+import com.wand.app.ui.screens.taskSessionRoute
+import kotlin.math.abs
 import com.wand.app.ui.screens.siblingSessionsFor
 import com.wand.app.ui.screens.taskSessionTransitionDirection
 import com.wand.app.ui.screens.WorkspaceTaskScreen
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -129,7 +115,8 @@ fun WandApp(
 
     LaunchedEffect(retryKey) {
         var attempt = 0
-        while (attempt < MAX_AUTH_RETRY_ATTEMPTS) {
+        while (true) {
+            var shouldRetry = true
             phase = AuthPhase.Authenticating
             phase = try {
                 if (actions.connection.hasToken && api.token != null) {
@@ -141,6 +128,12 @@ fun WandApp(
                 onAuthenticated()
                 AuthPhase.Ready
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                shouldRetry = when (e) {
+                    is WandAuth.AuthException -> e.retryable
+                    is WandApiException -> e.status != 401
+                    else -> true
+                }
                 val msg = e.message ?: "未知错误"
                 AuthPhase.Failed(
                     message = if (actions.connection.hasToken) {
@@ -148,19 +141,17 @@ fun WandApp(
                     } else {
                         "无法访问服务器：$msg\n如果服务器设有密码，请用「连接码」重新连接。"
                     },
-                    retryAttempt = attempt + 1,
+                    retrying = shouldRetry,
                 )
             }
 
             if (phase is AuthPhase.Ready) return@LaunchedEffect
+            if (!shouldRetry) return@LaunchedEffect
 
             val delayMs = reconnectDelayMs(attempt)
-            attempt++
+            attempt = (attempt + 1).coerceAtMost(6)
             delay(delayMs)
         }
-
-        // 达到重试上限后，返回服务器选择页让用户手动重连。
-        actions.navigation.switchServer()
     }
 
     Box(
@@ -172,7 +163,7 @@ fun WandApp(
             is AuthPhase.Authenticating -> AuthProgress()
             is AuthPhase.Failed -> AuthFailed(
                 message = p.message,
-                retryAttempt = p.retryAttempt,
+                retrying = p.retrying,
                 onRetry = { retryKey++ },
                 onSwitchServer = actions.navigation.switchServer,
             )
@@ -184,15 +175,16 @@ fun WandApp(
 private sealed class AuthPhase {
     data object Authenticating : AuthPhase()
     data object Ready : AuthPhase()
-    data class Failed(val message: String, val retryAttempt: Int) : AuthPhase()
+    data class Failed(
+        val message: String,
+        val retrying: Boolean,
+    ) : AuthPhase()
 }
 
 internal fun reconnectDelayMs(attempt: Int): Long {
     val exponent = attempt.coerceIn(0, 6)
     return (1_000L shl exponent).coerceAtMost(60_000L)
 }
-
-private const val MAX_AUTH_RETRY_ATTEMPTS = 10
 
 private val WideLayoutMinWidth = 640.dp
 private val WideLayoutMinHeight = 480.dp
@@ -275,7 +267,7 @@ private fun AuthProgress() {
 @Composable
 private fun AuthFailed(
     message: String,
-    retryAttempt: Int,
+    retrying: Boolean,
     onRetry: () -> Unit,
     onSwitchServer: () -> Unit,
 ) {
@@ -309,7 +301,8 @@ private fun AuthFailed(
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    "连接失败，正在自动重试（${retryAttempt}/${MAX_AUTH_RETRY_ATTEMPTS}）…",
+                    if (retrying) "连接失败，正在自动重试…"
+                    else "登录已失效，请用新的连接码重新连接。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -730,6 +723,21 @@ private fun WideReadyContent(
         animationSpec = WandMotion.settleSpringSpec(),
         label = "wideSidebarWidth",
     )
+    var peekDirectoryId by rememberSaveable { mutableStateOf<String?>(null) }
+    var peekAnchorTop by remember { mutableStateOf(0.dp) }
+    val rootWindowTop = remember { floatArrayOf(0f) }
+    val selectedTaskId = nav.current.taskIdOrNull()
+    val peeked = collapsedRailDirectories(taskState.groups)
+        .firstOrNull { it.group.workspaceId == peekDirectoryId }
+    LaunchedEffect(sidebarCollapsed, peekDirectoryId, taskState.groups) {
+        val missing = peekDirectoryId != null && peeked == null
+        if (!sidebarCollapsed || missing) peekDirectoryId = null
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { rootWindowTop[0] = it.positionInWindow().y },
+    ) {
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -759,22 +767,32 @@ private fun WideReadyContent(
                         contentAlignment = Alignment.TopStart,
                     ) {
                         if (collapsed) {
-                            CollapsedTaskRail(
+                            CollapsedDirectoryRail(
                                 groups = taskState.groups,
-                                selectedTaskId = nav.current.taskIdOrNull(),
+                                selectedTaskId = selectedTaskId,
+                                selectedSessionId = selectedSessionId,
+                                peekDirectoryId = peekDirectoryId,
+                                rootWindowTop = { rootWindowTop[0] },
+                                onToggleDirectory = { group, top ->
+                                    if (peekDirectoryId == group.workspaceId) {
+                                        peekDirectoryId = null
+                                    } else {
+                                        peekAnchorTop = top
+                                        peekDirectoryId = group.workspaceId
+                                    }
+                                },
+                                onDirectoryTop = { top ->
+                                    if (abs(peekAnchorTop.value - top.value) > 0.5f) peekAnchorTop = top
+                                },
                                 onNewTask = {
+                                    peekDirectoryId = null
                                     taskState.requestNewTask()
                                     onToggleSidebarCollapsed()
                                 },
-                                onOpenTask = { group, task ->
-                                    onOpenWorkspaceTask(
-                                        task.task.workspaceId,
-                                        task.id,
-                                        group.workspaceName,
-                                        task.name,
-                                    )
+                                onExpandSidebar = {
+                                    peekDirectoryId = null
+                                    onToggleSidebarCollapsed()
                                 },
-                                onExpandSidebar = onToggleSidebarCollapsed,
                             )
                         } else {
                             TaskListScreen(
@@ -786,7 +804,7 @@ private fun WideReadyContent(
                                 homeListMode = homeListMode,
                                 onHomeListModeChange = onHomeListModeChange,
                                 selectedSessionId = selectedSessionId,
-                                selectedTaskId = nav.current.taskIdOrNull(),
+                                selectedTaskId = selectedTaskId,
                                 onOpenTask = onOpenWorkspaceTask,
                                 onOpenSession = onOpenSession,
                                 onOpenBoardSession = onOpenBoardSession,
@@ -872,7 +890,35 @@ private fun WideReadyContent(
                     },
                 )
             }
+            if (sidebarCollapsed && peeked != null) {
+                val directory = peeked.group
+                DirectoryPeekOverlay(
+                    anchorTop = peekAnchorTop,
+                    group = directory,
+                    selectedTaskId = selectedTaskId,
+                    selectedSessionId = selectedSessionId,
+                    onOpenTask = { task ->
+                        peekDirectoryId = null
+                        onOpenWorkspaceTask(
+                            task.task.workspaceId,
+                            task.id,
+                            directory.workspaceName,
+                            task.name,
+                        )
+                    },
+                    onOpenSession = { session, task ->
+                        peekDirectoryId = null
+                        onOpenSession(taskSessionRoute(session, directory, task))
+                    },
+                    onExpand = {
+                        peekDirectoryId = null
+                        onToggleSidebarCollapsed()
+                    },
+                    onDismiss = { peekDirectoryId = null },
+                )
+            }
         }
+    }
     }
 }
 
@@ -935,237 +981,7 @@ private fun WideSidebarPanel(
     }
 }
 
-@Composable
-private fun CollapsedTaskRail(
-    groups: List<TaskDirectoryGroup>,
-    selectedTaskId: String?,
-    onNewTask: () -> Unit,
-    onOpenTask: (TaskDirectoryGroup, WorkspaceTaskSummary) -> Unit,
-    onExpandSidebar: () -> Unit,
-) {
-    val rail = collapsedRailTasks(groups, selectedTaskId)
-    Column(
-        modifier = Modifier
-            .width(56.dp)
-            .fillMaxHeight()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 4.dp, vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        CollapsedRailTile(
-            icon = rememberVectorPainter(WandIcons.panelExpand),
-            iconTint = WandColors.textSecondary,
-            accentTint = WandColors.brand,
-            selected = false,
-            selectionStateEnabled = false,
-            contentDescription = "展开任务侧边栏",
-            onClickLabel = "展开任务侧边栏",
-            outlined = true,
-            onClick = onExpandSidebar,
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        CollapsedRailDivider()
-        Spacer(modifier = Modifier.height(10.dp))
-        CollapsedRailTile(
-            icon = rememberVectorPainter(WandIcons.add),
-            iconTint = WandColors.brand,
-            accentTint = WandColors.brand,
-            selected = false,
-            selectionStateEnabled = false,
-            contentDescription = "新建任务",
-            onClickLabel = "新建任务",
-            emphasized = true,
-            onClick = onNewTask,
-        )
-        if (rail.items.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(10.dp))
-            CollapsedRailDivider()
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            rail.items.forEach { item ->
-                Box {
-                    CollapsedRailTile(
-                        icon = rememberVectorPainter(
-                            if (item.task.isIsolated) WandIcons.commit else WandIcons.todo,
-                        ),
-                        iconTint = if (item.task.id == selectedTaskId) WandColors.brand else WandColors.textSecondary,
-                        accentTint = WandColors.brand,
-                        selected = item.task.id == selectedTaskId,
-                        selectionStateEnabled = true,
-                        contentDescription = "打开任务 ${item.task.name}",
-                        onClickLabel = "打开任务",
-                        onClick = { onOpenTask(item.group, item.task) },
-                    )
-                    if (item.activity != null) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(6.dp)
-                                .size(7.dp)
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(
-                                    if (item.activity == "attention") WandColors.warning else WandColors.success,
-                                ),
-                        )
-                    }
-                }
-            }
-            if (rail.overflow > 0) {
-                CollapsedRailTile(
-                    icon = rememberVectorPainter(WandIcons.more),
-                    iconTint = WandColors.textMuted,
-                    accentTint = WandColors.brand,
-                    selected = false,
-                    selectionStateEnabled = false,
-                    contentDescription = "展开侧栏，还有 ${rail.overflow} 个任务",
-                    onClickLabel = "展开侧栏",
-                    onClick = onExpandSidebar,
-                )
-            }
-        }
-    }
-}
 
-@Composable
-private fun CollapsedRailDivider() {
-    Box(
-        modifier = Modifier
-            .width(24.dp)
-            .height(1.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(WandColors.border.copy(alpha = 0.48f)),
-    )
-}
-
-@Composable
-private fun CollapsedRailTile(
-    icon: Painter,
-    iconTint: Color,
-    iconScale: Float = 1f,
-    selected: Boolean,
-    contentDescription: String,
-    onClickLabel: String = "打开",
-    accentTint: Color = iconTint,
-    selectionStateEnabled: Boolean = false,
-    outlined: Boolean = false,
-    emphasized: Boolean = false,
-    loading: Boolean = false,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(12.dp)
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.96f else 1f,
-        animationSpec = WandMotion.tweenPress(),
-        label = "collapsedRailPress",
-    )
-    val showContainer = outlined || emphasized || selected
-    val background by animateColorAsState(
-        targetValue = when {
-            selected -> accentTint.copy(alpha = 0.12f)
-            emphasized -> accentTint.copy(alpha = 0.09f)
-            outlined -> WandColors.surfaceSoft.copy(alpha = 0.58f)
-            else -> Color.Transparent
-        },
-        animationSpec = WandMotion.tweenFast(),
-        label = "collapsedRailBackground",
-    )
-    val borderColor by animateColorAsState(
-        targetValue = when {
-            selected -> accentTint.copy(alpha = 0.22f)
-            emphasized -> accentTint.copy(alpha = 0.28f)
-            outlined -> WandColors.border.copy(alpha = 0.48f)
-            else -> Color.Transparent
-        },
-        animationSpec = WandMotion.tweenFast(),
-        label = "collapsedRailBorder",
-    )
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
-            .clip(shape)
-            .clickable(
-                enabled = !loading,
-                interactionSource = interactionSource,
-                indication = LocalIndication.current,
-                onClickLabel = onClickLabel,
-                role = Role.Button,
-                onClick = onClick,
-            )
-            .semantics {
-                this.contentDescription = contentDescription
-                if (selectionStateEnabled) this.selected = selected
-                if (loading) stateDescription = "正在恢复会话"
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        if (selected) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .width(3.dp)
-                    .height(22.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(accentTint.copy(alpha = 0.92f)),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .then(
-                    if (showContainer) {
-                        Modifier
-                            .clip(shape)
-                            .background(background)
-                            .border(1.dp, borderColor, shape)
-                    } else {
-                        Modifier
-                    }
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (loading) {
-                CircularProgressIndicator(
-                    color = accentTint,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(20.dp),
-                )
-            } else {
-                Icon(
-                    painter = icon,
-                    contentDescription = null,
-                    // Color.Unspecified must survive so multicolor assets do not receive a black filter.
-                    tint = BrandLogos.tintWithAlpha(
-                        iconTint,
-                        alpha = if (outlined && !emphasized && !selected) 0.82f else 0.96f,
-                    ),
-                    modifier = Modifier.size(
-                        (when {
-                            emphasized -> 20.dp
-                            outlined -> 19.dp
-                            else -> 23.dp
-                        }) * iconScale,
-                    ),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun DetailPlaceholder(
     onNewTask: () -> Unit,
 ) {

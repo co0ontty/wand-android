@@ -57,7 +57,7 @@ internal class NativePtyTerminal(
 ) {
     val ready = mutableStateOf(false)
     val loading = mutableStateOf(true)
-    private val socket = WandSocket(api.baseUrl)
+    private val socket = WandSocket(api.baseUrl, api.token)
     private var started = false
     private var restoring = false
     private var rejectedSnapshot = false
@@ -100,6 +100,7 @@ internal class NativePtyTerminal(
         started = true
         loading.value = true
         socket.onPtyEvent = ::handle
+        socket.onAuthenticationFailure = onError
         socket.onPtyResync = {
             ready.value = false
             loading.value = !rejectedSnapshot

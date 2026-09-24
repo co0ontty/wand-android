@@ -55,17 +55,6 @@ private fun sessionHasLiveActivity(session: WorkspaceSessionSummary): Boolean =
         "reconnecting",
     )
 
-private fun compareNullableTimestamp(left: String?, right: String?): Int {
-    val leftValue = left?.takeIf { it.isNotBlank() }
-    val rightValue = right?.takeIf { it.isNotBlank() }
-    return when {
-        leftValue == null && rightValue == null -> 0
-        leftValue == null -> 1
-        rightValue == null -> -1
-        else -> leftValue.compareTo(rightValue)
-    }
-}
-
 /** Even a single workspace can be collapsed; the disclosure never changes meaning. */
 @Suppress("UNUSED_PARAMETER")
 internal fun showsDirectoryDisclosure(directoryCount: Int): Boolean = true
@@ -117,8 +106,6 @@ internal fun listSessionLabel(
     return "${workspaceProviderLabel(session.provider)} ${index + 1}"
 }
 
-internal const val COLLAPSED_RAIL_LIMIT = 8
-
 internal data class SidebarManageSelection(
     val taskIds: Set<String> = emptySet(),
     val sessionIds: Set<String> = emptySet(),
@@ -127,38 +114,50 @@ internal data class SidebarManageSelection(
     val isEmpty: Boolean get() = count == 0
 }
 
-internal data class CollapsedRailTask(
+/** 窄栏一项一个目录，顺序与展开后的目录树一致。 */
+internal data class CollapsedRailDirectory(
     val group: TaskDirectoryGroup,
-    val task: WorkspaceTaskSummary,
     val activity: String?,
 )
 
-internal data class CollapsedRailModel(
-    val items: List<CollapsedRailTask>,
-    val overflow: Int,
+private val RAIL_ATTENTION_STATUSES = setOf(
+    "failed",
+    "waiting-input",
+    "waiting_input",
+    "permission-blocked",
+    "reconnecting",
 )
 
-internal fun taskRailActivity(task: WorkspaceTaskSummary): String? {
-    if (task.sessions.any { session ->
-            session.status in setOf(
-                "failed",
-                "waiting-input",
-                "waiting_input",
-                "permission-blocked",
-                "reconnecting",
-            )
-        }
-    ) {
-        return "attention"
-    }
-    if (task.sessions.any { session ->
-            session.inFlight == true || session.ptyBusy == true || session.status == "thinking"
-        }
-    ) {
-        return "running"
-    }
+internal fun sessionRailActivity(session: WorkspaceSessionSummary): String? = when {
+    session.status in RAIL_ATTENTION_STATUSES -> "attention"
+    session.inFlight == true || session.ptyBusy == true || session.status == "thinking" -> "running"
+    else -> null
+}
+
+internal fun directoryRailActivity(group: TaskDirectoryGroup): String? {
+    val sessions = group.tasks.flatMap { it.sessions } + group.standaloneSessions
+    if (sessions.any { sessionRailActivity(it) == "attention" }) return "attention"
+    if (sessions.any { sessionRailActivity(it) == "running" }) return "running"
     return null
 }
+
+/** 当前任务或终端落在这个目录里时，窄栏文件夹保持选中。 */
+internal fun directoryContainsSelection(
+    group: TaskDirectoryGroup,
+    selectedTaskId: String?,
+    selectedSessionId: String?,
+): Boolean {
+    if (!selectedTaskId.isNullOrBlank() && group.tasks.any { it.id == selectedTaskId }) return true
+    val sessionId = selectedSessionId?.takeIf { it.isNotBlank() } ?: return false
+    if (group.standaloneSessions.any { it.id == sessionId }) return true
+    return group.tasks.any { task -> task.sessions.any { it.id == sessionId } }
+}
+
+/** 平板窄栏：每个可见目录一个文件夹，不再把任务摊平成图标。 */
+internal fun collapsedRailDirectories(groups: List<TaskDirectoryGroup>): List<CollapsedRailDirectory> =
+    directoryTreeGroups(groups).map { group ->
+        CollapsedRailDirectory(group = group, activity = directoryRailActivity(group))
+    }
 
 internal fun collectManagedIds(groups: List<TaskDirectoryGroup>): SidebarManageSelection {
     val taskIds = linkedSetOf<String>()
@@ -197,30 +196,4 @@ internal fun describeManagedDeletion(selection: SidebarManageSelection): String 
     return parts.joinToString("和").ifEmpty { "所选项目" }
 }
 
-internal fun collapsedRailTasks(
-    groups: List<TaskDirectoryGroup>,
-    activeTaskId: String?,
-    limit: Int = COLLAPSED_RAIL_LIMIT,
-): CollapsedRailModel {
-    val items = groups.flatMap { group ->
-        group.tasks.map { task ->
-            CollapsedRailTask(group = group, task = task, activity = taskRailActivity(task))
-        }
-    }.sortedWith { left, right ->
-        val rank = railRank(left, activeTaskId).compareTo(railRank(right, activeTaskId))
-        if (rank != 0) rank
-        else compareNullableTimestamp(
-            right.task.task.lastOpenedAt ?: right.task.task.createdAt,
-            left.task.task.lastOpenedAt ?: left.task.task.createdAt,
-        )
-    }
-    val visible = items.take(limit.coerceAtLeast(0))
-    return CollapsedRailModel(items = visible, overflow = (items.size - visible.size).coerceAtLeast(0))
-}
 
-private fun railRank(item: CollapsedRailTask, activeTaskId: String?): Int = when {
-    item.task.id == activeTaskId -> 0
-    item.activity == "attention" -> 1
-    item.activity == "running" -> 2
-    else -> 3
-}

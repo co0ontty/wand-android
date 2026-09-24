@@ -104,7 +104,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     val canLoadEarlier: Boolean get() = loadedOffset > 0
     private val earlierPageSize = 40
 
-    private val socket = WandSocket(api.baseUrl)
+    private val socket = WandSocket(api.baseUrl, api.token)
     /**
      * started = 对象是否跑过首次加载；active = 页面当前是否可见。
      * Compose / Navigation 可能复用同一个 ChatStore：shutdown 关 socket 后，
@@ -144,6 +144,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 ensureScope()
                 socket.onEvent = { event -> handle(event) }
                 socket.onConnectionChange = { up -> connected = up }
+                socket.onAuthenticationFailure = { message -> loadError = message }
                 // 实时连接不能被 REST / 模型目录 / 卡片默认值挡住。旧逻辑等三段请求收尾才
                 // connect，页面看起来已经打开、红条却一直挂着；退回再进才重新建连。
                 connectSocket()
@@ -676,4 +677,3 @@ internal fun chatRealtimeStartKind(active: Boolean, started: Boolean): ChatRealt
     if (active) return ChatRealtimeStartKind.Skip
     return if (started) ChatRealtimeStartKind.Reconnect else ChatRealtimeStartKind.FirstConnect
 }
-

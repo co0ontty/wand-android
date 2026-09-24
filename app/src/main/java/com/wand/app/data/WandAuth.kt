@@ -21,7 +21,7 @@ import java.io.IOException
  */
 object WandAuth {
 
-    class AuthException(message: String) : Exception(message)
+    class AuthException(message: String, val retryable: Boolean = true) : Exception(message)
 
     /** 解码连接码：base64(url#token)。 */
     @JvmStatic
@@ -70,7 +70,10 @@ object WandAuth {
                 client.newCall(request).execute().use { response ->
                     when (response.code) {
                         200 -> Unit
-                        401 -> throw AuthException("认证失败，连接码可能已过期（密码已更改），请重新获取连接码")
+                        401 -> throw AuthException(
+                            "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
+                            retryable = false,
+                        )
                         429 -> throw AuthException("登录尝试次数过多，请稍后再试")
                         else -> throw AuthException("服务器返回异常状态码：${response.code}")
                     }

@@ -113,7 +113,7 @@ object SessionWatcher {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         registerForegroundTracking()
 
-        val ws = WandSocket(baseUrl)
+        val ws = WandSocket(baseUrl, token)
         ws.onEvent = { event -> handle(event) }
         ws.onConnectionChange = { up -> if (up) refreshSessions() }
         socket = ws

@@ -3,6 +3,11 @@ package com.wand.app.data
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -18,13 +23,14 @@ import org.json.JSONObject
  * 这是增量合流（替换末条 vs 追加）正确性的前提；不能用协程 launch
  * （不保证顺序）。复用当前 endpoint 的 WandHttp client，自签证书与 session cookie 自动生效。
  */
-class WandSocket(baseUrl: String) {
+class WandSocket(baseUrl: String, private val appToken: String? = null) {
 
     /** 解析后的服务端推送，主线程回调。 */
     var onEvent: ((SessionEvent) -> Unit)? = null
 
     /** 连接状态变化（true=已连上），主线程回调。 */
     var onConnectionChange: ((Boolean) -> Unit)? = null
+    var onAuthenticationFailure: ((String) -> Unit)? = null
 
     /** 原生 PTY 专用原始帧；聊天订阅仍只收到类型化 SessionEvent。 */
     internal var onPtyEvent: ((WsIncoming) -> Unit)? = null
@@ -43,7 +49,9 @@ class WandSocket(baseUrl: String) {
     private var lastMessageAt = SystemClock.elapsedRealtime()
     private var reconnectDelayMs = 1_000L
     private var reconnectScheduled = false
-    private var closed = false
+    private var closed = true
+    private var authenticationJob: Job? = null
+    private var forceReauthenticate = false
 
     /** 当前连接的代号，旧连接的回调用它识别后丢弃，避免互相干扰。 */
     private var generation = 0
@@ -65,6 +73,7 @@ class WandSocket(baseUrl: String) {
     // MARK: - 生命周期（主线程调用）
 
     fun connect() {
+        if (!closed) return
         closed = false
         openSocket()
         restartWatchdog()
@@ -76,6 +85,8 @@ class WandSocket(baseUrl: String) {
      */
     fun reconnectForForeground() {
         if (closed) return
+        authenticationJob?.cancel()
+        authenticationJob = null
         reconnectScheduled = false
         reconnectDelayMs = 1_000L
         generation += 1
@@ -93,6 +104,8 @@ class WandSocket(baseUrl: String) {
 
     fun close() {
         closed = true
+        authenticationJob?.cancel()
+        authenticationJob = null
         handler.removeCallbacksAndMessages(null)
         reconnectScheduled = false
         generation += 1
@@ -171,6 +184,34 @@ class WandSocket(baseUrl: String) {
         generation += 1
         val gen = generation
         lastMessageAt = SystemClock.elapsedRealtime()
+        val token = appToken
+        if (!token.isNullOrEmpty() &&
+            (forceReauthenticate || WandHttp.cookieHeaderFor(baseUrl).isNullOrEmpty())
+        ) {
+            authenticationJob = CoroutineScope(Dispatchers.Main.immediate).launch {
+                try {
+                    WandAuth.loginWithToken(baseUrl, token, client)
+                    if (closed || gen != generation) return@launch
+                    forceReauthenticate = false
+                    createSocket(gen)
+                } catch (error: Exception) {
+                    if (closed || gen != generation) return@launch
+                    if (error is WandAuth.AuthException && !error.retryable) {
+                        Log.w(TAG, "WebSocket authentication rejected")
+                        onConnectionChange?.invoke(false)
+                        onAuthenticationFailure?.invoke(error.message ?: "登录已失效，请重新连接")
+                        return@launch
+                    }
+                    Log.w(TAG, "WebSocket session refresh failed: ${error.javaClass.simpleName}")
+                    scheduleReconnect(authRequired = true)
+                }
+            }
+            return
+        }
+        createSocket(gen)
+    }
+
+    private fun createSocket(gen: Int) {
         val request = Request.Builder().url(wsUrl).build()
         val socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -197,14 +238,17 @@ class WandSocket(baseUrl: String) {
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 handler.post {
                     if (gen != generation || closed) return@post
-                    scheduleReconnect()
+                    Log.w(TAG, "WebSocket failed: ${t.javaClass.simpleName}, HTTP ${response?.code ?: 0}")
+                    scheduleReconnect(authRequired = response?.code == 401)
                 }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 handler.post {
                     if (gen != generation || closed) return@post
-                    scheduleReconnect()
+                    val unauthorized = code == 1008 && reason == "Unauthorized"
+                    Log.w(TAG, "WebSocket closed: code=$code, auth=$unauthorized")
+                    scheduleReconnect(authRequired = unauthorized)
                 }
             }
         })
@@ -265,9 +309,11 @@ class WandSocket(baseUrl: String) {
 
     // MARK: - 重连与看门狗
 
-    private fun scheduleReconnect() {
+    private fun scheduleReconnect(authRequired: Boolean = false) {
+        if (authRequired) forceReauthenticate = true
         if (closed || reconnectScheduled) return
         reconnectScheduled = true
+        generation += 1
         onConnectionChange?.invoke(false)
         webSocket?.cancel()
         webSocket = null
@@ -276,13 +322,16 @@ class WandSocket(baseUrl: String) {
         onPtyResync?.invoke()
         val delay = reconnectDelayMs
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(30_000L)
+        val scheduledGeneration = generation
         handler.postDelayed({
+            if (generation != scheduledGeneration || closed) return@postDelayed
             reconnectScheduled = false
-            if (!closed && webSocket == null) openSocket()
+            if (webSocket == null) openSocket()
         }, delay)
     }
 
     companion object {
+        private const val TAG = "WandSocket"
         /** Split at UTF-8 scalar boundaries below the server per-frame limit. */
         internal fun ptyInputChunks(text: String, maxBytes: Int = 16 * 1024): List<String> {
             if (text.isEmpty()) return emptyList()

@@ -1,5 +1,6 @@
 package com.wand.app.ui.screens
 
+import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTask
@@ -391,26 +392,78 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun collapsedRailPrefersActiveAndAttentionTasks() {
-        val idle = task().copy(task = task().task.copy(id = "idle", name = "旧任务", lastOpenedAt = "2026-09-01T00:00:00Z"))
-        val active = task().copy(task = task().task.copy(id = "active", name = "当前", lastOpenedAt = "2026-09-08T00:00:00Z"))
+    fun collapsedRailShowsOneFolderPerDirectoryInTreeOrder() {
+        val doneOnly = group().copy(
+            workspaceId = "done-dir",
+            workspaceName = "DoneDir",
+            tasks = listOf(
+                task().copy(task = task().task.copy(id = "done", status = WorkspaceTaskStatus.Done)),
+            ),
+        )
+        val alpha = group().copy(workspaceId = "alpha", workspaceName = "Alpha")
+        val global = group().copy(
+            workspaceId = GLOBAL_WORKSPACE_ID,
+            workspaceName = "ignored",
+            global = true,
+            tasks = emptyList(),
+            standaloneSessions = listOf(session("pty", null).copy(id = "loose")),
+        )
+        val hiddenGlobal = group().copy(
+            workspaceId = "empty-global",
+            workspaceName = "Empty",
+            global = true,
+            tasks = emptyList(),
+            standaloneSessions = emptyList(),
+        )
+        val rail = collapsedRailDirectories(listOf(global, doneOnly, hiddenGlobal, alpha))
+
+        assertEquals(listOf("done-dir", "alpha", GLOBAL_WORKSPACE_ID), rail.map { it.group.workspaceId })
+        assertEquals("未归属工作区", rail.last().group.workspaceName)
+        assertTrue(rail.first().group.tasks.isEmpty())
+    }
+
+    @Test
+    fun collapsedRailDirectoryActivityPrefersAttentionOverRunning() {
         val attention = task().copy(
-            task = task().task.copy(id = "attention", name = "待处理", lastOpenedAt = "2026-09-07T00:00:00Z"),
+            task = task().task.copy(id = "attention"),
             sessions = listOf(session("structured", "structured").copy(id = "blocked", status = "waiting-input")),
             totalSessions = 1,
         )
         val running = task().copy(
-            task = task().task.copy(id = "running", name = "运行中", lastOpenedAt = "2026-09-06T00:00:00Z"),
+            task = task().task.copy(id = "running"),
             sessions = listOf(session("structured", "structured").copy(id = "busy", inFlight = true)),
             totalSessions = 1,
         )
-        val rail = collapsedRailTasks(
-            listOf(group().copy(tasks = listOf(idle, active, attention, running))),
-            activeTaskId = "active",
-            limit = 3,
+        val idle = group().copy(workspaceId = "idle", workspaceName = "Idle")
+        val mixed = group().copy(workspaceId = "mixed", workspaceName = "Mixed", tasks = listOf(attention, running))
+        val runningOnly = group().copy(
+            workspaceId = "run",
+            workspaceName = "Run",
+            tasks = emptyList(),
+            standaloneSessions = listOf(session("pty", null).copy(id = "shell", status = "thinking")),
         )
-        assertEquals(listOf("active", "attention", "running"), rail.items.map { it.task.id })
-        assertEquals(1, rail.overflow)
+        val rail = collapsedRailDirectories(listOf(idle, mixed, runningOnly))
+
+        assertEquals(listOf(null, "attention", "running"), rail.map { it.activity })
+    }
+
+    @Test
+    fun directoryContainsSelectionMatchesTaskSessionOrStandalone() {
+        val grouped = task().copy(
+            sessions = listOf(session("structured", "structured")),
+            totalSessions = 1,
+        )
+        val directory = group().copy(
+            tasks = listOf(grouped),
+            standaloneSessions = listOf(session("pty", null).copy(id = "loose")),
+        )
+
+        assertTrue(directoryContainsSelection(directory, "task-1", null))
+        assertTrue(directoryContainsSelection(directory, "task-1", "session-1"))
+        assertTrue(directoryContainsSelection(directory, null, "loose"))
+        assertFalse(directoryContainsSelection(directory, "other", "other-session"))
+        assertFalse(directoryContainsSelection(directory, null, null))
+        assertFalse(directoryContainsSelection(directory, null, "  "))
     }
 
     @Test
