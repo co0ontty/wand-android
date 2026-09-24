@@ -538,7 +538,9 @@ private fun UpdateInstallingContent(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    state.hint ?: "请在系统弹窗中确认更新，安装完成后应用会自动重启。",
+                    state.hint
+                        ?: "请在系统弹窗中确认更新；安装完成后应用会回到新版本，如果系统"
+                            + "拦下后台拉起，会收到一条「更新已完成」通知。",
                     style = MaterialTheme.typography.bodySmall,
                     color = WandColors.textSecondary,
                 )
@@ -546,7 +548,8 @@ private fun UpdateInstallingContent(
         }
         VersionBridge(state.update)
         Text(
-            "如果已经看到「安装完成」但应用没有自动回来，点下面这个按钮可以直接重启到新版本。",
+            "如果安装已经完成但应用没有自己回来，点下面的按钮重新进入，或点击通知里的"
+                + "「更新已完成」。",
             fontSize = 12.sp,
             lineHeight = 18.sp,
             color = WandColors.textMuted,

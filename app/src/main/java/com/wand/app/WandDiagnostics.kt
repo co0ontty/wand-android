@@ -29,7 +29,7 @@ object WandDiagnostics {
     private const val MAX_REPORT_CHARS = 1_200_000
     private const val MAX_EXIT_INFOS = 8
     private const val MAX_EXIT_TRACE_CHARS = 8_000
-    private const val MAX_LOGCAT_LINES = 500
+    private const val MAX_LOGCAT_CHARS = 120_000
 
     private fun stamp(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -226,20 +226,22 @@ object WandDiagnostics {
     /**
      * 当前进程 logcat 尾部快照。Android 只允许应用读自己的日志；
      * 机型/版本差异会让它失败，失败就静默跳过（内存环 + 文件日志已经覆盖主要信息）。
+     *
+     * 注意不要用 `logcat -t N`：`-t` 作用在**过滤前的整段缓冲区**上，系统很吵时
+     * 尾部 N 行几乎全是别人的日志，过滤完只剩零星几行。这里按 pid 过滤后自己在
+     * 内存里截尾。
      */
     private fun logcatSnapshot(): String {
         val pid = android.os.Process.myPid()
         val process = runCatching {
-            ProcessBuilder(
-                "logcat", "-d", "-v", "threadtime",
-                "-t", MAX_LOGCAT_LINES.toString(),
-                "--pid=$pid",
-            ).redirectErrorStream(true).start()
+            ProcessBuilder("logcat", "-d", "-v", "threadtime", "--pid=$pid")
+                .redirectErrorStream(true)
+                .start()
         }.getOrNull() ?: return ""
         return runCatching {
             val output = process.inputStream.bufferedReader().use { it.readText() }
-            if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroy()
-            output
+            if (!process.waitFor(4, TimeUnit.SECONDS)) process.destroy()
+            if (output.length > MAX_LOGCAT_CHARS) output.takeLast(MAX_LOGCAT_CHARS) else output
         }.getOrDefault("")
     }
 

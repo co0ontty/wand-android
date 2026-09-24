@@ -101,17 +101,30 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 脱敏：`WandLog.redact` 兜底清掉 `token` / `password` / `apiKey` / `Authorization` / `Cookie`
 与 `Bearer` 凭据；**会话 id 故意保留**，它是排查故障的锚点。任何新增打点都不得主动传凭据。
 
-## 更新安装与自动重启
+## 更新安装与回到新版本
 
 点「安装更新」后由系统安装器接管，Android 会杀掉 Wand 进程，用户只看到系统安装器的「完成」页。
 客户端用一组持久化状态把这段流程接起来（`ServerStore` 的 `update_*` 键 + `UpdateInstallState`）：
 
-1. 提交安装会话之前记录「待安装版本」（读 APK 自身 versionName/versionCode）与时间；
-2. 界面立即从「已下载」切到**正在安装**，旧界面不再留一个可点的「安装更新」；
-3. `UpdateInstallReceiver` 收到 `STATUS_SUCCESS` 后安排一次自动拉起：先直接 `startActivity`，
-   再用 `AlarmManager` + `PendingIntent.getActivity` 兜底（后台启动限制会静默拦下前者，而闹钟
-   由系统代发 PendingIntent，属于豁免路径）。任意 Activity 恢复时撤销这次闹钟，避免重复重启；
-4. 恢复前台时 `UpdateInstallReconciler` 判定：版本已生效但当前仍是安装前的进程 → 重启进程；
-   已生效且是新进程 → 清状态；超过宽限期仍未生效（用户取消 / 失败）→ 清状态并退回可重试界面。
+1. 提交安装会话前记录「待安装版本」（读 APK 自身的 versionName/versionCode）与时间；
+2. 界面立即从「已下载」切到**正在安装**：旧界面不再留一个可点的「安装更新」，也就不会出现
+   「点完又让我安装一次」的错觉；
+3. 缺少通知权限时先申请：通知是安装完成后把用户带回应用的**唯一可靠通道**；
+4. `UpdateInstallReceiver` 收到 `STATUS_SUCCESS` 后先试一次直接 `startActivity`（部分给了
+   「后台弹出界面 / 自启动」权限的 OEM 系统会放行），然后必发一条**「更新已完成」通知**，
+   点它即由系统 UI 代发起进入新版本。任意 Activity 恢复时会撤销通知与残留 PendingIntent；
+5. 回到前台时 `UpdateInstallReconciler` 结算状态：版本已生效 → 清账并记日志；过了宽限期仍未
+   生效（用户取消 / 失败）→ 清账，界面退回可重试；安装被取消后重进的界面会明确显示
+   「上次安装没有完成，可以重试」。
 
-失败与取消都会记录到诊断日志（含 PackageInstaller 状态码），排查「更新后没重启」时先导日志。
+**为什么不做自动重启进程**：Android 10+ 的后台启动限制（BAL）会拦下所有后台拉起，实测
+Android 16 上「直接 startActivity」和「AlarmManager + PendingIntent 闹钟兜底」都是 `BAL_BLOCK`
+（闹钟那条曾经被当成豁免路径，日志证明 AlarmManager 以
+`MODE_BACKGROUND_ACTIVITY_START_DENIED` 发送），把进程杀掉只会让用户看到应用自己退出。
+因此只保留：直接拉起（尽力而为）+ 通知（可靠）+ 界面里的「重新打开应用」按钮。
+
+注意 `X.Y.Z-debug.MMDDHHMM` 这类连续 debug 构建共享同一个 versionCode，所以「装上了没有」不能
+只看 versionCode —— 同号时必须再比 versionName，否则「还没装」会被误判成「已升级」。
+
+失败与取消都会记录到诊断日志（含 PackageInstaller 状态码与中文说明），排查「更新后没重启」
+时先导出日志。

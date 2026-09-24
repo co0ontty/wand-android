@@ -2,12 +2,14 @@ package com.wand.app
 
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Build
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -57,6 +59,9 @@ class HomeActivity : AppCompatActivity() {
     private var hasResumedRuntime = false
     /** 同一 Activity 的认证重试不应重复弹出同一个更新提示。 */
     private var autoUpdateCheckStarted = false
+    /** 授权「通知」后要接着做的安装（见 installUpdate）。 */
+    private var installAfterNotificationPermission: (() -> Unit)? = null
+    private var notificationPermissionRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -124,15 +129,37 @@ class HomeActivity : AppCompatActivity() {
         // 安装阶段（系统安装器接管后）需要知道「正在装哪个版本、安装包在哪」。
         var pendingUpdate: AppUpdateInfo? = null
         var pendingApkFile: java.io.File? = null
+
         // 系统安装确认弹窗是否真的弹过。只有弹过之后回到前台才算「用户取消」——
         // 授权「安装未知应用」时用户去设置页再回来，中间也会 resume，不能误判。
         var installPromptShown = false
+
+        fun notificationPermissionGranted(): Boolean =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    this@HomeActivity,
+                    android.Manifest.permission.POST_NOTIFICATIONS,
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
         fun installUpdate(update: AppUpdateInfo?, apkFile: java.io.File?) {
             if (update == null || apkFile == null || !apkFile.isFile) {
                 WandLog.w("update", "安装请求缺少版本或安装包，已丢弃")
                 return
             }
+            // 通知是「安装完成后把用户带回应用」的唯一可靠通道（见 UpdateInstallReceiver），
+            // 所以缺权限时先补一次申请；拒绝也继续安装，只是失去自动回前台。
+            if (!notificationPermissionGranted() && !notificationPermissionRequested) {
+                WandLog.i("update", "缺少通知权限，先申请再安装")
+                notificationPermissionRequested = true
+                installAfterNotificationPermission = { installUpdate(update, apkFile) }
+                ActivityCompat.requestPermissions(
+                    this@HomeActivity,
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    REQUEST_NOTIFICATION_PERMISSION,
+                )
+                return
+            }
+            installAfterNotificationPermission = null
             pendingUpdate = update
             pendingApkFile = apkFile
             // 立即离开 [Ready]：安装由系统接管，旧界面不能再留一个可点的「安装更新」。
@@ -335,8 +362,15 @@ class HomeActivity : AppCompatActivity() {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
                         val current = updatePresentation
+                        // 安装状态若已被 UpdateInstallReconciler 结算（清账），这里不再重复判定：
+                        // 那种情况要么更新已生效，要么已经由它记过结论。
+                        val pendingTracked = ServerStore(this@HomeActivity).let { store ->
+                            store.pendingInstallVersion.isNotBlank() ||
+                                store.pendingInstallVersionCode > 0L
+                        }
                         val cancelled = current is UpdatePresentation.Installing &&
                             installPromptShown &&
+                            pendingTracked &&
                             !installAlreadyApplied()
                         if (cancelled) {
                             val info = pendingUpdate
@@ -383,8 +417,9 @@ class HomeActivity : AppCompatActivity() {
                         onInstall = { apkFile -> installUpdate(pendingUpdate, apkFile) },
                         onRetryInstall = { update, apkFile -> installUpdate(update, apkFile) },
                         onRelaunchApp = {
-                            // 安装已经完成但应用没有自己回来：手动重启到新版本。
-                            UpdateInstallReconciler.relaunchIntoNewProcess(this@HomeActivity)
+                            // 安装已经完成但应用没有自己回来（系统拦下了后台拉起）：
+                            // 手动重新进入应用。
+                            UpdateInstallReconciler.reopenApp(this@HomeActivity)
                         },
                         onSkipVersion = { update ->
                             serverStore.setSkippedVersion(update.latestVersion, update.channel)
@@ -394,6 +429,10 @@ class HomeActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private companion object {
+        const val REQUEST_NOTIFICATION_PERMISSION = 1004
     }
 
     private fun isConfigurationNight(): Boolean =
@@ -406,6 +445,23 @@ class HomeActivity : AppCompatActivity() {
             statusBarStyle = SystemBarStyle.auto(transparent, transparent) { dark },
             navigationBarStyle = SystemBarStyle.auto(transparent, transparent) { dark },
         )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
+        WandLog.i(
+            "update",
+            "通知权限结果 granted=" +
+                (grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED),
+        )
+        val next = installAfterNotificationPermission
+        installAfterNotificationPermission = null
+        next?.invoke()
     }
 
     @Deprecated("Deprecated in Java")

@@ -2,18 +2,20 @@ package com.wand.app
 
 import android.app.Activity
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
 
 /**
- * 「安装更新后自动回到新版本」的落地动作。
+ * 「安装更新之后」的收尾：把持久化的待安装/已安装状态对齐到当前运行的版本。
  *
- * 系统安装器完成安装时会杀掉 Wand 进程，用户只看到系统安装器的「完成」页。这里用
- * [UpdateInstallState] 判定当前处于哪种状态，并做对应收尾：
+ * 系统安装器完成安装时会杀掉 Wand 进程，所以正常路径下这里看到的状态都是「安装已生效」，
+ * 只需清账；真正需要它判断的只有两种情况：
  *
- * - 更新已生效且当前进程是安装前的旧进程 → 重启进程（旧代码不会自己消失）；
- * - 更新已生效且当前进程就是新进程 → 只清理状态；
- * - 安装没落地（用户取消 / 失败）→ 清理状态，避免下次启动又看到「待安装」残影。
+ * - 安装已经生效 → 清状态并记一条结论日志；
+ * - 报过安装成功或过了宽限期，但版本号没动 → 用户取消 / 安装失败，清状态，避免下次启动
+ *   又看到「待安装」残影（界面侧由 [`HomeActivity`] 把「正在安装」退回可重试）。
+ *
+ * 刻意不做「重启进程」：Android 10+ 的后台启动限制会拦下所有后台拉起（实测 Android 16
+ * 直接 startActivity 与闹钟兜底都是 BAL_BLOCK），把进程杀掉只会让用户看到应用自己退出。
+ * 需要新代码时用户点「更新已完成」通知（系统 UI 代发起，不受限制）或重新打开应用即可。
  */
 object UpdateInstallReconciler {
 
@@ -35,55 +37,41 @@ object UpdateInstallReconciler {
             pendingVersionCode = pendingCode,
             pendingSinceMs = pendingAt,
             installedAtMs = installedAt,
-            processStartMs = WandLog.processStartWallClockMs(),
             nowMs = System.currentTimeMillis(),
         )
         when (outcome) {
             UpdateInstallOutcome.NONE -> Unit
 
-            UpdateInstallOutcome.INSTALLED_FRESH -> {
+            UpdateInstallOutcome.INSTALLED -> {
+                val restarted = WandLog.processStartWallClockMs() <
+                    effectiveInstallAt(pendingAt, installedAt)
                 WandLog.i(
                     TAG,
-                    "更新已生效：v$pendingVersion → 运行中 v${running.first}（进程启动于安装之后）",
+                    "更新已生效：v$pendingVersion → 运行中 v${running.first}" +
+                        if (restarted) "（本次进程由系统安装器重启拉起）" else "",
                 )
                 store.clearInstallState()
-            }
-
-            UpdateInstallOutcome.INSTALLED_NEEDS_RESTART -> {
-                WandLog.w(
-                    TAG,
-                    "更新已生效但当前仍是安装前的进程，重启以加载新版本 " +
-                        "pending=$pendingVersion running=${running.first}",
-                )
-                store.clearInstallState()
-                relaunchIntoNewProcess(activity)
             }
 
             UpdateInstallOutcome.NOT_APPLIED -> {
-                WandLog.w(TAG, "上次安装请求未生效（取消或失败），清理待安装状态 pending=$pendingVersion")
+                WandLog.w(TAG, "上次安装请求未生效（取消或失败），清理待安装状态 pending=$pendingVersion", null)
                 store.clearInstallState()
             }
         }
     }
 
-    /**
-     * 重启到新进程：先安排一次由系统代发的拉起（进程即将被杀，必须由系统在之后发出），
-     * 再结束当前进程。安装后的新代码只有新进程才能完全加载。
-     */
-    fun relaunchIntoNewProcess(activity: Activity) {
-        WandLog.i(TAG, "重启应用到新版本")
-        UpdateInstallReceiver.scheduleRelaunch(activity, 300L)
+    /** 打开应用（前台调用，不受后台启动限制）：清掉任务栈后从连接页重新进入。 */
+    fun reopenApp(activity: Activity) {
+        WandLog.i(TAG, "用户要求重新打开应用以加载新版本")
         activity.startActivity(
             Intent(activity, ConnectActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         )
         activity.finishAffinity()
-        // 给这次 startActivity 留一帧；随后由闹钟在系统侧重新拉起（若本进程已被系统清掉，
-        // 闹钟同样有效）。
-        Handler(Looper.getMainLooper()).postDelayed({
-            android.os.Process.killProcess(android.os.Process.myPid())
-        }, 150L)
     }
+
+    private fun effectiveInstallAt(pendingAt: Long, installedAt: Long): Long =
+        if (installedAt > 0L) installedAt else pendingAt
 
     private fun runningVersion(activity: Activity): Pair<String?, Long> = try {
         val info = activity.packageManager.getPackageInfo(activity.packageName, 0)

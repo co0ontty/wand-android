@@ -1,15 +1,18 @@
 package com.wand.app;
 
 import android.app.ActivityOptions;
-import android.app.AlarmManager;
+import android.app.Notification;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInstaller;
 import android.os.Build;
-import android.os.SystemClock;
 import android.widget.Toast;
+
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 
 /**
  * PackageInstaller.commit 的状态回调。系统会先送来 STATUS_PENDING_USER_ACTION，
@@ -19,8 +22,14 @@ import android.widget.Toast;
  * 这里清掉 selector 再拉起。
  *
  * 安装成功时应用进程已被系统杀掉，用户看到的只是系统安装器的「完成」页 —— 应用不会
- * 自己回来。所以这里在 STATUS_SUCCESS 后安排一次「把应用拉回前台」的闹钟（见
- * {@link #scheduleRelaunch}），让客户端自动回到新版本，而不是停在旧界面。
+ * 自己回来。STATUS_SUCCESS 之后的「回到应用」有三条路（见 {@link #bringAppBack}）：
+ *
+ * 1. 直接 startActivity：Android 10+ 的后台启动限制会拦下它（实测 Android 16 返回
+ *    BAL_BLOCK），只有部分给了「后台弹出界面 / 自启动」权限的 OEM 系统会放行；
+ * 2. 闹钟兜底：曾经以为系统代发 PendingIntent 属于豁免路径，实测同样被拦
+ *    （AlarmManager 以 MODE_BACKGROUND_ACTIVITY_START_DENIED 发送），所以删除；
+ * 3. 通知：**唯一在原生 Android 上可靠的做法** —— 用户点通知由系统 UI 代发起，
+ *    不受后台启动限制，点击即进入新版本。
  */
 public final class UpdateInstallReceiver extends BroadcastReceiver {
 
@@ -29,8 +38,8 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
     private static final String TAG = "update";
     private static final int RELAUNCH_REQUEST_CODE = 4711;
 
-    /** 安装完成后延迟拉起应用：给系统安装器一点时间画完「完成」页并释放焦点。 */
-    private static final long RELAUNCH_DELAY_MS = 1_500L;
+    /** 「更新已完成」通知的 id（单条，重装后覆盖）。 */
+    private static final int NOTIFICATION_ID_UPDATE_READY = 8801;
 
     /** 同进程内的 UI 回调（进程被杀后自然失效，不会泄漏到新进程）。 */
     interface StatusListener {
@@ -88,21 +97,13 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
             String installed = store.getPendingInstallVersion();
             WandLog.i(TAG, "安装成功，准备重启到新版本 " + (installed == null ? "" : installed));
             notifyStatus(status, null);
-            // 直接拉起 + 闹钟兜底：前台启动限制会把「后台组件直接 startActivity」静默
-            // 拦下（只在 logcat 留一条 Background activity launch blocked），而闹钟是
-            // 由系统代发 PendingIntent，属于该限制的豁免路径。谁先成功，另一个会被
-            // WandApplication.onActivityResumed → cancelRelaunch 撤销，不会重复重启。
-            launchApp(context, "安装完成");
-            scheduleRelaunch(context);
+            bringAppBack(context);
             return;
         }
 
         // 失败 / 用户取消：清掉待安装状态，避免重启后仍显示「待安装」。
         new ServerStore(context).clearInstallState();
-        String message = statusMessage;
-        if (message == null || message.trim().isEmpty()) {
-            message = "安装失败（" + statusName(status) + "）";
-        }
+        String message = describeFailure(status, statusMessage);
         WandLog.w(TAG, "安装未完成：" + message, null);
         notifyStatus(status, message);
         if (status != PackageInstaller.STATUS_FAILURE_ABORTED) {
@@ -110,11 +111,19 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
         }
     }
 
-    /** 尝试把应用拉回前台；被系统限制拦下时不会抛异常，所以返回 true 不代表一定会显示。 */
+    /**
+     * 安装成功后把应用交回用户：先试一次直接拉起（OEM 放行时体验最好），无论成败都发一条
+     * 「更新已完成」通知作为兜底 —— 通知点击由系统 UI 代发起，不受后台启动限制。
+     */
+    private static void bringAppBack(Context context) {
+        launchApp(context, "安装完成");
+        postReadyNotification(context);
+    }
+
+    /** 尝试把应用拉回前台；被后台启动限制拦下时不会抛异常，只会在 logcat 留 BAL 记录。 */
     private static void launchApp(Context context, String reason) {
-        Intent launch = relaunchIntent(context);
         try {
-            context.startActivity(launch);
+            context.startActivity(relaunchIntent(context));
             WandLog.i(TAG, "已请求回到前台（" + reason + "）");
         } catch (Exception e) {
             WandLog.w(TAG, "回到前台失败（" + reason + "）", e);
@@ -122,7 +131,60 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
     }
 
     /**
-     * 拉起应用的目标 Intent。构造方式必须与 {@link #cancelRelaunch} 完全一致，
+     * 「更新已完成」通知。系统安装完成时应用进程已被杀掉，唯一可靠的回前台方式就是让用户
+     * 点一下通知；任意 Activity 恢复时会把它撤掉（见 {@link #cancelRelaunch}）。
+     */
+    private static void postReadyNotification(Context context) {
+        try {
+            NotificationHelper helper = new NotificationHelper(context);
+            helper.createChannels();
+            if (!helper.hasPostNotificationPermission()) {
+                WandLog.w(TAG, "没有通知权限，无法提示用户回到应用", null);
+                return;
+            }
+            PendingIntent tap = PendingIntent.getActivity(
+                    context,
+                    RELAUNCH_REQUEST_CODE,
+                    relaunchIntent(context),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE,
+                    relaunchOptions());
+            Notification notification =
+                    new NotificationCompat.Builder(context, NotificationHelper.CHANNEL_ID_UPDATES)
+                            .setSmallIcon(R.drawable.ic_notification)
+                            .setContentTitle("更新已完成")
+                            .setContentText("点击打开新版本的 Wand")
+                            .setContentIntent(tap)
+                            .setAutoCancel(true)
+                            .setPriority(NotificationCompat.PRIORITY_HIGH)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .build();
+            NotificationManagerCompat.from(context)
+                    .notify(NOTIFICATION_ID_UPDATE_READY, notification);
+            WandLog.i(TAG, "已发出「更新已完成」通知，等待用户点击回到应用");
+        } catch (Exception e) {
+            WandLog.w(TAG, "发送更新完成通知失败", e);
+        }
+    }
+
+    /** 用户自己先回到了应用：撤掉通知与残留的 PendingIntent，避免重复拉起。 */
+    static void cancelRelaunch(Context context) {
+        try {
+            NotificationManager manager = context.getSystemService(NotificationManager.class);
+            if (manager != null) manager.cancel(NOTIFICATION_ID_UPDATE_READY);
+        } catch (Exception ignored) {
+            // 通知已经消失或没有权限，忽略。
+        }
+        PendingIntent pending = PendingIntent.getActivity(
+                context,
+                RELAUNCH_REQUEST_CODE,
+                relaunchIntent(context),
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE,
+                relaunchOptions());
+        if (pending != null) pending.cancel();
+    }
+
+    /**
+     * 拉起应用的目标 Intent。构造参数必须与 {@link #cancelRelaunch} 完全一致，
      * 否则 PendingIntent 身份不同，撤销会失效。
      */
     private static Intent relaunchIntent(Context context) {
@@ -131,53 +193,50 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
     }
 
-    static void scheduleRelaunch(Context context) {
-        scheduleRelaunch(context, RELAUNCH_DELAY_MS);
+    /**
+     * 拉起用的 ActivityOptions：目标 SDK ≥ 35 时创建方默认不传递自己的后台启动特权，
+     * 这里显式允许（用户点通知时由系统 UI 代发起，本身就不受限制，这里是额外保险）。
+     */
+    private static android.os.Bundle relaunchOptions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null;
+        return ActivityOptions.makeBasic()
+                .setPendingIntentCreatorBackgroundActivityStartMode(
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                .toBundle();
     }
 
     /**
-     * 创建拉起用的 PendingIntent。schedule / cancel 必须走同一份参数
-     * （requestCode + Intent + ActivityOptions），否则身份不同，撤销会失效。
+     * 面向用户的失败文案 + 系统原始信息。PackageInstaller 的 message 是英文的
+     * （INSTALL_FAILED_ABORTED: User rejected permissions），直接展示看不懂，
+     * 但排查又需要原始值，所以中文在前、原始信息在后。
      */
-    private static PendingIntent relaunchPendingIntent(Context context, int extraFlags) {
-        ActivityOptions options = null;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // 目标 SDK ≥ 35 时创建方默认不传递自己的后台启动特权；这里显式允许，
-            // 让系统代发这次拉起时不会被 BAL 限制拦下。
-            options = ActivityOptions.makeBasic()
-                    .setPendingIntentCreatorBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+    static String describeFailure(int status, String rawMessage) {
+        String summary;
+        switch (status) {
+            case PackageInstaller.STATUS_FAILURE_ABORTED:
+                summary = "已取消安装";
+                break;
+            case PackageInstaller.STATUS_FAILURE_BLOCKED:
+                summary = "被系统或安全软件拦截";
+                break;
+            case PackageInstaller.STATUS_FAILURE_CONFLICT:
+                summary = "与已安装版本的签名冲突，需要先卸载再安装";
+                break;
+            case PackageInstaller.STATUS_FAILURE_INCOMPATIBLE:
+                summary = "安装包与当前系统不兼容";
+                break;
+            case PackageInstaller.STATUS_FAILURE_INVALID:
+                summary = "安装包无效或已损坏";
+                break;
+            case PackageInstaller.STATUS_FAILURE_STORAGE:
+                summary = "存储空间不足";
+                break;
+            default:
+                summary = "安装失败（" + statusName(status) + "）";
+                break;
         }
-        return PendingIntent.getActivity(
-                context,
-                RELAUNCH_REQUEST_CODE,
-                relaunchIntent(context),
-                extraFlags | PendingIntent.FLAG_IMMUTABLE,
-                options != null ? options.toBundle() : null);
-    }
-
-    static void scheduleRelaunch(Context context, long delayMs) {
-        PendingIntent pending = relaunchPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT);
-        AlarmManager alarms = context.getSystemService(AlarmManager.class);
-        if (alarms == null) return;
-        long triggerAt = SystemClock.elapsedRealtime() + delayMs;
-        try {
-            // 精确闹钟需要 SCHEDULE_EXACT_ALARM（14 起默认拒绝），这里用非精确闹钟：
-            // 安装完成时屏幕是亮的、设备不在休眠，误差通常在 1 秒内。
-            alarms.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pending);
-            WandLog.i(TAG, "已安排 " + delayMs + "ms 后自动回到应用");
-        } catch (Exception e) {
-            WandLog.w(TAG, "安排自动回到应用失败", e);
-        }
-    }
-
-    /** 用户自己先打开了应用时撤销这次多余的自动拉起。 */
-    static void cancelRelaunch(Context context) {
-        PendingIntent pending = relaunchPendingIntent(context, PendingIntent.FLAG_NO_CREATE);
-        if (pending == null) return;
-        AlarmManager alarms = context.getSystemService(AlarmManager.class);
-        if (alarms != null) alarms.cancel(pending);
-        pending.cancel();
+        if (rawMessage == null || rawMessage.trim().isEmpty()) return summary;
+        return summary + " · " + rawMessage.trim();
     }
 
     static String statusName(int status) {
