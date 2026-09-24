@@ -472,6 +472,9 @@ fun PtyTerminalScreen(
                     }
                 }
             }
+            if (voiceInput.voice.showModelDialog) {
+                SttModelDownloadDialog(onDismiss = { voiceInput.voice.showModelDialog = false })
+            }
             if (quickCommit.panelOpen) {
                 QuickCommitSheet(
                     qc = quickCommit,

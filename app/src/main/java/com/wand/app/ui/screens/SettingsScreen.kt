@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.wand.app.data.WandApi
 import com.wand.app.speech.SherpaSpeechEngine
+import com.wand.app.speech.SpeechNativeLibrary
 import com.wand.app.speech.SttModelManager
 import com.wand.app.ui.HomeConnectionInfo
 import com.wand.app.ui.HomeNavigationActions
@@ -811,6 +812,7 @@ private fun SttModelSection() {
                 ready -> "已就绪"
                 sttState is SttModelManager.State.Failed && selectedId == model.id ->
                     "重试"
+                SttModelManager.isModelDownloaded(context, model) -> "需下载引擎"
                 else -> model.sizeLabel
             }
             Column(
@@ -890,7 +892,7 @@ private fun SttModelSection() {
     }
     pendingDownload?.let { model ->
         WandDialog(
-            title = "下载语音模型？",
+            title = "启用本地语音识别？",
             onDismissRequest = { pendingDownload = null },
             icon = WandIcons.update,
             confirm = WandDialogAction(
@@ -903,7 +905,9 @@ private fun SttModelSection() {
             dismiss = WandDialogAction("取消", { pendingDownload = null }),
         ) {
             Text(
-                "将下载「${model.label}」（约 ${model.sizeLabel}）。建议在 Wi‑Fi 下进行，下载完成后识别完全在本机离线运行。",
+                (if (!SpeechNativeLibrary.isInstalled(context)) "将从官方 GitHub 下载语音引擎（约 38 MB）；" else "") +
+                    (if (!SttModelManager.isModelDownloaded(context, model)) "下载「${model.label}」（${model.sizeLabel}）。" else "模型已在本机。") +
+                    "建议在 Wi‑Fi 下进行，启用后识别完全在本机离线运行。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )

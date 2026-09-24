@@ -134,6 +134,7 @@ import com.wand.app.data.SESSION_MODE_OPTIONS
 import com.wand.app.data.sessionModeLabel
 import com.wand.app.data.supportedSessionModeIds
 import com.wand.app.speech.SherpaSpeechEngine
+import com.wand.app.speech.SpeechNativeLibrary
 import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
@@ -2626,16 +2627,18 @@ internal fun VoiceTranscriptBubble(backdrop: GlassBackdrop?, voice: VoiceInputCo
 
 /** 端侧语音模型下载对话框：说明 → 下载进度 → 就绪/失败重试。 */
 @Composable
-private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
+internal fun SttModelDownloadDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val state = SttModelManager.state
     val model = remember { SttModelManager.selectedModel(context) }
+    val needsLibrary = !SpeechNativeLibrary.isInstalled(context)
+    val needsModel = !SttModelManager.isModelDownloaded(context, model)
     // 下载完成立刻预热模型，让「下载完→按住即用」无加载等待。
     LaunchedEffect(state) {
         if (state is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
     }
     WandDialog(
-        title = "下载本地语音模型",
+        title = "启用本地语音识别",
         onDismissRequest = { if (state !is SttModelManager.State.Downloading) onDismiss() },
         icon = WandIcons.update,
         confirm = when (state) {
@@ -2658,7 +2661,7 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
                 when (state) {
                     is SttModelManager.State.Downloading -> {
                         Text(
-                            "正在下载语音识别模型…",
+                            "正在下载语音识别组件…",
                             fontSize = 13.sp,
                             color = WandColors.textSecondary,
                         )
@@ -2680,15 +2683,15 @@ private fun SttModelDownloadDialog(onDismiss: () -> Unit) {
                         color = WandColors.textSecondary,
                     )
                     is SttModelManager.State.Failed -> Text(
-                        "${state.message}\n可重试，会自动切换镜像源。",
+                        "${state.message}\n请检查网络后重试；模型下载会尝试备用镜像。",
                         fontSize = 13.sp,
                         color = WandColors.danger,
                     )
                     else -> Text(
-                        "此设备没有可用的系统语音识别服务。下载开源端侧模型" +
-                            "（${model.label}，${model.sizeLabel}）后，" +
-                            "语音识别完全在本机离线运行：不耗流量、语音内容不出设备。" +
-                            "可在设置页切换识别模型。",
+                        "此设备没有可用的系统语音识别服务。" +
+                            (if (needsLibrary) "将从官方 GitHub 下载语音引擎（约 38 MB）；" else "") +
+                            (if (needsModel) "另下载${model.label}（${model.sizeLabel}）。" else "模型已在本机。") +
+                            "仅在确认后下载；启用后识别完全在本机离线运行。",
                         fontSize = 13.sp,
                         color = WandColors.textSecondary,
                     )

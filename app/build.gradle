@@ -4,6 +4,50 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+// 构建时只取 sherpa AAR 的 JVM API 类；原生 .so 仅在用户启用端侧语音后下载。
+// 上游 OnlineRecognizer / OnlineStream 的静态初始化会强制 System.loadLibrary，
+// 这里用本地的同名 JNI wrapper 替换它们，以便按需 System.load(绝对路径)。
+def sherpaAar = file('libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar')
+def sherpaApiJarFile = layout.buildDirectory.file('generated/sherpa/sherpa-api.jar')
+def sherpaWrappers = [
+    'com/k2fsa/sherpa/onnx/OnlineRecognizer.class',
+    'com/k2fsa/sherpa/onnx/OnlineRecognizer$Companion.class',
+    'com/k2fsa/sherpa/onnx/OnlineStream.class',
+    'com/k2fsa/sherpa/onnx/OnlineStream$Companion.class',
+] as Set
+
+def prepareSherpaApiJar = tasks.register('prepareSherpaApiJar') {
+    inputs.file(sherpaAar)
+    inputs.property('replacedWrappers', sherpaWrappers.toList().sort().join(','))
+    outputs.file(sherpaApiJarFile)
+    doLast {
+        def target = sherpaApiJarFile.get().asFile
+        target.parentFile.mkdirs()
+        new ZipFile(sherpaAar).withCloseable { aar ->
+            def classes = aar.getEntry('classes.jar')
+            if (classes == null) throw new GradleException('sherpa AAR 缺少 classes.jar')
+            new ZipInputStream(aar.getInputStream(classes)).withCloseable { input ->
+                new ZipOutputStream(target.newOutputStream()).withCloseable { output ->
+                    for (def entry = input.nextEntry; entry != null; entry = input.nextEntry) {
+                        if (entry.name.endsWith('.class') && !sherpaWrappers.contains(entry.name)) {
+                            def jarEntry = new ZipEntry(entry.name)
+                            jarEntry.time = 0L
+                            output.putNextEntry(jarEntry)
+                            input.transferTo(output)
+                            output.closeEntry()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 def appVersionName = project.hasProperty('APP_VERSION_NAME') ? project.property('APP_VERSION_NAME') : "1.0.0"
 
 // versionCode 的唯一真源 —— 由 versionName 派生，所有构建方式（本地 / publish.sh / CI）必须
@@ -46,8 +90,9 @@ android {
         targetSdk 36
         versionCode appVersionCode
         versionName appVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        // sherpa-onnx 原生库只随包带 arm64：现代真机全是 arm64-v8a，
+        // 端侧语音仅支持 arm64：现代真机全是 arm64-v8a，
         // 砍掉其余 ABI 省约 3/4 的 .so 体积（代价：x86 模拟器装不了）。
         ndk {
             abiFilters "arm64-v8a"
@@ -105,6 +150,11 @@ android {
     }
 
     packagingOptions {
+        dex {
+            // minSdk 33 默认把 classes*.dex 原样存进 APK（约 16 MiB）。自分发 APK
+            // 优先降低下载体积：压缩后约 7.2 MiB；安装时由系统解压，可能多占磁盘。
+            useLegacyPackaging = true
+        }
         jniLibs {
             // .so 压缩进 APK：下载体积从 +22MB 降到 +8MB（自分发下载体积优先；
             // 代价是安装时解压、磁盘双份占用）。
@@ -117,6 +167,8 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
@@ -147,11 +199,9 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // Compose 图片加载（聊天内联缩略图 / 全屏预览）：用 WandHttp.client 走自签证书 + cookie 鉴权。
     implementation 'io.coil-kt:coil-compose:2.7.0'
-    // 端侧语音识别（sherpa-onnx，static-link onnxruntime 版 AAR）。
-    // 提交在 libs/ 而不走仓库依赖：JitPack 对 k2-fsa 最新 tag 构建失败、
-    // 国内可达性不可控；钉本地文件保证三种构建（本地/publish.sh/CI）确定一致。
-    // 来源：https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-static-link-onnxruntime-1.13.2.aar
-    implementation files('libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar')
+    // AAR 仅作确定性的构建源；APK 只带轻量 API，绝不打包 22 MB 原生库。
+    // 启用语音时从同版本官方发行包下载并校验（见 SpeechNativeLibrary）。
+    implementation files(prepareSherpaApiJar)
 }
 
 // UI 页面只能跨 Wand 设计系统 seam 使用 Material 3。底层 Material/玻璃实现集中在
@@ -189,3 +239,7 @@ tasks.register('verifyWandDesignSystem') {
 }
 
 tasks.named('preBuild').configure { dependsOn('verifyWandDesignSystem') }
+
+tasks.withType(Test).configureEach {
+    systemProperty 'wand.sherpaAar', sherpaAar.absolutePath
+}

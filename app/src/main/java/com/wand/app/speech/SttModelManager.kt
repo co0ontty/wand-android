@@ -140,11 +140,15 @@ object SttModelManager {
     fun modelDir(context: Context, model: SttModel): File =
         File(context.filesDir, "asr/${model.dirName}")
 
-    fun isReady(context: Context, model: SttModel): Boolean {
+    fun isModelDownloaded(context: Context, model: SttModel): Boolean {
         val dir = modelDir(context, model)
         return File(dir, COMPLETE_MARKER).exists() &&
             model.files.all { (name, _) -> File(dir, name).exists() }
     }
+
+    /** 本地语音必须同时有模型和按需安装的 JNI 库。 */
+    fun isReady(context: Context, model: SttModel): Boolean =
+        isModelDownloaded(context, model) && SpeechNativeLibrary.isInstalled(context)
 
     /**
      * 实际生效的模型：所选模型就绪用所选；没就绪（比如大模型还在下载）
@@ -174,28 +178,39 @@ object SttModelManager {
         downloading = true
         cancelRequested = false
         downloadingModelId = model.id
-        state = State.Downloading(0, 0, model.totalBytesEstimate)
         val appContext = context.applicationContext
+        val nativeBytes = if (SpeechNativeLibrary.isInstalled(appContext)) 0L else SpeechNativeLibrary.DOWNLOAD_SIZE
+        val modelBytes = if (isModelDownloaded(appContext, model)) 0L else model.totalBytesEstimate
+        val totalBytes = nativeBytes + modelBytes
+        state = State.Downloading(0, 0, totalBytes)
         scope.launch {
-            var lastError: Exception? = null
-            for (base in sources(model)) {
-                if (cancelRequested) break
-                try {
-                    downloadFrom(appContext, model, base)
-                    downloading = false
-                    downloadingModelId = null
-                    refreshAfterDownload(appContext)
-                    return@launch
-                } catch (e: Exception) {
-                    lastError = e
+            try {
+                if (nativeBytes > 0L) {
+                    SpeechNativeLibrary.download(appContext, http, { received ->
+                        updateProgress(received, totalBytes)
+                    }, { cancelRequested })
                 }
-            }
-            downloading = false
-            downloadingModelId = null
-            state = if (cancelRequested) {
-                State.Idle
-            } else {
-                State.Failed("下载失败：${lastError?.message ?: "网络不可达"}")
+                if (modelBytes > 0L && !cancelRequested) {
+                    var lastError: Exception? = null
+                    for (base in sources(model)) {
+                        if (cancelRequested) break
+                        try {
+                            downloadFrom(appContext, model, base, nativeBytes, totalBytes)
+                            lastError = null
+                            break
+                        } catch (e: Exception) {
+                            lastError = e
+                        }
+                    }
+                    if (lastError != null) throw lastError
+                }
+                if (cancelRequested) throw IOException("已取消")
+                refreshAfterDownload(appContext)
+            } catch (e: Exception) {
+                state = if (cancelRequested) State.Idle else State.Failed("下载失败：${e.message}")
+            } finally {
+                downloading = false
+                downloadingModelId = null
             }
         }
     }
@@ -237,7 +252,7 @@ object SttModelManager {
                         // 实时复查 downloadingModelId：prune 扫描期间用户可能刚点了下载，
                         // 快照里没有但目录正在被写入，误删会让 rename 失败报「写入模型文件失败」。
                         downloadingModelId?.let { id -> modelById(id).dirName } == dir.name -> Unit
-                        !isReady(appContext, model) ->
+                        !isModelDownloaded(appContext, model) ->
                             dir.deleteRecursively()
                         else ->
                             dir.listFiles { f -> f.isFile && f.name.endsWith(".part") }
@@ -251,12 +266,26 @@ object SttModelManager {
         }
     }
 
-    private fun downloadFrom(context: Context, model: SttModel, base: String) {
+    private fun updateProgress(downloaded: Long, totalEstimate: Long) {
+        val total = totalEstimate.coerceAtLeast(downloaded)
+        state = State.Downloading(
+            percent = ((downloaded * 100) / total).toInt().coerceIn(0, 99),
+            downloadedBytes = downloaded,
+            totalBytes = total,
+        )
+    }
+
+    private fun downloadFrom(
+        context: Context,
+        model: SttModel,
+        base: String,
+        prefixBytes: Long,
+        totalEstimate: Long,
+    ) {
         val dir = modelDir(context, model)
         if (!dir.exists() && !dir.mkdirs()) throw IOException("无法创建模型目录")
         File(dir, COMPLETE_MARKER).delete()
 
-        val totalEstimate = model.totalBytesEstimate
         var doneBytes = 0L
 
         for ((name, estimate) in model.files) {
@@ -287,13 +316,7 @@ object SttModelManager {
                         val now = System.currentTimeMillis()
                         if (now - lastUiUpdate > 100) {
                             lastUiUpdate = now
-                            val downloaded = doneBytes + fileDone
-                            val total = totalEstimate.coerceAtLeast(downloaded)
-                            state = State.Downloading(
-                                percent = ((downloaded * 100) / total).toInt().coerceIn(0, 99),
-                                downloadedBytes = downloaded,
-                                totalBytes = total,
-                            )
+                            updateProgress(prefixBytes + doneBytes + fileDone, totalEstimate)
                         }
                     }
                 }

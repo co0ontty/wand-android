@@ -139,6 +139,7 @@ class SherpaSpeechEngine(private val context: Context) : SpeechEngine {
             }
             sharedRecognizer?.release()
             sharedRecognizer = null
+            SpeechNativeLibrary.ensureLoaded(context)
             val recognizer = OnlineRecognizer(
                 assetManager = null, // 传 null 走 newFromFile：从绝对路径加载
                 config = buildConfig(context, model, dir),

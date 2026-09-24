@@ -66,12 +66,13 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 | `SpeechEngine.kt` | 引擎接口（start / finish / cancel，回调 onPartial / onFinal / onError） |
 | `SystemSpeechEngine.kt` | 系统 `SpeechRecognizer`（API 31+ 有端侧服务时用 `createOnDeviceSpeechRecognizer`，否则默认识别器 + `EXTRA_PREFER_OFFLINE`） |
 | `SherpaSpeechEngine.kt` | sherpa-onnx 流式 Zipformer-CTC 中文模型，完全离线；识别器常驻复用 |
-| `SttModelManager.kt` | 模型按需下载（hf-mirror 优先 / huggingface 兜底，两个裸文件免解压，约 26 MB → `filesDir/asr/`） |
+| `SttModelManager.kt` | 用户确认后下载语音引擎与模型（模型从 hf-mirror 优先 / huggingface 兜底下载，中文模型约 26 MB → `filesDir/asr/`） |
+| `SpeechNativeLibrary.kt` | 从固定版本的官方 GitHub AAR 按需下载 arm64 JNI，校验 SHA-256、只读落入 `noBackupFilesDir` 后 `System.load` |
 | `VoiceInputController.kt` | 按住会话状态机 + 引擎选择 |
 
-**引擎优先级**：sherpa 本地模型（已下载）→ 系统识别器（GMS 设备）→ 弹模型下载对话框。国产无谷歌服务 ROM 上系统识别器普遍不可用（OPPO 返回 false、华为挂假服务），sherpa 路径就是为它们准备的主路径。
+**引擎优先级**：sherpa 本地模型 + 已下载引擎 → 系统识别器（GMS 设备）→ 弹出启用对话框。未启用本地语音时，APK 不含 sherpa 原生库，不会自动下载；确认启用才下载约 38 MB 的官方 AAR，提取约 22 MB arm64 库，同时按需下载所选模型。已有模型的升级用户只需下载引擎一次。国产无谷歌服务 ROM 上系统识别器普遍不可用（OPPO 返回 false、华为挂假服务），因此对话框会提供本地路径；官方 GitHub 不可达时提示错误而不是运行未校验的库。启用后转写完全离线。
 
-**依赖说明**：`app/libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar`（38 MB，提交在仓库里）。不走 JitPack（k2-fsa 最新 tag 在 JitPack 构建失败、国内可达性不可控），钉本地文件保证本地 / publish.sh / CI 三种构建一致。`abiFilters` 只保留 arm64-v8a；`useLegacyPackaging = true` 把 .so 压缩进 APK（下载体积 +9 MB 左右）。升级 AAR 时从 sherpa-onnx GitHub Release 下载同名 static-link 版本替换并同步改 build.gradle 文件名。
+**构建说明**：`app/libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar` 是仓库内锁定的构建依赖（38 MB），Gradle 只提取 API 类（替换上游两个强制 `loadLibrary` 的 wrapper），不把 AAR 或 `.so` 放进 APK；APK 仅带 arm64 相关其他小型库。升级 sherpa 时须同时更新 AAR、wrapper JNI 签名以及 `SpeechNativeLibrary` 固定版本/文件大小/SHA-256。DEX 使用 `useLegacyPackaging = true` 压缩，优先降低自分发下载体积（安装时可能额外占用磁盘）。本地端侧验收运行 `cd android && ./gradlew :app:connectedDebugAndroidTest`（不带分发版本参数，测试变体需保留测试运行器的 Kotlin 类）。
 
 ## 后续演进
 

@@ -46,7 +46,7 @@ class VoiceInputController(private val context: Context) {
 
     init {
         SttModelManager.refresh(context)
-        SherpaSpeechEngine.warmUp(context)
+        if (SttModelManager.isReady(context)) SherpaSpeechEngine.warmUp(context)
     }
 
     fun hasMicPermission(): Boolean =
