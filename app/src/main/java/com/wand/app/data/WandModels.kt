@@ -937,9 +937,11 @@ data class MessagesPage(
 }
 
 /**
- * `GET /api/sessions/:id/messages?turn=&blockOffset=&blockLimit=` 的块级分页响应：
- * 返回该 turn 的 `[blockOffset, blockStart+blocks.size)` 段（服务端只往下取一段
- * 预算内最接近 blockOffset 的块）。
+ * `GET /api/sessions/:id/messages?turn=&blockOffset=&blockLimit=` 的块级分页响应。
+ *
+ * 服务端从请求的 `blockOffset`（当前 leading 游标）往回收最多 `blockLimit` 块，
+ * 响应里的 `blockOffset` 是这一段的**起点**（新的 leading 游标），`blockTotal` 是
+ * 该 turn 的完整块数。缺字段时把拿到的这段当成尾段处理，宁可不接也不拼错位。
  */
 data class BlocksPage(
     val turnIndex: Int,
@@ -954,7 +956,7 @@ data class BlocksPage(
             return BlocksPage(
                 turnIndex = o.int("turnIndex") ?: 0,
                 blocks = blocks,
-                // 服务端已在响应里声明起点；缺字段时按「拿到的就是尾段」兜底。
+                // 服务端已在响应里声明新游标；缺字段时只能当成「拿到的是尾段」。
                 blockOffset = rawOffset,
                 blockTotal = o.int("blockTotal") ?: (rawOffset + blocks.size),
             )
