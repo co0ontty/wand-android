@@ -665,8 +665,13 @@ fun ChatScreen(
                                         )
                                         Spacer(Modifier.size(8.dp))
                                     }
+                                    val blockPaging = store.leadingBlockOffset > 0
                                     Text(
-                                        if (store.loadingEarlier) "正在加载更早消息…" else "加载更早消息",
+                                        when {
+                                            store.loadingEarlier -> "正在加载更早内容…"
+                                            blockPaging -> "加载更早步骤 · 还有 ${store.leadingBlockOffset} 条"
+                                            else -> "加载更早消息"
+                                        },
                                         fontSize = 12.sp,
                                         color = WandColors.textSecondary,
                                     )

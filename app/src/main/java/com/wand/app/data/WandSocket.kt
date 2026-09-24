@@ -32,6 +32,13 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     var onConnectionChange: ((Boolean) -> Unit)? = null
     var onAuthenticationFailure: ((String) -> Unit)? = null
 
+    /**
+     * 订阅时声明的块级窗口预算（结构化聊天用，对齐 Web/iOS）：服务端据此把
+     * init/resync/全量快照切成最近 N 个内容块，长任务首屏就不会因为单条 turn
+     * 上百块而拉回整份历史。null 表示继续走 turn 级窗口（PTY / 通知中枢）。
+     */
+    var blockBudget: Int? = null
+
     /** 原生 PTY 专用原始帧；聊天订阅仍只收到类型化 SessionEvent。 */
     internal var onPtyEvent: ((WsIncoming) -> Unit)? = null
     internal var onPtyResync: (() -> Unit)? = null
@@ -175,8 +182,10 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     private fun sendSubscribe(sessionId: String) {
         lastSeqBySession.remove(sessionId)
         if (ptyAck) awaitingPtySnapshot = true
-        sendJson(JSONObject().put("type", "subscribe").put("sessionId", sessionId)
-            .put("capabilities", JSONObject().put("ptyAck", ptyAck)))
+        val payload = JSONObject().put("type", "subscribe").put("sessionId", sessionId)
+            .put("capabilities", JSONObject().put("ptyAck", ptyAck))
+        blockBudget?.takeIf { it > 0 }?.let { payload.put("blockBudget", it) }
+        sendJson(payload)
     }
 
     private fun openSocket() {

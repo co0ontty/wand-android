@@ -100,12 +100,20 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         private set
     var messageTotal by mutableIntStateOf(0)
         private set
+    // 块级窗口游标（带 blockBudget 时服务端才下发）：messages[0] 被切掉的头部块数 /
+    // 这条 turn 的完整块数。leadingBlockOffset > 0 表示顶部还有更早的步骤。
+    var leadingBlockOffset by mutableIntStateOf(0)
+        private set
+    var leadingBlockTotal by mutableIntStateOf(0)
+        private set
     var loadingEarlier by mutableStateOf(false)
         private set
-    val canLoadEarlier: Boolean get() = loadedOffset > 0
+    val canLoadEarlier: Boolean get() = leadingBlockOffset > 0 || loadedOffset > 0
     private val earlierPageSize = 40
+    private val earlierBlockPageSize = 40
 
     private val socket = WandSocket(api.baseUrl, api.token)
+        .apply { blockBudget = WandApi.CHAT_BLOCK_WINDOW }
     /**
      * started = 对象是否跑过首次加载；active = 页面当前是否可见。
      * Compose / Navigation 可能复用同一个 ChatStore：shutdown 关 socket 后，
@@ -225,6 +233,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         messages = messages,
         loadedOffset = loadedOffset,
         messageTotal = messageTotal,
+        leadingBlockOffset = leadingBlockOffset,
+        leadingBlockTotal = leadingBlockTotal,
         status = status,
         isResponding = isResponding,
         queuedMessages = queuedMessages,
@@ -253,6 +263,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         if (messages !== nextMessages) messages = nextMessages
         if (loadedOffset != next.loadedOffset) loadedOffset = next.loadedOffset
         if (messageTotal != next.messageTotal) messageTotal = next.messageTotal
+        if (leadingBlockOffset != next.leadingBlockOffset) leadingBlockOffset = next.leadingBlockOffset
+        if (leadingBlockTotal != next.leadingBlockTotal) leadingBlockTotal = next.leadingBlockTotal
         if (status != next.status) status = next.status
         if (isResponding != next.isResponding) isResponding = next.isResponding
         if (queuedMessages !== next.queuedMessages) queuedMessages = next.queuedMessages
@@ -654,9 +666,57 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
     }
 
-    /** 加载更早的一页消息（滚动到顶时触发），prepend 到 messages 并前移 loadedOffset。 */
+    /**
+     * 加载更早的一页（滚动到顶时触发）。两阶段：先按「块」翻完 messages[0] 这条 turn
+     * 被块级窗口切掉的头部，再按「整条 turn」往前翻更早的会话 —— 与 iOS ChatStore 一致。
+     */
     fun loadEarlier() {
-        if (!canLoadEarlier || loadingEarlier) return
+        when {
+            leadingBlockOffset > 0 -> loadEarlierBlocks()
+            loadedOffset > 0 -> loadEarlierTurns()
+        }
+    }
+
+    /** 把 messages[0] 被切掉的头部按页 prepend 回它的 content。 */
+    private fun loadEarlierBlocks() {
+        if (loadingEarlier) return
+        val turnIndex = loadedOffset
+        val currentBlockOffset = leadingBlockOffset
+        if (currentBlockOffset <= 0) return
+        val head = messages.firstOrNull() ?: return
+        val headRole = head.role
+        loadingEarlier = true
+        scope.launch {
+            try {
+                val page = api.fetchEarlierBlocks(
+                    id = sessionId,
+                    turn = turnIndex,
+                    blockOffset = currentBlockOffset,
+                    blockLimit = earlierBlockPageSize,
+                )
+                // 起点被其它更新改过、或 messages[0] 不再是同一条 turn 时不合并，避免错位。
+                val current = messages.firstOrNull()
+                if (loadedOffset == turnIndex &&
+                    leadingBlockOffset == currentBlockOffset &&
+                    current != null &&
+                    current.role == headRole &&
+                    page.blocks.isNotEmpty()
+                ) {
+                    messages = listOf(current.copy(content = page.blocks + current.content)) + messages.drop(1)
+                    leadingBlockOffset = page.blockOffset
+                    leadingBlockTotal = maxOf(leadingBlockTotal, page.blockTotal)
+                }
+            } catch (e: Exception) {
+                toast = e.message ?: "加载更早步骤失败"
+            } finally {
+                loadingEarlier = false
+            }
+        }
+    }
+
+    /** 翻更早的整条 turn：messages[0] 已完整、其前面还有更早 turn 时，prepend 整条并前移 loadedOffset。 */
+    private fun loadEarlierTurns() {
+        if (loadingEarlier) return
         val currentOffset = loadedOffset
         val newOffset = maxOf(0, currentOffset - earlierPageSize)
         val limit = currentOffset - newOffset
@@ -670,6 +730,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     messages = page.messages + messages
                     loadedOffset = newOffset
                     messageTotal = maxOf(messageTotal, page.total)
+                    // 整条翻页拿到的最旧一条是完整 turn，leading 归零并指向新的 messages[0]。
+                    leadingBlockOffset = 0
+                    leadingBlockTotal = messages.firstOrNull()?.content?.size ?: 0
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "加载更早消息失败"

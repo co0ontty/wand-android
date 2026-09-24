@@ -360,6 +360,143 @@ class ChatSessionEventReducerTest {
         assertEquals("2026-03-27T01:02:09Z", done.last().completedAt)
     }
 
+    @Test
+    fun blockWindowInitKeepsLocallyLoadedEarlierBlocks() {
+        val localTurn = blockTurn("assistant", 771, 100)
+        val current = ChatSessionEventState(
+            messages = listOf(localTurn),
+            loadedOffset = 19,
+            messageTotal = 20,
+            leadingBlockOffset = 771,
+            leadingBlockTotal = 871,
+        )
+        // 服务端每次 init/resync 都只给最近 60 块（blockBudget），不能把用户已翻出的前缀冲掉。
+        val next = ChatSessionEventReducer.reduce(
+            current,
+            output(
+                MessageUpdate.Full(
+                    messages = listOf(blockTurn("assistant", 811, 60)),
+                    offset = 19,
+                    total = 20,
+                    leadingOffset = 811,
+                    leadingTotal = 871,
+                ),
+            ),
+        )
+
+        assertEquals(1, next.messages.size)
+        assertEquals(100, next.messages.single().content.size)
+        assertEquals(771, next.leadingBlockOffset)
+        assertEquals(871, next.leadingBlockTotal)
+    }
+
+    @Test
+    fun blockWindowPicksTheMoreCompleteVersionOfOverlappingBlocks() {
+        // 本地块 0..2，服务端尾窗 2..4；重叠块 2 上服务端更长，应以服务端为准。
+        val localTurn = ConversationTurn(
+            role = "assistant",
+            content = listOf(
+                ContentBlock.Text("a", null),
+                ContentBlock.Text("b", null),
+                ContentBlock.Text("short", null),
+            ),
+        )
+        val incomingTurn = ConversationTurn(
+            role = "assistant",
+            content = listOf(
+                ContentBlock.Text("short but much longer tail", null),
+                ContentBlock.Text("d", null),
+                ContentBlock.Text("e", null),
+            ),
+        )
+        val next = ChatSessionEventReducer.reduce(
+            ChatSessionEventState(
+                messages = listOf(localTurn),
+                loadedOffset = 0,
+                messageTotal = 1,
+                leadingBlockOffset = 0,
+                leadingBlockTotal = 3,
+            ),
+            output(
+                MessageUpdate.Full(
+                    messages = listOf(incomingTurn),
+                    offset = 0,
+                    total = 1,
+                    leadingOffset = 2,
+                    leadingTotal = 5,
+                ),
+            ),
+        )
+
+        val blocks = next.messages.single().content.map { (it as ContentBlock.Text).text }
+        assertEquals(listOf("a", "b", "short but much longer tail", "d", "e"), blocks)
+        assertEquals(0, next.leadingBlockOffset)
+        assertEquals(5, next.leadingBlockTotal)
+    }
+
+    @Test
+    fun emptyMessagesWindowKeepsVisibleHistory() {
+        val current = ChatSessionEventState(
+            messages = listOf(textTurn("assistant", "keep me")),
+            loadedOffset = 19,
+            messageTotal = 20,
+            leadingBlockOffset = 811,
+            leadingBlockTotal = 871,
+        )
+        val next = ChatSessionEventReducer.reduce(
+            current,
+            output(
+                MessageUpdate.Full(
+                    messages = emptyList(),
+                    offset = 19,
+                    total = 20,
+                    leadingOffset = 811,
+                    leadingTotal = 871,
+                ),
+            ),
+        )
+
+        assertEquals("keep me", turnText(next.messages.single()))
+        assertEquals(811, next.leadingBlockOffset)
+    }
+
+    @Test
+    fun laterTurnWindowReplacesLeadingCursorInsteadOfMergingTwoTurns() {
+        // 新窗口从更晚 turn 开始且自身被截断：leadingBlockOffset 只能描述 messages[0]，
+        // 此时采用新窗口，不把旧前缀拼在前面（否则游标指向错误 turn）。
+        val current = ChatSessionEventState(
+            messages = listOf(textTurn("assistant", "older")),
+            loadedOffset = 18,
+            messageTotal = 20,
+            leadingBlockOffset = 0,
+            leadingBlockTotal = 5,
+        )
+        val next = ChatSessionEventReducer.reduce(
+            current,
+            output(
+                MessageUpdate.Full(
+                    messages = listOf(blockTurn("assistant", 811, 60)),
+                    offset = 19,
+                    total = 20,
+                    leadingOffset = 811,
+                    leadingTotal = 871,
+                ),
+            ),
+        )
+
+        assertEquals(19, next.loadedOffset)
+        assertEquals(1, next.messages.size)
+        assertEquals(60, next.messages.single().content.size)
+        assertEquals(811, next.leadingBlockOffset)
+    }
+
+    private fun blockTurn(role: String, startBlock: Int, count: Int) = ConversationTurn(
+        role = role,
+        content = (startBlock until startBlock + count).map {
+            ContentBlock.Text("block-$it", subagent = null)
+        },
+    )
+
     private fun output(
         messages: MessageUpdate,
         changes: SessionChanges = SessionChanges(),

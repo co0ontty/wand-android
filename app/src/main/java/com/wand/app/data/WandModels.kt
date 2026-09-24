@@ -491,6 +491,10 @@ data class SessionSnapshot(
      *  messageTotal = 完整 turn 数。更早的按需翻页（GET /api/sessions/:id/messages）。 */
     val messageOffset: Int? = null,
     val messageTotal: Int? = null,
+    /** 块级窗口（请求带 blockBudget 时服务端才下发）：messages[0] 被切掉的头部块数，
+     *  leadingBlockTotal 是这条 turn 的完整块数。leadingBlockOffset > 0 表示顶部还有块可翻。 */
+    val leadingBlockOffset: Int? = null,
+    val leadingBlockTotal: Int? = null,
     val queuedMessages: List<String>?,
     val structuredState: StructuredSessionState?,
     val pendingEscalation: EscalationRequest?,
@@ -550,6 +554,8 @@ data class SessionSnapshot(
             messages = ConversationTurn.parseList(o.arr("messages")),
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
+            leadingBlockOffset = o.int("leadingBlockOffset"),
+            leadingBlockTotal = o.int("leadingBlockTotal"),
             queuedMessages = o.arr("queuedMessages")?.stringItems(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
@@ -813,6 +819,8 @@ internal data class WsData(
     val messages: List<ConversationTurn>?,
     val messageOffset: Int? = null,
     val messageTotal: Int? = null,
+    val leadingBlockOffset: Int? = null,
+    val leadingBlockTotal: Int? = null,
     val queuedMessages: List<String>?,
     val structuredState: StructuredSessionState?,
     val pendingEscalation: EscalationRequest?,
@@ -848,6 +856,7 @@ internal data class WsData(
             thinkingEffort = thinkingEffort,
             claudeSessionId = claudeSessionId, messages = null,
             messageOffset = messageOffset, messageTotal = messageTotal,
+            leadingBlockOffset = leadingBlockOffset, leadingBlockTotal = leadingBlockTotal,
             queuedMessages = queuedMessages,
             structuredState = structuredState, pendingEscalation = pendingEscalation,
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
@@ -884,6 +893,8 @@ internal data class WsData(
             messages = ConversationTurn.parseList(o.arr("messages")),
             messageOffset = o.int("messageOffset"),
             messageTotal = o.int("messageTotal"),
+            leadingBlockOffset = o.int("leadingBlockOffset"),
+            leadingBlockTotal = o.int("leadingBlockTotal"),
             queuedMessages = o.arr("queuedMessages")?.stringItems(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
@@ -922,6 +933,32 @@ data class MessagesPage(
             offset = o.int("offset") ?: 0,
             total = o.int("total") ?: 0,
         )
+    }
+}
+
+/**
+ * `GET /api/sessions/:id/messages?turn=&blockOffset=&blockLimit=` 的块级分页响应：
+ * 返回该 turn 的 `[blockOffset, blockStart+blocks.size)` 段（服务端只往下取一段
+ * 预算内最接近 blockOffset 的块）。
+ */
+data class BlocksPage(
+    val turnIndex: Int,
+    val blocks: List<ContentBlock>,
+    val blockOffset: Int,
+    val blockTotal: Int,
+) {
+    companion object {
+        fun parse(o: JSONObject): BlocksPage {
+            val blocks = o.arr("blocks")?.parseEachSafely { ContentBlock.parse(it) } ?: emptyList()
+            val rawOffset = o.int("blockOffset") ?: 0
+            return BlocksPage(
+                turnIndex = o.int("turnIndex") ?: 0,
+                blocks = blocks,
+                // 服务端已在响应里声明起点；缺字段时按「拿到的就是尾段」兜底。
+                blockOffset = rawOffset,
+                blockTotal = o.int("blockTotal") ?: (rawOffset + blocks.size),
+            )
+        }
     }
 }
 

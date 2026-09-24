@@ -7,6 +7,9 @@ data class ChatSessionEventState(
     val messages: List<ConversationTurn> = emptyList(),
     val loadedOffset: Int = 0,
     val messageTotal: Int = 0,
+    /** 块级窗口游标：messages[0] 被切掉的头部块数 / 这条 turn 的完整块数。 */
+    val leadingBlockOffset: Int = 0,
+    val leadingBlockTotal: Int = 0,
     val status: String = "running",
     val isResponding: Boolean = false,
     val queuedMessages: List<String> = emptyList(),
@@ -44,7 +47,13 @@ object ChatSessionEventReducer {
         snapshot.messages?.let {
             next = applyMessages(
                 next,
-                MessageUpdate.Full(it, snapshot.messageOffset, snapshot.messageTotal),
+                MessageUpdate.Full(
+                    it,
+                    snapshot.messageOffset,
+                    snapshot.messageTotal,
+                    snapshot.leadingBlockOffset,
+                    snapshot.leadingBlockTotal,
+                ),
             )
         }
         next = next.copy(
@@ -139,23 +148,102 @@ object ChatSessionEventReducer {
         update: MessageUpdate.Full,
     ): ChatSessionEventState {
         val incoming = update.messages
-        val snapOffset = update.offset ?: 0
+        val snapOffset = (update.offset ?: 0).coerceAtLeast(0)
         val snapTotal = update.total ?: maxOf(snapOffset + incoming.size, incoming.size)
+        val incomingLeadingOffset = (update.leadingOffset ?: 0).coerceAtLeast(0)
+        val incomingLeadingTotal = update.leadingTotal ?: (incoming.firstOrNull()?.content?.size ?: 0)
+        // 空快照不清屏：终端 ended 事件常带空 messages/0 总数，不能把可见历史干掉。
         if (incoming.isEmpty() && current.messages.isNotEmpty() && snapTotal == 0) return current
 
-        val (messages, offset) = when {
-            current.messages.isEmpty() -> incoming to snapOffset
-            current.loadedOffset <= snapOffset -> {
-                val keep = (snapOffset - current.loadedOffset).coerceIn(0, current.messages.size)
-                val previousTail = current.messages.drop(keep)
-                (current.messages.subList(0, keep) + overlayConversationTurnTimes(previousTail, incoming)) to current.loadedOffset
+        if (current.messages.isEmpty()) {
+            return current.copy(
+                messages = incoming,
+                loadedOffset = snapOffset,
+                messageTotal = maxOf(snapTotal, snapOffset + incoming.size),
+                leadingBlockOffset = incomingLeadingOffset,
+                leadingBlockTotal = incomingLeadingTotal,
+            )
+        }
+
+        // leadingBlockOffset 只能描述 messages[0]。新窗口从更晚 turn 开始且该 turn 自身
+        // 被截断时，保留本地旧前缀会让游标指向错误的 turn，并永久漏掉新窗口的头部块；
+        // 此时采用新窗口，用户翻完它的块后仍可继续按 turn 加载旧前缀。
+        if (snapOffset > current.loadedOffset && incomingLeadingOffset > 0) {
+            return current.copy(
+                messages = incoming,
+                loadedOffset = snapOffset,
+                messageTotal = maxOf(snapTotal, snapOffset + incoming.size),
+                leadingBlockOffset = incomingLeadingOffset,
+                leadingBlockTotal = incomingLeadingTotal,
+            )
+        }
+
+        val currentEnd = current.loadedOffset + current.messages.size
+        val snapEnd = snapOffset + incoming.size
+        if (snapOffset > currentEnd || current.loadedOffset > snapEnd) {
+            return current.copy(
+                messages = incoming,
+                loadedOffset = snapOffset,
+                messageTotal = maxOf(snapTotal, snapOffset + incoming.size),
+                leadingBlockOffset = incomingLeadingOffset,
+                leadingBlockTotal = incomingLeadingTotal,
+            )
+        }
+
+        val mergedOffset = minOf(current.loadedOffset, snapOffset)
+        val mergedEnd = maxOf(currentEnd, snapEnd)
+        var resolvedLeadingOffset = if (mergedOffset == current.loadedOffset) {
+            current.leadingBlockOffset
+        } else {
+            incomingLeadingOffset
+        }
+        var resolvedLeadingTotal = if (mergedOffset == current.loadedOffset) {
+            current.leadingBlockTotal
+        } else {
+            incomingLeadingTotal
+        }
+        val merged = ArrayList<ConversationTurn>(mergedEnd - mergedOffset)
+        for (absoluteIndex in mergedOffset until mergedEnd) {
+            val local = current.messages.getOrNull(absoluteIndex - current.loadedOffset)
+                ?.takeIf { absoluteIndex in current.loadedOffset until currentEnd }
+            val replacement = incoming.getOrNull(absoluteIndex - snapOffset)
+                ?.takeIf { absoluteIndex in snapOffset until snapEnd }
+            if (local != null && replacement != null) {
+                val leadingMerge = if (absoluteIndex == mergedOffset && current.loadedOffset == snapOffset) {
+                    mergeLeadingAssistantTurn(
+                        local = local,
+                        localOffset = current.leadingBlockOffset,
+                        localTotal = current.leadingBlockTotal,
+                        incoming = replacement,
+                        incomingOffset = incomingLeadingOffset,
+                        incomingTotal = incomingLeadingTotal,
+                    )
+                } else {
+                    null
+                }
+                if (leadingMerge != null) {
+                    merged += leadingMerge.turn
+                    resolvedLeadingOffset = leadingMerge.blockOffset
+                    resolvedLeadingTotal = leadingMerge.blockTotal
+                } else {
+                    val keepLocal = shouldKeepLocalTurn(local, replacement)
+                    merged += mergeOverlappingTurns(local, replacement)
+                    if (absoluteIndex == mergedOffset && current.loadedOffset == snapOffset) {
+                        resolvedLeadingOffset = if (keepLocal) current.leadingBlockOffset else incomingLeadingOffset
+                        resolvedLeadingTotal = if (keepLocal) current.leadingBlockTotal else incomingLeadingTotal
+                    }
+                }
+            } else {
+                val chosen = replacement ?: local
+                if (chosen != null) merged += chosen
             }
-            else -> overlayConversationTurnTimes(current.messages, incoming) to snapOffset
         }
         return current.copy(
-            messages = messages,
-            loadedOffset = offset,
-            messageTotal = maxOf(snapTotal, offset + messages.size),
+            messages = merged,
+            loadedOffset = mergedOffset,
+            messageTotal = maxOf(snapTotal, mergedOffset + merged.size),
+            leadingBlockOffset = resolvedLeadingOffset,
+            leadingBlockTotal = resolvedLeadingTotal,
         )
     }
 
@@ -168,13 +256,25 @@ object ChatSessionEventReducer {
         val incoming = stampLiveTurnTime(
             mergeConversationTurnTimes(last?.takeIf { it.role == update.message.role }, update.message),
         )
+        var leadingBlockOffset = current.leadingBlockOffset
+        var leadingBlockTotal = current.leadingBlockTotal
         val messages = when {
-            last != null && last.role == update.message.role -> current.messages.dropLast(1) + incoming
-            current.loadedOffset + current.messages.size < expected || expected == 0 -> current.messages + incoming
+            last != null && last.role == update.message.role -> {
+                val keepLocal = shouldKeepLocalTurn(last, incoming)
+                if (current.messages.size == 1 && !keepLocal) {
+                    leadingBlockOffset = 0
+                    leadingBlockTotal = incoming.content.size
+                }
+                current.messages.dropLast(1) + mergeOverlappingTurns(last, incoming)
+            }
+            current.loadedOffset + current.messages.size < expected || expected == 0 ->
+                current.messages + incoming
             else -> current.messages
         }
         return current.copy(
             messages = messages,
+            leadingBlockOffset = leadingBlockOffset,
+            leadingBlockTotal = leadingBlockTotal,
             messageTotal = if (expected > 0) maxOf(current.messageTotal, expected) else current.messageTotal,
         )
     }
@@ -259,14 +359,101 @@ internal fun mergeConversationTurnTimes(
     return incoming.copy(createdAt = createdAt, completedAt = completedAt)
 }
 
-internal fun overlayConversationTurnTimes(
-    previous: List<ConversationTurn>,
-    incoming: List<ConversationTurn>,
-): List<ConversationTurn> {
-    if (previous.isEmpty()) return incoming
-    return incoming.mapIndexed { index, turn ->
-        mergeConversationTurnTimes(previous.getOrNull(index), turn)
+/** 内容体积：块级合并时用「哪一版更完整」决定重叠块取谁。 */
+internal fun contentBlockVolume(block: ContentBlock): Int = when (block) {
+    is ContentBlock.Text -> block.text.length
+    is ContentBlock.Thinking -> block.thinking.length
+    is ContentBlock.ToolUse ->
+        (block.description?.length ?: 0) + jsonValueVolume(block.input)
+    is ContentBlock.ToolResult -> block.text.length
+    is ContentBlock.Unknown -> block.payload.length
+}
+
+private fun jsonValueVolume(value: Any?): Int = when (value) {
+    null -> 1
+    is String -> value.length
+    is Number, is Boolean -> 1
+    is org.json.JSONArray -> (0 until value.length()).sumOf { jsonValueVolume(value.opt(it)) }
+    is org.json.JSONObject -> value.keys().asSequence().sumOf { key ->
+        key.length + jsonValueVolume(value.opt(key))
     }
+    else -> value.toString().length
+}
+
+internal fun turnContentVolume(turn: ConversationTurn): Int =
+    turn.content.sumOf(::contentBlockVolume)
+
+/** 本地这一版比服务端快照更完整（服务端窗口可能只带尾部）。 */
+internal fun shouldKeepLocalTurn(local: ConversationTurn, incoming: ConversationTurn): Boolean =
+    local.role == "assistant" &&
+        incoming.role == "assistant" &&
+        turnContentVolume(local) > turnContentVolume(incoming)
+
+/**
+ * 两版 turn 重叠时，内容更完整的一版胜出；时代戳逐字段互补，不因为换内容丢掉时间。
+ */
+internal fun mergeOverlappingTurns(
+    local: ConversationTurn,
+    incoming: ConversationTurn,
+): ConversationTurn =
+    if (shouldKeepLocalTurn(local, incoming)) {
+        mergeConversationTurnTimes(local, incoming)
+            .copy(content = local.content, usage = incoming.usage ?: local.usage)
+    } else {
+        mergeConversationTurnTimes(local, incoming)
+    }
+
+internal data class LeadingTurnMerge(
+    val turn: ConversationTurn,
+    val blockOffset: Int,
+    val blockTotal: Int,
+)
+
+/**
+ * 首 turn 的块窗口按**绝对块下标**合并：本地已翻出的旧前缀和服务端最新尾窗同时保留，
+ * 重叠块逐块取内容更完整的一版，避免短快照回退或流式尾块增长丢失。
+ * 两个窗口不重叠（不可比）时返回 null，由调用方回退到整 turn 合并。
+ */
+internal fun mergeLeadingAssistantTurn(
+    local: ConversationTurn,
+    localOffset: Int,
+    localTotal: Int,
+    incoming: ConversationTurn,
+    incomingOffset: Int,
+    incomingTotal: Int,
+): LeadingTurnMerge? {
+    if (local.role != "assistant" || incoming.role != "assistant") return null
+    val localStart = localOffset.coerceAtLeast(0)
+    val incomingStart = incomingOffset.coerceAtLeast(0)
+    val localEnd = localStart + local.content.size
+    val incomingEnd = incomingStart + incoming.content.size
+    if (incomingStart > localEnd || localStart > incomingEnd) return null
+
+    val mergedStart = minOf(localStart, incomingStart)
+    val mergedEnd = maxOf(localEnd, incomingEnd)
+    val blocks = ArrayList<ContentBlock>(mergedEnd - mergedStart)
+    for (absoluteIndex in mergedStart until mergedEnd) {
+        val localBlock = local.content.getOrNull(absoluteIndex - localStart)
+            ?.takeIf { absoluteIndex in localStart until localEnd }
+        val incomingBlock = incoming.content.getOrNull(absoluteIndex - incomingStart)
+            ?.takeIf { absoluteIndex in incomingStart until incomingEnd }
+        when {
+            localBlock != null && incomingBlock != null ->
+                blocks += if (contentBlockVolume(incomingBlock) >= contentBlockVolume(localBlock)) {
+                    incomingBlock
+                } else {
+                    localBlock
+                }
+            incomingBlock != null -> blocks += incomingBlock
+            localBlock != null -> blocks += localBlock
+        }
+    }
+    return LeadingTurnMerge(
+        turn = mergeConversationTurnTimes(local, incoming)
+            .copy(content = blocks, usage = incoming.usage ?: local.usage),
+        blockOffset = mergedStart,
+        blockTotal = maxOf(localTotal, incomingTotal, mergedEnd),
+    )
 }
 
 internal fun stampLiveTurnTime(turn: ConversationTurn, now: String = Instant.now().toString()): ConversationTurn {

@@ -80,9 +80,17 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 
 ## 诊断日志导出
 
-设置页「诊断 → 导出运行日志」把关键运行日志拼成一份文本，通过系统分享面板发出去（微信 /
-邮件 / 保存到文件都行）。日志落在 `filesDir/logs/wand.log`（512 KB 轮转一代，最多 2 份），
-崩溃时同步写盘；导出文件写在 `cacheDir/exports/`，只保留最近 5 份。
+设置页「诊断」提供三条落盘路径，都不依赖「分享」这一环（分享面板里的接收方不一定有
+「保存到文件」）：
+
+| 入口 | 行为 | 实现 |
+|------|------|------|
+| 保存到「下载」 | 一次点击直接落盘 `下载/Wand/wand-android-log-*.txt` | `MediaStore.Downloads`（`IS_PENDING` 归零后立即可见），无需存储权限、不弹选择器 |
+| 另存到其他位置… | 系统「另存为」自选目录 / 云盘 | `ACTION_CREATE_DOCUMENT`（SAF），选完位置才拼报表 |
+| 分享日志文件 | 交给系统分享面板（微信 / 邮件…） | `FileProvider` + `ACTION_SEND`，写 `cacheDir/exports/` 只留最近 5 份 |
+
+日志本体落在 `filesDir/logs/wand.log`（512 KB 轮转一代，最多 2 份），崩溃时同步写盘。
+口径：下载与另存都写完整报表；分享走缓存文件。
 
 报表内容（`WandDiagnostics.buildReport`）：
 
@@ -93,13 +101,33 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 | 运行时日志 | `WandLog` 落盘文件 + 内存环 | 网络 / WebSocket / 更新安装 / 会话加载等关键事件时间线 |
 | logcat 快照 | 当前进程 `logcat -d --pid` | 补足原生库与系统侧日志；无权限时该段留空 |
 
-打点位置：`WandApi`（每个 REST 请求的方法、路径、状态码、耗时与错误）、`WandAuth`（登录结果）、
+打点位置：`WandApi`（每个 REST 请求的方法、路径、状态码、耗时、响应体大小与错误）、
+`WandAuth`（登录结果）、
 `WandSocket`（连接、重连、resync、序号间隙）、`SessionWatcher`（通知中枢连接与列表刷新）、
 `ChatStore`（会话打开、快照、发送失败）、`ConnectActivity`（连接探测）、`UpdateManager` /
 `UpdateInstallReceiver`（检查、下载、安装状态回调）。
 
 脱敏：`WandLog.redact` 兜底清掉 `token` / `password` / `apiKey` / `Authorization` / `Cookie`
 与 `Bearer` 凭据；**会话 id 故意保留**，它是排查故障的锚点。任何新增打点都不得主动传凭据。
+
+## 结构化会话的块级窗口
+
+长任务的单条 assistant turn 可能有几百个内容块（一次 `2000` 行的 `Bash` 输出加几十个工具
+调用就是一个块），按「整条 turn」下发会拉回 MB 级首屏载荷，在弱网/弱机上表现为“会话打开很
+慢或打不开”。Android 与 Web / iOS 走同一套块级窗口：
+
+- `WandApi.getSession(blockBudget = WandApi.CHAT_BLOCK_WINDOW)`（`60`）与
+  `WandSocket.blockBudget` 都在 `subscribe` 里声明预算；服务端只回最近这么多块，并附
+  `leadingBlockOffset` / `leadingBlockTotal`。
+- `ChatStore.loadEarlier()` 两阶段：先把 `messages[0]` 被切掉的头部按块翻（
+  `GET /api/sessions/:id/messages?turn=&blockOffset=&blockLimit=`，每页 40 块），
+  翻完了再按整条 turn 往前翻更早的会话（`?offset=&limit=`）。顶部入口文案会区分两者。
+- 合并规则在 `ChatSessionEventReducer.applyFullMessages`（对齐 iOS `SessionMessageReducer`）：
+  init / resync / 全量快照按**绝对块下标**与本地已加载内容求并集，重叠 turn 逐块取更完整的
+  一版，所以服务端每次只回尾窗也不会把用户刚翻出来的旧前缀冲掉。
+
+不带 `blockBudget` 的客户端仍按 turn 级窗口下发；通知中枢（`SessionWatcher`）不需要首屏内容，
+保持不带预算。
 
 ## 更新安装与回到新版本
 

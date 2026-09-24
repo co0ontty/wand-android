@@ -60,6 +60,9 @@ sealed interface MessageUpdate {
         val messages: List<ConversationTurn>,
         val offset: Int?,
         val total: Int?,
+        /** 块级窗口字段（服务端按 blockBudget 下发时才有）。 */
+        val leadingOffset: Int? = null,
+        val leadingTotal: Int? = null,
     ) : MessageUpdate
 
     data class Incremental(
@@ -97,7 +100,7 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
                 sessionId = sessionId,
                 snapshot = it.toSnapshot(),
                 messages = it.messages?.let { turns ->
-                    MessageUpdate.Full(turns, it.messageOffset, it.messageTotal)
+                    MessageUpdate.Full(turns, it.messageOffset, it.messageTotal, it.leadingBlockOffset, it.leadingBlockTotal)
                 },
                 responding = if (it.providerCliActive == false) false
                 else it.structuredState?.let { state -> state.inFlight ?: false },
@@ -130,7 +133,7 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
         "ended" -> SessionEvent.Ended(
             sessionId = sessionId,
             messages = payload?.messages?.let {
-                MessageUpdate.Full(it, payload.messageOffset, payload.messageTotal)
+                MessageUpdate.Full(it, payload.messageOffset, payload.messageTotal, payload.leadingBlockOffset, payload.leadingBlockTotal)
             },
             status = payload?.status ?: "exited",
             exitCode = payload?.exitCode,
@@ -144,7 +147,7 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
 }
 
 private fun WsData.toMessageUpdate(): MessageUpdate = when {
-    messages != null -> MessageUpdate.Full(messages, messageOffset, messageTotal)
+    messages != null -> MessageUpdate.Full(messages, messageOffset, messageTotal, leadingBlockOffset, leadingBlockTotal)
     incremental == true && lastMessage != null -> MessageUpdate.Incremental(lastMessage, messageCount ?: 0)
     else -> MessageUpdate.None
 }

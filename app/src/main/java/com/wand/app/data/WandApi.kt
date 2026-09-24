@@ -26,6 +26,14 @@ class WandApiException(val status: Int?, message: String) : Exception(message)
  */
 class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort, TaskBoardPort {
 
+    companion object {
+        /**
+         * 结构化聊天首屏的块级窗口预算：与 Web/iOS 一致，只拉最近这么多内容块。
+         * 单条 turn 上百块、1MB 级的长任务全靠它把首屏载荷压到几十 KB。
+         */
+        const val CHAT_BLOCK_WINDOW = 60
+    }
+
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
     private val taskMutations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -64,8 +72,11 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         requestClient.newCall(request).execute().use { response ->
             val text = response.body?.string() ?: ""
             val elapsed = (System.nanoTime() - startedAt) / 1_000_000
+            // 带上响应体大小：会话首屏慢/卡大多能直接从这条日志看出来（长任务单条 turn
+            // 上百块时曾是 MB 级），否则只能算时间猜原因。
+            val sizeLabel = " · ${text.length}B"
             if (response.code in 200..299) {
-                WandLog.d(TAG, "${request.method} ${request.url.encodedPath} → ${response.code} (${elapsed}ms)")
+                WandLog.d(TAG, "${request.method} ${request.url.encodedPath} → ${response.code} (${elapsed}ms)$sizeLabel")
             } else {
                 WandLog.w(TAG, "${request.method} ${request.url.encodedPath} → ${response.code} (${elapsed}ms) ${text.take(300)}")
             }
@@ -147,12 +158,35 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
     suspend fun listSessions(): List<SessionSnapshot> =
         SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
 
-    suspend fun getSession(id: String): SessionSnapshot =
-        SessionSnapshot.parse(requestObject("GET", "/api/sessions/$id?format=chat"))
+    suspend fun getSession(id: String, blockBudget: Int? = CHAT_BLOCK_WINDOW): SessionSnapshot =
+        SessionSnapshot.parse(
+            requestObject(
+                "GET",
+                "/api/sessions/$id?format=chat" +
+                    (blockBudget?.let { "&blockBudget=$it" } ?: ""),
+            ),
+        )
 
     /** 历史消息分页：返回完整历史的 [offset, offset+limit) 段 + 总数。 */
     suspend fun fetchMessages(id: String, offset: Int, limit: Int): MessagesPage =
         MessagesPage.parse(requestObject("GET", "/api/sessions/$id/messages?offset=$offset&limit=$limit"))
+
+    /**
+     * 块级翻页（对齐 iOS fetchEarlierBlocks）：取该 turn 里 `blockOffset` 之前的一段块，
+     * 用于把首屏被块级窗口切掉的头部按页补回来。
+     */
+    suspend fun fetchEarlierBlocks(
+        id: String,
+        turn: Int,
+        blockOffset: Int,
+        blockLimit: Int,
+    ): BlocksPage = BlocksPage.parse(
+        requestObject(
+            "GET",
+            "/api/sessions/${encode(id)}/messages?turn=$turn" +
+                "&blockOffset=$blockOffset&blockLimit=$blockLimit",
+        ),
+    )
 
     /** 按需取回被消息窗口截断的完整 tool_result 内容。 */
     suspend fun fetchToolContent(id: String, toolUseId: String): ContentBlock.ToolResult {
