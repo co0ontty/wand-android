@@ -575,6 +575,8 @@ final class UpdateManager {
             }
             Intent callback = new Intent(activity, UpdateInstallReceiver.class);
             callback.setAction(UpdateInstallReceiver.ACTION_INSTALL_STATUS);
+            // 回调带上会话号：旧会话被放弃后弹窗可能还活着，它的迟到回调必须能被认出来并丢弃。
+            callback.putExtra(UpdateInstallReceiver.EXTRA_SESSION_ID, sessionId);
             PendingIntent pending = PendingIntent.getBroadcast(
                     activity,
                     sessionId,
@@ -626,7 +628,7 @@ final class UpdateManager {
         if (versionName == null || versionName.isEmpty()) {
             versionName = extractVersionFromFileName(apkFile.getName());
         }
-        serverStore.setPendingInstall(versionName, versionCode);
+        serverStore.setPendingInstall(versionName, versionCode, sessionId);
         WandLog.i(TAG, "记录待安装版本 " + versionName + " (" + versionCode + ")"
                 + (sessionId >= 0 ? " sessionId=" + sessionId : ""));
     }

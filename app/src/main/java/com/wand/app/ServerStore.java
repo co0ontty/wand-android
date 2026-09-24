@@ -39,6 +39,7 @@ public class ServerStore {
     private static final String KEY_PENDING_INSTALL_VERSION_CODE = "update_pending_install_version_code";
     private static final String KEY_PENDING_INSTALL_AT = "update_pending_install_at_ms";
     private static final String KEY_INSTALL_SUCCEEDED_AT = "update_install_succeeded_at_ms";
+    private static final String KEY_INSTALL_SESSION_ID = "update_install_session_id";
 
     private static final Object PROFILE_LOCK = new Object();
 
@@ -257,13 +258,16 @@ public class ServerStore {
     // 能判断「更新是否已经生效、当前进程是否还是安装前的旧代码」，从而自动回到前台
     // 新版本，而不是停在「安装更新」的旧界面。
 
-    /** 记录一次发起的安装（提包给系统安装器之前调用）。 */
-    public void setPendingInstall(String version, long versionCode) {
-        prefs.edit()
+    /** 记录一次发起的安装（提包给系统安装器之前调用）。sessionId < 0 表示没有会话可追踪。 */
+    public void setPendingInstall(String version, long versionCode, int sessionId) {
+        SharedPreferences.Editor editor = prefs.edit()
                 .putString(KEY_PENDING_INSTALL_VERSION, version)
                 .putLong(KEY_PENDING_INSTALL_VERSION_CODE, versionCode)
-                .putLong(KEY_PENDING_INSTALL_AT, System.currentTimeMillis())
-                .apply();
+                .putLong(KEY_PENDING_INSTALL_AT, System.currentTimeMillis());
+        // sessionId < 0（VIEW Intent 回退路径没有会话）不覆盖上一次的记录：留着它，旧会话的
+        // 迟到回调才还有识别的依据（见 getInstallSessionId）。
+        if (sessionId >= 0) editor.putInt(KEY_INSTALL_SESSION_ID, sessionId);
+        editor.apply();
     }
 
     public String getPendingInstallVersion() {
@@ -278,6 +282,16 @@ public class ServerStore {
         return prefs.getLong(KEY_PENDING_INSTALL_AT, 0L);
     }
 
+    /**
+     * 最近一次提交给 PackageInstaller 的会话号（没有记录时 -1）。
+     *
+     * {@link #clearInstallState()} **刻意不清它**：旧会话被放弃后弹窗可能还活着，它的迟到回调
+     * 只能靠这个会话号识别出来（见 UpdateInstallState#isCurrentSession）。
+     */
+    public int getInstallSessionId() {
+        return prefs.getInt(KEY_INSTALL_SESSION_ID, -1);
+    }
+
     /** 系统安装器回报安装成功（可能发生在新进程里）。 */
     public void markInstallSucceeded() {
         prefs.edit().putLong(KEY_INSTALL_SUCCEEDED_AT, System.currentTimeMillis()).apply();
@@ -287,7 +301,7 @@ public class ServerStore {
         return prefs.getLong(KEY_INSTALL_SUCCEEDED_AT, 0L);
     }
 
-    /** 清空安装状态：成功接管、被取消或判定未生效后调用。 */
+    /** 清空安装状态：成功接管、被取消或判定未生效后调用。会话号（见 {@link #getInstallSessionId}）不清。 */
     public void clearInstallState() {
         prefs.edit()
                 .remove(KEY_PENDING_INSTALL_VERSION)

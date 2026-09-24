@@ -160,4 +160,28 @@ class UpdateInstallStateTest {
             ),
         )
     }
+
+    @Test
+    fun callbackFromAnAbandonedSessionIsNotCurrent() {
+        // 实机日志：提交会话 762669748 安装成功后，3.7 秒前放弃的旧会话回调才到。
+        assertFalse(UpdateInstallState.isCurrentSession(910154005, 762669748))
+        assertFalse(UpdateInstallState.isCurrentSession(565493771, 762669748))
+    }
+
+    @Test
+    fun callbackFromTheLatestSessionIsCurrent() {
+        assertTrue(UpdateInstallState.isCurrentSession(762669748, 762669748))
+    }
+
+    @Test
+    fun callbackWithoutASessionIdIsStillHandled() {
+        // 从修复前的版本升级上来时，commit 由旧代码发起，回调里没有会话号：不能因为认不出就丢弃。
+        assertTrue(UpdateInstallState.isCurrentSession(-1, 762669748))
+        assertTrue(UpdateInstallState.isCurrentSession(-1, -1))
+    }
+
+    @Test
+    fun withoutAnyRecordedSessionNothingIsFiltered() {
+        assertTrue(UpdateInstallState.isCurrentSession(1423138288, -1))
+    }
 }

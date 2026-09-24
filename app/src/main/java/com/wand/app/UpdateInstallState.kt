@@ -74,4 +74,24 @@ object UpdateInstallState {
         }
         return hasPendingName && runningVersionName == pendingVersionName
     }
+
+    /**
+     * 安装状态回调是否属于「最近一次提交的安装会话」。
+     *
+     * 背景：用户放弃一次安装并不会取消那个 PackageInstaller 会话 —— 弹窗可能还开着，用户过几
+     * 秒再把它关掉，aborted 回调才姗姗来迟。2026-09-25 的日志就是这种形态：05:57:19 已回报
+     * SUCCESS，05:57:23 又收到 3.7 秒前那次旧会话的 FAILURE_ABORTED，把刚标记的「安装成功」
+     * 改成「安装失败；已取消安装」，用户看到的就是「装完了却说没装成功」。
+     *
+     * 所以回调必须按会话号过滤。两个方向都保持宽容，宁可处理也不要漏掉真实回调：
+     *
+     * - [callbackSessionId] < 0：旧版本提交安装时回调 Intent 里还没有会话号（例如从修复前的
+     *   版本升级上来的第一次安装），无法判定，照旧处理；
+     * - [lastCommittedSessionId] < 0：没有记录过任何会话（状态已清账），同样不拦。
+     */
+    @JvmStatic
+    fun isCurrentSession(callbackSessionId: Int, lastCommittedSessionId: Int): Boolean {
+        if (callbackSessionId < 0 || lastCommittedSessionId < 0) return true
+        return callbackSessionId == lastCommittedSessionId
+    }
 }

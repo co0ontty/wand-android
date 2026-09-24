@@ -30,10 +30,18 @@ import androidx.core.app.NotificationManagerCompat;
  *    （AlarmManager 以 MODE_BACKGROUND_ACTIVITY_START_DENIED 发送），所以删除；
  * 3. 通知：**唯一在原生 Android 上可靠的做法** —— 用户点通知由系统 UI 代发起，
  *    不受后台启动限制，点击即进入新版本。
+ *
+ * 回调按会话号过滤：系统不会因为用户放弃一次安装就取消那个会话，弹窗可能还活着，aborted
+ * 回调隔几秒才到。不过滤的话，成功安装之后会被旧会话的失败回调改写成「安装失败」（实机日志
+ * 2026-09-25 05:57:19 SUCCESS → 05:57:23 FAILURE_ABORTED）。判定规则见
+ * {@link UpdateInstallState#isCurrentSession}。
  */
 public final class UpdateInstallReceiver extends BroadcastReceiver {
 
     static final String ACTION_INSTALL_STATUS = "com.wand.app.UPDATE_INSTALL_STATUS";
+
+    /** 提交安装时写入的 PackageInstaller 会话号；旧版本提交的回调没有这一项。 */
+    static final String EXTRA_SESSION_ID = "com.wand.app.extra.INSTALL_SESSION_ID";
 
     private static final String TAG = "update";
     private static final int RELAUNCH_REQUEST_CODE = 4711;
@@ -68,8 +76,20 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
         int status = intent.getIntExtra(
                 PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
         String statusMessage = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-        WandLog.i(TAG, "安装状态回调 status=" + statusName(status)
+        int sessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1);
+        WandLog.i(TAG, "安装状态回调" + (sessionId >= 0 ? " sessionId=" + sessionId : "")
+                + " status=" + statusName(status)
                 + (statusMessage != null && !statusMessage.isEmpty() ? " · " + statusMessage : ""));
+
+        ServerStore store = new ServerStore(context);
+        int lastSessionId = store.getInstallSessionId();
+        if (!UpdateInstallState.isCurrentSession(sessionId, lastSessionId)) {
+            // 上一次提交的会话被超时/重试放弃，弹窗却还开着：用户晚点关掉它，回调才到这里。
+            // 既不能把「安装成功」改写成失败，也不能弹出过期的安装界面，直接丢弃。
+            WandLog.w(TAG, "忽略过期安装会话回调 sessionId=" + sessionId
+                    + "（最近提交的会话是 " + lastSessionId + "）", null);
+            return;
+        }
 
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
@@ -92,7 +112,6 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
         }
 
         if (status == PackageInstaller.STATUS_SUCCESS) {
-            ServerStore store = new ServerStore(context);
             store.markInstallSucceeded();
             String installed = store.getPendingInstallVersion();
             WandLog.i(TAG, "安装成功，准备重启到新版本 " + (installed == null ? "" : installed));
@@ -102,7 +121,7 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
         }
 
         // 失败 / 用户取消：清掉待安装状态，避免重启后仍显示「待安装」。
-        new ServerStore(context).clearInstallState();
+        store.clearInstallState();
         String message = describeFailure(status, statusMessage);
         WandLog.w(TAG, "安装未完成：" + message, null);
         notifyStatus(status, message);
