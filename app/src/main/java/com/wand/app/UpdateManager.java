@@ -144,9 +144,11 @@ final class UpdateManager {
                 String fileName = data.optString("fileName", "wand-update.apk");
                 long size = data.optLong("size", 0);
                 String source = data.optString("source", "");
-                String releaseNotes = data.optString("releaseNotes", "");
+                // 服务端「没有更新说明」时下发的是 JSON null，optString 会把它读成字符串
+                // "null" 并原样显示在更新面板里，所以这里的每个可空字段都走 nullString。
+                String releaseNotes = nullString(data, "releaseNotes", "");
                 // 服务端对本地分发的 APK 计算 SHA-256（旧服务端没有该字段 → 跳过校验）。
-                String sha256 = data.optString("sha256", "");
+                String sha256 = nullString(data, "sha256", "");
 
                 if (latestVersion.isEmpty() || downloadUrl.isEmpty()) {
                     WandLog.w(TAG, "更新响应缺少版本或下载地址");
@@ -172,6 +174,13 @@ final class UpdateManager {
                         NetworkErrorHelper.describeError(e, "check_update"));
             }
         });
+    }
+
+    /** JSON null / 缺失都取默认值，避免把字面量 "null" 当成内容。 */
+    private static String nullString(JSONObject data, String key, String fallback) {
+        if (data.isNull(key)) return fallback;
+        String value = data.optString(key, fallback);
+        return value.isEmpty() || "null".equals(value) ? fallback : value;
     }
 
     private void notifyNoUpdate(NoUpdateCallback callback, String message) {
