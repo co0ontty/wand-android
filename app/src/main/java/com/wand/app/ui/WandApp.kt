@@ -982,6 +982,7 @@ private fun WideSidebarPanel(
 }
 
 
+@Composable
 private fun DetailPlaceholder(
     onNewTask: () -> Unit,
 ) {
