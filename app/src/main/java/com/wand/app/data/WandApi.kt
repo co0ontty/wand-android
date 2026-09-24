@@ -626,6 +626,11 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         requestData("DELETE", "/api/workspace-tasks/${encode(taskId)}?cascade=1")
     }
 
+    override suspend fun archiveWorkspaceTask(taskId: String): WorkspaceTask =
+        WorkspaceTask.parse(
+            requestObject("POST", "/api/workspace-tasks/${encode(taskId)}/archive"),
+        ) ?: throw WandApiException(500, "归档任务响应无效。")
+
     override suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
         val sessionIds = workspaceTask(taskId).sessions.map { it.id }.distinct()
         return deleteWorkspaceSessions(sessionIds)

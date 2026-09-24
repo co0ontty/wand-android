@@ -184,13 +184,16 @@ class TaskListStateTest {
         val renamed = state.renameTask("task-1", "  新名称 ")
         val cleared = state.clearTaskSessions("task-1")
         val deleted = state.deleteTask("task-1")
+        val archived = state.archiveTask("task-1")
 
         assertEquals("新名称", renamed?.name)
         assertEquals(2, cleared)
         assertTrue(deleted)
+        assertTrue(archived)
         assertEquals(listOf("task-1"), port.clearedTaskIds)
         assertEquals(listOf("task-1"), port.deletedTaskIds)
-        assertEquals(4, port.listGroupsCalls)
+        assertEquals(listOf("task-1"), port.archivedTaskIds)
+        assertEquals(5, port.listGroupsCalls)
     }
 
     @Test
@@ -391,6 +394,7 @@ class TaskListStateTest {
         val renamedDirectories = mutableListOf<Pair<String, String?>>()
         val clearedTaskIds = mutableListOf<String>()
         val deletedTaskIds = mutableListOf<String>()
+        val archivedTaskIds = mutableListOf<String>()
         val createdWindowBindings = mutableListOf<WorkspaceBinding>()
         val createdWindowPrompts = mutableListOf<String?>()
         val createdWindowChoices = mutableListOf<Pair<WorkspaceSessionTarget, WorkspaceSessionKind>>()
@@ -484,6 +488,11 @@ class TaskListStateTest {
 
         override suspend fun deleteWorkspaceTask(taskId: String) {
             deletedTaskIds += taskId
+        }
+
+        override suspend fun archiveWorkspaceTask(taskId: String): WorkspaceTask {
+            archivedTaskIds += taskId
+            return task(taskId, "Task")
         }
 
         override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> = emptyList()

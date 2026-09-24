@@ -172,7 +172,11 @@ internal fun collectManagedIds(groups: List<TaskDirectoryGroup>): SidebarManageS
     return SidebarManageSelection(taskIds, sessionIds)
 }
 
-internal fun resolveManagedDeletion(
+/**
+ * 归档会连同任务里的终端一起隐藏，所以被选中任务名下的终端不再进删除集合，
+ * 只保留真正独立选中的终端（对齐 web 端「两者互不覆盖」）。
+ */
+internal fun resolveManagedAction(
     selection: SidebarManageSelection,
     groups: List<TaskDirectoryGroup>,
 ): SidebarManageSelection {
@@ -188,12 +192,27 @@ internal fun resolveManagedDeletion(
     )
 }
 
-internal fun describeManagedDeletion(selection: SidebarManageSelection): String {
-    val parts = buildList {
-        if (selection.taskIds.isNotEmpty()) add("${selection.taskIds.size} 个任务")
-        if (selection.sessionIds.isNotEmpty()) add("${selection.sessionIds.size} 个终端")
-    }
-    return parts.joinToString("和").ifEmpty { "所选项目" }
+/**
+ * 批量操作里任务是归档（终端继续跑、worktree 保留），只有显式选中的终端才真删除。
+ * 对齐 web 端 `describeManagedAction` 与 iOS 同类实现，三端用同一句动作名。
+ */
+internal fun describeManagedAction(selection: SidebarManageSelection): String = when {
+    selection.taskIds.isNotEmpty() && selection.sessionIds.isNotEmpty() -> "归档任务并删除终端"
+    selection.taskIds.isNotEmpty() -> "归档任务"
+    else -> "删除终端"
+}
+
+/** 只有真的会杀终端时才用危险样式；纯归档不该渲染成红色破坏性操作。 */
+internal fun managedSelectionIsDestructive(selection: SidebarManageSelection): Boolean =
+    selection.sessionIds.isNotEmpty()
+
+/** 批量确认弹窗正文：说清归档与删除各自会发生什么（归档是软删除）。 */
+internal fun describeManagedConfirmMessage(selection: SidebarManageSelection): String = when {
+    selection.taskIds.isEmpty() -> "将结束所选终端，此操作无法撤销。"
+    selection.sessionIds.isEmpty() ->
+        "所选任务会从侧栏隐藏并移入看板归档，终端与 Worktree 都保留。"
+    else ->
+        "所选任务会移入看板归档（终端与 Worktree 保留），同时结束所选终端。"
 }
 
 

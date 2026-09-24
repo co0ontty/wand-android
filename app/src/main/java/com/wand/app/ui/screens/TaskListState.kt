@@ -318,6 +318,17 @@ class TaskListState(
             true
         } ?: false
 
+    /**
+     * 归档任务（软删除）：终端继续运行、worktree 保留，只从侧栏隐藏并移入看板归档。
+     * 对应服务端 POST /api/workspace-tasks/:taskId/archive，与详情页「归档」同一条路径。
+     */
+    suspend fun archiveTask(taskId: String): Boolean =
+        mutate("归档任务失败") {
+            port.archiveWorkspaceTask(taskId)
+            load(silent = true)
+            true
+        } ?: false
+
     suspend fun createTaskWindow(
         taskId: String,
         target: WorkspaceSessionTarget,

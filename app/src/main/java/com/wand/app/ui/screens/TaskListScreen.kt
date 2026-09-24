@@ -168,20 +168,21 @@ fun TaskListScreen(
     var renameDirectoryTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     var renameDirectoryDraft by remember { mutableStateOf("") }
     var clearTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
+    var archiveTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
     var moveSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
     var selecting by remember { mutableStateOf(false) }
     var selectedTaskIds by remember { mutableStateOf(setOf<String>()) }
     var selectedSessionIds by remember { mutableStateOf(setOf<String>()) }
-    var confirmManagedDelete by remember { mutableStateOf(false) }
+    var confirmManagedAction by remember { mutableStateOf(false) }
     var reviewTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     val targetSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val visibleGroups = directoryTreeGroups(state.groups)
     val showingBoard = homeListMode == HomeListMode.Tasks
     val managedSelection = SidebarManageSelection(selectedTaskIds, selectedSessionIds)
-    val resolvedManagedDelete = resolveManagedDeletion(managedSelection, visibleGroups)
+    val resolvedManagedAction = resolveManagedAction(managedSelection, visibleGroups)
     val hasVisibleContent = visibleGroups.isNotEmpty()
     val directoryGroupCount = visibleGroups.size
     var boardRefreshNonce by remember { mutableStateOf(0) }
@@ -714,6 +715,35 @@ fun TaskListScreen(
         }
     }
 
+    archiveTarget?.let { summary ->
+        WandDialog(
+            title = "归档任务？",
+            onDismissRequest = { if (!state.mutationBusy) archiveTarget = null },
+            icon = WandIcons.archive,
+            confirm = WandDialogAction(
+                label = if (state.mutationBusy) "归档中…" else "归档",
+                enabled = !state.mutationBusy,
+                onClick = {
+                    scope.launch {
+                        if (state.archiveTask(summary.id)) {
+                            onTaskClosed(summary.id)
+                            archiveTarget = null
+                        }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction("取消", onClick = { archiveTarget = null }),
+        ) {
+            Text(
+                "任务「${summary.name}」会从侧栏隐藏并移入任务看板的归档任务，" +
+                    "终端继续运行、Worktree 保留。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+            MutationErrorText(state.mutationError)
+        }
+    }
+
     deleteTarget?.let { summary ->
         WandDialog(
             title = "删除任务？",
@@ -774,37 +804,40 @@ fun TaskListScreen(
         }
     }
 
-    if (confirmManagedDelete) {
+    if (confirmManagedAction) {
+        val managedAction = describeManagedAction(resolvedManagedAction)
+        val destructive = managedSelectionIsDestructive(resolvedManagedAction)
         WandDialog(
-            title = "删除所选项目？",
-            onDismissRequest = { if (!state.mutationBusy) confirmManagedDelete = false },
-            icon = WandIcons.delete,
+            title = "$managedAction？",
+            onDismissRequest = { if (!state.mutationBusy) confirmManagedAction = false },
+            icon = if (destructive) WandIcons.delete else WandIcons.archive,
             confirm = WandDialogAction(
-                label = if (state.mutationBusy) "删除中…" else "删除",
-                destructive = true,
-                enabled = !state.mutationBusy && resolvedManagedDelete.count > 0,
+                label = if (state.mutationBusy) "处理中…" else managedAction,
+                destructive = destructive,
+                enabled = !state.mutationBusy && resolvedManagedAction.count > 0,
                 onClick = {
                     scope.launch {
-                        resolvedManagedDelete.taskIds.forEach { taskId ->
-                            if (state.deleteTask(taskId)) onTaskClosed(taskId)
+                        // 批量里任务是归档（终端继续跑、worktree 保留），只有显式选中的终端才真删。
+                        resolvedManagedAction.taskIds.forEach { taskId ->
+                            if (state.archiveTask(taskId)) onTaskClosed(taskId)
                         }
-                        if (resolvedManagedDelete.sessionIds.isNotEmpty()) {
-                            val deleted = state.deleteSessions(resolvedManagedDelete.sessionIds.toList())
+                        if (resolvedManagedAction.sessionIds.isNotEmpty()) {
+                            val deleted = state.deleteSessions(resolvedManagedAction.sessionIds.toList())
                             if (deleted != null) {
-                                resolvedManagedDelete.sessionIds.forEach(onSessionClosed)
+                                resolvedManagedAction.sessionIds.forEach(onSessionClosed)
                             }
                         }
                         selecting = false
                         selectedTaskIds = emptySet()
                         selectedSessionIds = emptySet()
-                        confirmManagedDelete = false
+                        confirmManagedAction = false
                     }
                 },
             ),
-            dismiss = WandDialogAction("取消", onClick = { confirmManagedDelete = false }),
+            dismiss = WandDialogAction("取消", onClick = { confirmManagedAction = false }),
         ) {
             Text(
-                "将删除${describeManagedDeletion(resolvedManagedDelete)}，此操作无法撤销。",
+                describeManagedConfirmMessage(resolvedManagedAction),
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )
@@ -984,12 +1017,14 @@ fun TaskListScreen(
                                         selectedSessionIds = all.sessionIds
                                     }
                                 },
-                                onDelete = { if (managedSelection.count > 0) confirmManagedDelete = true },
+                                actionLabel = describeManagedAction(resolvedManagedAction),
+                                actionDestructive = managedSelectionIsDestructive(resolvedManagedAction),
+                                onAction = { if (managedSelection.count > 0) confirmManagedAction = true },
                                 onDone = {
                                     selecting = false
                                     selectedTaskIds = emptySet()
                                     selectedSessionIds = emptySet()
-                                    confirmManagedDelete = false
+                                    confirmManagedAction = false
                                 },
                             )
                             }
@@ -1072,6 +1107,10 @@ fun TaskListScreen(
                             },
                             onClear = { task ->
                                 clearTarget = task
+                                state.clearMutationError()
+                            },
+                            onArchive = { task ->
+                                archiveTarget = task
                                 state.clearMutationError()
                             },
                             onDelete = { task ->
@@ -1281,8 +1320,10 @@ private fun SidebarManageBar(
     count: Int,
     allSelected: Boolean,
     busy: Boolean,
+    actionLabel: String,
+    actionDestructive: Boolean,
     onSelectAll: () -> Unit,
-    onDelete: () -> Unit,
+    onAction: () -> Unit,
     onDone: () -> Unit,
 ) {
     WandCard(
@@ -1306,8 +1347,16 @@ private fun SidebarManageBar(
             TextButton(onClick = onSelectAll, enabled = !busy) {
                 Text(if (allSelected) "取消全选" else "全选")
             }
-            TextButton(onClick = onDelete, enabled = !busy && count > 0) {
-                Text("删除", color = if (count > 0) WandColors.danger else WandColors.textMuted)
+            TextButton(onClick = onAction, enabled = !busy && count > 0) {
+                // 纯归档不是破坏性操作，不渲染成红色（对齐 web 端 managedSelectionIsDestructive）。
+                Text(
+                    actionLabel,
+                    color = when {
+                        count == 0 -> WandColors.textMuted
+                        actionDestructive -> WandColors.danger
+                        else -> WandColors.brand
+                    },
+                )
             }
             TextButton(onClick = onDone, enabled = !busy) {
                 Text("完成")
@@ -1342,6 +1391,7 @@ private fun TaskDirectorySection(
     onNewWindow: (WorkspaceTaskSummary) -> Unit,
     onRename: (WorkspaceTaskSummary) -> Unit,
     onClear: (WorkspaceTaskSummary) -> Unit,
+    onArchive: (WorkspaceTaskSummary) -> Unit,
     onDelete: (WorkspaceTaskSummary) -> Unit,
     onDeleteSession: (WorkspaceSessionSummary) -> Unit,
     onReview: () -> Unit,
@@ -1496,6 +1546,7 @@ private fun TaskDirectorySection(
                         onNewWindow = { onNewWindow(task) },
                         onRename = { onRename(task) },
                         onClear = { onClear(task) },
+                        onArchive = { onArchive(task) },
                         onDelete = { onDelete(task) },
                         onDeleteSession = onDeleteSession,
                         onMoveSession = onMoveSession,
@@ -1551,6 +1602,7 @@ private fun TaskAggregateRow(
     onNewWindow: () -> Unit,
     onRename: () -> Unit,
     onClear: () -> Unit,
+    onArchive: () -> Unit,
     onDelete: () -> Unit,
     onDeleteSession: (WorkspaceSessionSummary) -> Unit,
 ) {
@@ -1659,9 +1711,17 @@ private fun TaskAggregateRow(
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("删除", color = WandColors.danger) },
-                        onClick = { menuOpen = false; onDelete() },
+                        text = { Text("归档任务") },
+                        leadingIcon = { Icon(WandIcons.archive, contentDescription = null) },
+                        onClick = { menuOpen = false; onArchive() },
                     )
+                    // 归档是软删除；只有隔离任务才在归档之外再提供真删（清理 Worktree）。
+                    if (task.isIsolated) {
+                        DropdownMenuItem(
+                            text = { Text("删除任务并清理 Worktree", color = WandColors.danger) },
+                            onClick = { menuOpen = false; onDelete() },
+                        )
+                    }
                 }
             }
         }

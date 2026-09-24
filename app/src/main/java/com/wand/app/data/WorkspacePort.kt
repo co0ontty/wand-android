@@ -110,6 +110,14 @@ interface WorkspacePort : TaskChangeSource {
     /** DELETE /api/workspace-tasks/:taskId?cascade=1 —— 删除任务、会话和隔离 worktree。 */
     suspend fun deleteWorkspaceTask(taskId: String)
 
+    /**
+     * POST /api/workspace-tasks/:taskId/archive —— 归档任务（软删除）。
+     * 终端继续运行、worktree 保留，只从侧栏隐藏并移入看板归档。
+     */
+    suspend fun archiveWorkspaceTask(taskId: String): WorkspaceTask {
+        throw UnsupportedOperationException("归档任务接口不可用")
+    }
+
     /** 删除任务内全部会话，但保留任务与 worktree。 */
     suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
         throw UnsupportedOperationException("清空任务会话接口不可用")

@@ -359,7 +359,7 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun managedDeleteCascadesTaskSessionsAndKeepsLooseTerminals() {
+    fun managedActionKeepsTaskOwnedSessionsOutOfDeletion() {
         val groups = listOf(
             group().copy(
                 tasks = listOf(
@@ -379,7 +379,7 @@ class TaskListPresentationTest {
                 standaloneSessions = listOf(session("pty", null).copy(id = "loose-1")),
             ),
         )
-        val resolved = resolveManagedDeletion(
+        val resolved = resolveManagedAction(
             SidebarManageSelection(
                 taskIds = setOf("task-1"),
                 sessionIds = setOf("session-1", "loose-1"),
@@ -388,7 +388,31 @@ class TaskListPresentationTest {
         )
         assertEquals(setOf("task-1"), resolved.taskIds)
         assertEquals(setOf("loose-1"), resolved.sessionIds)
-        assertEquals("1 个任务和1 个终端", describeManagedDeletion(resolved))
+    }
+
+    /** 任务在批量里是归档，只有终端才真删：动作名 / 危险色 / 确认文案三端一致。 */
+    @Test
+    fun managedActionDescribesArchiveAndDeletePerSelection() {
+        val sessionsOnly = SidebarManageSelection(sessionIds = setOf("loose-1"))
+        assertEquals("删除终端", describeManagedAction(sessionsOnly))
+        assertTrue(managedSelectionIsDestructive(sessionsOnly))
+        assertEquals("将结束所选终端，此操作无法撤销。", describeManagedConfirmMessage(sessionsOnly))
+
+        val tasksOnly = SidebarManageSelection(taskIds = setOf("task-1"))
+        assertEquals("归档任务", describeManagedAction(tasksOnly))
+        assertFalse(managedSelectionIsDestructive(tasksOnly))
+        assertEquals(
+            "所选任务会从侧栏隐藏并移入看板归档，终端与 Worktree 都保留。",
+            describeManagedConfirmMessage(tasksOnly),
+        )
+
+        val both = SidebarManageSelection(taskIds = setOf("task-1"), sessionIds = setOf("loose-1"))
+        assertEquals("归档任务并删除终端", describeManagedAction(both))
+        assertTrue(managedSelectionIsDestructive(both))
+        assertEquals(
+            "所选任务会移入看板归档（终端与 Worktree 保留），同时结束所选终端。",
+            describeManagedConfirmMessage(both),
+        )
     }
 
     @Test
