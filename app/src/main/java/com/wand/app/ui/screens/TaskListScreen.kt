@@ -946,8 +946,6 @@ fun TaskListScreen(
                 HomeTopBar(
                     serverDisplayName = serverDisplayName,
                     interactionEnabled = interactionEnabled,
-                    // 窄屏主操作的入口在底部启动条；这里只在没有启动条时（宽屏侧栏）兜底。
-                    showNewTask = !showingBoard && !showComposer,
                     searchOpen = searchOpen,
                     searchQuery = searchQuery,
                     onSearchQueryChange = { searchQuery = it },
@@ -963,7 +961,6 @@ fun TaskListScreen(
                         selectedTaskIds = emptySet()
                         selectedSessionIds = emptySet()
                     },
-                    onNewTask = { beginNewTask() },
                     onRefresh = {
                         if (showingBoard) {
                             boardRefreshNonce += 1

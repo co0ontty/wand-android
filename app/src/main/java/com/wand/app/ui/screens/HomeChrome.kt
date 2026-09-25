@@ -110,12 +110,10 @@ import com.wand.app.ui.withLiveTitle
 internal fun HomeTopBar(
     serverDisplayName: String,
     interactionEnabled: Boolean,
-    showNewTask: Boolean,
     searchOpen: Boolean,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onSearchToggle: () -> Unit,
-    onNewTask: () -> Unit,
     onRefresh: () -> Unit,
     onStartSelection: (() -> Unit)?,
     onOpenTaskBoard: () -> Unit,
@@ -227,15 +225,6 @@ internal fun HomeTopBar(
                 contentDescription = "收起任务侧边栏",
                 onClick = onCollapseSidebar,
                 variant = WandIconButtonVariant.Toolbar,
-            )
-        }
-        if (!searchOpen && showNewTask) {
-            WandIconButton(
-                icon = WandIcons.add,
-                contentDescription = "新建任务",
-                onClick = onNewTask,
-                enabled = interactionEnabled,
-                variant = WandIconButtonVariant.Accent,
             )
         }
         if (!searchOpen) {
