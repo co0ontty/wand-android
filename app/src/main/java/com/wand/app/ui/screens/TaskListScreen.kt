@@ -4,20 +4,17 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,16 +24,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,10 +50,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import com.wand.app.data.DirectoryListing
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
@@ -68,6 +80,7 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandDialog
@@ -83,34 +96,6 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlinx.coroutines.launch
-
-/** One visual unit per decision in the new-task form. */
-@Composable
-private fun NewTaskFormCard(
-    number: String,
-    title: String,
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(WandColors.surface)
-            .border(1.dp, WandColors.border.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(number, style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold, color = WandColors.brand)
-            Text(title, style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold, color = WandColors.textPrimary)
-        }
-        content()
-    }
-}
 
 /** Stable route information carried from the task tree into a session detail screen. */
 data class TaskSessionRoute(
@@ -333,300 +318,215 @@ fun TaskListScreen(
         }
         val canCreateTask = cwd.isNotEmpty() && TaskListState.isValidOptionalTaskName(groupedName) &&
             (groupedName.isNotEmpty() || taskPrompt != null)
-        WandDialog(
-            title = "新建任务",
-            icon = WandIcons.add,
+        val submitNewTask: () -> Unit = submit@{
+            if (state.mutationBusy || !canCreateTask) return@submit
+            val submittedTarget = newTaskTarget
+            val submittedKind = newTaskKind
+            val submittedStartSession = startFirstSession
+            val submittedWorktree = newTaskWorktree
+            val submittedWorkspaceId = newTaskWorkspaceId
+            newTaskDraftRevision += 1
+            scope.launch {
+                state.rememberCreationChoice(
+                    defaultProvider = submittedTarget.raw.takeUnless { submittedTarget.isShell },
+                    defaultSessionKind = submittedKind,
+                )
+                val result = state.createTask(
+                    name = groupedName,
+                    cwd = cwd,
+                    worktree = submittedWorktree,
+                    workspaceId = submittedWorkspaceId,
+                    description = taskPrompt,
+                )
+                if (result != null) {
+                    newTaskOpen = false
+                    val snapshot = if (submittedStartSession) state.createTaskWindow(
+                        result.task.id, submittedTarget, submittedKind, taskPrompt,
+                    ) else null
+                    if (snapshot != null) {
+                        onOpenSession(
+                            TaskSessionRoute(
+                                sessionId = snapshot.id,
+                                structured = snapshot.isStructured,
+                                workspaceId = result.workspace.id,
+                                taskId = result.task.id,
+                                workspaceName = result.workspace.name,
+                                taskName = result.task.name,
+                            ),
+                        )
+                    } else {
+                        if (submittedStartSession && state.mutationError != null) {
+                            android.widget.Toast.makeText(context,
+                                "任务已创建，但启动会话失败：${state.mutationError}", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                        onOpenTask(result.workspace.id, result.task.id, result.workspace.name, result.task.name)
+                    }
+                }
+            }
+        }
+        val focusRequester = remember { FocusRequester() }
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+        Dialog(
             onDismissRequest = { if (!state.mutationBusy) newTaskOpen = false },
-            confirm = WandDialogAction(
-                label = if (state.mutationBusy) "创建中…" else if (startFirstSession) "创建并启动会话" else "创建任务",
-                enabled = !state.mutationBusy && canCreateTask,
-                onClick = {
-                    if (state.mutationBusy || cwd.isEmpty()) return@WandDialogAction
-                    if (!canCreateTask) return@WandDialogAction
-                    // Freeze the submitted choices before any network suspension.
-                    val submittedTarget = newTaskTarget
-                    val submittedKind = newTaskKind
-                    newTaskDraftRevision += 1
-                    scope.launch {
-                        state.rememberCreationChoice(
-                            defaultProvider = submittedTarget.raw.takeUnless { submittedTarget.isShell },
-                            defaultSessionKind = submittedKind,
-                        )
-                        val result = state.createTask(
-                            name = groupedName,
-                            cwd = cwd,
-                            worktree = newTaskWorktree,
-                            workspaceId = newTaskWorkspaceId,
-                            description = taskPrompt,
-                        )
-                        if (result != null) {
-                            newTaskOpen = false
-                            val snapshot = if (startFirstSession) state.createTaskWindow(
-                                result.task.id, submittedTarget, submittedKind, taskPrompt,
-                            ) else null
-                            if (snapshot != null) {
-                                onOpenSession(
-                                    TaskSessionRoute(
-                                        sessionId = snapshot.id,
-                                        structured = snapshot.isStructured,
-                                        workspaceId = result.workspace.id,
-                                        taskId = result.task.id,
-                                        workspaceName = result.workspace.name,
-                                        taskName = result.task.name,
-                                    ),
-                                )
-                            } else {
-                                if (startFirstSession && state.mutationError != null) {
-                                    android.widget.Toast.makeText(context,
-                                        "任务已创建，但启动会话失败：${state.mutationError}", android.widget.Toast.LENGTH_LONG).show()
-                                }
-                                onOpenTask(
-                                    result.workspace.id,
-                                    result.task.id,
-                                    result.workspace.name,
-                                    result.task.name,
-                                )
-                            }
-                        }
-                    }
-                },
-            ),
-            dismiss = WandDialogAction(
-                label = "取消",
-                enabled = !state.mutationBusy,
-                onClick = { newTaskOpen = false },
-            ),
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
-            Text(
-                "任务与看板同步；选择工作目录，再决定是否立即启动会话。",
-                style = MaterialTheme.typography.bodySmall,
-                color = WandColors.textMuted,
-                modifier = Modifier.padding(bottom = 14.dp),
-            )
-            NewTaskFormCard("01", if (startFirstSession && !newTaskTarget.isShell) "任务名称 · 可选" else "任务名称 · 必填") {
-                WandTextField(
-                    value = newTaskName,
-                    onValueChange = { newTaskName = it; state.clearMutationError() },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = if (startFirstSession && !newTaskTarget.isShell) "留空按提示词自动命名" else "输入任务名称",
-                    singleLine = true,
-                    enabled = !state.mutationBusy,
-                )
+            val dialogView = LocalView.current
+            val dialogWindow = (dialogView.parent as? DialogWindowProvider)?.window
+            val lightBackground = WandColors.bgElevated.luminance() > 0.5f
+            DisposableEffect(dialogWindow, lightBackground) {
+                val controller = dialogWindow?.let { WindowCompat.getInsetsController(it, dialogView) }
+                val previous = controller?.isAppearanceLightStatusBars
+                controller?.isAppearanceLightStatusBars = lightBackground
+                onDispose { if (previous != null) controller.isAppearanceLightStatusBars = previous }
             }
-            NewTaskFormCard("02", "工作目录", modifier = Modifier.padding(top = 12.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
-                    .border(1.dp, WandColors.border.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
-                    .clickable(enabled = !state.mutationBusy) { openDirectoryPicker() }
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.fillMaxSize().background(WandColors.bgElevated)
+                    .statusBarsPadding().navigationBarsPadding().imePadding(),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(WandColors.brandSoft),
-                    contentAlignment = Alignment.Center,
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        WandIcons.folder,
-                        contentDescription = null,
-                        tint = WandColors.brand,
-                        modifier = Modifier.size(16.dp),
-                    )
+                    Text("新建任务", style = MaterialTheme.typography.titleLarge,
+                        color = WandColors.textPrimary, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { newTaskOpen = false }, enabled = !state.mutationBusy) { Text("取消") }
                 }
-                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                    Text(
-                        if (cwd.isEmpty()) "选择工作目录" else "工作目录",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = WandColors.textMuted,
+                HorizontalDivider(color = WandColors.border)
+                Column(
+                    modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    WandTextField(
+                        value = newTaskName,
+                        onValueChange = { newTaskName = it; state.clearMutationError() },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = if (startFirstSession && !newTaskTarget.isShell) "任务标题（可选）" else "任务标题（必填）",
+                        singleLine = true,
+                        enabled = !state.mutationBusy,
                     )
-                    Text(
-                        if (cwd.isEmpty()) "点击浏览服务器上的目录" else cwd,
-                        style = if (cwd.isEmpty()) MaterialTheme.typography.bodyMedium
-                        else MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = if (cwd.isEmpty()) WandColors.textPrimary else WandColors.brand,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Icon(WandIcons.chevronRight, contentDescription = "选择目录", tint = WandColors.textMuted)
-            }
-            if (state.recentPaths.isNotEmpty()) {
-                Text(
-                    "最近使用",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(top = 12.dp, bottom = 6.dp),
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    state.recentPaths.take(3).forEach { recent ->
-                        Text(
-                            recent.displayName,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(if (cwd == recent.path) WandColors.brandSoft else WandColors.surfaceSoft)
-                                .clickable(enabled = !state.mutationBusy) { updateTaskCwd(recent.path) }
-                                .padding(horizontal = 9.dp, vertical = 7.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (cwd == recent.path) WandColors.brand else WandColors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                    if (startFirstSession && !newTaskTarget.isShell) {
+                        WandTextField(
+                            value = newTaskPrompt,
+                            onValueChange = { newTaskPrompt = it; state.clearMutationError() },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).focusRequester(focusRequester),
+                            placeholder = "描述要完成的工作…",
+                            minLines = 6,
+                            enabled = !state.mutationBusy,
                         )
                     }
-                }
-            }
-            if (cwd.isEmpty()) {
-                Text(
-                    "必须选择目录才能创建",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.danger,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-            }
-            NewTaskFormCard("03", "创建后", modifier = Modifier.padding(top = 12.dp)) {
-                WandChoiceStrip(options = listOf(true to "启动会话", false to "仅建分组"), selected = startFirstSession,
-                    onSelect = { if (!state.mutationBusy) startFirstSession = it }, minHeight = 44.dp, flat = true)
-                Text(
-                    if (startFirstSession) "创建任务后立即打开第一个会话" else "仅创建分组，之后再添加会话",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                )
-            }
-            if (startFirstSession) {
-                NewTaskFormCard("04", "首次会话", modifier = Modifier.padding(top = 12.dp)) {
-                if (!newTaskTarget.isShell) {
-                    WandTextField(value = newTaskPrompt, onValueChange = { newTaskPrompt = it },
-                        label = "首个会话的提示词（可选）", placeholder = "希望 CLI 帮你完成什么？",
-                        minLines = 2, enabled = !state.mutationBusy,
-                        modifier = Modifier.fillMaxWidth())
-                    Text("任务名称留空时按此提示词自动命名，仍可随时改名。", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-                }
-                Text(
-                    "首次打开的工具",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    WorkspaceSessionTarget.OPTIONS.forEach { option ->
-                        val selected = newTaskTarget == option
-                        val logoProvider = option.raw.takeUnless { option.isShell }
-                        // 新建任务面板里的 provider 胶囊：选中底 / 描边 / 文字跟其他选择控件一样过渡。
-                        val choiceFill by animateColorAsState(
-                            targetValue = if (selected) WandColors.brandSoft else WandColors.surfaceSoft.copy(alpha = 0.62f),
-                            animationSpec = WandMotion.respectMotion(
-                                !reduceMotionEnabled(),
-                                WandMotion.tweenFast(),
-                            ),
-                            label = "newTaskTargetFill",
-                        )
-                        val choiceStroke by animateColorAsState(
-                            targetValue = if (selected) WandColors.brand.copy(alpha = 0.7f) else WandColors.border.copy(alpha = 0.5f),
-                            animationSpec = WandMotion.respectMotion(
-                                !reduceMotionEnabled(),
-                                WandMotion.tweenFast(),
-                            ),
-                            label = "newTaskTargetStroke",
-                        )
-                        val choiceText by animateColorAsState(
-                            targetValue = if (selected) WandColors.brand else WandColors.textPrimary,
-                            animationSpec = WandMotion.respectMotion(
-                                !reduceMotionEnabled(),
-                                WandMotion.tweenFast(),
-                            ),
-                            label = "newTaskTargetText",
-                        )
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(choiceFill)
-                                .border(
-                                    1.dp,
-                                    choiceStroke,
-                                    RoundedCornerShape(20.dp),
-                                )
-                                .clickable(enabled = !state.mutationBusy) {
-                                    newTaskDraftRevision += 1
-                                    newTaskTarget = option
-                                    if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
-                                }
-                                .padding(horizontal = 10.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Image(
-                                painter = BrandLogos.painterForProvider(logoProvider),
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
-                                    BrandLogos.tintForProvider(logoProvider, WandColors.textPrimary),
-                                ),
-                            )
-                            Text(
-                                option.label,
-                                modifier = Modifier.padding(start = 6.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = choiceText,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                    Text("参数", style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold, color = WandColors.textPrimary)
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(WandColors.surfaceSoft)
+                            .clickable(enabled = !state.mutationBusy) { openDirectoryPicker() }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("工作目录", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                            Text(if (cwd.isEmpty()) "选择目录" else cwd,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = WandColors.textPrimary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
                         }
+                        Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
                     }
-                }
-                if (!newTaskTarget.isShell) {
-                    Text(
-                        "会话类型",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = WandColors.textMuted,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 6.dp),
-                    )
                     WandChoiceStrip(
-                        options = WorkspaceSessionKind.entries.map { it to it.label },
-                        selected = newTaskKind,
-                        onSelect = {
-                            if (state.mutationBusy) return@WandChoiceStrip
-                            newTaskDraftRevision += 1
-                            newTaskKind = it
-                            state.rememberCreationChoice(defaultSessionKind = it)
-                        },
-                        minHeight = 36.dp,
+                        options = listOf(true to "启动会话", false to "仅建分组"),
+                        selected = startFirstSession,
+                        onSelect = { if (!state.mutationBusy) startFirstSession = it },
+                        minHeight = 44.dp,
                         flat = true,
                     )
-                    Text(
-                        newTaskKind.description,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = WandColors.textMuted,
-                        modifier = Modifier.padding(top = 6.dp),
+                    if (startFirstSession) {
+                        Text("工具", style = MaterialTheme.typography.labelMedium, color = WandColors.textMuted)
+                        var providerMenuOpen by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(WandColors.surfaceSoft)
+                                    .clickable(enabled = !state.mutationBusy) { providerMenuOpen = true }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                val provider = newTaskTarget.raw.takeUnless { newTaskTarget.isShell }
+                                Image(
+                                    painter = BrandLogos.painterForProvider(provider),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Text(newTaskTarget.label, modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary)
+                                Icon(WandIcons.expand, contentDescription = null, tint = WandColors.textMuted)
+                            }
+                            DropdownMenu(expanded = providerMenuOpen, onDismissRequest = { providerMenuOpen = false }) {
+                                WorkspaceSessionTarget.OPTIONS.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option.label) },
+                                        onClick = {
+                                            providerMenuOpen = false
+                                            newTaskDraftRevision += 1
+                                            newTaskTarget = option
+                                            if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        if (!newTaskTarget.isShell) {
+                            Text("会话类型", style = MaterialTheme.typography.labelMedium,
+                                color = WandColors.textMuted)
+                            WandChoiceStrip(
+                                options = WorkspaceSessionKind.entries.map { it to it.label },
+                                selected = newTaskKind,
+                                onSelect = {
+                                    if (state.mutationBusy) return@WandChoiceStrip
+                                    newTaskDraftRevision += 1
+                                    newTaskKind = it
+                                    state.rememberCreationChoice(defaultSessionKind = it)
+                                },
+                                minHeight = 40.dp,
+                                flat = true,
+                            )
+                        }
+                    }
+                    var advanced by remember { mutableStateOf(false) }
+                    BackHandler(enabled = advanced && !state.mutationBusy) { advanced = false }
+                    TextButton(onClick = { advanced = !advanced }, enabled = !state.mutationBusy) {
+                        Text(if (advanced) "收起工作树选项" else "工作树选项")
+                    }
+                    WandInlinePanel(visible = advanced, growFrom = Alignment.Top) {
+                        WandChoiceStrip(
+                            options = listOf(false to "共用工作区", true to "独立工作树"),
+                            selected = newTaskWorktree,
+                            onSelect = { if (!state.mutationBusy) newTaskWorktree = it },
+                            minHeight = 44.dp,
+                            flat = true,
+                        )
+                    }
+                }
+                HorizontalDivider(color = WandColors.border)
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                    MutationErrorText(state.mutationError)
+                    WandButton(
+                        label = if (startFirstSession) "创建并启动会话" else "创建任务",
+                        onClick = submitNewTask,
+                        loading = state.mutationBusy,
+                        enabled = canCreateTask,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                }
             }
-            var advanced by remember { mutableStateOf(false) }
-            BackHandler(enabled = advanced && !state.mutationBusy) { advanced = false }
-            TextButton(onClick = { advanced = !advanced }, enabled = !state.mutationBusy,
-                modifier = Modifier.padding(top = 6.dp)) {
-                Text(if (advanced) "收起高级选项" else "高级选项 · 独立工作树")
-            }
-            WandInlinePanel(visible = advanced, growFrom = Alignment.Top) {
-                NewTaskFormCard("05", "工作树隔离") {
-                    WandChoiceStrip(options = listOf(false to "共用工作区", true to "隔离 worktree"),
-                        selected = newTaskWorktree, onSelect = { if (!state.mutationBusy) newTaskWorktree = it },
-                        minHeight = 44.dp, flat = true)
-                    Text(if (newTaskWorktree) "需要 Git 仓库，会创建独立工作树。" else "仅做界面分组，不创建磁盘子目录。",
-                        style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-                }
-            }
-            MutationErrorText(state.mutationError, modifier = Modifier.padding(top = 8.dp))
         }
     }
 
