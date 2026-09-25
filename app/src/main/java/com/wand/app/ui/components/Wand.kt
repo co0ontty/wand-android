@@ -244,7 +244,12 @@ fun EmptyState(
     }
 }
 
-/** 紧凑分段切换条；flat 模式用于卡片内，去掉“外壳套胶囊”的双层感。 */
+/**
+ * 紧凑分段切换条；flat 模式用于卡片内，去掉“外壳套胶囊”的双层感。
+ *
+ * 动效（`docs/motion-design.md` 规则 5）：选中态由 [WandSegmentedTrack] 的滑动指示条承担，
+ * 切换时指示条先被拉向新位置再收回，而不是每一段自己换底色后硬切。
+ */
 @Composable
 fun <T> WandChoiceStrip(
     options: List<Pair<T, String>>,
@@ -257,16 +262,19 @@ fun <T> WandChoiceStrip(
     flat: Boolean = false,
 ) {
     val resolvedActiveTextColor = activeTextColor ?: WandColors.brand
-    val containerShape = if (flat) WandShapes.sm else WandShapes.full
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = minHeight)
-            .clip(containerShape)
-            .background(WandColors.surfaceSoft.copy(alpha = if (flat) 0.34f else 0.48f))
-            .padding(if (flat) 0.dp else 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (flat) 0.dp else 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val shape = if (flat) WandShapes.sm else WandShapes.full
+    val selectedIndex = options.indexOfFirst { it.first == selected }.coerceAtLeast(0)
+    WandSegmentedTrack(
+        itemCount = options.size,
+        selectedIndex = selectedIndex,
+        modifier = modifier,
+        containerShape = shape,
+        indicatorShape = shape,
+        containerColor = WandColors.surfaceSoft.copy(alpha = if (flat) 0.34f else 0.48f),
+        indicatorColor = WandColors.selectedFill,
+        indicatorBorder = WandColors.brand.copy(alpha = 0.55f),
+        padding = if (flat) 0.dp else 3.dp,
+        minHeight = minHeight,
     ) {
         options.forEach { (value, label) ->
             val active = value == selected
@@ -275,23 +283,17 @@ fun <T> WandChoiceStrip(
                 WandMotion.tweenFast(),
                 label = "choiceStripText",
             )
-            Column(
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = if (flat) minHeight else minHeight - 6.dp)
-                    .wandSelectedSurface(
-                        selected = active,
-                        shape = if (flat) RoundedCornerShape(0.dp) else WandShapes.full,
-                        unselectedFill = Color.Transparent,
-                        showUnselectedBorder = false,
-                    )
+                    .clip(shape)
                     .selectable(
                         selected = active,
                         role = if (flat) Role.RadioButton else Role.Tab,
                     ) { onSelect(value) }
                     .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     label,

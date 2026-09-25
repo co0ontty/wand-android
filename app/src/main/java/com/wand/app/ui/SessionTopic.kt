@@ -25,11 +25,15 @@ private val GENERIC_SESSION_TITLES = setOf(
  * Web overlays WS titles onto the polled task list; Android does the same here
  * so the list/header can change as soon as the user submits, without waiting
  * for the 10s workspace poll.
+ *
+ * 同一个 overlay 也记运行期权限态：工作区轮询返回的会话摘要里没有
+ * pendingEscalation，首页要显示「等待授权」只能靠 WS 事件实时喂进来。
  */
 object SessionTitleStore {
     private val titles = mutableStateMapOf<String, String>()
     private val generating = mutableStateMapOf<String, Boolean>()
     private val ptyBusy = mutableStateMapOf<String, Boolean>()
+    private val permissionBlocked = mutableStateMapOf<String, Boolean>()
 
     fun titleOf(id: String): String? = titles[id]?.takeIf { it.isNotEmpty() }
 
@@ -37,11 +41,15 @@ object SessionTitleStore {
 
     fun ptyBusyOf(id: String): Boolean? = ptyBusy[id]
 
+    /** 运行期覆盖：true 表示这个会话正卡在权限/等待输入上，需要用户处理。 */
+    fun permissionBlockedOf(id: String): Boolean? = permissionBlocked[id]
+
     fun apply(
         id: String,
         title: String? = null,
         generating: Boolean? = null,
         ptyBusy: Boolean? = null,
+        permissionBlocked: Boolean? = null,
     ) {
         if (id.isEmpty()) return
         title?.let { value ->
@@ -50,12 +58,14 @@ object SessionTitleStore {
         }
         if (generating != null) this.generating[id] = generating
         if (ptyBusy != null) this.ptyBusy[id] = ptyBusy
+        if (permissionBlocked != null) this.permissionBlocked[id] = permissionBlocked
     }
 
     fun clear() {
         titles.clear()
         generating.clear()
         ptyBusy.clear()
+        permissionBlocked.clear()
     }
 }
 

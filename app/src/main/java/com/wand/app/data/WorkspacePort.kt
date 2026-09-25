@@ -100,6 +100,22 @@ interface WorkspacePort : TaskChangeSource {
     }
 
     /**
+     * DELETE /api/workspaces/:id —— 删除项目。
+     * [cascade] 为 true 时连同其会话一起删除；false 只解绑（会话退回未分组）。
+     */
+    suspend fun deleteWorkspace(workspaceId: String, cascade: Boolean) {
+        throw UnsupportedOperationException("删除项目接口不可用")
+    }
+
+    /**
+     * PUT /api/workspaces/order —— 保存首页目录组的展示顺序（拖动排序）。
+     * 传客户端看到的组 id 列表（真实工作区 id / 合成目录 `cwd:...`），服务端持久化。
+     */
+    suspend fun saveWorkspaceGroupOrder(ids: List<String>) {
+        throw UnsupportedOperationException("保存目录顺序接口不可用")
+    }
+
+    /**
      * PUT /api/session-directories/name —— 重命名没有项目实体的合成目录。
      * [name] 为空时恢复目录名。
      */

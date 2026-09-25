@@ -816,6 +816,8 @@ private fun WideReadyContent(
                                 onOpenSettings = onOpenSettings,
                                 onSwitchServer = actions.navigation.switchServer,
                                 onCollapseSidebar = onToggleSidebarCollapsed,
+                                // 宽屏时这里是侧栏：主操作留在主区，侧栏底部不再塞一条输入条。
+                                showComposer = false,
                             )
                         }
                     }

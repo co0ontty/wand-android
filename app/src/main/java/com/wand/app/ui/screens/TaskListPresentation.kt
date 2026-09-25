@@ -16,6 +16,10 @@ enum class HomeListMode(val storageValue: String) {
     val label: String
         get() = if (this == Tasks) "任务模式" else "会话模式"
 
+    /** 分段控件上的短标签：控件本身已经表达了「模式」，标题里再重复一遍只是占宽度。 */
+    val segmentLabel: String
+        get() = if (this == Tasks) "任务" else "会话"
+
     val next: HomeListMode
         get() = if (this == Tasks) Sessions else Tasks
 
@@ -27,7 +31,12 @@ enum class HomeListMode(val storageValue: String) {
     }
 }
 
-/** 目录顺序以 GET /api/tasks 返回为准。 */
+/**
+ * 目录顺序**完全**以 GET /api/tasks 返回为准（服务端已按用户拖动保存的顺序排好）。
+ *
+ * 这里曾经本地把「未归属」压到最后，那会覆盖用户的拖动结果——顺序现在只有一个真源，
+ * 客户端不再二次排序。
+ */
 internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> =
     groups.map { group ->
         // Presentation only: retain completed tasks in the board and session navigation.
@@ -36,7 +45,6 @@ internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDir
             tasks = group.tasks.filter { it.status != WorkspaceTaskStatus.Done },
         )
     }.filter { !it.isGlobal || it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
-        .sortedBy { it.isGlobal }
 
 /** 目录内任务顺序以 GET /api/tasks 返回为准。 */
 internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =

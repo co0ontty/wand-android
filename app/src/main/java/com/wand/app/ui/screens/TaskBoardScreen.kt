@@ -97,7 +97,9 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandCard
+import androidx.activity.compose.BackHandler
 import com.wand.app.ui.components.WandChoiceStrip
+import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandDialog
@@ -130,6 +132,13 @@ fun TaskBoardScreen(
     linkedWorkspaceId: String? = null,
     embedded: Boolean = false,
     refreshNonce: Int = 0,
+    /**
+     * 外部查询词：嵌在首页里时，搜索框由顶部搜索栏承担（[showSearchField] = false），
+     * 这里只接收结果，避免同一个屏幕出现两个搜索入口。
+     */
+    externalQuery: String? = null,
+    onExternalQueryChange: ((String) -> Unit)? = null,
+    showSearchField: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     var tasks by remember { mutableStateOf<List<BoardTask>>(emptyList()) }
@@ -137,7 +146,11 @@ fun TaskBoardScreen(
     var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
-    var query by remember { mutableStateOf("") }
+    var internalQuery by remember { mutableStateOf("") }
+    val query = externalQuery ?: internalQuery
+    val onQueryChange: (String) -> Unit = { value ->
+        if (externalQuery != null) onExternalQueryChange?.invoke(value) else internalQuery = value
+    }
     var filterWorkspaceId by remember { mutableStateOf(linkedWorkspaceId.orEmpty()) }
     var statusFilter by remember { mutableStateOf("") }
     var boardSwipeOpen by remember { mutableStateOf(false) }
@@ -282,10 +295,11 @@ fun TaskBoardScreen(
                     projectName = projectName,
                     workspaces = workspaces,
                     query = query,
+                    showSearch = showSearchField,
                     filterWorkspaceId = filterWorkspaceId,
                     statusFilter = statusFilter,
                     onSwipeOpenChange = { boardSwipeOpen = it },
-                    onQueryChange = { query = it },
+                    onQueryChange = onQueryChange,
                     onFilterWorkspace = { filterWorkspaceId = it },
                     onStatusFilter = { statusFilter = it },
                     onOpen = { task -> onOpenTaskDetail(task.id) },
@@ -390,6 +404,7 @@ private fun TaskBoardList(
     projectName: String,
     workspaces: List<Workspace>,
     query: String,
+    showSearch: Boolean = true,
     filterWorkspaceId: String,
     statusFilter: String,
     onQueryChange: (String) -> Unit,
@@ -410,6 +425,8 @@ private fun TaskBoardList(
     // 这份状态必须留在列表内部：手势每帧都会改它，上提到屏幕层会让整屏逐帧重组，卡片就直接拖不动了。
     // 只把「有没有张开」这个布尔量报上去，用来给右下角悬浮按钮让位。
     var swipedTaskId by remember { mutableStateOf<String?>(null) }
+    // 就地展开的任务：点卡片在当前页展开详情，其他卡片顺势下移，不跳详情页（规则 7）。
+    var expandedTaskId by remember { mutableStateOf<String?>(null) }
     fun setSwipedTaskId(id: String?) {
         swipedTaskId = id
         onSwipeOpenChange(id != null)
@@ -422,7 +439,12 @@ private fun TaskBoardList(
         if (listState.isScrollInProgress) setSwipedTaskId(null)
     }
     // 筛选条件变了就把划开状态收掉：被筛走的卡片会让悬浮按钮一直不复位。
-    LaunchedEffect(statusFilter, filterWorkspaceId, query) { setSwipedTaskId(null) }
+    LaunchedEffect(statusFilter, filterWorkspaceId, query) {
+        setSwipedTaskId(null)
+        expandedTaskId = null
+    }
+    // 展开的卡片先吃返回键：再按一次才轮到页面返回。
+    BackHandler(enabled = expandedTaskId != null) { expandedTaskId = null }
     val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
     val showWorkspace = filterWorkspaceId.isBlank()
     // 分组行、归档行与筛选结果三个分支渲染的是同一条任务卡，只保留这一处构造。
@@ -433,6 +455,10 @@ private fun TaskBoardList(
             revealed = swipedTaskId == task.id,
             onRevealedChange = { open -> setSwipedTaskId(if (open) task.id else null) },
             onOpen = { onOpen(task) },
+            expanded = expandedTaskId == task.id,
+            onToggleExpanded = {
+                expandedTaskId = if (expandedTaskId == task.id) null else task.id
+            },
             onToggleComplete = { onToggleComplete(task) },
             onOpenSession = onOpenSession,
             onSwipeAction = { action ->
@@ -454,6 +480,7 @@ private fun TaskBoardList(
                 stats = stats,
                 query = query,
                 onQueryChange = onQueryChange,
+                showSearch = showSearch,
             )
         }
         item(key = "filters") {
@@ -576,6 +603,7 @@ private fun TaskBoardHero(
     stats: BoardTaskStats,
     query: String,
     onQueryChange: (String) -> Unit,
+    showSearch: Boolean = true,
 ) {
     WandCard(
         containerColor = WandColors.successSoft,
@@ -596,7 +624,7 @@ private fun TaskBoardHero(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            BoardSearchCapsule(value = query, onValueChange = onQueryChange)
+            if (showSearch) BoardSearchCapsule(value = query, onValueChange = onQueryChange)
         }
         Row(
             modifier = Modifier.padding(top = 4.dp),
@@ -827,6 +855,8 @@ private fun BoardTaskItem(
     revealed: Boolean,
     onRevealedChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
     onToggleComplete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onSwipeAction: (BoardTaskSwipeAction) -> Unit,
@@ -843,6 +873,8 @@ private fun BoardTaskItem(
             task = task,
             showWorkspace = showWorkspace,
             onOpen = onOpen,
+            expanded = expanded,
+            onToggleExpanded = onToggleExpanded,
             onToggleComplete = onToggleComplete,
             onOpenSession = onOpenSession,
         )
@@ -869,13 +901,22 @@ private fun BoardTaskCard(
     task: BoardTask,
     showWorkspace: Boolean,
     onOpen: () -> Unit,
+    expanded: Boolean = false,
+    onToggleExpanded: () -> Unit = {},
     onToggleComplete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
 ) {
     val done = task.status == "done" || task.status == "archived"
     val model = boardTaskCardModel(task, showWorkspace)
+    // 展开态给全量内容：描述不再截两行、会话不再只留前三条、标签不再折成 +N。
+    val visibleSessions = if (expanded) {
+        boardTaskCardSessions(task.sessions, limit = Int.MAX_VALUE)
+    } else {
+        model.sessions
+    }
+    val extraSessionCount = (task.sessions.size - visibleSessions.size).coerceAtLeast(0)
     WandCard(
-        onClick = onOpen,
+        onClick = onToggleExpanded,
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(
@@ -917,7 +958,8 @@ private fun BoardTaskCard(
                 color = WandColors.textSecondary,
                 style = MaterialTheme.typography.bodySmall,
                 lineHeight = 18.sp,
-                maxLines = 2,
+                // 未展开时标题化的摘要只给两行；展开后完整读出来。
+                maxLines = if (expanded) Int.MAX_VALUE else 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 6.dp),
             )
@@ -974,12 +1016,13 @@ private fun BoardTaskCard(
                 }
             }
         }
-        if (model.sessions.isNotEmpty() || model.extraSessionCount > 0) {
+        if (visibleSessions.isNotEmpty() || extraSessionCount > 0) {
             BoardTaskSessions(
-                sessions = model.sessions,
-                extraCount = model.extraSessionCount,
+                sessions = visibleSessions,
+                extraCount = extraSessionCount,
                 onOpenSession = onOpenSession,
-                onOpenTask = onOpen,
+                // 「+N 个会话」不再跳页：点一下原地把剩下的会话摊开（规则 7）。
+                onOpenTask = onToggleExpanded,
             )
         }
         model.processingLabel?.let { label ->
@@ -988,6 +1031,36 @@ private fun BoardTaskCard(
                 running = model.running,
                 modifier = Modifier.padding(top = 10.dp),
             )
+        }
+        // 展开出来的收尾行：详情页仍是完整入口，但不再拦着「只想多看一眼」的人。
+        WandInlinePanel(visible = expanded, growFrom = Alignment.Top) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "打开完整任务页",
+                    color = WandColors.success,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .clip(BoardCardBlockShape)
+                        .clickable(onClick = onOpen)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "收起",
+                    color = WandColors.textMuted,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .clip(BoardCardBlockShape)
+                        .clickable(onClick = onToggleExpanded)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }

@@ -219,14 +219,15 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun legacyGlobalTasksUseNamedFallbackAfterRealDirectories() {
+    fun legacyGlobalTasksUseNamedFallbackAndKeepServerOrder() {
         val global = group().copy(workspaceId = "wand-global", workspaceName = "全局")
         val project = group()
+        // 顺序交给服务端（它按用户拖动保存的顺序返回），客户端不再把未归属压到最后。
         val visible = directoryTreeGroups(listOf(global, project))
-        assertEquals(listOf(project.workspaceId, global.workspaceId), visible.map { it.workspaceId })
-        assertEquals("未归属工作区", visible.last().workspaceName)
+        assertEquals(listOf(global.workspaceId, project.workspaceId), visible.map { it.workspaceId })
+        assertEquals("未归属工作区", visible.first().workspaceName)
         assertEquals("全局", global.workspaceName)
-        assertEquals(global.tasks, visible.last().tasks)
+        assertEquals(global.tasks, visible.first().tasks)
         assertTrue(directoryTreeGroups(listOf(global.copy(tasks = emptyList()))).isEmpty())
         val done = task().copy(task = task().task.copy(status = WorkspaceTaskStatus.Done))
         assertTrue(directoryTreeGroups(listOf(global.copy(tasks = listOf(done)))).isEmpty())
@@ -441,9 +442,10 @@ class TaskListPresentationTest {
         )
         val rail = collapsedRailDirectories(listOf(global, doneOnly, hiddenGlobal, alpha))
 
-        assertEquals(listOf("done-dir", "alpha", GLOBAL_WORKSPACE_ID), rail.map { it.group.workspaceId })
-        assertEquals("未归属工作区", rail.last().group.workspaceName)
-        assertTrue(rail.first().group.tasks.isEmpty())
+        // 窄栏顺序与首页一致：直接沿用服务端给的顺序，客户端不再单独重排。
+        assertEquals(listOf(GLOBAL_WORKSPACE_ID, "done-dir", "alpha"), rail.map { it.group.workspaceId })
+        assertEquals("未归属工作区", rail.first().group.workspaceName)
+        assertTrue(rail[1].group.tasks.isEmpty())
     }
 
     @Test

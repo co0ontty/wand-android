@@ -39,6 +39,8 @@ class TaskListState(
         private set
     var mutationError by mutableStateOf<String?>(null)
         private set
+    var orderSaveError by mutableStateOf<String?>(null)
+        private set
     var defaultCwd by mutableStateOf<String?>(null)
         private set
     var recentPaths by mutableStateOf<List<RecentPath>>(emptyList())
@@ -63,8 +65,16 @@ class TaskListState(
     }
     private val loadMutex = Mutex()
     private val mutationMutex = Mutex()
+    private val orderSaveMutex = Mutex()
     private val creationDefaultsMutex = Mutex()
     private var creationChoiceRevision = 0L
+    /**
+     * 拖动排序后、服务端确认前的本地顺序。
+     * 轮询可能比保存请求先回来，用它在中间这段时间压住服务端的旧顺序，避免卡片回弹。
+     */
+    private var pendingGroupOrder: List<String>? = null
+    private var dragStartOrder: List<String>? = null
+    private var dragPreviousPendingOrder: List<String>? = null
     private var syncing = false
     private var consumedNewTaskRequest = 0L
     private var groupsRevision: String? = null
@@ -186,7 +196,8 @@ class TaskListState(
                 loadError = null
                 return true
             }
-            if (groups != page.groups) groups = page.groups
+            val incoming = applyPendingGroupOrder(page.groups, pendingGroupOrder)
+            if (groups != incoming) groups = incoming
             groupsRevision = page.revision
             loadError = null
             true
@@ -362,6 +373,75 @@ class TaskListState(
         val deleted = port.deleteWorkspaceSessions(sessionIds)
         load(silent = true)
         deleted
+    }
+
+    /** 按下时记住原顺序；拖动过程中只改内存，松手后才发一次保存请求。 */
+    fun startDirectoryReorder() {
+        dragStartOrder = groupIdsInOrder(groups)
+        dragPreviousPendingOrder = pendingGroupOrder
+    }
+
+    fun moveDirectory(draggedId: String, targetId: String) {
+        if (dragStartOrder == null || draggedId == targetId || draggedId.isEmpty() || targetId.isEmpty()) return
+        val current = groups
+        val from = current.indexOfFirst { it.id == draggedId }
+        val to = current.indexOfFirst { it.id == targetId }
+        if (from < 0 || to < 0) return
+        val next = movedItem(current, from, to)
+        if (next == current) return
+        groups = next
+        pendingGroupOrder = groupIdsInOrder(next)
+    }
+
+    fun finishDirectoryReorder() {
+        val start = dragStartOrder ?: return
+        val previousPending = dragPreviousPendingOrder
+        dragStartOrder = null
+        dragPreviousPendingOrder = null
+        if (groupIdsInOrder(groups) != start) persistPendingGroupOrder()
+        else pendingGroupOrder = previousPending
+    }
+
+    fun cancelDirectoryReorder() {
+        dragStartOrder?.let { groups = applyPendingGroupOrder(groups, it) }
+        pendingGroupOrder = dragPreviousPendingOrder
+        dragStartOrder = null
+        dragPreviousPendingOrder = null
+    }
+
+    /** 保存串行化；多次拖动叠加时，先前响应不能抹掉后来还没保存的顺序。 */
+    private fun persistPendingGroupOrder() {
+        orderSaveError = null
+        scope.launch {
+            orderSaveMutex.withLock {
+                val order = pendingGroupOrder ?: return@withLock
+                try {
+                    port.saveWorkspaceGroupOrder(order)
+                    if (pendingGroupOrder == order) {
+                        pendingGroupOrder = null
+                        orderSaveError = null
+                    }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    if (pendingGroupOrder == order) {
+                        orderSaveError = error.message ?: "保存目录顺序失败，请重试或更新服务端"
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun deleteDirectory(group: TaskDirectoryGroup, cascade: Boolean): Boolean =
+        mutate("删除工作区失败") {
+            port.deleteWorkspace(group.workspaceId, cascade)
+            pendingGroupOrder = pendingGroupOrder?.filterNot { it == group.id }
+            load(silent = true)
+            true
+        } ?: false
+
+    /** 拖动保存失败后的重试：把当前本地顺序再提交一次。 */
+    fun retrySaveGroupOrder() {
+        if (pendingGroupOrder != null) persistPendingGroupOrder()
     }
 
     suspend fun refreshAfterMutation(): Boolean = load(silent = true)

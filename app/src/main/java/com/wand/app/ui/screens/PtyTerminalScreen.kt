@@ -103,6 +103,13 @@ import com.wand.app.ui.sessionTopicBlocklist
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
+import androidx.activity.compose.BackHandler
+import com.wand.app.ui.SEND_FAILED_DWELL_MS
+import com.wand.app.ui.SEND_SENT_DWELL_MS
+import com.wand.app.ui.SendActionVisual
+import com.wand.app.ui.SendPhase
+import com.wand.app.ui.sendActionVisual
+import com.wand.app.ui.components.WandInlinePanelAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandSnackbarHost
 import com.wand.app.ui.components.showWandNotice
@@ -292,10 +299,24 @@ fun PtyTerminalScreen(
         if (toast == message) toast = null
     }
 
+    // 提交反馈（规则 3）：PTY 没有服务端 ack，用本地发送协程的完成作为「已送达」。
+    var sendPhase by remember { mutableStateOf(SendPhase.Idle) }
+    var sendPhaseJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    fun dwellSendPhase(phase: SendPhase, dwellMs: Long) {
+        sendPhaseJob?.cancel()
+        sendPhase = phase
+        sendPhaseJob = scope.launch {
+            delay(dwellMs)
+            sendPhase = SendPhase.Idle
+        }
+    }
+
     fun sendPtyDraft() {
         val body = draft.trim()
         val attachments = pendingAttachments
         if (body.isEmpty() && attachments.isEmpty()) return
+        sendPhaseJob?.cancel()
+        sendPhase = SendPhase.Sending
         val text = buildAttachmentPrompt(attachments, body).trim()
         val restore = draft
         draft = ""
@@ -320,7 +341,9 @@ fun PtyTerminalScreen(
                         error("终端未就绪，输入未发送；请检查连接后重试")
                     }
                 }
+                dwellSendPhase(SendPhase.Sent, SEND_SENT_DWELL_MS)
             } catch (error: Exception) {
+                dwellSendPhase(SendPhase.Failed, SEND_FAILED_DWELL_MS)
                 toast = error.message ?: "终端命令发送失败"
                 if (draft.isEmpty()) {
                     draft = restore
@@ -393,6 +416,7 @@ fun PtyTerminalScreen(
                 },
                 draft = draft,
                 onDraftChange = { draft = it },
+                sendPhase = sendPhase,
                 onSend = { sendPtyDraft() },
                 uploadingAttachments = uploadingAttachments,
                 pendingAttachments = pendingAttachments,
@@ -568,6 +592,7 @@ private fun PtyBottomBar(
     onToggleKeyboard: () -> Unit,
     onToggleInputDrawer: () -> Unit,
     draft: String,
+    sendPhase: SendPhase,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     uploadingAttachments: Boolean,
@@ -585,6 +610,9 @@ private fun PtyBottomBar(
 ) {
     val haptic = LocalHapticFeedback.current
     val shortcutScroll = rememberScrollState()
+    // ＋ 展开的附件动作行（规则 2）：与聊天输入栏同一套组件与手感。
+    var attachOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = attachOpen) { attachOpen = false }
     Column(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -626,6 +654,9 @@ private fun PtyBottomBar(
                         onPickFile = onPickFile,
                         voice = voice,
                         onMicDown = onMicDown,
+                        attachOpen = attachOpen,
+                        onAttachOpenChange = { attachOpen = it },
+                        sendPhase = sendPhase,
                     )
                 }
             }
@@ -944,6 +975,9 @@ private fun PtyInputDrawer(
     onPickFile: () -> Unit,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
+    attachOpen: Boolean,
+    onAttachOpenChange: (Boolean) -> Unit,
+    sendPhase: SendPhase,
 ) {
     val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
     val focusRequester = remember { FocusRequester() }
@@ -957,30 +991,62 @@ private fun PtyInputDrawer(
         ComposerActionsMenu(
             backdrop = null,
             uploading = uploading,
-            onPickPhoto = onPickPhoto,
-            onPickFile = onPickFile,
+            attachOpen = attachOpen,
+            onAttachOpenChange = onAttachOpenChange,
         )
     }
+    // ＋ 就地展开的附件动作行（规则 2）：PTY 输入栏与聊天输入栏共用同一套。
+    val attachPanel: @Composable () -> Unit = {
+        WandInlinePanelAction(
+            icon = WandIcons.image,
+            label = "从相册选择",
+            onClick = {
+                onAttachOpenChange(false)
+                onPickPhoto()
+            },
+        )
+        WandInlinePanelAction(
+            icon = WandIcons.attach,
+            label = "从文件选择",
+            onClick = {
+                onAttachOpenChange(false)
+                onPickFile()
+            },
+        )
+    }
+    // 与聊天输入栏共用同一枚提交按钮：原地走 发送中 → 已送达 / 失败（规则 3）。
+    val visual = sendActionVisual(phase = sendPhase, turnRunning = false, hasDraft = canSend)
     val sendButton: @Composable () -> Unit = {
-        FilledComposerAction(
-            enabled = canSend,
-            fillColor = if (canSend) WandColors.brand else WandColors.textSecondary.copy(alpha = 0.16f),
-            contentDescription = "发送",
+        SubmitMorphButton(
+            visual = visual,
+            contentDescription = when (visual) {
+                SendActionVisual.Sending -> "发送中"
+                SendActionVisual.Sent -> "已发送"
+                SendActionVisual.Failed -> "发送失败，可重试"
+                SendActionVisual.Blocked -> "当前没有可发送内容"
+                else -> "发送"
+            },
             onClick = onSend,
-        ) {
-            Icon(
-                WandIcons.arrowUp,
-                contentDescription = null,
-                tint = if (canSend) WandColors.textPrimary else WandColors.textSecondary.copy(alpha = 0.55f),
-                modifier = Modifier.size(ComposerActionIconSize),
-            )
-        }
+            enabled = visual == SendActionVisual.Send,
+            fillColor = when (visual) {
+                SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
+                SendActionVisual.Failed -> WandColors.dangerSoft
+                else -> WandColors.textSecondary.copy(alpha = 0.16f)
+            },
+            contentTint = when (visual) {
+                SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> Color.White
+                SendActionVisual.Failed -> WandColors.danger
+                else -> WandColors.textMuted.copy(alpha = 0.45f)
+            },
+        )
     }
     NativeComposerSurface(
         backdrop = null,
         expanded = expanded,
         drawSurface = false,
         modifier = Modifier.padding(start = 4.dp, end = 2.dp, top = 4.dp, bottom = 2.dp),
+        panelVisible = attachOpen,
+        panelContent = { attachPanel() },
         collapsedLeading = { plusMenu() },
         inputContent = {
             Column(

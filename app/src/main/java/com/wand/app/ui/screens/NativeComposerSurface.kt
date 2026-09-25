@@ -29,6 +29,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
@@ -53,6 +54,9 @@ fun NativeComposerSurface(
     inputContent: @Composable RowScope.() -> Unit,
     collapsedTrailing: @Composable RowScope.() -> Unit = {},
     expandedControls: @Composable RowScope.(controlsCompact: Boolean) -> Unit = {},
+    /** 就地展开的工具面板（＋ 展开的相册/文件行）：从输入行上方长出来、收回时缩回去。 */
+    panelVisible: Boolean = false,
+    panelContent: @Composable RowScope.() -> Unit = {},
 ) {
     // 输入底栏只保留低对比度玻璃底，不再叠加聚焦描边和宽外边距。
     val composerShape = WandShapes.lg
@@ -89,6 +93,16 @@ fun NativeComposerSurface(
             modifier = surfaceModifier,
             verticalArrangement = Arrangement.spacedBy(if (expanded) 6.dp else 0.dp),
         ) {
+            // 面板在输入行**上方**：输入行位置不动，面板从它上方长出来、原路缩回去，
+            // 视觉上就是「加号原地展开」，符合动效规范规则 2。
+            WandInlinePanel(visible = panelVisible, growFrom = Alignment.Bottom) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    content = panelContent,
+                )
+            }
             Row(
                 verticalAlignment = if (expanded) Alignment.Bottom else Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),

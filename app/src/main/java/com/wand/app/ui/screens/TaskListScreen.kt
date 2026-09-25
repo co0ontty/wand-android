@@ -1,26 +1,23 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -28,13 +25,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,18 +46,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.wand.app.data.DirectoryListing
-import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
@@ -74,28 +61,25 @@ import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.raw
-import com.wand.app.data.activityStatus
-import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.ui.withLiveTitle
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
-import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
-import com.wand.app.ui.components.WandIconButton
-import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.rememberWandDragReorderState
+import com.wand.app.ui.components.wandLongPressDrag
+import com.wand.app.ui.components.itemLiftModifier
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
-import com.wand.app.ui.theme.wandSelectedRow
 import kotlinx.coroutines.launch
 
 /** Stable route information carried from the task tree into a session detail screen. */
@@ -140,6 +124,7 @@ fun TaskListScreen(
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
+    showComposer: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     var newTaskOpen by remember { mutableStateOf(false) }
@@ -151,6 +136,7 @@ fun TaskListScreen(
     var newTaskName by remember { mutableStateOf("") }
     var newTaskTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
+    var composerDraft by remember { mutableStateOf("") }
     var newTaskDraftRevision by remember { mutableLongStateOf(0L) }
     var targetDraftRevision by remember { mutableLongStateOf(0L) }
     var directoryPickerOpen by remember { mutableStateOf(false) }
@@ -177,14 +163,34 @@ fun TaskListScreen(
     var selectedSessionIds by remember { mutableStateOf(setOf<String>()) }
     var confirmManagedAction by remember { mutableStateOf(false) }
     var reviewTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
+    var deleteDirectoryTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
+    val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val dragState = rememberWandDragReorderState()
     val targetSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    val visibleGroups = directoryTreeGroups(state.groups)
+    val reduceMotion = reduceMotionEnabled()
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    val allGroups = directoryTreeGroups(state.groups)
+    var attentionOnly by remember { mutableStateOf(false) }
+    // 过滤顺序：先按查询词收窄，再按「只看等你」收窄。
+    val searchedGroups = homeSearchGroups(allGroups, searchQuery)
+    val visibleGroups = if (attentionOnly) attentionOnlyGroups(searchedGroups) else searchedGroups
+    val searching = searchQuery.isNotBlank()
+    val overview = homeOverview(allGroups)
     val showingBoard = homeListMode == HomeListMode.Tasks
+    // 首页的时间是「几分钟前」这种相对说法，30 秒推一次就够，不必每秒重排整页。
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(30_000)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
     val managedSelection = SidebarManageSelection(selectedTaskIds, selectedSessionIds)
     val resolvedManagedAction = resolveManagedAction(managedSelection, visibleGroups)
     val hasVisibleContent = visibleGroups.isNotEmpty()
-    val directoryGroupCount = visibleGroups.size
+    val hasAnyContent = allGroups.isNotEmpty()
     var boardRefreshNonce by remember { mutableStateOf(0) }
 
     fun normalizedPath(value: String): String = value.trim().replace(Regex("/+$"), "").ifEmpty { "/" }
@@ -203,13 +209,17 @@ fun TaskListScreen(
         state.clearMutationError()
     }
 
-    fun beginNewTask(initialCwd: String? = null, workspaceId: String? = null) {
+    fun beginNewTask(
+        initialCwd: String? = null,
+        workspaceId: String? = null,
+        initialPrompt: String = "",
+    ) {
         if (!interactionEnabled) return
         state.clearMutationError()
         taskCwdDraft = initialCwd.orEmpty()
         newTaskWorkspaceId = workspaceId
         startFirstSession = true
-        newTaskPrompt = ""
+        newTaskPrompt = initialPrompt
         newTaskWorktree = false
         newTaskName = ""
         newTaskTarget = WorkspaceSessionTarget.Claude
@@ -269,6 +279,11 @@ fun TaskListScreen(
         return normalized.substringBeforeLast('/').ifEmpty { "/" }
     }
 
+    // 展开组件必须有自己的关闭路径：搜索展开时按返回键先收搜索，而不是退出页面。
+    BackHandler(enabled = searchOpen) {
+        searchOpen = false
+        searchQuery = ""
+    }
     LaunchedEffect(state.newTaskRequest) {
         if (state.consumeNewTaskRequest()) beginNewTask()
     }
@@ -845,6 +860,48 @@ fun TaskListScreen(
         }
     }
 
+    deleteDirectoryTarget?.let { group ->
+        WandDialog(
+            title = "删除工作区「${group.workspaceName}」？",
+            onDismissRequest = { if (!state.mutationBusy) deleteDirectoryTarget = null },
+            icon = WandIcons.delete,
+            confirm = WandDialogAction(
+                label = if (state.mutationBusy) "删除中…" else "删除工作区及其中会话",
+                destructive = true,
+                enabled = !state.mutationBusy,
+                onClick = {
+                    scope.launch {
+                        if (state.deleteDirectory(group, cascade = true)) deleteDirectoryTarget = null
+                    }
+                },
+            ),
+            dismiss = WandDialogAction("取消", onClick = { deleteDirectoryTarget = null }),
+        ) {
+            Text(
+                "「${group.workspaceName}」下的任务、会话和独立 worktree 会一起删除，此操作无法撤销。" +
+                    if (group.tasks.any { it.worktree != null }) {
+                        "选择仅移除时会保留普通会话，但独立 Worktree 中的会话也会结束并删除。"
+                    } else {
+                        "只想移除工作区、保留会话，请选择下面的「仅移除工作区」。"
+                    },
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        if (state.deleteDirectory(group, cascade = false)) deleteDirectoryTarget = null
+                    }
+                },
+                enabled = !state.mutationBusy,
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
+                Text(if (group.tasks.any { it.worktree != null }) "仅移除（保留普通会话）" else "仅移除工作区（保留会话）")
+            }
+            MutationErrorText(state.mutationError)
+        }
+    }
+
     reviewTarget?.let { group ->
         WorkspaceWorktreeReviewSheet(
             workspace = group.asWorkspace(),
@@ -929,21 +986,30 @@ fun TaskListScreen(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AmbientBackground(Modifier.fillMaxSize())
             Column(Modifier.fillMaxSize()) {
-                HomeOverviewCard(
+                HomeTopBar(
                     serverDisplayName = serverDisplayName,
-                    homeListMode = homeListMode,
-                    onToggleHomeListMode = {
+                    interactionEnabled = interactionEnabled,
+                    // 窄屏主操作的入口在底部启动条；这里只在没有启动条时（宽屏侧栏）兜底。
+                    showNewTask = !showingBoard && !showComposer,
+                    searchOpen = searchOpen,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    onSearchToggle = {
+                        // 就地展开 / 收起：收起时顺手清掉查询词，避免留下一个看不见的过滤条件。
+                        if (searchOpen) {
+                            searchOpen = false
+                            searchQuery = ""
+                        } else {
+                            searchOpen = true
+                        }
                         selecting = false
                         selectedTaskIds = emptySet()
                         selectedSessionIds = emptySet()
-                        onHomeListModeChange(homeListMode.next)
                     },
                     onNewTask = { beginNewTask() },
-                    showNewTask = !showingBoard,
-                    interactionEnabled = interactionEnabled,
                     onRefresh = {
                         if (showingBoard) {
                             boardRefreshNonce += 1
@@ -955,9 +1021,12 @@ fun TaskListScreen(
                     },
                     onOpenSettings = onOpenSettings,
                     onSwitchServer = onSwitchServer,
-                    onOpenTaskBoard = { onHomeListModeChange(HomeListMode.Tasks) },
+                    onOpenTaskBoard = {
+                        onHomeListModeChange(HomeListMode.Tasks)
+                        attentionOnly = false
+                    },
                     onCollapseSidebar = onCollapseSidebar,
-                    onStartSelection = if (!showingBoard && hasVisibleContent) {
+                    onStartSelection = if (!showingBoard && hasAnyContent) {
                         {
                             selecting = true
                             selectedTaskIds = emptySet()
@@ -967,8 +1036,47 @@ fun TaskListScreen(
                         null
                     },
                 )
-                if (showingBoard) {
-                    Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                HomeModeTabs(
+                    mode = homeListMode,
+                    enabled = interactionEnabled,
+                    onChange = { mode ->
+                        selecting = false
+                        selectedTaskIds = emptySet()
+                        selectedSessionIds = emptySet()
+                        if (mode == HomeListMode.Sessions) attentionOnly = false
+                        onHomeListModeChange(mode)
+                    },
+                )
+                if (!showingBoard && (selecting || !attentionOnly)) {
+                    HomeActivityStrip(
+                        overview = overview,
+                        attentionOnly = attentionOnly,
+                        enabled = interactionEnabled,
+                        onToggleAttention = {
+                            attentionOnly = !attentionOnly
+                            selecting = false
+                            selectedTaskIds = emptySet()
+                            selectedSessionIds = emptySet()
+                        },
+                    )
+                }
+                // 会话 ↔ 任务 是同一张列表的两种视图，切换时交叉淡入淡出，
+                // 不做整屏硬切、也不重新入场（对齐「列表切换不闪跳」）。
+                AnimatedContent(
+                    targetState = showingBoard,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    transitionSpec = {
+                        if (!reduceMotion) {
+                            // 退场比进场快：两层内容不会同时全亮。
+                            fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
+                        } else {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        }
+                    },
+                    label = "homeListSwitch",
+                ) { boardVisible ->
+                if (boardVisible) {
+                    Box(modifier = Modifier.fillMaxSize()) {
                         TaskBoardScreen(
                             api = boardApi,
                             onOpenBoundSession = onOpenSession,
@@ -977,25 +1085,43 @@ fun TaskListScreen(
                             onOpenTaskDetail = onOpenBoardTaskDetail,
                             embedded = true,
                             refreshNonce = boardRefreshNonce,
+                            // 查询词由顶部搜索接管：同一个输入框在两个列表之间通用。
+                            externalQuery = searchQuery,
+                            onExternalQueryChange = { searchQuery = it },
+                            showSearchField = false,
                         )
                     }
                 } else when {
-                    state.loading && !hasVisibleContent -> LoadingState(
-                        modifier = Modifier.weight(1f),
+                    state.loading && !hasAnyContent -> LoadingState(
+                        modifier = Modifier.fillMaxSize(),
                         text = "正在加载任务…",
                     )
-                    state.loadError != null && !hasVisibleContent -> ErrorState(
-                        modifier = Modifier.weight(1f),
+                    state.loadError != null && !hasAnyContent -> ErrorState(
+                        modifier = Modifier.fillMaxSize(),
                         message = state.loadError ?: "无法加载任务列表",
                         onRetry = { scope.launch { state.load() } },
                     )
-                    !hasVisibleContent -> EmptyState(
-                        modifier = Modifier.weight(1f),
-                        icon = WandIcons.todo,
-                        title = "还没有任务",
-                        subtitle = "新建一个任务分组，再在其中添加 CLI 会话。",
+                    !hasAnyContent -> EmptyState(
+                        modifier = Modifier.fillMaxSize(),
+                        icon = WandIcons.sparkle,
+                        title = if (searching) "没有匹配的工作区" else "开始第一个任务",
+                        subtitle = if (searching) {
+                            "换个词试试，或者关掉搜索看全部。"
+                        } else {
+                            "在底部写一句想做的事，或者用 ＋ 打开完整的新建面板。"
+                        },
                     )
-                    else -> {
+                    !hasVisibleContent -> EmptyState(
+                        modifier = Modifier.fillMaxSize(),
+                        icon = WandIcons.check,
+                        title = if (searching) "没有匹配的会话" else "没有需要处理的会话",
+                        subtitle = if (searching) {
+                            "换个词试试，或者关掉搜索看全部。"
+                        } else {
+                            "所有 Agent 都在自己跑，不用你插手。"
+                        },
+                    )
+                    else -> Column(modifier = Modifier.fillMaxSize()) {
                         if (selecting) {
                             Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
                             SidebarManageBar(
@@ -1029,8 +1155,18 @@ fun TaskListScreen(
                             )
                             }
                         }
+                        (state.loadError ?: state.orderSaveError)?.let { message ->
+                            InlineError(
+                                message = message,
+                                onRetry = {
+                                    if (state.loadError != null) scope.launch { state.load() }
+                                    else state.retrySaveGroupOrder()
+                                },
+                            )
+                        }
                         LazyColumn(
                             modifier = Modifier.weight(1f),
+                            state = homeListState,
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                 start = 14.dp,
                                 end = 14.dp,
@@ -1039,18 +1175,36 @@ fun TaskListScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                    state.loadError?.let { message ->
-                        item(key = "task-load-error") {
-                            InlineError(message = message, onRetry = { scope.launch { state.load() } })
-                        }
-                    }
-                    items(visibleGroups, key = { "group-${it.id}" }) { group ->
-                        TaskDirectorySection(
+                    val canReorder = !selecting && !searching && !attentionOnly && visibleGroups.size > 1
+                    itemsIndexed(visibleGroups, key = { _, group -> group.id }) { _, group ->
+                        HomeWorkspaceCard(
                             group = group,
-                            directoryCount = directoryGroupCount,
-                            groupCollapsed = state.isDirectoryCollapsed(group.id),
+                            modifier = dragState.itemLiftModifier(group.id)
+                                .then(if (reduceMotion) Modifier else Modifier.animateItem()),
+                            headerDragModifier = Modifier.wandLongPressDrag(
+                                state = dragState,
+                                itemKey = group.id,
+                                listState = homeListState,
+                                enabled = canReorder,
+                                onDragStarted = state::startDirectoryReorder,
+                                onDragFinished = state::finishDirectoryReorder,
+                                onDragCancelled = state::cancelDirectoryReorder,
+                                onMove = { fromKey, toKey ->
+                                    state.moveDirectory(
+                                        fromKey as? String ?: "",
+                                        toKey as? String ?: "",
+                                    )
+                                },
+                            ),
+                            // 搜索中一律展开：命中的会话如果藏在折叠节点里，看起来就像搜不到。
+                            expanded = searching || isDirectoryExpanded(
+                                userCollapsed = state.isDirectoryCollapsed(group.id),
+                                directoryCount = visibleGroups.size,
+                            ),
+                            forceExpandTasks = searching,
+                            standaloneCollapsed = !searching && state.isStandaloneCollapsed(group.id),
                             taskCollapsed = state::isTaskCollapsed,
-                            standaloneCollapsed = state.isStandaloneCollapsed(group.id),
+                            nowMillis = nowMillis,
                             selectedTaskId = selectedTaskId,
                             selectedSessionId = selectedSessionId,
                             selecting = selecting,
@@ -1121,195 +1275,31 @@ fun TaskListScreen(
                                 deleteSessionTarget = session
                                 state.clearMutationError()
                             },
+                            onDeleteDirectory = {
+                                deleteDirectoryTarget = group
+                                state.clearMutationError()
+                            },
                             onReview = { reviewTarget = group },
                         )
                     }
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeOverviewCard(
-    serverDisplayName: String,
-    homeListMode: HomeListMode,
-    onToggleHomeListMode: () -> Unit,
-    onNewTask: () -> Unit,
-    interactionEnabled: Boolean,
-    showNewTask: Boolean = true,
-    onRefresh: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onSwitchServer: () -> Unit,
-    onOpenTaskBoard: () -> Unit = {},
-    onCollapseSidebar: (() -> Unit)?,
-    onStartSelection: (() -> Unit)? = null,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                serverDisplayName.ifBlank { "当前服务器" },
-                style = MaterialTheme.typography.titleSmall,
-                color = WandColors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Spacer(Modifier.width(8.dp))
-            HomeListModeChip(
-                mode = homeListMode,
-                enabled = interactionEnabled,
-                onClick = onToggleHomeListMode,
-            )
-            Spacer(Modifier.weight(1f))
-        }
-        if (onCollapseSidebar != null) {
-            WandIconButton(
-                icon = WandIcons.panelCollapse,
-                contentDescription = "收起任务侧边栏",
-                onClick = onCollapseSidebar,
-                variant = WandIconButtonVariant.Toolbar,
-            )
-        }
-        if (showNewTask) {
-            WandIconButton(
-                icon = WandIcons.add,
-                contentDescription = "新建任务",
-                onClick = onNewTask,
-                enabled = interactionEnabled,
-                variant = WandIconButtonVariant.Accent,
-            )
-        }
-        Box {
-            WandIconButton(
-                icon = WandIcons.more,
-                contentDescription = "更多选项",
-                onClick = { menuOpen = true },
-                variant = WandIconButtonVariant.Toolbar,
-            )
-                DropdownMenu(
-                    expanded = menuOpen,
-                    onDismissRequest = { menuOpen = false },
-                    containerColor = WandColors.bgElevated,
-                ) {
-                    if (onStartSelection != null) {
-                        DropdownMenuItem(
-                            text = { Text("选择多项") },
-                            leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                            onClick = { menuOpen = false; onStartSelection() },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(if (homeListMode == HomeListMode.Tasks) "刷新任务" else "刷新会话") },
-                        leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
-                        onClick = { menuOpen = false; onRefresh() },
-                    )
-                    if (homeListMode != HomeListMode.Tasks) {
-                        DropdownMenuItem(
-                            text = { Text("任务管理") },
-                            leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                            onClick = { menuOpen = false; onOpenTaskBoard() },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("设置") },
-                        leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
-                        onClick = { menuOpen = false; onOpenSettings() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("切换服务器") },
-                        leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
-                        onClick = { menuOpen = false; onSwitchServer() },
-                    )
                 }
-        }
-    }
-}
-
-@Composable
-private fun HomeListModeChip(
-    mode: HomeListMode,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val next = mode.next
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(
-                enabled = enabled,
-                role = Role.Button,
-                onClick = onClick,
-            )
-            .semantics {
-                contentDescription = "当前${mode.label}，点按切换到${next.label}"
             }
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            mode.label,
-            style = MaterialTheme.typography.labelMedium,
-            color = WandColors.brand,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
-        Icon(
-            WandIcons.expand,
-            contentDescription = null,
-            tint = WandColors.brand,
-            modifier = Modifier.size(14.dp),
-        )
-    }
-}
-
-@Composable
-private fun ManageCheck(checked: Boolean) {
-    // 多选模式下的勾选框：底与描边跟着选中过渡，避免快速多选时整列硬闪。
-    val motionEnabled = !reduceMotionEnabled()
-    val fill by animateColorAsState(
-        targetValue = if (checked) WandColors.brand else WandColors.surfaceSoft,
-        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
-        label = "manageCheckFill",
-    )
-    val stroke by animateColorAsState(
-        targetValue = if (checked) WandColors.brand else WandColors.border.copy(alpha = 0.7f),
-        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
-        label = "manageCheckStroke",
-    )
-    Box(
-        modifier = Modifier
-            .padding(end = 8.dp)
-            .size(18.dp)
-            .clip(RoundedCornerShape(5.dp))
-            .background(fill)
-            .border(
-                width = 1.dp,
-                color = stroke,
-                shape = RoundedCornerShape(5.dp),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (checked) {
-            Icon(
-                WandIcons.statusDone,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(12.dp),
+        }
+        // 多选是管理态，底部启动条先让位，避免和批量操作抢注意力。
+        if (!showingBoard && showComposer && !selecting) {
+            HomeComposerBar(
+                value = composerDraft,
+                onValueChange = { composerDraft = it },
+                enabled = interactionEnabled,
+                onSubmit = { prompt ->
+                    // 提示词带进现有的新建任务面板：目录 / provider 这些真实选择仍在面板里确认。
+                    composerDraft = ""
+                    beginNewTask(initialPrompt = prompt)
+                },
+                onOpenFullDialog = { beginNewTask() },
             )
         }
     }
@@ -1362,613 +1352,6 @@ private fun SidebarManageBar(
                 Text("完成")
             }
         }
-    }
-}
-
-@Composable
-private fun TaskDirectorySection(
-    group: TaskDirectoryGroup,
-    directoryCount: Int,
-    groupCollapsed: Boolean,
-    taskCollapsed: (String) -> Boolean,
-    standaloneCollapsed: Boolean,
-    selectedTaskId: String?,
-    selectedSessionId: String?,
-    selecting: Boolean = false,
-    selectedTaskIds: Set<String> = emptySet(),
-    selectedSessionIds: Set<String> = emptySet(),
-    onToggleManagedTask: (String) -> Unit = {},
-    onToggleManagedSession: (String) -> Unit = {},
-    onEnterSelection: (taskId: String?, sessionId: String?) -> Unit = { _, _ -> },
-    onToggleGroup: () -> Unit,
-    onToggleTask: (String) -> Unit,
-    onToggleStandalone: () -> Unit,
-    onOpenTask: (WorkspaceTaskSummary) -> Unit,
-    onOpenSession: (WorkspaceSessionSummary, WorkspaceTaskSummary?) -> Unit,
-    onMoveSession: (WorkspaceSessionSummary) -> Unit,
-    onNewTask: () -> Unit,
-    onRenameDirectory: () -> Unit,
-    onNewWindow: (WorkspaceTaskSummary) -> Unit,
-    onRename: (WorkspaceTaskSummary) -> Unit,
-    onClear: (WorkspaceTaskSummary) -> Unit,
-    onArchive: (WorkspaceTaskSummary) -> Unit,
-    onDelete: (WorkspaceTaskSummary) -> Unit,
-    onDeleteSession: (WorkspaceSessionSummary) -> Unit,
-    onReview: () -> Unit,
-) {
-    val canCollapseDirectory = showsDirectoryDisclosure(directoryCount)
-    val groupExpanded = isDirectoryExpanded(groupCollapsed, directoryCount)
-    val reduceMotion = reduceMotionEnabled()
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(
-                    if (canCollapseDirectory) Modifier.clickable(onClick = onToggleGroup) else Modifier,
-                )
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(WandColors.brandSoft),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    WandIcons.folder,
-                    contentDescription = null,
-                    tint = WandColors.brand,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            Spacer(modifier = Modifier.size(9.dp))
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 8.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        group.workspaceName.ifEmpty { "任务目录" },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = WandColors.textPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    if (groupHasLiveActivity(group)) {
-                        StatusDot("running", modifier = Modifier.padding(start = 7.dp).size(7.dp))
-                    }
-                }
-                if (group.isGlobal) {
-                    Text("可在任务看板选择工作区", style = MaterialTheme.typography.labelSmall,
-                        color = WandColors.textMuted)
-                }
-            }
-            if (canCollapseDirectory) {
-                TreeDisclosureCaret(
-                    expanded = groupExpanded,
-                    contentDescription = if (groupExpanded) "收起目录" else "展开目录",
-                    onClick = onToggleGroup,
-                )
-            }
-            if (group.tasks.any { it.worktree != null }) {
-                WandIconButton(
-                    icon = WandIcons.commit,
-                    contentDescription = "审查 Worktree",
-                    onClick = onReview,
-                    variant = WandIconButtonVariant.Compact,
-                )
-            }
-            if (group.workspaceId != GLOBAL_WORKSPACE_ID) {
-                WandIconButton(
-                    icon = WandIcons.rename,
-                    contentDescription = "重命名目录 ${group.workspaceName}",
-                    onClick = onRenameDirectory,
-                    variant = WandIconButtonVariant.Compact,
-                )
-            }
-            if (!group.isGlobal) Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onNewTask),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(WandColors.brandSoft),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        WandIcons.add,
-                        contentDescription = "在 ${group.workspaceName} 新建任务",
-                        tint = WandColors.brand,
-                        modifier = Modifier.size(13.dp),
-                    )
-                }
-            }
-        }
-        AnimatedVisibility(
-            visible = groupExpanded,
-            enter = if (reduceMotion) {
-                EnterTransition.None
-            } else {
-                expandVertically(
-                    animationSpec = WandMotion.tweenEnter(),
-                    expandFrom = Alignment.Top,
-                ) + fadeIn(WandMotion.tweenEnter())
-            },
-            exit = if (reduceMotion) {
-                ExitTransition.None
-            } else {
-                shrinkVertically(
-                    animationSpec = WandMotion.tweenExit(),
-                    shrinkTowards = Alignment.Top,
-                ) + fadeOut(WandMotion.tweenExit())
-            },
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(start = 25.dp, end = 2.dp, top = 1.dp, bottom = 4.dp)
-                    .fillMaxWidth(),
-            ) {
-                orderedTaskSummaries(group.tasks).forEach { task ->
-                    TaskAggregateRow(
-                        task = task,
-                        parentNames = listOf(group.workspaceName),
-                        expanded = isTaskSessionsExpanded(
-                            userCollapsed = taskCollapsed(task.id),
-                            sessionCount = task.totalSessions,
-                        ),
-                        selected = isTaskRowSelected(
-                            taskId = task.id,
-                            visibleSessionIds = task.sessions.map { it.id },
-                            selectedTaskId = selectedTaskId,
-                            selectedSessionId = selectedSessionId,
-                        ),
-                        selectedSessionId = selectedSessionId,
-                        selecting = selecting,
-                        managedSelected = task.id in selectedTaskIds,
-                        selectedSessionIds = selectedSessionIds,
-                        onToggleManaged = { onToggleManagedTask(task.id) },
-                        onToggleManagedSession = onToggleManagedSession,
-                        onEnterSelection = { onEnterSelection(task.id, null) },
-                        onToggle = { onToggleTask(task.id) },
-                        onOpen = { onOpenTask(task) },
-                        onOpenSession = { onOpenSession(it, task) },
-                        onNewWindow = { onNewWindow(task) },
-                        onRename = { onRename(task) },
-                        onClear = { onClear(task) },
-                        onArchive = { onArchive(task) },
-                        onDelete = { onDelete(task) },
-                        onDeleteSession = onDeleteSession,
-                        onMoveSession = onMoveSession,
-                    )
-                }
-                if (group.tasks.isEmpty() && group.standaloneSessions.isEmpty()) {
-                    Text(
-                        "这个目录还没有任务或终端。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = WandColors.textMuted,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                    )
-                }
-                if (group.standaloneSessions.isNotEmpty()) {
-                    StandaloneSessionSection(
-                        sessions = group.standaloneSessions,
-                        parentNames = listOf(group.workspaceName),
-                        expanded = !standaloneCollapsed,
-                        selectedSessionId = selectedSessionId,
-                        selecting = selecting,
-                        selectedSessionIds = selectedSessionIds,
-                        onToggleManagedSession = onToggleManagedSession,
-                        onEnterSelection = { onEnterSelection(null, it) },
-                        onToggle = onToggleStandalone,
-                        onOpen = { onOpenSession(it, null) },
-                        onDelete = onDeleteSession,
-                        onMove = onMoveSession,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun TaskAggregateRow(
-    task: WorkspaceTaskSummary,
-    parentNames: Collection<String>,
-    expanded: Boolean,
-    selected: Boolean,
-    selectedSessionId: String?,
-    selecting: Boolean = false,
-    managedSelected: Boolean = false,
-    selectedSessionIds: Set<String> = emptySet(),
-    onToggleManaged: () -> Unit = {},
-    onToggleManagedSession: (String) -> Unit = {},
-    onEnterSelection: () -> Unit = {},
-    onToggle: () -> Unit,
-    onOpen: () -> Unit,
-    onOpenSession: (WorkspaceSessionSummary) -> Unit,
-    onMoveSession: (WorkspaceSessionSummary) -> Unit,
-    onNewWindow: () -> Unit,
-    onRename: () -> Unit,
-    onClear: () -> Unit,
-    onArchive: () -> Unit,
-    onDelete: () -> Unit,
-    onDeleteSession: (WorkspaceSessionSummary) -> Unit,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    val reduceMotion = reduceMotionEnabled()
-    val done = task.status == com.wand.app.data.WorkspaceTaskStatus.Done
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
-            .then(if (done) Modifier.graphicsLayer { alpha = 0.76f } else Modifier),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 44.dp)
-                .wandSelectedRow(
-                    selected = if (selecting) managedSelected else selected,
-                    shape = RoundedCornerShape(8.dp),
-                )
-                .combinedClickable(
-                    onClick = { if (selecting) onToggleManaged() else onOpen() },
-                    onLongClick = {
-                        if (!selecting) onEnterSelection() else onToggleManaged()
-                    },
-                )
-                .padding(end = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (selecting) {
-                ManageCheck(checked = managedSelected)
-            }
-            Text(
-                task.name,
-                style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textPrimary,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(top = 8.dp, bottom = 8.dp, end = 6.dp),
-            )
-            if (done) {
-                Text(
-                    "已完成",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.padding(end = 4.dp),
-                )
-            }
-            if (task.isIsolated) {
-                Icon(
-                    WandIcons.commit,
-                    contentDescription = "隔离 worktree",
-                    tint = WandColors.success,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
-            if (showsTaskSessionDisclosure(task.totalSessions)) {
-                TreeDisclosureCaret(
-                    expanded = expanded,
-                    contentDescription = if (expanded) "收起终端" else "展开终端",
-                    label = task.totalSessions.toString(),
-                    onClick = onToggle,
-                )
-            }
-            if (!selecting) {
-                WandIconButton(
-                    icon = WandIcons.add,
-                    contentDescription = "在任务中新建会话",
-                    onClick = onNewWindow,
-                    variant = WandIconButtonVariant.Compact,
-                    tint = WandColors.brand,
-                )
-            }
-            Box {
-                WandIconButton(
-                    icon = WandIcons.more,
-                    contentDescription = "任务操作",
-                    onClick = { menuOpen = true },
-                    variant = WandIconButtonVariant.Compact,
-                )
-                DropdownMenu(
-                    expanded = menuOpen,
-                    onDismissRequest = { menuOpen = false },
-                    containerColor = WandColors.bgElevated,
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("新建工作窗口") },
-                        leadingIcon = { Icon(WandIcons.add, contentDescription = null) },
-                        onClick = { menuOpen = false; onNewWindow() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("打开任务") },
-                        onClick = { menuOpen = false; onOpen() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("重命名") },
-                        onClick = { menuOpen = false; onRename() },
-                    )
-                    if (task.totalSessions > 0) {
-                        DropdownMenuItem(
-                            text = { Text("清空会话", color = WandColors.danger) },
-                            onClick = { menuOpen = false; onClear() },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("归档任务") },
-                        leadingIcon = { Icon(WandIcons.archive, contentDescription = null) },
-                        onClick = { menuOpen = false; onArchive() },
-                    )
-                    // 归档是软删除；只有隔离任务才在归档之外再提供真删（清理 Worktree）。
-                    if (task.isIsolated) {
-                        DropdownMenuItem(
-                            text = { Text("删除任务并清理 Worktree", color = WandColors.danger) },
-                            onClick = { menuOpen = false; onDelete() },
-                        )
-                    }
-                }
-            }
-        }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = if (reduceMotion) {
-                EnterTransition.None
-            } else {
-                expandVertically(
-                    animationSpec = WandMotion.tweenEnter(),
-                    expandFrom = Alignment.Top,
-                ) + fadeIn(WandMotion.tweenEnter())
-            },
-            exit = if (reduceMotion) {
-                ExitTransition.None
-            } else {
-                shrinkVertically(
-                    animationSpec = WandMotion.tweenExit(),
-                    shrinkTowards = Alignment.Top,
-                ) + fadeOut(WandMotion.tweenExit())
-            },
-        ) {
-            if (task.sessions.isEmpty()) {
-                Text(
-                    "＋ 添加第一个会话",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.fillMaxWidth().clickable(onClick = onNewWindow).padding(vertical = 12.dp),
-                )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .padding(start = 10.dp, end = 2.dp, bottom = 4.dp)
-                        .fillMaxWidth(),
-                ) {
-                    task.sessions.forEachIndexed { index, session ->
-                        AggregateSessionRow(
-                            session = session,
-                            label = listSessionLabel(session.withLiveTitle(), index, parentNames + task.name),
-                            selected = session.id == selectedSessionId,
-                            selecting = selecting,
-                            managedSelected = session.id in selectedSessionIds,
-                            onToggleManaged = { onToggleManagedSession(session.id) },
-                            onEnterSelection = { onEnterSelection() },
-                            onClick = { onOpenSession(session) },
-                            onDelete = { onDeleteSession(session) },
-                            onMove = { onMoveSession(session) },
-                        )
-                    }
-                    if (task.totalSessions > task.sessions.size) {
-                        Text(
-                            "列表仅显示 ${task.sessions.size}/${task.totalSessions} 个会话，" +
-                                "打开任务可查看全部。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = WandColors.textMuted,
-                            modifier = Modifier.clickable(onClick = onOpen).padding(start = 8.dp, end = 12.dp, bottom = 6.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StandaloneSessionSection(
-    sessions: List<WorkspaceSessionSummary>,
-    parentNames: Collection<String>,
-    expanded: Boolean,
-    selectedSessionId: String?,
-    selecting: Boolean = false,
-    selectedSessionIds: Set<String> = emptySet(),
-    onToggleManagedSession: (String) -> Unit = {},
-    onEnterSelection: (String) -> Unit = {},
-    onToggle: () -> Unit,
-    onOpen: (WorkspaceSessionSummary) -> Unit,
-    onDelete: (WorkspaceSessionSummary) -> Unit,
-    onMove: (WorkspaceSessionSummary) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "${sessions.size} 个未分组终端",
-                style = MaterialTheme.typography.labelSmall,
-                color = WandColors.textMuted,
-                modifier = Modifier.weight(1f),
-            )
-            TreeDisclosureCaret(
-                expanded = expanded,
-                contentDescription = if (expanded) "收起未分组终端" else "展开未分组终端",
-                onClick = onToggle,
-            )
-        }
-        if (expanded) {
-            sessions.forEachIndexed { index, session ->
-                AggregateSessionRow(
-                    session = session,
-                    label = listSessionLabel(session.withLiveTitle(), index, parentNames),
-                    selected = session.id == selectedSessionId,
-                    selecting = selecting,
-                    managedSelected = session.id in selectedSessionIds,
-                    onToggleManaged = { onToggleManagedSession(session.id) },
-                    onEnterSelection = { onEnterSelection(session.id) },
-                    onClick = { onOpen(session) },
-                    onDelete = { onDelete(session) },
-                    onMove = { onMove(session) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-@OptIn(ExperimentalFoundationApi::class)
-private fun AggregateSessionRow(
-    session: WorkspaceSessionSummary,
-    label: String,
-    selected: Boolean,
-    selecting: Boolean = false,
-    managedSelected: Boolean = false,
-    onToggleManaged: () -> Unit = {},
-    onEnterSelection: () -> Unit = {},
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
-    onMove: () -> Unit,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .wandSelectedRow(
-                selected = if (selecting) managedSelected else selected,
-                shape = RoundedCornerShape(8.dp),
-            )
-            .padding(end = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .combinedClickable(
-                    onClick = { if (selecting) onToggleManaged() else onClick() },
-                    onLongClick = {
-                        if (!selecting) onEnterSelection() else onToggleManaged()
-                    },
-                )
-                .padding(top = 8.dp, bottom = 8.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (selecting) {
-                ManageCheck(checked = managedSelected)
-            }
-            Box(
-                modifier = Modifier.size(16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                StatusDot(session.withLiveTitle().activityStatus(), modifier = Modifier.size(7.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WandColors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    buildString {
-                        append(workspaceProviderLabel(session.provider))
-                        if (session.sessionKind == "pty" && !session.provider.isNullOrBlank() && session.provider != "shell") {
-                            append(" · 终端")
-                        }
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                )
-            }
-        }
-        Box {
-            WandIconButton(
-                icon = WandIcons.more,
-                contentDescription = "终端操作 $label",
-                onClick = { menuOpen = true },
-                variant = WandIconButtonVariant.Quiet,
-            )
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                containerColor = WandColors.bgElevated,
-            ) {
-                DropdownMenuItem(
-                    text = { Text("打开") },
-                    onClick = { menuOpen = false; onClick() },
-                )
-                DropdownMenuItem(
-                    text = { Text("移动到任务") },
-                    leadingIcon = { Icon(WandIcons.folder, contentDescription = null) },
-                    onClick = { menuOpen = false; onMove() },
-                )
-                DropdownMenuItem(
-                    text = { Text("删除终端", color = WandColors.danger) },
-                    onClick = { menuOpen = false; onDelete() },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TreeDisclosureCaret(
-    expanded: Boolean,
-    contentDescription: String,
-    onClick: () -> Unit,
-    label: String? = null,
-) {
-    // 与卡片里的 ExpandChevron 共用同一套展开语义：箭头跟着状态转，不再硬切。
-    val motionEnabled = !reduceMotionEnabled()
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 0f else -90f,
-        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenNormal()),
-        label = "treeDisclosureCaret",
-    )
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (label != null) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-        }
-        Icon(
-            WandIcons.expand,
-            contentDescription = contentDescription,
-            tint = WandColors.textMuted,
-            modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = rotation },
-        )
     }
 }
 

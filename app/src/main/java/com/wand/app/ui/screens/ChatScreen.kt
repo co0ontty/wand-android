@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -155,6 +156,12 @@ import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
+import androidx.activity.compose.BackHandler
+import com.wand.app.ui.SendActionVisual
+import com.wand.app.ui.sendActionVisual
+import com.wand.app.ui.components.WandInPlaceSwap
+import com.wand.app.ui.components.WandInlinePanelAction
+import com.wand.app.ui.components.WandMorphIconButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandSnackbarHost
 import com.wand.app.ui.components.showWandNotice
@@ -455,6 +462,9 @@ fun ChatScreen(
     val glassBackdrop = rememberGlassBackdrop()
     val activeBackdrop = if (chromeSettled) glassBackdrop else null
     var composerExpanded by remember { mutableStateOf(false) }
+    // ＋ 展开的动作面板：就地展开，返回键/发送/换会话时收起（规则 2）。
+    var attachOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = attachOpen) { attachOpen = false }
     CompositionLocalProvider(
         LocalServerBaseUrl provides api.baseUrl,
         LocalChatApi provides api,
@@ -565,8 +575,11 @@ fun ChatScreen(
             onPickPhoto = attachmentPickers.pickPhoto,
             onPickFile = attachmentPickers.pickFile,
             onExpandedChange = { composerExpanded = it },
+            attachOpen = attachOpen,
+            onAttachOpenChange = { attachOpen = it },
         ) {
             // 发送回调（带触感反馈）；新输入出现后，上一条回复会自动转为历史折叠态。
+            attachOpen = false
             if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val text = buildAttachmentPrompt(pendingAttachments, drafts[sessionId])
             drafts[sessionId] = ""
@@ -1731,6 +1744,9 @@ private fun BottomBar(
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
     onExpandedChange: (Boolean) -> Unit,
+    // 就地展开的附件面板状态：放在 onSend 之前，保证末尾的尾随 lambda 仍然绑定 onSend。
+    attachOpen: Boolean = false,
+    onAttachOpenChange: (Boolean) -> Unit = {},
     onSend: () -> Unit,
 ) {
     // 草稿订阅收敛在这里：打字只重组底部栏，不再波及消息列表。
@@ -1815,6 +1831,8 @@ private fun BottomBar(
             onPickFile = onPickFile,
             onExpandedChange = onExpandedChange,
             onSend = onSend,
+            attachOpen = attachOpen,
+            onAttachOpenChange = onAttachOpenChange,
         )
     }
     }
@@ -1836,6 +1854,8 @@ private fun InputBar(
     onPickFile: () -> Unit,
     onExpandedChange: (Boolean) -> Unit,
     onSend: () -> Unit,
+    attachOpen: Boolean,
+    onAttachOpenChange: (Boolean) -> Unit,
 ) {
     // 结构化会话不存在「已结束」终止态（停止只回到 idle，真失败也能再发消息触发
     // 服务端 --resume 续接），所以发送按钮只看草稿是否非空，不再被 sessionEnded 卡死。
@@ -1938,8 +1958,27 @@ private fun InputBar(
         ComposerActionsMenu(
             backdrop = backdrop,
             uploading = uploading,
-            onPickPhoto = onPickPhoto,
-            onPickFile = onPickFile,
+            attachOpen = attachOpen,
+            onAttachOpenChange = onAttachOpenChange,
+        )
+    }
+    // ＋ 展开出来的动作行：就地在输入区上方展开，不再弹底部选择弹层。
+    val attachPanel: @Composable () -> Unit = {
+        WandInlinePanelAction(
+            icon = WandIcons.image,
+            label = "从相册选择",
+            onClick = {
+                onAttachOpenChange(false)
+                onPickPhoto()
+            },
+        )
+        WandInlinePanelAction(
+            icon = WandIcons.attach,
+            label = "从文件选择",
+            onClick = {
+                onAttachOpenChange(false)
+                onPickFile()
+            },
         )
     }
     val trailing: @Composable () -> Unit = {
@@ -1968,6 +2007,8 @@ private fun InputBar(
         collapsedLeading = { plusMenu() },
         inputContent = { inputContent() },
         collapsedTrailing = { trailing() },
+        panelVisible = attachOpen,
+        panelContent = { attachPanel() },
         expandedControls = { controlsCompact ->
             // 控制行：+ / 模式徽标 / 模型·思考徽标 / 停止·语音·发送。
             Row(
@@ -2016,6 +2057,10 @@ private fun InputBar(
  * 发送 / 停止按钮组（对齐 iOS trailingButtons）：
  * - 运行中且无草稿 → 唯一按钮是黑底停止（对齐 Codex collapsed composer）；
  * - 有草稿 → 发送按钮（运行中时左侧追加一个红色停止，可一边排队一边停）。
+ *
+ * 动效（`docs/motion-design.md` 规则 3 / 4）：
+ * - 提交后按钮**原地**依次显示 发送中 → 已送达 / 失败，不弹 Toast、不换位置；
+ * - 箭头 ⇄ 停止方块是同构变形，不再是一帧硬切。
  */
 @Composable
 private fun TrailingSendStop(
@@ -2025,51 +2070,116 @@ private fun TrailingSendStop(
     voiceAction: @Composable () -> Unit,
     onSend: () -> Unit,
 ) {
-    if (store.isResponding && !canSend) {
+    val visual = sendActionVisual(
+        phase = store.sendPhase,
+        turnRunning = store.isResponding,
+        hasDraft = canSend,
+    )
+    // 运行中且没有草稿：这一枚按钮的语义就是「停止」，与「发送」共用同一个位置、互相变形。
+    if (visual == SendActionVisual.Stop) {
         voiceAction()
-        FilledComposerAction(
-            enabled = true,
-            fillColor = WandColors.textPrimary,
+        SubmitMorphButton(
+            visual = visual,
             contentDescription = "停止任务",
             onClick = onStop,
-        ) {
-            Icon(
-                WandIcons.stop,
-                contentDescription = null,
-                tint = WandColors.surface,
-                modifier = Modifier.size(ComposerActionIconSize),
-            )
-        }
+            fillColor = WandColors.textPrimary,
+            contentTint = WandColors.surface,
+        )
         return
     }
     if (store.isResponding) {
-        FilledComposerAction(
-            enabled = true,
-            fillColor = WandColors.dangerSoft,
+        SubmitMorphButton(
+            visual = SendActionVisual.Stop,
             contentDescription = "停止任务",
             onClick = onStop,
-        ) {
-            Icon(
-                WandIcons.stop,
-                contentDescription = null,
-                tint = WandColors.danger,
-                modifier = Modifier.size(ComposerActionIconSize),
-            )
-        }
+            fillColor = WandColors.dangerSoft,
+            contentTint = WandColors.danger,
+        )
     }
     voiceAction()
-    FilledComposerAction(
-        enabled = canSend,
-        fillColor = if (canSend) WandColors.brand else WandColors.textSecondary.copy(alpha = 0.16f),
-        contentDescription = if (canSend) "发送消息" else "当前没有可发送内容",
+    SubmitMorphButton(
+        visual = visual,
+        contentDescription = when (visual) {
+            SendActionVisual.Sending -> "发送中"
+            SendActionVisual.Sent -> "已发送"
+            SendActionVisual.Failed -> "发送失败，可重试"
+            SendActionVisual.Blocked -> "当前没有可发送内容"
+            else -> "发送消息"
+        },
         onClick = onSend,
+        enabled = visual == SendActionVisual.Send,
+        fillColor = when (visual) {
+            SendActionVisual.Send -> WandColors.brand
+            SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
+            SendActionVisual.Failed -> WandColors.dangerSoft
+            else -> WandColors.textSecondary.copy(alpha = 0.16f)
+        },
+        contentTint = when (visual) {
+            SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> Color.White
+            SendActionVisual.Failed -> WandColors.danger
+            else -> WandColors.textMuted.copy(alpha = 0.45f)
+        },
+    )
+}
+
+/**
+ * 提交按钮：箭头 / 转圈 / 对勾 / 叉 / 停止五种形态在同一个 32dp 圆里交叉淡入 + 缩放。
+ * 按钮本身不移动、不变大（规则 3「全程在同一位置完成」+ 规则 4「同构变形」）。
+ */
+@Composable
+internal fun SubmitMorphButton(
+    visual: SendActionVisual,
+    contentDescription: String,
+    onClick: () -> Unit,
+    fillColor: Color,
+    contentTint: Color,
+    enabled: Boolean = true,
+) {
+    // 底色也在原地过渡：品牌色 → 送达/失败态，不会出现一帧生硬的换色。
+    val animatedFill by animateColorAsState(
+        targetValue = fillColor,
+        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()),
+        label = "submitFill",
+    )
+    FilledComposerAction(
+        enabled = enabled,
+        fillColor = animatedFill,
+        contentDescription = contentDescription,
+        onClick = onClick,
     ) {
-        Icon(
-            WandIcons.arrowUp,
-            contentDescription = null,
-            tint = if (canSend) Color.White else WandColors.textMuted.copy(alpha = 0.45f),
-            modifier = Modifier.size(ComposerActionIconSize),
-        )
+        WandInPlaceSwap(contentKey = visual, modifier = Modifier.size(ComposerActionIconSize)) { key ->
+            when (key as SendActionVisual) {
+                SendActionVisual.Sending -> CircularProgressIndicator(
+                    color = contentTint,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(ComposerActionIconSize),
+                )
+                SendActionVisual.Sent -> Icon(
+                    WandIcons.check,
+                    contentDescription = null,
+                    tint = contentTint,
+                    modifier = Modifier.size(ComposerActionIconSize),
+                )
+                SendActionVisual.Failed -> Icon(
+                    WandIcons.statusFail,
+                    contentDescription = null,
+                    tint = contentTint,
+                    modifier = Modifier.size(ComposerActionIconSize),
+                )
+                SendActionVisual.Stop -> Icon(
+                    WandIcons.stop,
+                    contentDescription = null,
+                    tint = contentTint,
+                    modifier = Modifier.size(ComposerActionIconSize),
+                )
+                else -> Icon(
+                    WandIcons.arrowUp,
+                    contentDescription = null,
+                    tint = contentTint,
+                    modifier = Modifier.size(ComposerActionIconSize),
+                )
+            }
+        }
     }
 }
 
@@ -2386,63 +2496,38 @@ private fun ModelThinkingChip(
 internal fun ComposerActionsMenu(
     backdrop: GlassBackdrop?,
     uploading: Boolean,
-    onPickPhoto: () -> Unit,
-    onPickFile: () -> Unit,
+    attachOpen: Boolean,
+    onAttachOpenChange: (Boolean) -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box {
+    if (uploading) {
+        // 上传中：按钮原地变成转圈，位置和尺寸都不变（规则 3）。
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(ComposerActionTouchSize)
-                .clip(CircleShape)
                 .semantics {
-                    contentDescription = if (uploading) "正在上传附件" else "添加附件"
+                    contentDescription = "正在上传附件"
                     role = Role.Button
-                }
-                .clickable(enabled = !uploading, role = Role.Button) { open = true },
-        ) {
-            if (uploading) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(ComposerActionVisualSize),
-                ) {
-                    CircularProgressIndicator(
-                        color = WandColors.textSecondary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(ComposerActionIconSize),
-                    )
-                }
-            } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(ComposerActionVisualSize),
-                ) {
-                    Icon(
-                        WandIcons.add,
-                        contentDescription = null,
-                        tint = WandColors.textSecondary,
-                        modifier = Modifier.size(ComposerActionIconSize),
-                    )
-                }
-            }
-        }
-        if (open) {
-            ComposerChoiceSheet(
-                title = "添加附件",
-                options = listOf(
-                    "photo" to "从相册选择",
-                    "file" to "从文件选择",
-                ),
-                selected = null,
-                onSelect = { id ->
-                    open = false
-                    if (id == "photo") onPickPhoto() else onPickFile()
                 },
-                onDismiss = { open = false },
+        ) {
+            CircularProgressIndicator(
+                color = WandColors.textSecondary,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(ComposerActionIconSize),
             )
         }
+        return
     }
+    // ＋ ⇄ ✕ 同构变形：同一个按钮，展开时转成关闭（规则 4）。
+    WandMorphIconButton(
+        expanded = attachOpen,
+        collapsedIcon = WandIcons.add,
+        expandedIcon = WandIcons.close,
+        contentDescription = if (attachOpen) "收起添加附件" else "添加附件",
+        onClick = { onAttachOpenChange(!attachOpen) },
+        touchSize = ComposerActionTouchSize,
+        iconSize = ComposerActionIconSize,
+    )
 }
 
 // MARK: - 按住说话（端侧语音识别）

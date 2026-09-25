@@ -180,6 +180,7 @@ object SessionWatcher {
                         title = snap.title,
                         generating = snap.titleGenerating,
                         ptyBusy = snap.ptyBusy,
+                        permissionBlocked = snap.hasPendingPermission,
                     )
                     snap.status?.let { w.status = it }
                     w.archived = snap.archived ?: false
@@ -227,6 +228,8 @@ object SessionWatcher {
         val esc = event.changes.pendingEscalation
         if (perm != null || esc != null) {
             w.permissionBlocked = true
+            // 首页靠这个实时标记把会话归到「待处理」，不必等下一次工作区轮询。
+            SessionTitleStore.apply(sid, permissionBlocked = true)
             val detail = perm?.prompt?.takeIf { it.isNotEmpty() }
                 ?: esc?.reason?.takeIf { it.isNotEmpty() }
                 ?: "需要权限审批"
@@ -283,7 +286,10 @@ object SessionWatcher {
                 ptyBusy = changes.ptyBusy,
             )
         }
-        changes.permissionBlocked?.let { w.permissionBlocked = it }
+        changes.permissionBlocked?.let {
+            w.permissionBlocked = it
+            SessionTitleStore.apply(sid, permissionBlocked = it)
+        }
     }
 
     /** busy true→false 即「回合完成」——两个 runner 的完成信号都汇到这里。 */

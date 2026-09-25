@@ -663,6 +663,26 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             ),
         ) ?: throw WandApiException(500, "重命名项目响应无效。")
 
+    override suspend fun deleteWorkspace(workspaceId: String, cascade: Boolean) {
+        requestData(
+            "DELETE",
+            "/api/workspaces/${encode(workspaceId)}?cascade=${if (cascade) "1" else "0"}",
+        )
+    }
+
+    override suspend fun saveWorkspaceGroupOrder(ids: List<String>) {
+        val array = JSONArray()
+        ids.forEach { array.put(it) }
+        try {
+            requestData("PUT", "/api/workspaces/order", JSONObject().put("ids", array))
+        } catch (error: WandApiException) {
+            if (error.status == 404) {
+                throw WandApiException(404, "当前服务不支持保存工作区顺序，请先更新服务端")
+            }
+            throw error
+        }
+    }
+
     override suspend fun renameSessionDirectory(cwd: String, name: String?) {
         requestData(
             "PUT",

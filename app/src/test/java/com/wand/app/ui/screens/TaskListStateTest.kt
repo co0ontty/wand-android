@@ -379,8 +379,117 @@ class TaskListStateTest {
         assertTrue(port.renamedTasks.isEmpty())
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun dragSavesOnceOnReleaseAndKeepsLatestOrderAcrossOverlappingSaves() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val firstSave = CompletableDeferred<Unit>()
+        val port = FakeWorkspacePort().apply {
+            groups = listOf(group("a", "/a"), group("b", "/b"), group("c", "/c"))
+            pendingGroupSave = firstSave
+        }
+        val state = TaskListState(port)
+        try {
+            state.load()
+            state.startDirectoryReorder()
+            state.moveDirectory("a", "b")
+            state.moveDirectory("a", "c")
+            assertEquals(listOf("b", "c", "a"), state.groups.map { it.id })
+            assertTrue(port.savedGroupOrders.isEmpty())
+            state.finishDirectoryReorder()
+            assertEquals(listOf(listOf("b", "c", "a")), port.savedGroupOrders)
+
+            state.startDirectoryReorder()
+            state.moveDirectory("c", "b")
+            state.finishDirectoryReorder()
+            assertEquals(listOf("c", "b", "a"), state.groups.map { it.id })
+            // 第一笔还没回来，第二笔不能抢跑、也不能被第一笔的成功清掉。
+            assertEquals(1, port.savedGroupOrders.size)
+            firstSave.complete(Unit)
+            testScheduler.runCurrent()
+            assertEquals(listOf(listOf("b", "c", "a"), listOf("c", "b", "a")), port.savedGroupOrders)
+            assertEquals(listOf("c", "b", "a"), state.groups.map { it.id })
+            assertNull(state.orderSaveError)
+        } finally {
+            state.shutdown()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun saveFailureSurvivesUnchangedPollingAndCanRetry() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val port = FakeWorkspacePort().apply {
+            groups = listOf(group("a", "/a"), group("b", "/b"))
+            saveOrderFailure = IllegalStateException("服务端未更新")
+        }
+        val state = TaskListState(port)
+        try {
+            state.load()
+            state.startDirectoryReorder()
+            state.moveDirectory("a", "b")
+            state.finishDirectoryReorder()
+            assertEquals("服务端未更新", state.orderSaveError)
+            port.groupsUnchanged = true
+            assertTrue(state.load(silent = true))
+            assertEquals(listOf("b", "a"), state.groups.map { it.id })
+            port.groupsUnchanged = false
+            assertTrue(state.load(silent = true))
+            assertEquals(listOf("b", "a"), state.groups.map { it.id })
+            port.saveOrderFailure = null
+            state.retrySaveGroupOrder()
+            testScheduler.runCurrent()
+            assertEquals(listOf("b", "a"), port.groups.map { it.id })
+            assertNull(state.orderSaveError)
+        } finally {
+            state.shutdown()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun cancelledAndUndoneDragsDoNotSendOrder() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val port = FakeWorkspacePort().apply { groups = listOf(group("a", "/a"), group("b", "/b")) }
+        val state = TaskListState(port)
+        try {
+            state.load()
+            state.startDirectoryReorder()
+            state.moveDirectory("a", "b")
+            state.cancelDirectoryReorder()
+            assertEquals(listOf("a", "b"), state.groups.map { it.id })
+            state.startDirectoryReorder()
+            state.moveDirectory("a", "b")
+            state.moveDirectory("a", "b")
+            state.finishDirectoryReorder()
+            assertEquals(listOf("a", "b"), state.groups.map { it.id })
+            assertTrue(port.savedGroupOrders.isEmpty())
+        } finally {
+            state.shutdown()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun deleteDirectoryUsesRequestedCascadeAndRefreshesGroups() = runBlocking {
+        val group = group("only-test", "/test")
+        val port = FakeWorkspacePort().apply { groups = listOf(group) }
+        val state = TaskListState(port)
+        assertTrue(state.load())
+        assertTrue(state.deleteDirectory(group, cascade = false))
+        assertEquals(listOf("only-test" to false), port.deletedWorkspaces)
+        assertTrue(state.groups.isEmpty())
+    }
+
     private class FakeWorkspacePort : WorkspacePort {
         var groups: List<TaskDirectoryGroup> = emptyList()
+        var groupsUnchanged = false
+        val savedGroupOrders = mutableListOf<List<String>>()
+        var saveOrderFailure: Exception? = null
+        var pendingGroupSave: CompletableDeferred<Unit>? = null
+        val deletedWorkspaces = mutableListOf<Pair<String, Boolean>>()
         var listGroupsFailure: Exception? = null
         var listGroupsCalls = 0
         var workspaces = mutableListOf<Workspace>()
@@ -414,6 +523,22 @@ class TaskListStateTest {
             listGroupsCalls += 1
             listGroupsFailure?.let { throw it }
             return groups
+        }
+
+        override suspend fun listTaskGroupsPage(revision: String?): com.wand.app.data.TaskGroupsPage =
+            if (groupsUnchanged) com.wand.app.data.TaskGroupsPage(emptyList(), unchanged = true)
+            else com.wand.app.data.TaskGroupsPage(listTaskGroups())
+
+        override suspend fun saveWorkspaceGroupOrder(ids: List<String>) {
+            savedGroupOrders += ids
+            pendingGroupSave?.await()
+            saveOrderFailure?.let { throw it }
+            groups = applyPendingGroupOrder(groups, ids)
+        }
+
+        override suspend fun deleteWorkspace(workspaceId: String, cascade: Boolean) {
+            deletedWorkspaces += workspaceId to cascade
+            groups = groups.filterNot { it.id == workspaceId }
         }
 
         override suspend fun listWorkspaces(): List<Workspace> = workspaces.toList()

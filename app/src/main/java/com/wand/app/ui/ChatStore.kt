@@ -18,6 +18,7 @@ import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import com.wand.app.wlog
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -280,6 +281,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     title = snap.title,
                     generating = snap.titleGenerating,
                     ptyBusy = snap.ptyBusy,
+                    permissionBlocked = snap.hasPendingPermission,
                 )
             }
         }
@@ -405,14 +407,32 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     // MARK: - 用户动作
 
     /** 发送一条消息。PTY 会话走 chat 视图语义（结尾补换行），结构化会话直接发文本。 */
+    /** 提交按钮的状态机（规则 3：加载 → 完成 → 结果，全程同一位置）。 */
+    var sendPhase by mutableStateOf(SendPhase.Idle)
+        private set
+    private var sendPhaseJob: Job? = null
+
+    private fun advanceSendPhase(event: SendEvent, dwellMs: Long? = null) {
+        sendPhase = nextSendPhase(sendPhase, event)
+        sendPhaseJob?.cancel()
+        if (dwellMs == null) return
+        sendPhaseJob = scope.launch {
+            delay(dwellMs)
+            sendPhase = nextSendPhase(sendPhase, SendEvent.Dwell)
+        }
+    }
+
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val queueing = isStructured && isResponding && status == "running"
         if (queueing && lastSubmittedStructuredInput() == trimmed) {
+            // 被去重拦下：明确给一个「已收到但不发」的完成态，而不是静默什么都不发生。
+            advanceSendPhase(SendEvent.Accepted, SEND_SENT_DWELL_MS)
             toast = "与上一条消息相同，已忽略，不会加入排队。"
             return
         }
+        advanceSendPhase(SendEvent.Submit)
         applyProvisionalTopic(trimmed)
         val previousMessages = messages
         val previousQueue = queuedMessages
@@ -437,11 +457,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     val accepted = api.sendInput(sessionId, trimmed, respondImmediately = !queueing)
                     apply(accepted)
                     socket.requestResync()
+                    advanceSendPhase(SendEvent.Accepted, SEND_SENT_DWELL_MS)
                 } else {
                     sendPtyChatInput(trimmed)
                 }
             } catch (e: Exception) {
                 wlog("chat", "发送失败 session=$sessionId：${e.message}", e)
+                advanceSendPhase(SendEvent.Rejected, SEND_FAILED_DWELL_MS)
                 toast = e.message ?: "发送失败"
                 if (isStructured) {
                     if (queueing) queuedMessages = previousQueue else messages = previousMessages

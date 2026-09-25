@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Menu
@@ -209,6 +210,9 @@ object WandIcons {
 
     /** 归档（任务卡右划动作用）。 */
     val archive: ImageVector = Icons.Outlined.Archive
+
+    /** 相册 / 图片附件入口。 */
+    val image: ImageVector = Icons.Outlined.Image
 
     /** AskUserQuestion 提问卡。 */
     val question: ImageVector = Icons.AutoMirrored.Outlined.HelpOutline

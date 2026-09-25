@@ -391,6 +391,27 @@ object WandMotion {
     fun <T> settleSpringSpec(): SpringSpec<T> =
         spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
 
+    /**
+     * 图标变形（＋ → ✕、发送 → 停止）。
+     * 比标准时长略长：形状要对得上，太快会看成闪一下；太慢会看出是两个图标在交叉。
+     */
+    fun <T> morph(): TweenSpec<T> = tween(morphDuration, easing = emphasized)
+
+    const val morphDuration = 200
+
+    /**
+     * 标签指示条。前缘用 0 延迟、后缘用 [indicatorTrailDelayMillis]，
+     * 两段用同一条曲线，中间态自然被拉长再收回（对齐 iOS 分段控件）。
+     */
+    fun <T> indicator(delayMillis: Int = 0): TweenSpec<T> =
+        tween(indicatorDuration, delayMillis = delayMillis, easing = emphasized)
+
+    const val indicatorDuration = 260
+    const val indicatorTrailDelayMillis = 70
+
+    /** 旧内容退场比新内容进场快（90ms 量级），换位时不会出现两层内容叠着看。 */
+    const val quickExit = 90
+
     /** 状态呼吸灯规格。配合 breathAlphaMin / breathScaleMax 使用。 */
     fun <T> breath(): InfiniteRepeatableSpec<T> =
         infiniteRepeatable(tween(breathDuration, easing = FastOutSlowInEasing), RepeatMode.Reverse)
