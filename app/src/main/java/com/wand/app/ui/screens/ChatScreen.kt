@@ -16,8 +16,6 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -26,6 +24,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -45,6 +44,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -61,6 +61,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -1191,13 +1192,13 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         accent = accent,
                         accentSoft = accentSoft,
                         options = buildList {
-                            add(null to "默认 · ${modelDisplayLabel(store, null)}")
+                            add("default" to "默认 · ${modelDisplayLabel(store, null)}")
                             store.availableModels
                                 .filter { it.id != "default" }
                                 .forEach { add(it.id to it.label) }
                         },
-                        selected = store.selectedModel?.takeUnless { it == "default" },
-                        onSelect = store::setModel,
+                        selected = store.selectedModel?.takeUnless { it == "default" } ?: "default",
+                        onSelect = { store.setModel(it.takeUnless { id -> id == "default" }) },
                         searchable = true,
                     )
                     HorizontalDivider(
@@ -1213,7 +1214,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         accentSoft = accentSoft,
                         options = thinkingLevels(store).map { it.id to it.menuLabel },
                         selected = store.thinkingEffort,
-                        onSelect = { it?.let(store::chooseThinkingEffort) },
+                        onSelect = store::chooseThinkingEffort,
                     )
                 }
             }
@@ -1260,9 +1261,9 @@ private fun LaunchSettingPicker(
     value: String,
     accent: Color,
     accentSoft: Color,
-    options: List<Pair<String?, String>>,
-    selected: String?,
-    onSelect: (String?) -> Unit,
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit,
     searchable: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -1347,11 +1348,13 @@ private fun LaunchSettingPicker(
         if (expanded) {
             WandBottomSheet(
                 onDismissRequest = { closePicker() },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             ) {
                 NoOverscroll {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(max = 620.dp)
                             .imePadding()
                             .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
                     ) {
@@ -1381,59 +1384,18 @@ private fun LaunchSettingPicker(
                                     .padding(bottom = 8.dp),
                             )
                         }
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            if (visibleOptions.isEmpty()) {
-                                Text(
-                                    "没有匹配的$label",
-                                    fontSize = 14.sp,
-                                    color = WandColors.textMuted,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
-                                )
-                            }
-                            visibleOptions.forEach { (id, optionLabel) ->
-                                val isSelected = selected == id
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(
-                                            if (isSelected) accentSoft else Color.Transparent,
-                                        )
-                                        .selectable(
-                                            selected = isSelected,
-                                            role = Role.RadioButton,
-                                        ) {
-                                            onSelect(id)
-                                            closePicker()
-                                        }
-                                        .padding(horizontal = 14.dp, vertical = 13.dp),
-                                ) {
-                                    Text(
-                                        optionLabel,
-                                        fontSize = 14.sp,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (isSelected) accent else WandColors.textPrimary,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    if (isSelected) {
-                                        Icon(
-                                            WandIcons.check,
-                                            contentDescription = null,
-                                            tint = accent,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        ChoiceOptionsList(
+                            options = visibleOptions,
+                            selected = selected,
+                            accent = accent,
+                            accentSoft = accentSoft,
+                            emptyLabel = "没有匹配的$label",
+                            onSelect = { id ->
+                                onSelect(id)
+                                closePicker()
+                            },
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
                     }
                 }
             }
@@ -1455,9 +1417,6 @@ private fun thinkingLabel(store: ChatStore, id: String): String {
         ?: levels.firstOrNull()?.label
         ?: "自动"
 }
-
-private fun thinkingShortLabel(store: ChatStore, id: String): String =
-    thinkingLevels(store).firstOrNull { it.id == id }?.shortLabel ?: "自"
 
 /** 「default」是「跟随服务端默认」的占位值；解析成真正生效的模型 id（可能为空）。 */
 private fun effectiveModelId(store: ChatStore, id: String?): String? =
@@ -1508,12 +1467,6 @@ private fun shortModelLabel(store: ChatStore): String {
         else -> leaf
     }
 }
-
-private fun modelThinkingText(store: ChatStore): String {
-    val model = shortModelLabel(store)
-    return "$model · ${thinkingShortLabel(store, store.thinkingEffort)}"
-}
-
 
 /**
  * 排队消息条（对位 Web 端 queue-bar）：折叠态显示「已排队 N 条」+ 操作按钮；
@@ -2010,20 +1963,26 @@ private fun InputBar(
         panelVisible = attachOpen,
         panelContent = { attachPanel() },
         expandedControls = { controlsCompact ->
-            // 控制行：+ / 模式徽标 / 模型·思考徽标 / 停止·语音·发送。
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
-                modifier = Modifier.weight(1f),
-            ) {
-                plusMenu()
-                if (store.isStructured) {
-                    ModeChip(store, compact = controlsCompact)
-                    ModelThinkingChip(
-                        store,
-                        compact = controlsCompact,
-                        modifier = if (controlsCompact) Modifier else Modifier.weight(1f),
-                    )
+            // 控制行：+ / 模式 / 模型 / 思考深度各有入口；窄屏保持 44dp 点击区。
+            BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                val compactChips = controlsCompact || maxWidth < 300.dp
+                // 中等宽度只折叠模式/深度：模型仍留名称，便于辨认两个独立入口。
+                val compactModel = maxWidth < 260.dp
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    plusMenu()
+                    if (store.isStructured) {
+                        ModeChip(store, compact = compactChips)
+                        ModelChip(
+                            store,
+                            compact = compactModel,
+                            modifier = Modifier.weight(1f),
+                        )
+                        ThinkingChip(store, compact = compactChips)
+                    }
                 }
             }
             trailing()
@@ -2205,6 +2164,7 @@ private fun ControlChip(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
+            .widthIn(min = 44.dp)
             .heightIn(min = 48.dp)
             .semantics {
                 this.contentDescription = contentDescription
@@ -2245,12 +2205,63 @@ private fun ControlChip(
     }
 }
 
-private data class ComposerChoiceSection(
-    val title: String? = null,
-    val options: List<Pair<String, String>>,
-    val selected: String? = null,
-    val searchable: Boolean = false,
-)
+@Composable
+private fun ChoiceOptionsList(
+    options: List<Pair<String, String>>,
+    selected: String?,
+    accent: Color,
+    accentSoft: Color,
+    emptyLabel: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // 只布局可见选项；模型目录可能很长，不能让整个弹层在拖动时重排所有行。
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (options.isEmpty()) {
+            item {
+                Text(
+                    emptyLabel,
+                    fontSize = 14.sp,
+                    color = WandColors.textMuted,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
+                )
+            }
+        }
+        items(options, key = { it.first }) { (id, optionLabel) ->
+            val isSelected = selected == id
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (isSelected) accentSoft else Color.Transparent)
+                    .selectable(selected = isSelected, role = Role.RadioButton) { onSelect(id) }
+                    .padding(horizontal = 14.dp, vertical = 13.dp),
+            ) {
+                Text(
+                    optionLabel,
+                    fontSize = 14.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isSelected) accent else WandColors.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (isSelected) {
+                    Icon(
+                        WandIcons.check,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2260,30 +2271,23 @@ private fun ComposerChoiceSheet(
     selected: String?,
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
-) {
-    ComposerChoiceSheet(
-        title = title,
-        sections = listOf(ComposerChoiceSection(options = options, selected = selected)),
-        onSelect = { _, id -> onSelect(id) },
-        onDismiss = onDismiss,
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ComposerChoiceSheet(
-    title: String,
-    sections: List<ComposerChoiceSection>,
-    onSelect: (sectionIndex: Int, id: String) -> Unit,
-    onDismiss: () -> Unit,
+    searchable: Boolean = false,
 ) {
     var query by remember { mutableStateOf("") }
-    val showSearch = sections.any { it.searchable }
-    WandBottomSheet(onDismissRequest = onDismiss) {
+    val visibleOptions = if (searchable) {
+        options.filter { matchesModelSearch(query, it.first, it.second) }
+    } else {
+        options
+    }
+    WandBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         NoOverscroll {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 620.dp)
                     .imePadding()
                     .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
             ) {
@@ -2294,7 +2298,7 @@ private fun ComposerChoiceSheet(
                     color = WandColors.textPrimary,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
                 )
-                if (showSearch) {
+                if (searchable) {
                     WandTextField(
                         value = query,
                         onValueChange = { query = it },
@@ -2313,79 +2317,15 @@ private fun ComposerChoiceSheet(
                             .padding(bottom = 8.dp),
                     )
                 }
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                sections.forEachIndexed { sectionIndex, section ->
-                    val searching = query.isNotBlank()
-                    if (searching && !section.searchable) return@forEachIndexed
-                    val visibleOptions = if (section.searchable) {
-                        section.options.filter { matchesModelSearch(query, it.first, it.second) }
-                    } else {
-                        section.options
-                    }
-                    if (section.title != null && (visibleOptions.isNotEmpty() || section.searchable)) {
-                        Text(
-                            section.title,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textMuted,
-                            modifier = Modifier.padding(
-                                start = 8.dp,
-                                end = 8.dp,
-                                top = if (sectionIndex == 0) 0.dp else 10.dp,
-                                bottom = 4.dp,
-                            ),
-                        )
-                    }
-                    if (visibleOptions.isEmpty() && section.searchable) {
-                        Text(
-                            "没有匹配的模型",
-                            fontSize = 14.sp,
-                            color = WandColors.textMuted,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
-                        )
-                    }
-                    visibleOptions.forEach { (id, optionLabel) ->
-                        val isSelected = section.selected == id
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (isSelected) WandColors.brandSoft else Color.Transparent,
-                                )
-                                .selectable(
-                                    selected = isSelected,
-                                    role = Role.RadioButton,
-                                ) { onSelect(sectionIndex, id) }
-                                .padding(horizontal = 14.dp, vertical = 13.dp),
-                        ) {
-                            Text(
-                                optionLabel,
-                                fontSize = 14.sp,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isSelected) WandColors.brand else WandColors.textPrimary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (isSelected) {
-                                Icon(
-                                    WandIcons.check,
-                                    contentDescription = null,
-                                    tint = WandColors.brand,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-                }
+                ChoiceOptionsList(
+                    options = visibleOptions,
+                    selected = selected,
+                    accent = WandColors.brand,
+                    accentSoft = WandColors.brandSoft,
+                    emptyLabel = "没有匹配的$title",
+                    onSelect = onSelect,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
             }
         }
     }
@@ -2430,13 +2370,42 @@ private fun ModeChip(store: ChatStore, compact: Boolean = false) {
     }
 }
 
-/** 模型 · 思考深度合并徽标 + 下拉菜单（对齐 iOS modelThinkingChip）。 */
+/** 模型和思考深度分别打开，避免调整深度前必须滑过整个模型目录。 */
 @Composable
-private fun ModelThinkingChip(
-    store: ChatStore,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
+private fun ModelChip(store: ChatStore, modifier: Modifier = Modifier, compact: Boolean = false) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        ControlChip(
+            icon = WandIcons.tune,
+            text = shortModelLabel(store),
+            tint = WandColors.brand,
+            contentDescription = "模型：${modelDisplayLabel(store, store.selectedModel)}",
+            showText = !compact,
+            modifier = Modifier.fillMaxWidth(),
+        ) { open = true }
+        if (open) {
+            ComposerChoiceSheet(
+                title = "模型",
+                options = buildList {
+                    add("default" to "默认 · ${modelDisplayLabel(store, null)}")
+                    store.availableModels.filter { it.id != "default" }.forEach { model ->
+                        add(model.id to model.label)
+                    }
+                },
+                selected = store.selectedModel?.takeUnless { it == "default" } ?: "default",
+                searchable = true,
+                onSelect = { id ->
+                    store.setModel(id.takeUnless { it == "default" })
+                    open = false
+                },
+                onDismiss = { open = false },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThinkingChip(store: ChatStore, compact: Boolean = false) {
     var open by remember { mutableStateOf(false) }
     val tint = when (store.thinkingEffort) {
         "standard" -> WandColors.success
@@ -2444,42 +2413,22 @@ private fun ModelThinkingChip(
         "max" -> WandColors.danger
         else -> WandColors.brand
     }
-    Box(modifier = modifier) {
+    Box(modifier = Modifier.width(if (compact) 44.dp else 80.dp)) {
         ControlChip(
-            icon = WandIcons.tune,
-            text = modelThinkingText(store),
+            icon = WandIcons.thinking,
+            text = thinkingLabel(store, store.thinkingEffort),
             tint = tint,
-            contentDescription = "模型与思考：${modelThinkingText(store)}",
+            contentDescription = "思考深度：${thinkingLabel(store, store.thinkingEffort)}",
             showText = !compact,
-            modifier = if (compact) Modifier.widthIn(max = 112.dp) else Modifier,
+            modifier = Modifier.fillMaxWidth(),
         ) { open = true }
         if (open) {
             ComposerChoiceSheet(
-                title = "模型与思考",
-                sections = listOf(
-                    ComposerChoiceSection(
-                        title = "模型",
-                        options = buildList {
-                            add("default" to "默认 · ${modelDisplayLabel(store, null)}")
-                            store.availableModels.filter { it.id != "default" }.forEach { model ->
-                                add(model.id to model.label)
-                            }
-                        },
-                        selected = store.selectedModel?.takeUnless { it == "default" } ?: "default",
-                        searchable = true,
-                    ),
-                    ComposerChoiceSection(
-                        title = "思考深度",
-                        options = thinkingLevels(store).map { it.id to it.menuLabel },
-                        selected = store.thinkingEffort,
-                    ),
-                ),
-                onSelect = { sectionIndex, id ->
-                    if (sectionIndex == 0) {
-                        store.setModel(id.takeUnless { it == "default" })
-                    } else {
-                        store.chooseThinkingEffort(id)
-                    }
+                title = "思考深度",
+                options = thinkingLevels(store).map { it.id to it.menuLabel },
+                selected = store.thinkingEffort,
+                onSelect = { id ->
+                    store.chooseThinkingEffort(id)
                     open = false
                 },
                 onDismiss = { open = false },
