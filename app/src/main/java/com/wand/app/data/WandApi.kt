@@ -745,8 +745,10 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         binding: WorkspaceBinding,
         kind: WorkspaceSessionKind,
         prompt: String?,
+        model: String?,
+        thinkingEffort: String?,
     ): SessionSnapshot {
-        val request = createWorkspaceTaskWindowRequest(target, binding, kind, prompt)
+        val request = createWorkspaceTaskWindowRequest(target, binding, kind, prompt, model, thinkingEffort)
         return SessionSnapshot.parse(requestObject("POST", request.path, request.body))
     }
 

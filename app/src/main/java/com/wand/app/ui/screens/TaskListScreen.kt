@@ -24,22 +24,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,20 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.core.view.WindowCompat
 import com.wand.app.data.DirectoryListing
+import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
@@ -75,17 +61,14 @@ import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.raw
 import com.wand.app.ui.withLiveTitle
-import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandCard
-import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
-import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.rememberWandDragReorderState
 import com.wand.app.ui.components.wandLongPressDrag
@@ -151,8 +134,12 @@ fun TaskListScreen(
     var newTaskName by remember { mutableStateOf("") }
     var newTaskTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
+    var newTaskModel by remember { mutableStateOf("default") }
+    var newTaskThinkingEffort by remember { mutableStateOf("off") }
+    var newTaskModels by remember { mutableStateOf<ModelsResponse?>(null) }
     var composerDraft by remember { mutableStateOf("") }
     var newTaskDraftRevision by remember { mutableLongStateOf(0L) }
+    var newTaskOpeningId by remember { mutableLongStateOf(0L) }
     var targetDraftRevision by remember { mutableLongStateOf(0L) }
     var directoryPickerOpen by remember { mutableStateOf(false) }
     var directoryPickerPath by remember { mutableStateOf("") }
@@ -239,18 +226,35 @@ fun TaskListScreen(
         newTaskName = ""
         newTaskTarget = WorkspaceSessionTarget.Claude
         newTaskKind = WorkspaceSessionKind.Structured
+        newTaskModel = "default"
+        newTaskThinkingEffort = "off"
+        newTaskModels = null
         newTaskDraftRevision += 1
+        newTaskOpeningId += 1
         val defaultsRevision = newTaskDraftRevision
+        val openingId = newTaskOpeningId
         newTaskOpen = true
         scope.launch {
             state.loadCreationDefaults()
-            if (!newTaskOpen || defaultsRevision != newTaskDraftRevision) return@launch
+            if (!newTaskOpen || openingId != newTaskOpeningId) return@launch
             if (taskCwdDraft.isBlank()) {
                 taskCwdDraft = state.defaultCwd.orEmpty()
                 newTaskWorkspaceId = workspaceForPath(taskCwdDraft)
             }
-            newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: newTaskTarget
-            newTaskKind = state.defaultSessionKind
+            if (defaultsRevision == newTaskDraftRevision) {
+                newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: newTaskTarget
+                newTaskKind = state.defaultSessionKind
+                newTaskThinkingEffort = state.defaultThinkingEffort
+            }
+            val loadedModels = runCatching { boardApi.boardModels() }.getOrNull()
+            if (!newTaskOpen || openingId != newTaskOpeningId) return@launch
+            newTaskModels = loadedModels
+            val available = com.wand.app.ui.thinkingEffortOptions(
+                newTaskTarget.raw, newTaskModel,
+                loadedModels?.defaultModelFor(newTaskTarget.raw),
+                loadedModels?.modelsFor(newTaskTarget.raw).orEmpty(),
+            )
+            if (available.none { it.id == newTaskThinkingEffort }) newTaskThinkingEffort = "off"
         }
     }
 
@@ -306,22 +310,76 @@ fun TaskListScreen(
         state.expandPathToSelection(selectedTaskId, selectedSessionId)
     }
 
+    val directoryPickerContent: @Composable () -> Unit = {
+        if (directoryPickerOpen) {
+            WandBottomSheet(
+                onDismissRequest = { if (!state.mutationBusy) directoryPickerOpen = false },
+                modifier = Modifier.navigationBarsPadding(),
+                sheetState = targetSheetState,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("选择工作目录", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
+                        Text(
+                            directoryPickerPath,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            color = WandColors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    TextButton(onClick = { directoryPickerOpen = false }) { Text("关闭") }
+                }
+                directoryError?.let {
+                    Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp))
+                }
+                if (directoryLoading) {
+                    Text("读取中…", color = WandColors.textMuted, modifier = Modifier.padding(20.dp))
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp).padding(horizontal = 12.dp)) {
+                        if (directoryPickerPath != "/") {
+                            item {
+                                DirectoryPickerRow("返回上一级", parentDirectory(directoryPickerPath), WandIcons.chevronRight) {
+                                    browseDirectory(parentDirectory(directoryPickerPath))
+                                }
+                            }
+                        }
+                        items(directoryListing?.items.orEmpty().filter { it.isDirectory }, key = { it.path }) { item ->
+                            DirectoryPickerRow(item.name, item.path, WandIcons.folder) { browseDirectory(item.path) }
+                        }
+                    }
+                }
+                TextButton(
+                    onClick = {
+                        updateTaskCwd(directoryPickerPath)
+                        directoryPickerOpen = false
+                    },
+                    enabled = !directoryLoading,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text("选择此目录")
+                }
+            }
+        }
+    }
+
     if (newTaskOpen) {
         val context = androidx.compose.ui.platform.LocalContext.current
         val cwd = taskCwdDraft.trim()
         val groupedName = newTaskName.trim()
         // 任务身份不再依赖首个会话提示词：名称留空时由提示词自动命名。
-        val taskPrompt = if (!startFirstSession || newTaskTarget.isShell) {
-            null
-        } else {
-            newTaskPrompt.trim().ifEmpty { null }
-        }
+        val taskPrompt = newTaskPrompt.trim().ifEmpty { null }
         val canCreateTask = cwd.isNotEmpty() && TaskListState.isValidOptionalTaskName(groupedName) &&
             (groupedName.isNotEmpty() || taskPrompt != null)
         val submitNewTask: () -> Unit = submit@{
             if (state.mutationBusy || !canCreateTask) return@submit
             val submittedTarget = newTaskTarget
             val submittedKind = newTaskKind
+            val submittedModel = newTaskModel.takeUnless { it == "default" }
+            val submittedEffort = newTaskThinkingEffort
             val submittedStartSession = startFirstSession
             val submittedWorktree = newTaskWorktree
             val submittedWorkspaceId = newTaskWorkspaceId
@@ -342,6 +400,7 @@ fun TaskListScreen(
                     newTaskOpen = false
                     val snapshot = if (submittedStartSession) state.createTaskWindow(
                         result.task.id, submittedTarget, submittedKind, taskPrompt,
+                        submittedModel, submittedEffort,
                     ) else null
                     if (snapshot != null) {
                         onOpenSession(
@@ -364,170 +423,58 @@ fun TaskListScreen(
                 }
             }
         }
-        val focusRequester = remember { FocusRequester() }
-        val keyboard = LocalSoftwareKeyboardController.current
-        LaunchedEffect(Unit) {
-            focusRequester.requestFocus()
-            keyboard?.show()
-        }
-        Dialog(
-            onDismissRequest = { if (!state.mutationBusy) newTaskOpen = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
-            val dialogView = LocalView.current
-            val dialogWindow = (dialogView.parent as? DialogWindowProvider)?.window
-            val lightBackground = WandColors.bgElevated.luminance() > 0.5f
-            DisposableEffect(dialogWindow, lightBackground) {
-                val controller = dialogWindow?.let { WindowCompat.getInsetsController(it, dialogView) }
-                val previous = controller?.isAppearanceLightStatusBars
-                controller?.isAppearanceLightStatusBars = lightBackground
-                onDispose { if (previous != null) controller.isAppearanceLightStatusBars = previous }
-            }
-            Column(
-                modifier = Modifier.fillMaxSize().background(WandColors.bgElevated)
-                    .statusBarsPadding().navigationBarsPadding().imePadding(),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("新建任务", style = MaterialTheme.typography.titleLarge,
-                        color = WandColors.textPrimary, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { newTaskOpen = false }, enabled = !state.mutationBusy) { Text("取消") }
-                }
-                HorizontalDivider(color = WandColors.border)
-                Column(
-                    modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp, vertical = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    WandTextField(
-                        value = newTaskName,
-                        onValueChange = { newTaskName = it; state.clearMutationError() },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = if (startFirstSession && !newTaskTarget.isShell) "任务标题（可选）" else "任务标题（必填）",
-                        singleLine = true,
-                        enabled = !state.mutationBusy,
-                    )
-                    if (startFirstSession && !newTaskTarget.isShell) {
-                        WandTextField(
-                            value = newTaskPrompt,
-                            onValueChange = { newTaskPrompt = it; state.clearMutationError() },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).focusRequester(focusRequester),
-                            placeholder = "描述要完成的工作…",
-                            minLines = 6,
-                            enabled = !state.mutationBusy,
-                        )
-                    }
-                    Text("参数", style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold, color = WandColors.textPrimary)
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(WandColors.surfaceSoft)
-                            .clickable(enabled = !state.mutationBusy) { openDirectoryPicker() }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("工作目录", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-                            Text(if (cwd.isEmpty()) "选择目录" else cwd,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = WandColors.textPrimary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
-                        }
-                        Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
-                    }
-                    WandChoiceStrip(
-                        options = listOf(true to "启动会话", false to "仅建分组"),
-                        selected = startFirstSession,
-                        onSelect = { if (!state.mutationBusy) startFirstSession = it },
-                        minHeight = 44.dp,
-                        flat = true,
-                    )
-                    if (startFirstSession) {
-                        Text("工具", style = MaterialTheme.typography.labelMedium, color = WandColors.textMuted)
-                        var providerMenuOpen by remember { mutableStateOf(false) }
-                        Box {
-                            Row(
-                                modifier = Modifier.fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(WandColors.surfaceSoft)
-                                    .clickable(enabled = !state.mutationBusy) { providerMenuOpen = true }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                val provider = newTaskTarget.raw.takeUnless { newTaskTarget.isShell }
-                                Image(
-                                    painter = BrandLogos.painterForProvider(provider),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                                Text(newTaskTarget.label, modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary)
-                                Icon(WandIcons.expand, contentDescription = null, tint = WandColors.textMuted)
-                            }
-                            DropdownMenu(expanded = providerMenuOpen, onDismissRequest = { providerMenuOpen = false }) {
-                                WorkspaceSessionTarget.OPTIONS.forEach { option ->
-                                    DropdownMenuItem(
-                                        text = { Text(option.label) },
-                                        onClick = {
-                                            providerMenuOpen = false
-                                            newTaskDraftRevision += 1
-                                            newTaskTarget = option
-                                            if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                        if (!newTaskTarget.isShell) {
-                            Text("会话类型", style = MaterialTheme.typography.labelMedium,
-                                color = WandColors.textMuted)
-                            WandChoiceStrip(
-                                options = WorkspaceSessionKind.entries.map { it to it.label },
-                                selected = newTaskKind,
-                                onSelect = {
-                                    if (state.mutationBusy) return@WandChoiceStrip
-                                    newTaskDraftRevision += 1
-                                    newTaskKind = it
-                                    state.rememberCreationChoice(defaultSessionKind = it)
-                                },
-                                minHeight = 40.dp,
-                                flat = true,
-                            )
-                        }
-                    }
-                    var advanced by remember { mutableStateOf(false) }
-                    BackHandler(enabled = advanced && !state.mutationBusy) { advanced = false }
-                    TextButton(onClick = { advanced = !advanced }, enabled = !state.mutationBusy) {
-                        Text(if (advanced) "收起工作树选项" else "工作树选项")
-                    }
-                    WandInlinePanel(visible = advanced, growFrom = Alignment.Top) {
-                        WandChoiceStrip(
-                            options = listOf(false to "共用工作区", true to "独立工作树"),
-                            selected = newTaskWorktree,
-                            onSelect = { if (!state.mutationBusy) newTaskWorktree = it },
-                            minHeight = 44.dp,
-                            flat = true,
-                        )
-                    }
-                }
-                HorizontalDivider(color = WandColors.border)
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                    MutationErrorText(state.mutationError)
-                    WandButton(
-                        label = if (startFirstSession) "创建并启动会话" else "创建任务",
-                        onClick = submitNewTask,
-                        loading = state.mutationBusy,
-                        enabled = canCreateTask,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
+        NewTaskComposerDialog(
+            name = newTaskName,
+            onNameChange = { newTaskName = it; state.clearMutationError() },
+            prompt = newTaskPrompt,
+            onPromptChange = { newTaskPrompt = it; state.clearMutationError() },
+            cwd = cwd,
+            onChooseDirectory = ::openDirectoryPicker,
+            target = newTaskTarget,
+            onTargetChange = { option ->
+                newTaskDraftRevision += 1
+                newTaskTarget = option
+                newTaskModel = "default"
+                val available = com.wand.app.ui.thinkingEffortOptions(
+                    option.raw, "default", newTaskModels?.defaultModelFor(option.raw),
+                    newTaskModels?.modelsFor(option.raw).orEmpty(),
+                )
+                newTaskThinkingEffort = state.defaultThinkingEffort.takeIf { effort ->
+                    available.any { it.id == effort }
+                } ?: "off"
+                if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
+            },
+            kind = newTaskKind,
+            onKindChange = {
+                newTaskDraftRevision += 1
+                newTaskKind = it
+                state.rememberCreationChoice(defaultSessionKind = it)
+            },
+            model = newTaskModel,
+            onModelChange = { chosen ->
+                newTaskDraftRevision += 1
+                newTaskModel = chosen
+                val available = com.wand.app.ui.thinkingEffortOptions(
+                    newTaskTarget.raw, chosen,
+                    newTaskModels?.defaultModelFor(newTaskTarget.raw),
+                    newTaskModels?.modelsFor(newTaskTarget.raw).orEmpty(),
+                )
+                if (available.none { it.id == newTaskThinkingEffort }) newTaskThinkingEffort = "off"
+            },
+            thinkingEffort = newTaskThinkingEffort,
+            onThinkingEffortChange = { newTaskDraftRevision += 1; newTaskThinkingEffort = it },
+            models = newTaskModels,
+            startFirstSession = startFirstSession,
+            onStartFirstSessionChange = { startFirstSession = it },
+            worktree = newTaskWorktree,
+            onWorktreeChange = { newTaskWorktree = it },
+            busy = state.mutationBusy,
+            error = state.mutationError,
+            canCreate = canCreateTask,
+            onSubmit = submitNewTask,
+            directoryPickerContent = directoryPickerContent,
+            onDismiss = { if (!state.mutationBusy) newTaskOpen = false },
+        )
     }
 
     moveSessionTarget?.let { session ->
@@ -536,59 +483,6 @@ fun TaskListScreen(
             onMoved = { scope.launch { state.refreshAfterMutation() } })
     }
 
-    if (directoryPickerOpen) {
-        WandBottomSheet(
-            onDismissRequest = { if (!state.mutationBusy) directoryPickerOpen = false },
-            modifier = Modifier.navigationBarsPadding(),
-            sheetState = targetSheetState,
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("选择工作目录", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
-                    Text(
-                        directoryPickerPath,
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                        color = WandColors.textMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                TextButton(onClick = { directoryPickerOpen = false }) { Text("关闭") }
-            }
-            directoryError?.let {
-                Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp))
-            }
-            if (directoryLoading) {
-                Text("读取中…", color = WandColors.textMuted, modifier = Modifier.padding(20.dp))
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp).padding(horizontal = 12.dp)) {
-                    if (directoryPickerPath != "/") {
-                        item {
-                            DirectoryPickerRow("返回上一级", parentDirectory(directoryPickerPath), WandIcons.chevronRight) {
-                                browseDirectory(parentDirectory(directoryPickerPath))
-                            }
-                        }
-                    }
-                    items(directoryListing?.items.orEmpty().filter { it.isDirectory }, key = { it.path }) { item ->
-                        DirectoryPickerRow(item.name, item.path, WandIcons.folder) { browseDirectory(item.path) }
-                    }
-                }
-            }
-            TextButton(
-                onClick = {
-                    updateTaskCwd(directoryPickerPath)
-                    directoryPickerOpen = false
-                },
-                enabled = !directoryLoading,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Text("选择此目录")
-            }
-        }
-    }
 
     renameTarget?.let { summary ->
         val name = renameDraft.trim()

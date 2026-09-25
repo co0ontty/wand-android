@@ -86,6 +86,35 @@ class WorkspaceTaskCreationTest {
     }
 
     @Test
+    fun chosenModelAndEffortApplyBeforeFirstPrompt() {
+        val binding = WorkspaceBinding("ws-1", "task-1", "/repo")
+        val structured = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.Pi, binding, WorkspaceSessionKind.Structured,
+            prompt = "完成这项任务", model = "pi-model", thinkingEffort = "max",
+        ).body
+        assertEquals("pi-model", structured.getString("model"))
+        assertEquals("max", structured.getString("thinkingEffort"))
+        assertEquals("完成这项任务", structured.getString("prompt"))
+        assertTrue(structured.getBoolean("respondImmediately"))
+
+        val pty = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.Codex, binding, WorkspaceSessionKind.Pty,
+            prompt = "先检查仓库", model = "codex-model", thinkingEffort = "deep",
+        ).body
+        assertEquals("codex-model", pty.getString("model"))
+        assertEquals("deep", pty.getString("thinkingEffort"))
+        assertEquals("先检查仓库", pty.getString("initialInput"))
+        assertFalse(pty.has("respondImmediately"))
+
+        val defaults = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.Pi, binding, model = "default",
+        ).body
+        assertFalse(defaults.has("model"))
+        assertFalse(defaults.has("thinkingEffort"))
+        assertFalse(defaults.has("respondImmediately"))
+    }
+
+    @Test
     fun binding_carriesThreeFields() {
         val binding = WorkspaceBinding("ws-1", "task-1", "/worktree/path")
         assertEquals("ws-1", binding.workspaceId)

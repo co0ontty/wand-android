@@ -48,10 +48,12 @@ class TaskListStateTest {
             testScheduler.runCurrent()
             state.rememberCreationChoice("codex", WorkspaceSessionKind.Structured)
             defaults.complete(ServerConfigInfo.parse(JSONObject()
-                .put("defaultProvider", "claude").put("defaultSessionKind", "pty")))
+                .put("defaultProvider", "claude").put("defaultSessionKind", "pty")
+                .put("defaultThinkingEffort", "max")))
             assertTrue(loading.await())
             assertEquals("codex", state.defaultProvider)
             assertEquals(WorkspaceSessionKind.Structured, state.defaultSessionKind)
+            assertEquals("max", state.defaultThinkingEffort)
             assertNotNull(state.createTaskWindow("task-1", WorkspaceSessionTarget.Codex, state.defaultSessionKind))
             assertEquals(WorkspaceSessionTarget.Codex to WorkspaceSessionKind.Structured, port.createdWindowChoices.single())
         } finally {
@@ -303,14 +305,17 @@ class TaskListStateTest {
     }
 
     @Test
-    fun createTaskSessionForwardsPromptWithoutRenamingTask() = runBlocking {
+    fun createTaskSessionForwardsPromptAndSelectedModelWithoutRenamingTask() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
         val session = state.createTaskWindow("task-1", WorkspaceSessionTarget.Claude,
-            WorkspaceSessionKind.Structured, prompt = "Investigate tests")
+            WorkspaceSessionKind.Structured, prompt = "Investigate tests",
+            model = "chosen-model", thinkingEffort = "deep")
         assertEquals("created-session", session?.id)
         assertEquals("task-1", port.createdWindowBindings.single().workspaceTaskId)
         assertEquals(listOf("Investigate tests"), port.createdWindowPrompts)
+        assertEquals(listOf("chosen-model"), port.createdWindowModels)
+        assertEquals(listOf("deep"), port.createdWindowEfforts)
         assertTrue(port.renamedTasks.isEmpty())
         assertNull(state.mutationError)
     }
@@ -506,6 +511,8 @@ class TaskListStateTest {
         val archivedTaskIds = mutableListOf<String>()
         val createdWindowBindings = mutableListOf<WorkspaceBinding>()
         val createdWindowPrompts = mutableListOf<String?>()
+        val createdWindowModels = mutableListOf<String?>()
+        val createdWindowEfforts = mutableListOf<String?>()
         val createdWindowChoices = mutableListOf<Pair<WorkspaceSessionTarget, WorkspaceSessionKind>>()
         var pendingConfig: CompletableDeferred<ServerConfigInfo>? = null
         val savedLayouts = mutableListOf<Pair<String, TaskWindowLayout?>>()
@@ -638,9 +645,13 @@ class TaskListStateTest {
             binding: WorkspaceBinding,
             kind: WorkspaceSessionKind,
             prompt: String?,
+            model: String?,
+            thinkingEffort: String?,
         ): SessionSnapshot {
             createdWindowBindings += binding
             createdWindowPrompts += prompt
+            createdWindowModels += model
+            createdWindowEfforts += thinkingEffort
             createdWindowChoices += target to kind
             return SessionSnapshot.parse(JSONObject().put("id", "created-session"))
         }

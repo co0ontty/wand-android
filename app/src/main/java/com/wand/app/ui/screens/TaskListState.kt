@@ -48,6 +48,7 @@ class TaskListState(
     var defaultProvider by mutableStateOf("claude")
         private set
     var defaultSessionKind by mutableStateOf(WorkspaceSessionKind.Structured)
+    var defaultThinkingEffort by mutableStateOf("off")
         private set
     var creationDefaultsLoading by mutableStateOf(false)
         private set
@@ -219,6 +220,7 @@ class TaskListState(
                 .filter { it.path.isNotBlank() }
                 .distinctBy { normalizeWorkspacePath(it.path) }
             runCatching { port.serverConfig() }.getOrNull()?.let { config ->
+                defaultThinkingEffort = config.defaultThinkingEffort?.takeIf { it.isNotBlank() } ?: "off"
                 // A slow defaults request must not undo a choice made in the open dialog.
                 if (choiceRevision != creationChoiceRevision) return@let
                 defaultProvider = config.defaultProvider?.takeIf { it.isNotBlank() } ?: defaultProvider
@@ -345,6 +347,8 @@ class TaskListState(
         target: WorkspaceSessionTarget,
         kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
         prompt: String? = null,
+        model: String? = null,
+        thinkingEffort: String? = null,
     ): SessionSnapshot? = mutate("创建工作窗口失败") {
         val detail = port.workspaceTask(taskId)
         val session = port.createWorkspaceTaskWindow(
@@ -352,6 +356,8 @@ class TaskListState(
             WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd),
             kind,
             prompt,
+            model,
+            thinkingEffort,
         )
         val reconciled = reconcileTaskWindowLayout(
             detail.task.layout,

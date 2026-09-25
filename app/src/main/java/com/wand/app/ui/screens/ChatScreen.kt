@@ -1228,7 +1228,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
  * 与 [com.wand.app.ui.components.WandBrandMark] 同尺寸/同圆角比例，但内容随 provider 变化。
  */
 @Composable
-private fun ProviderBrandMark(
+internal fun ProviderBrandMark(
     provider: String?,
     size: Int = 52,
 ) {
@@ -2144,7 +2144,7 @@ internal fun SubmitMorphButton(
 
 /** 控制行通用胶囊徽标：图标 + 文字 + 弱色底 + 下拉箭头。 */
 @Composable
-private fun ControlChip(
+internal fun ControlChip(
     icon: ImageVector,
     text: String,
     tint: Color,
@@ -2265,7 +2265,7 @@ private fun ChoiceOptionsList(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ComposerChoiceSheet(
+internal fun ComposerChoiceSheet(
     title: String,
     options: List<Pair<String, String>>,
     selected: String?,

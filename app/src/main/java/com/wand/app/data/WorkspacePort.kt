@@ -165,13 +165,15 @@ interface WorkspacePort : TaskChangeSource {
      * - 其它 target + 结构化 → POST /api/structured-sessions
      * - 其它 target + PTY → POST /api/commands，provider 对应 CLI（qoder → qodercli）
      *
-     * 模式、模型、thinking effort 使用服务端默认值；不调用 updateNewSessionDefaults，
-     * 避免任务快捷选择器持久化全局新建偏好。
+     * 模型 / thinking effort 可按这次新建的显式选择覆盖，否则使用服务端默认值；
+     * 不调用 updateNewSessionDefaults，避免任务快捷选择器持久化全局新建偏好。
      */
     suspend fun createWorkspaceTaskWindow(
         target: WorkspaceSessionTarget,
         binding: WorkspaceBinding,
         kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
         prompt: String? = null,
+        model: String? = null,
+        thinkingEffort: String? = null,
     ): SessionSnapshot
 }

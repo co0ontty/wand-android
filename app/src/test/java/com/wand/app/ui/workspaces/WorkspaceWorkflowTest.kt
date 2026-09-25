@@ -307,6 +307,8 @@ class WorkspaceWorkflowTest {
             binding: WorkspaceBinding,
             kind: WorkspaceSessionKind,
             prompt: String?,
+            model: String?,
+            thinkingEffort: String?,
         ): SessionSnapshot {
             createCalls += target to binding
             return SessionSnapshot(

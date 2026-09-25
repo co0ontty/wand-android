@@ -36,6 +36,8 @@ internal fun createWorkspaceTaskWindowRequest(
     binding: WorkspaceBinding,
     kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
     prompt: String? = null,
+    model: String? = null,
+    thinkingEffort: String? = null,
 ): WorkspaceTaskWindowRequest {
     val body = JSONObject().put("cwd", binding.cwd).apply {
         binding.workspaceId?.trim()?.takeIf { it.isNotEmpty() }?.let { put("workspaceId", it) }
@@ -47,9 +49,15 @@ internal fun createWorkspaceTaskWindowRequest(
     }
     val provider = target.raw
     body.put("provider", provider)
+    model?.trim()?.takeIf { it.isNotEmpty() && it != "default" }?.let { body.put("model", it) }
+    thinkingEffort?.trim()?.takeIf { it.isNotEmpty() }?.let { body.put("thinkingEffort", it) }
     val initialPrompt = prompt?.trim()?.takeIf { it.isNotEmpty() }
     if (kind == WorkspaceSessionKind.Structured) {
-        initialPrompt?.let { body.put("prompt", it) }
+        initialPrompt?.let {
+            body.put("prompt", it)
+            // 会话快照先返回；首轮执行继续走事件流，不让新建界面等整轮完成。
+            body.put("respondImmediately", true)
+        }
         body.put("runner", structuredRunnerFor(provider))
         return WorkspaceTaskWindowRequest("/api/structured-sessions", body)
     }
