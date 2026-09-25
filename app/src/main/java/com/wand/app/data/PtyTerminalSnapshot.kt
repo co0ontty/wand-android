@@ -17,6 +17,12 @@ internal data class PtyTerminalSnapshot(
 
     val isReplayable: Boolean get() = version == 1 && validSize(cols, rows)
 
+    /** The checkpoint may end with a resize in its ordered pending operations. */
+    val finalSize: Pair<Int, Int> get() = pending
+        .filterIsInstance<Operation.Resize>()
+        .lastOrNull()
+        ?.let { it.cols to it.rows } ?: (cols to rows)
+
     companion object {
         fun validSize(cols: Int, rows: Int): Boolean = cols in 1..1000 && rows in 1..1000
 

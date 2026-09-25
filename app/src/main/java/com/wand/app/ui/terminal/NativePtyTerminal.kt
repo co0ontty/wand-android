@@ -49,6 +49,13 @@ internal fun replayTerminalSnapshot(
     return true
 }
 
+internal fun shouldResizePtyAfterSnapshot(
+    viewSize: Pair<Int, Int>?,
+    lastSize: Pair<Int, Int>?,
+    serverSize: Pair<Int, Int>?,
+): Boolean = viewSize != null && PtyTerminalSnapshot.validSize(viewSize.first, viewSize.second) &&
+    (viewSize != lastSize || (serverSize != null && viewSize != serverSize))
+
 /** One native renderer and one ACK-enabled websocket per visible PTY session. */
 internal class NativePtyTerminal(
     private val api: WandApi,
@@ -102,9 +109,9 @@ internal class NativePtyTerminal(
         socket.onPtyEvent = ::handle
         socket.onAuthenticationFailure = onError
         socket.onPtyResync = {
-            ready.value = false
-            loading.value = !rejectedSnapshot
-            lastSize = null
+            // Keep the last painted screen visible while replacing a stale PTY stream.
+            // Hiding it behind the loading overlay on every backpressure recovery flickers.
+            if (!ready.value) loading.value = !rejectedSnapshot
         }
         socket.onConnectionChange = { connected ->
             if (!connected) {
@@ -128,6 +135,7 @@ internal class NativePtyTerminal(
         ready.value = false
         loading.value = true
         rejectedSnapshot = false
+        lastSize = null
         socket.reconnectForForeground()
     }
 
@@ -165,10 +173,13 @@ internal class NativePtyTerminal(
                 if (size != null && PtyTerminalSnapshot.validSize(size.first, size.second)) {
                     emulator.resize(size.second, size.first)
                 }
-                lastSize = null
                 ready.value = true
                 loading.value = false
-                if (size != null && PtyTerminalSnapshot.validSize(size.first, size.second)) {
+                val serverSize = data.terminalState?.finalSize
+                    ?: if (data.ptyCols != null && data.ptyRows != null) {
+                        data.ptyCols to data.ptyRows
+                    } else null
+                if (size != null && shouldResizePtyAfterSnapshot(size, lastSize, serverSize)) {
                     lastSize = size
                     socket.resizePty(size.first, size.second)
                 }

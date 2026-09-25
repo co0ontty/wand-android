@@ -27,6 +27,7 @@ class PtyTerminalSnapshotTest {
         assertEquals(PtyTerminalSnapshot.Operation.Resize(40, 12), state.pending[1])
         assertEquals(PtyTerminalSnapshot.Operation.Data("world"), state.pending[2])
         assertEquals(42, incoming.seq)
+        assertEquals(40 to 12, state.finalSize)
     }
 
     @Test fun rejectsIncompleteUnknownOrInvalidSnapshots() {
