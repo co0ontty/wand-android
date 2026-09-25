@@ -117,6 +117,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -194,6 +195,27 @@ private enum class ChatScrollMode {
 
 /** LazyColumn 中正向手指位移表示内容被拉向更早的消息。 */
 internal fun shouldPauseBottomFollow(userScrollDeltaY: Float): Boolean = userScrollDeltaY > 0f
+
+/** 仅用户把顶部哨兵拉进视口时翻页；布局/贴底/惯性滚动不能自动翻空历史。 */
+internal fun shouldAutoLoadEarlierMessages(
+    isUserScroll: Boolean,
+    scrollingTowardHistory: Boolean,
+    topSentinelVisible: Boolean,
+    canLoadEarlier: Boolean,
+    loadingEarlier: Boolean,
+    requestedThisGesture: Boolean,
+): Boolean = isUserScroll && scrollingTowardHistory && topSentinelVisible &&
+    canLoadEarlier && !loadingEarlier && !requestedThisGesture
+
+internal data class EarlierLoadAnchor(
+    val itemKey: Any?,
+    val scrollOffset: Int,
+    val turnOffset: Int,
+    val blockOffset: Int,
+)
+
+internal fun earlierLoadAdvanced(anchor: EarlierLoadAnchor, turnOffset: Int, blockOffset: Int): Boolean =
+    turnOffset < anchor.turnOffset || (turnOffset == anchor.turnOffset && blockOffset < anchor.blockOffset)
 
 /** 状态坞只承接流式状态 / 子 Agent；完成时间和用量留在各轮消息里，避免右下角再显一遍。 */
 internal fun shouldShowStructuredActivityDock(
@@ -372,12 +394,57 @@ fun ChatScreen(
     val headerOffset = if (showLoadEarlierSentinel) 1 else 0
     // bottomIndex 是最后的 chat-bottom 哨兵下标（即它之前的项数）。
     val bottomIndex = headerOffset + displayItems.size
+    var earlierLoadAnchor by remember(sessionId) { mutableStateOf<EarlierLoadAnchor?>(null) }
+    val requestEarlier: () -> Unit = {
+        if (store.canLoadEarlier && !store.loadingEarlier) {
+            scrollMode = ChatScrollMode.Manual
+            val firstContent = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                it.key != "chat-load-earlier" && it.key != "chat-bottom"
+            }
+            earlierLoadAnchor = EarlierLoadAnchor(
+                itemKey = firstContent?.key,
+                scrollOffset = firstContent?.let {
+                    (listState.layoutInfo.viewportStartOffset - it.offset).coerceAtLeast(0)
+                } ?: 0,
+                turnOffset = store.loadedOffset,
+                blockOffset = store.leadingBlockOffset,
+            )
+            store.loadEarlier()
+        }
+    }
+    // 点击按钮和上拉共用锚点。稳定 key 的消息在 prepend 后仍保持原位，不能让固定在
+    // index=0 的哨兵把阅读位置锁在列表最上方，也不能因为哨兵还可见而连翻多页。
+    LaunchedEffect(store.loadedOffset, store.leadingBlockOffset, store.loadingEarlier, earlierLoadAnchor) {
+        val anchor = earlierLoadAnchor ?: return@LaunchedEffect
+        if (earlierLoadAdvanced(anchor, store.loadedOffset, store.leadingBlockOffset)) {
+            withFrameNanos { }
+            val anchoredIndex = displayItems.indexOfFirst { item ->
+                messageItemKey(
+                    item = item,
+                    loadedOffset = store.loadedOffset,
+                    anchorExplorationAtEnd = lastUserTurnIndex >= 0 &&
+                        messageItemTurnIndex(item) < lastUserTurnIndex,
+                ) == anchor.itemKey
+            }
+            listState.scrollToItem(
+                if (anchoredIndex >= 0) headerOffset + anchoredIndex else headerOffset,
+                anchor.scrollOffset,
+            )
+            earlierLoadAnchor = null
+        } else if (!store.loadingEarlier) {
+            // 空页/请求失败时不要让旧锚点误用于后续 WS 推送。
+            earlierLoadAnchor = null
+        }
+    }
+    val latestRequestEarlier = rememberUpdatedState(requestEarlier)
 
     // 用户一开始向上浏览旧内容就立即暂停贴底跟随。流式消息刷新很频繁，若等拖动
     // 累计超过某个阈值才暂停，阈值内的新 token 会先把列表重新拽回底部。
     // Manual 模式不会因用户自己滚回底部而退出；只有“回到底部”按钮或主动发送才恢复。
-    val followPauseConnection = remember(focusManager) {
+    val followPauseConnection = remember(focusManager, listState, store) {
         object : NestedScrollConnection {
+            private var requestedThisGesture = false
+
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput) {
                     if (available.y != 0f) focusManager.clearFocus()
@@ -386,6 +453,28 @@ fun ChatScreen(
                     }
                 }
                 return Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (shouldAutoLoadEarlierMessages(
+                        isUserScroll = source == NestedScrollSource.UserInput,
+                        scrollingTowardHistory = consumed.y + available.y > 0f,
+                        topSentinelVisible = listState.layoutInfo.visibleItemsInfo.any {
+                            it.key == "chat-load-earlier"
+                        },
+                        canLoadEarlier = store.canLoadEarlier,
+                        loadingEarlier = store.loadingEarlier,
+                        requestedThisGesture = requestedThisGesture,
+                    )) {
+                    requestedThisGesture = true
+                    latestRequestEarlier.value()
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                requestedThisGesture = false
+                return Velocity.Zero
             }
         }
     }
@@ -657,7 +746,7 @@ fun ChatScreen(
                         if (showLoadEarlierSentinel) {
                             item(key = "chat-load-earlier") {
                                 TextButton(
-                                    onClick = store::loadEarlier,
+                                    onClick = requestEarlier,
                                     enabled = !store.loadingEarlier,
                                     modifier = Modifier
                                         .fillMaxWidth()

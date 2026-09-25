@@ -15,6 +15,39 @@ class ChatPresentationTest {
     }
 
     @Test
+    fun userScrollingIntoTopSentinelLoadsOneEarlierPagePerGesture() {
+        fun shouldLoad(
+            isUserScroll: Boolean = true,
+            scrollingTowardHistory: Boolean = true,
+            topSentinelVisible: Boolean = true,
+            canLoadEarlier: Boolean = true,
+            loadingEarlier: Boolean = false,
+            requestedThisGesture: Boolean = false,
+        ) = shouldAutoLoadEarlierMessages(
+            isUserScroll, scrollingTowardHistory, topSentinelVisible,
+            canLoadEarlier, loadingEarlier, requestedThisGesture,
+        )
+
+        assertEquals(true, shouldLoad())
+        assertEquals(false, shouldLoad(isUserScroll = false)) // 初始贴底/惯性滚动
+        assertEquals(false, shouldLoad(scrollingTowardHistory = false))
+        assertEquals(false, shouldLoad(topSentinelVisible = false))
+        assertEquals(false, shouldLoad(canLoadEarlier = false))
+        assertEquals(false, shouldLoad(loadingEarlier = true))
+        assertEquals(false, shouldLoad(requestedThisGesture = true))
+    }
+
+    @Test
+    fun earlierPageOnlyRestoresAnchorAfterBlockOrTurnCursorMovesBack() {
+        val anchor = EarlierLoadAnchor("turn-80", 12, turnOffset = 80, blockOffset = 50)
+
+        assertEquals(false, earlierLoadAdvanced(anchor, turnOffset = 80, blockOffset = 50))
+        assertEquals(false, earlierLoadAdvanced(anchor, turnOffset = 81, blockOffset = 0))
+        assertEquals(true, earlierLoadAdvanced(anchor, turnOffset = 80, blockOffset = 10))
+        assertEquals(true, earlierLoadAdvanced(anchor, turnOffset = 40, blockOffset = 0))
+    }
+
+    @Test
     fun quickCommitStatusRefreshWaitsForIdleLoadedSession() {
         assertEquals(false, shouldRefreshQuickCommitStatus(isLoading = true, isResponding = false))
         assertEquals(false, shouldRefreshQuickCommitStatus(isLoading = false, isResponding = true))
