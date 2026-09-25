@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -71,6 +72,7 @@ import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
+import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.rememberWandDragReorderState
 import com.wand.app.ui.components.wandLongPressDrag
@@ -81,6 +83,34 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlinx.coroutines.launch
+
+/** One visual unit per decision in the new-task form. */
+@Composable
+private fun NewTaskFormCard(
+    number: String,
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(WandColors.surface)
+            .border(1.dp, WandColors.border.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(number, style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold, color = WandColors.brand)
+            Text(title, style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold, color = WandColors.textPrimary)
+        }
+        content()
+    }
+}
 
 /** Stable route information carried from the task tree into a session detail screen. */
 data class TaskSessionRoute(
@@ -305,6 +335,7 @@ fun TaskListScreen(
             (groupedName.isNotEmpty() || taskPrompt != null)
         WandDialog(
             title = "新建任务",
+            icon = WandIcons.add,
             onDismissRequest = { if (!state.mutationBusy) newTaskOpen = false },
             confirm = WandDialogAction(
                 label = if (state.mutationBusy) "创建中…" else if (startFirstSession) "创建并启动会话" else "创建任务",
@@ -366,13 +397,23 @@ fun TaskListScreen(
                 onClick = { newTaskOpen = false },
             ),
         ) {
-            Text("任务是工作区内的分组，与任务看板同步，不会创建磁盘子目录。",
-                style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
-            WandTextField(value = newTaskName,
-                onValueChange = { newTaskName = it; state.clearMutationError() },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                label = "任务名称", placeholder = "留空按提示词自动命名", singleLine = true,
-                enabled = !state.mutationBusy)
+            Text(
+                "任务与看板同步；选择工作目录，再决定是否立即启动会话。",
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textMuted,
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
+            NewTaskFormCard("01", if (startFirstSession && !newTaskTarget.isShell) "任务名称 · 可选" else "任务名称 · 必填") {
+                WandTextField(
+                    value = newTaskName,
+                    onValueChange = { newTaskName = it; state.clearMutationError() },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = if (startFirstSession && !newTaskTarget.isShell) "留空按提示词自动命名" else "输入任务名称",
+                    singleLine = true,
+                    enabled = !state.mutationBusy,
+                )
+            }
+            NewTaskFormCard("02", "工作目录", modifier = Modifier.padding(top = 12.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -421,17 +462,18 @@ fun TaskListScreen(
                     color = WandColors.textMuted,
                     modifier = Modifier.padding(top = 12.dp, bottom = 6.dp),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     state.recentPaths.take(3).forEach { recent ->
                         Text(
                             recent.displayName,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(9.dp))
-                                .background(WandColors.surfaceSoft)
+                                .background(if (cwd == recent.path) WandColors.brandSoft else WandColors.surfaceSoft)
                                 .clickable(enabled = !state.mutationBusy) { updateTaskCwd(recent.path) }
                                 .padding(horizontal = 9.dp, vertical = 7.dp),
                             style = MaterialTheme.typography.labelSmall,
-                            color = WandColors.textPrimary,
+                            color = if (cwd == recent.path) WandColors.brand else WandColors.textPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -446,23 +488,30 @@ fun TaskListScreen(
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
-            Text("创建后", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted,
-                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
-            WandChoiceStrip(options = listOf(true to "启动会话", false to "仅建分组"), selected = startFirstSession,
-                onSelect = { if (!state.mutationBusy) startFirstSession = it }, minHeight = 44.dp, flat = true)
+            }
+            NewTaskFormCard("03", "创建后", modifier = Modifier.padding(top = 12.dp)) {
+                WandChoiceStrip(options = listOf(true to "启动会话", false to "仅建分组"), selected = startFirstSession,
+                    onSelect = { if (!state.mutationBusy) startFirstSession = it }, minHeight = 44.dp, flat = true)
+                Text(
+                    if (startFirstSession) "创建任务后立即打开第一个会话" else "仅创建分组，之后再添加会话",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.textMuted,
+                )
+            }
             if (startFirstSession) {
+                NewTaskFormCard("04", "首次会话", modifier = Modifier.padding(top = 12.dp)) {
                 if (!newTaskTarget.isShell) {
                     WandTextField(value = newTaskPrompt, onValueChange = { newTaskPrompt = it },
                         label = "首个会话的提示词（可选）", placeholder = "希望 CLI 帮你完成什么？",
                         minLines = 2, enabled = !state.mutationBusy,
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+                        modifier = Modifier.fillMaxWidth())
                     Text("任务名称留空时按此提示词自动命名，仍可随时改名。", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
                 }
                 Text(
                     "首次打开的工具",
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
-                    modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+                    modifier = Modifier.padding(top = 4.dp),
                 )
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
@@ -560,17 +609,22 @@ fun TaskListScreen(
                         modifier = Modifier.padding(top = 6.dp),
                     )
                 }
+                }
             }
             var advanced by remember { mutableStateOf(false) }
-            TextButton(onClick = { advanced = !advanced }, enabled = !state.mutationBusy) {
-                Text(if (advanced) "收起高级选项" else "高级：独立工作树")
+            BackHandler(enabled = advanced && !state.mutationBusy) { advanced = false }
+            TextButton(onClick = { advanced = !advanced }, enabled = !state.mutationBusy,
+                modifier = Modifier.padding(top = 6.dp)) {
+                Text(if (advanced) "收起高级选项" else "高级选项 · 独立工作树")
             }
-            if (advanced) {
-                WandChoiceStrip(options = listOf(false to "共用工作区", true to "隔离 worktree"),
-                    selected = newTaskWorktree, onSelect = { if (!state.mutationBusy) newTaskWorktree = it },
-                    minHeight = 44.dp, flat = true)
-                Text(if (newTaskWorktree) "需要 Git 仓库，会创建独立工作树。" else "默认仅做界面分组，不创建目录。",
-                    style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+            WandInlinePanel(visible = advanced, growFrom = Alignment.Top) {
+                NewTaskFormCard("05", "工作树隔离") {
+                    WandChoiceStrip(options = listOf(false to "共用工作区", true to "隔离 worktree"),
+                        selected = newTaskWorktree, onSelect = { if (!state.mutationBusy) newTaskWorktree = it },
+                        minHeight = 44.dp, flat = true)
+                    Text(if (newTaskWorktree) "需要 Git 仓库，会创建独立工作树。" else "仅做界面分组，不创建磁盘子目录。",
+                        style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                }
             }
             MutationErrorText(state.mutationError, modifier = Modifier.padding(top = 8.dp))
         }
