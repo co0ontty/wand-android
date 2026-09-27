@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.ClipData
 import android.content.Intent
 import android.os.Build
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.animateColorAsState
 import androidx.activity.result.contract.ActivityResultContracts
@@ -121,7 +120,6 @@ fun SettingsScreen(
     var betaChannel by remember { mutableStateOf(settings.isBetaChannel()) }
     var appearanceMode by remember { mutableStateOf(settings.getAppearanceMode()) }
     var exportingLogs by remember { mutableStateOf(false) }
-    val motionEnabled = rememberSettingsMotionEnabled()
     val appContext = LocalContext.current.applicationContext
     val logScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -637,20 +635,6 @@ private fun shareLogFile(context: android.content.Context, file: java.io.File) {
             "无法打开分享面板，日志已保存在 ${file.name}",
             android.widget.Toast.LENGTH_LONG,
         ).show()
-    }
-}
-
-@Composable
-private fun rememberSettingsMotionEnabled(): Boolean {
-    val context = LocalContext.current
-    return remember(context) {
-        runCatching {
-            Settings.Global.getFloat(
-                context.contentResolver,
-                Settings.Global.ANIMATOR_DURATION_SCALE,
-                1f,
-            ) > 0f
-        }.getOrDefault(true)
     }
 }
 

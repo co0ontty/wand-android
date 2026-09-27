@@ -344,6 +344,34 @@ data class TurnUsage(
     }
 }
 
+/**
+ * 群聊（团队运行 relay 会话）里一条发言的署名；普通会话的服务端回合不带，解析结果为 null。
+ * 有了它，安卓才能把「负责人（主任务）」和「成员（子任务）」分开显示。
+ */
+@Immutable
+data class TurnAuthor(
+    val id: String? = null,
+    val name: String,
+    val leader: Boolean = false,
+    val provider: String? = null,
+    val sessionId: String? = null,
+) {
+    companion object {
+        fun parse(o: JSONObject?): TurnAuthor? {
+            if (o == null) return null
+            val name = o.str("name")?.trim().orEmpty()
+            if (name.isEmpty()) return null
+            return TurnAuthor(
+                id = o.str("id"),
+                name = name,
+                leader = o.bool("leader") == true,
+                provider = o.str("provider"),
+                sessionId = o.str("sessionId"),
+            )
+        }
+    }
+}
+
 @Immutable
 data class ConversationTurn(
     val role: String,
@@ -351,6 +379,10 @@ data class ConversationTurn(
     val usage: TurnUsage? = null,
     val createdAt: String? = null,
     val completedAt: String? = null,
+    /** 系统提示行（团队 relay 的 notice）：弱化居中展示，不当作助手回复折叠。 */
+    val notice: Boolean = false,
+    /** 群聊署名；普通会话没有。 */
+    val author: TurnAuthor? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): ConversationTurn {
@@ -362,6 +394,8 @@ data class ConversationTurn(
                 usage = TurnUsage.parse(o.obj("usage")),
                 createdAt = o.str("createdAt"),
                 completedAt = o.str("completedAt"),
+                notice = o.bool("notice") == true,
+                author = TurnAuthor.parse(o.obj("author")),
             )
         }
 
@@ -492,9 +526,10 @@ data class SessionSnapshot(
     val messageOffset: Int? = null,
     val messageTotal: Int? = null,
     /** 块级窗口（请求带 blockBudget 时服务端才下发）：messages[0] 被切掉的头部块数，
-     *  leadingBlockTotal 是这条 turn 的完整块数。leadingBlockOffset > 0 表示顶部还有块可翻。 */
+     *  leadingVisibleCount 是头部里用户可感知的条数（默认收起的工具 / 思考块不计入）；旧服务端缺字段。 */
     val leadingBlockOffset: Int? = null,
     val leadingBlockTotal: Int? = null,
+    val leadingVisibleCount: Int? = null,
     val queuedMessages: List<String>?,
     val structuredState: StructuredSessionState?,
     val pendingEscalation: EscalationRequest?,
@@ -556,6 +591,7 @@ data class SessionSnapshot(
             messageTotal = o.int("messageTotal"),
             leadingBlockOffset = o.int("leadingBlockOffset"),
             leadingBlockTotal = o.int("leadingBlockTotal"),
+            leadingVisibleCount = o.int("leadingVisibleCount"),
             queuedMessages = o.arr("queuedMessages")?.stringItems(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
@@ -720,7 +756,6 @@ data class CardExpandDefaults(
     val inlineTools: Boolean = false,
     val terminal: Boolean = false,
     val thinking: Boolean = false,
-    val toolGroup: Boolean = false,
 ) {
     fun shouldExpandTool(toolName: String): Boolean = when (toolName) {
         "Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoRead" -> inlineTools
@@ -736,7 +771,6 @@ data class CardExpandDefaults(
             inlineTools = o?.bool("inlineTools") == true,
             terminal = o?.bool("terminal") == true,
             thinking = o?.bool("thinking") == true,
-            toolGroup = o?.bool("toolGroup") == true,
         )
     }
 }
@@ -821,6 +855,7 @@ internal data class WsData(
     val messageTotal: Int? = null,
     val leadingBlockOffset: Int? = null,
     val leadingBlockTotal: Int? = null,
+    val leadingVisibleCount: Int? = null,
     val queuedMessages: List<String>?,
     val structuredState: StructuredSessionState?,
     val pendingEscalation: EscalationRequest?,
@@ -857,6 +892,7 @@ internal data class WsData(
             claudeSessionId = claudeSessionId, messages = null,
             messageOffset = messageOffset, messageTotal = messageTotal,
             leadingBlockOffset = leadingBlockOffset, leadingBlockTotal = leadingBlockTotal,
+            leadingVisibleCount = leadingVisibleCount,
             queuedMessages = queuedMessages,
             structuredState = structuredState, pendingEscalation = pendingEscalation,
             permissionBlocked = permissionBlocked, autoApprovePermissions = autoApprovePermissions,
@@ -895,6 +931,7 @@ internal data class WsData(
             messageTotal = o.int("messageTotal"),
             leadingBlockOffset = o.int("leadingBlockOffset"),
             leadingBlockTotal = o.int("leadingBlockTotal"),
+            leadingVisibleCount = o.int("leadingVisibleCount"),
             queuedMessages = o.arr("queuedMessages")?.stringItems(),
             structuredState = StructuredSessionState.parse(o.obj("structuredState")),
             pendingEscalation = EscalationRequest.parse(o.obj("pendingEscalation")),
@@ -948,6 +985,8 @@ data class BlocksPage(
     val blocks: List<ContentBlock>,
     val blockOffset: Int,
     val blockTotal: Int,
+    /** 新的 leading 游标之前还剩多少条用户可感知的块（默认收起的工具块不计入）；旧服务端缺字段。 */
+    val blockVisible: Int? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): BlocksPage {
@@ -959,6 +998,7 @@ data class BlocksPage(
                 // 服务端已在响应里声明新游标；缺字段时只能当成「拿到的是尾段」。
                 blockOffset = rawOffset,
                 blockTotal = o.int("blockTotal") ?: (rawOffset + blocks.size),
+                blockVisible = o.int("blockVisible"),
             )
         }
     }
@@ -1158,6 +1198,8 @@ data class QuickCommitResult(
     val pushed: Boolean?,
     val pushError: String?,
     val submoduleCommitCount: Int?,
+    val archivedTaskCount: Int,
+    val archiveError: String?,
 ) {
     companion object {
         fun parse(o: JSONObject): QuickCommitResult {
@@ -1170,6 +1212,8 @@ data class QuickCommitResult(
                 pushed = o.bool("pushed"),
                 pushError = o.str("pushError"),
                 submoduleCommitCount = o.arr("submoduleCommits")?.length(),
+                archivedTaskCount = o.arr("archivedTaskIds")?.length() ?: 0,
+                archiveError = o.str("archiveError"),
             )
         }
     }

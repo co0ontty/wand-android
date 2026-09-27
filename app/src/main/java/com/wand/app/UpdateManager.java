@@ -203,20 +203,7 @@ final class UpdateManager {
      * - GitHub 来源用 Release digest + 检查接口给出的 size；再叠加 Content-Length
      *   比对和 zip magic。失败自动整体重试至多 {@link #MAX_DOWNLOAD_ATTEMPTS} 次。
      */
-    DownloadRequest download(String downloadUrl, String fileName,
-                             String latestVersion, String channel,
-                             DownloadListener listener) {
-        return download(downloadUrl, fileName, latestVersion, channel, null, 0, listener);
-    }
-
-    DownloadRequest download(String downloadUrl, String fileName,
-                             String latestVersion, String channel, String expectedSha256,
-                             DownloadListener listener) {
-        return download(downloadUrl, fileName, latestVersion, channel, expectedSha256, 0, listener);
-    }
-
-    DownloadRequest download(String downloadUrl, String fileName,
-                             String latestVersion, String channel, String expectedSha256,
+    DownloadRequest download(String downloadUrl, String fileName, String expectedSha256,
                              long expectedSize, DownloadListener listener) {
         final DownloadRequest request = new DownloadRequest();
         if (downloadUrl == null || downloadUrl.isEmpty()) {
@@ -238,7 +225,7 @@ final class UpdateManager {
             for (int attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt++) {
                 try {
                     downloadAttempt(downloadUrl, safeFileName, expectedSha256, expectedSize,
-                            latestVersion, channel, listener, request);
+                            listener, request);
                     // 成功与用户取消都已在 downloadAttempt 内回调收尾。
                     return;
                 } catch (Exception e) {
@@ -279,8 +266,8 @@ final class UpdateManager {
      * 留下可被当作「待安装更新」的截断 APK。
      */
     private File downloadAttempt(String downloadUrl, String fileName, String expectedSha256,
-                                 long expectedSize, String latestVersion, String channel,
-                                 DownloadListener listener, DownloadRequest request) throws Exception {
+                                 long expectedSize, DownloadListener listener,
+                                 DownloadRequest request) throws Exception {
         Response response = null;
         File partFile = null;
         try {
@@ -400,11 +387,6 @@ final class UpdateManager {
                 throw new Exception("安装包落盘失败");
             }
             partFile = null;
-            String versionToRecord = latestVersion != null
-                    ? latestVersion : extractVersionFromFileName(fileName);
-            if (versionToRecord != null) {
-                serverStore.setDownloadedApkVersion(versionToRecord, channel);
-            }
             postDownloadCompleted(listener, outputFile);
             WandLog.i(TAG, "下载完成 " + fileName + "（" + formatSize(outputFile.length()) + "）");
             return outputFile;
@@ -703,7 +685,7 @@ final class UpdateManager {
     static String extractVersionFromFileName(String fileName) {
         if (fileName == null) return null;
         // 锚到结尾并让 .apk 后缀可选：否则 [A-Za-z0-9.-]+ 会把 ".apk" 一起吞进
-        // 版本串（4.42.1-debug.08150708.apk），污染 setDownloadedApkVersion 的记录。
+        // 版本串（4.42.1-debug.08150708.apk）。
         java.util.regex.Matcher m = java.util.regex.Pattern
                 .compile("(\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+?)?)(?:\\.apk)?$")
                 .matcher(fileName);

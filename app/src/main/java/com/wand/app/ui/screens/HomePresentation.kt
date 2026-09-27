@@ -42,9 +42,6 @@ internal fun sessionPulse(session: WorkspaceSessionSummary): HomeSessionPulse {
 internal fun sessionNeedsYou(session: WorkspaceSessionSummary): Boolean =
     sessionPulse(session) == HomeSessionPulse.NeedsYou
 
-internal fun sessionIsRunning(session: WorkspaceSessionSummary): Boolean =
-    sessionPulse(session) == HomeSessionPulse.Running
-
 /** 目录/任务上的一行摘要：运行中、等你、其他。工作区标题靠这三个数就够了。 */
 internal data class HomeSessionCounts(
     val running: Int = 0,

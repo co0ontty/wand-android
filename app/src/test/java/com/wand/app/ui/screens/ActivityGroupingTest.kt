@@ -51,18 +51,7 @@ class ActivityGroupingTest {
     }
 
     @Test
-    fun activityLabelsMatchTheWebFoldBar() {
-        assertEquals("深度思考", activityThinkingLabel("   "))
-        assertEquals("先看目录结构", activityThinkingLabel("先看目录结构"))
-        assertEquals(
-            "运行 ls -la",
-            activityToolLabel("Bash", JSONObject().put("command", "ls -la")),
-        )
-        assertEquals(
-            "读取 android/app/src/App.kt",
-            activityToolLabel("Read", JSONObject().put("file_path", "android/app/src/App.kt")),
-        )
-        assertEquals("修改 文件", activityToolLabel("Edit", JSONObject()))
+    fun activityKindsMatchTheWebFoldBar() {
         assertEquals("command", activityKindOf("Bash"))
         assertEquals("read", activityKindOf("Read"))
         assertEquals("edit", activityKindOf("TodoWrite"))

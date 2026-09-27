@@ -323,7 +323,7 @@ private fun DirectoryPeekPanel(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
                 )
             }
-            orderedTaskSummaries(group.tasks).forEach { task ->
+            group.tasks.forEach { task ->
                 PeekTaskBlock(
                     task = task,
                     parentNames = listOf(group.workspaceName),

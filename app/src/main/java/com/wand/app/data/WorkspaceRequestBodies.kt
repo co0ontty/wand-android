@@ -8,12 +8,14 @@ internal fun createWorkspaceTaskRequestBody(
     worktree: Boolean?,
     cwd: String? = null,
     description: String? = null,
+    parentTaskId: String? = null,
 ): JSONObject = JSONObject().put("name", name).apply {
     if (!baseRef.isNullOrBlank()) put("baseRef", baseRef)
     if (!cwd.isNullOrBlank()) put("cwd", cwd)
     if (worktree != null) put("worktree", worktree)
     // 首个会话的提示词：任务留空名时服务端据此总结标题，不再写“未命名任务”。
     if (!description.isNullOrBlank()) put("description", description)
+    if (!parentTaskId.isNullOrBlank()) put("parentTaskId", parentTaskId)
 }
 
 internal fun createStandaloneTaskRequestBody(
@@ -21,7 +23,8 @@ internal fun createStandaloneTaskRequestBody(
     cwd: String? = null,
     worktree: Boolean? = null,
     description: String? = null,
-): JSONObject = createWorkspaceTaskRequestBody(name, null, worktree, cwd, description)
+    parentTaskId: String? = null,
+): JSONObject = createWorkspaceTaskRequestBody(name, null, worktree, cwd, description, parentTaskId)
 
 internal data class WorkspaceTaskWindowRequest(
     val path: String,

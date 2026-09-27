@@ -242,6 +242,7 @@ class TaskListState(
         worktree: Boolean,
         workspaceId: String? = null,
         description: String? = null,
+        parentTaskId: String? = null,
     ): TaskCreationResult? = mutate("创建任务失败") {
         // Task names belong to the container, never to a session's prompt.
         val normalizedName = name.trim()
@@ -270,6 +271,7 @@ class TaskListState(
                 name = normalizedName.ifEmpty { "新任务" },
                 worktree = worktree,
                 description = normalizedDescription.ifEmpty { null },
+                parentTaskId = parentTaskId,
             )
         } else {
             port.createStandaloneTask(
@@ -277,6 +279,7 @@ class TaskListState(
                 cwd = normalizedCwd.ifEmpty { null },
                 worktree = if (normalizedCwd.isEmpty()) false else worktree,
                 description = normalizedDescription.ifEmpty { null },
+                parentTaskId = parentTaskId,
             )
         }
         val workspace = project
@@ -381,10 +384,17 @@ class TaskListState(
         deleted
     }
 
-    /** 按下时记住原顺序；拖动过程中只改内存，松手后才发一次保存请求。 */
-    fun startDirectoryReorder() {
+    /** 长按时先把被拖的工作区收成标题行；落点后保持收起，点标题仍可重新展开。 */
+    fun startDirectoryReorder(draggedId: String) {
         dragStartOrder = groupIdsInOrder(groups)
         dragPreviousPendingOrder = pendingGroupOrder
+        val dragged = groups.firstOrNull { it.id == draggedId }
+        if (dragged != null && (dragged.tasks.isNotEmpty() || dragged.standaloneSessions.isNotEmpty()) &&
+            !isDirectoryCollapsed(draggedId)
+        ) {
+            directoryExpansion[draggedId] = false
+            persistDirectoryExpansion()
+        }
     }
 
     fun moveDirectory(draggedId: String, targetId: String) {

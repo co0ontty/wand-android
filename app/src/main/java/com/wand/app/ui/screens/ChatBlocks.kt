@@ -4,13 +4,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -29,6 +26,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -47,7 +45,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.widthIn
@@ -56,9 +53,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -76,14 +73,12 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.SubcomposeLayout
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -98,6 +93,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.LaunchedEffect
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.TurnAuthor
+import com.wand.app.data.providerDisplayName
 import com.wand.app.data.CardExpandDefaults
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
@@ -148,6 +145,13 @@ import java.util.Locale
 /** ChatScreen 注入的会话上下文，用于按需加载被服务端截断的完整工具结果。 */
 internal val LocalChatApi = compositionLocalOf<WandApi?> { null }
 internal val LocalActivityFoldCompact = compositionLocalOf { false }
+
+/**
+ * 活动滚动窗口里「最新一条」在 group.items 里的下标；不在窗口里时为 null。
+ * 窗口按「只有最新一条展开」呈现：新活动一到，更早的思考 / 工具调用都退化成
+ * 一行摘要，窗口始终停在最新那一条的真实内容上（对齐 Web 端 activityTailIndex）。
+ */
+internal val LocalActivityWindowTail = compositionLocalOf<Int?> { null }
 internal val LocalChatSessionId = compositionLocalOf { "" }
 internal val LocalCardExpandDefaults = compositionLocalOf { CardExpandDefaults() }
 
@@ -196,6 +200,10 @@ fun TurnView(
     onAskToggle: (String, Int, Int, Boolean) -> Unit = { _, _, _, _ -> },
     onAskSubmit: (String, String) -> Unit = { _, _ -> },
 ) {
+    if (turn.notice) {
+        ChatNoticeView(turn)
+        return
+    }
     if (turn.role == "user") {
         UserTurnView(turn, compact = compactUser)
         return
@@ -231,6 +239,7 @@ fun TurnView(
                 collapsed = collapsed,
                 preview = preview,
                 copyText = copyText,
+                author = turn.author,
                 onToggle = {
                     val next = !collapsed
                     setCollapsed(next)
@@ -263,23 +272,28 @@ fun TurnView(
 /**
  * 助手回复折叠头：收起时用弱底色和一行正文预览交代内容，展开时回到
  * 透明标题行。不再在每条回复下画贯穿整屏的分隔线，层级由留白和局部底色表达。
+ *
+ * 群聊（团队运行 relay 会话）里助手回复带署名：负责人（主任务）用品牌底色强调，
+ * 成员（子任务）照常透明 —— 这样主任务与子任务不再长得一模一样。
  */
 @Composable
 private fun AssistantReplyHeader(
     collapsed: Boolean,
     preview: String,
     copyText: String,
+    author: TurnAuthor?,
     onToggle: () -> Unit,
 ) {
-    val background by animateColorAsState(
-        targetValue = if (collapsed) {
-            WandColors.surfaceSoft.copy(alpha = 0.58f)
-        } else {
-            Color.Transparent
+    val color by animateColorAsState(
+        targetValue = when {
+            author?.leader == true -> WandColors.brandSoft.copy(alpha = 0.45f)
+            collapsed -> WandColors.surfaceSoft.copy(alpha = 0.58f)
+            else -> Color.Transparent
         },
         animationSpec = WandMotion.tweenFast(),
         label = "assistantReplyHeaderBackground",
     )
+    val background = color
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -312,11 +326,23 @@ private fun AssistantReplyHeader(
             )
         }
         Text(
-            "Wand",
+            author?.name?.takeIf { it.isNotBlank() } ?: "Wand",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = WandColors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
+        when {
+            author?.leader == true -> ChatAuthorBadge("负责人")
+            !author?.provider.isNullOrBlank() -> Text(
+                providerDisplayName(author?.provider),
+                fontSize = 11.sp,
+                color = WandColors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         if (collapsed && preview.isNotBlank()) {
             Text(
                 preview,
@@ -345,6 +371,80 @@ private fun AssistantReplyHeader(
             size = 16.dp,
             contentDescription = null,
         )
+    }
+}
+
+/** 群聊署名里的小标签（目前只有「负责人」）。 */
+@Composable
+private fun ChatAuthorBadge(text: String) {
+    Text(
+        text,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = WandColors.brand,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(WandShapes.xs)
+            .background(WandColors.brandSoft.copy(alpha = 0.5f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
+/**
+ * 群聊系统提示行（团队 relay 的 notice 回合，例如「实现者 开始「T1 …」」）：
+ * 居中弱化的一条小行，不当作助手回复、不带折叠头。
+ */
+@Composable
+private fun ChatNoticeView(turn: ConversationTurn) {
+    val text = turn.content
+        .filterIsInstance<ContentBlock.Text>()
+        .joinToString("\n") { it.text }
+        .trim()
+    if (text.isBlank()) return
+    val clock = conversationTurnClock(turn)
+    val author = turn.author?.name?.takeIf { it.isNotBlank() }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    ) {
+        Spacer(modifier = Modifier.weight(1f))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .clip(WandShapes.sm)
+                .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            if (author != null) {
+                Text(
+                    author,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                text,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                color = WandColors.textSecondary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (clock.isNotBlank()) {
+                Text(
+                    clock,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.weight(1f))
     }
 }
 
@@ -1114,6 +1214,7 @@ internal data class SubagentActivity(
     val blocks: List<ContentBlock>,
     val running: Boolean,
     val failed: Boolean,
+    val interrupted: Boolean,
 )
 
 /**
@@ -1155,12 +1256,16 @@ internal fun collectSubagentActivities(
     }
 
     return byId.map { (id, activity) ->
+        // 只有最后一条用户消息之后的任务才参与运行/中断判定；更早的无结果任务
+        // 多半是分页窗口截断了父级 tool_result，保持「已完成」不误报。
+        val inLatestWindow = activity.lastSeenTurn > lastHumanTurn
         SubagentActivity(
             id = id,
             meta = activity.meta,
             blocks = activity.blocks.toList(),
-            running = sessionRunning && activity.lastSeenTurn > lastHumanTurn && !activity.completed,
+            running = sessionRunning && inLatestWindow && !activity.completed,
             failed = activity.failed,
+            interrupted = !sessionRunning && inLatestWindow && !activity.completed,
         )
     }
 }
@@ -1272,6 +1377,11 @@ private fun RenderDisplayItem(
     showSubagentTags: Boolean,
 ) {
     val cardDefaults = LocalCardExpandDefaults.current
+    // 窗口里只有最新一条默认展开，历史条目按配置默认收起；不在窗口里时沿用用户的卡片偏好。
+    val windowTailIndex = LocalActivityWindowTail.current
+    val expandDefault = { configured: Boolean ->
+        if (windowTailIndex == null) shouldExpandChatCard(isLastTurn, configured) else itemIndex == windowTailIndex
+    }
     when (item) {
         is DisplayItem.Tool -> {
             val use = item.use
@@ -1313,22 +1423,19 @@ private fun RenderDisplayItem(
                         input = use.input,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = shouldExpandChatCard(isLastTurn, cardDefaults.editCards),
+                        initiallyExpanded = expandDefault(cardDefaults.editCards),
                     )
                     use.name == "Bash" -> TerminalCard(
                         input = use.input,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = shouldExpandChatCard(isLastTurn, cardDefaults.terminal),
+                        initiallyExpanded = expandDefault(cardDefaults.terminal),
                     )
                     else -> ToolCard(
                         use = use,
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
-                        initiallyExpanded = shouldExpandChatCard(
-                            isLastTurn,
-                            cardDefaults.shouldExpandTool(use.name),
-                        ),
+                        initiallyExpanded = expandDefault(cardDefaults.shouldExpandTool(use.name)),
                     )
                 }
             }
@@ -1338,19 +1445,11 @@ private fun RenderDisplayItem(
             streaming = isLastTurn && isResponding && itemIndex == itemCount - 1,
             showSubagentTag = showSubagentTags,
             initiallyExpanded = when (val block = item.block) {
-                is ContentBlock.Thinking -> shouldExpandChatCard(isLastTurn, cardDefaults.thinking)
-                is ContentBlock.ToolUse -> shouldExpandChatCard(
-                    isLastTurn,
-                    cardDefaults.shouldExpandTool(block.name),
-                )
-                is ContentBlock.ToolResult -> shouldExpandChatCard(isLastTurn, cardDefaults.editCards)
+                is ContentBlock.Thinking -> expandDefault(cardDefaults.thinking)
+                is ContentBlock.ToolUse -> expandDefault(cardDefaults.shouldExpandTool(block.name))
+                is ContentBlock.ToolResult -> expandDefault(cardDefaults.editCards)
                 else -> false
             },
-        )
-        is DisplayItem.Exploration -> ExplorationDetailCard(
-            tools = item.tools,
-            running = isLastTurn && isResponding && item.tools.any { it.result == null },
-            initiallyExpanded = shouldExpandChatCard(isLastTurn, cardDefaults.toolGroup),
         )
     }
 }
@@ -1563,16 +1662,16 @@ private fun shouldCompactUserBody(text: String): Boolean =
 internal sealed class DisplayItem {
     class Plain(val block: ContentBlock) : DisplayItem()
     class Tool(val use: ContentBlock.ToolUse, val result: ContentBlock.ToolResult?) : DisplayItem()
-    class Exploration(val tools: List<ExplorationToolItem>) : DisplayItem()
 }
 
 internal data class ActivityGroup(
     val key: String,
-    val latest: String,
     val meta: String,
     val count: Int,
     val items: List<DisplayItem>,
     val running: Boolean,
+    /** 这条回复里最新的一段活动：默认展开，更早的段默认收起成状态条。 */
+    val newest: Boolean = false,
 )
 
 internal sealed class SegmentRenderItem {
@@ -1650,7 +1749,6 @@ private fun explorationToolsOnly(turn: ConversationTurn): List<ExplorationToolIt
     val tools = mutableListOf<ExplorationToolItem>()
     for (item in pairToolBlocks(turn.content)) {
         when {
-            item is DisplayItem.Exploration -> tools += item.tools
             item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use, item.result) ->
                 tools += ExplorationToolItem(item.use, item.result)
             else -> return null
@@ -1687,7 +1785,7 @@ private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse, result: Cont
     return true
 }
 
-/** 连续思考/工具收成一条压缩条：遇到正文就切段，末尾活动条保持 running 态。 */
+/** 连续思考/工具收成一条滚动窗口：遇到正文就切段，最新一段默认展开并跟随尾部。 */
 internal fun collapseActivityItems(
     items: List<DisplayItem>,
     isLastTurn: Boolean,
@@ -1704,7 +1802,6 @@ internal fun collapseActivityItems(
             renderItems += SegmentRenderItem.Activity(
                 ActivityGroup(
                     key = activityGroupKey(groupItems, pending.first().first),
-                    latest = summary.latest,
                     meta = summary.meta,
                     count = summary.count,
                     items = groupItems,
@@ -1728,9 +1825,14 @@ internal fun collapseActivityItems(
 
     val live = isLastTurn && isResponding
     val lastIndex = renderItems.indexOfLast { it is SegmentRenderItem.Activity }
-    if (live && lastIndex >= 0 && renderItems.last() is SegmentRenderItem.Activity) {
+    if (lastIndex >= 0) {
         val last = renderItems[lastIndex] as SegmentRenderItem.Activity
-        renderItems[lastIndex] = SegmentRenderItem.Activity(last.group.copy(running = true))
+        // 本轮最后一段活动：标记为「最新」以默认展开；末尾还在跑时同时标记运行态。
+        val next = last.group.copy(
+            newest = isLastTurn,
+            running = last.group.running || (live && renderItems.last() is SegmentRenderItem.Activity),
+        )
+        if (next != last.group) renderItems[lastIndex] = SegmentRenderItem.Activity(next)
     }
     return renderItems
 }
@@ -1743,7 +1845,6 @@ private fun activityGroupKey(items: List<DisplayItem>, startIndex: Int): String 
 
 private fun displayItemStableKey(item: DisplayItem): String = when (item) {
     is DisplayItem.Tool -> "tool:${item.use.id.ifBlank { item.use.name }}"
-    is DisplayItem.Exploration -> "explore:${item.tools.firstOrNull()?.use?.id ?: item.tools.size}"
     is DisplayItem.Plain -> when (val block = item.block) {
         is ContentBlock.Thinking -> "thinking:${block.subagent?.taskId ?: block.thinking.take(24)}"
         is ContentBlock.ToolResult -> "result:${block.toolUseId.ifBlank { block.text.take(24) }}"
@@ -1789,7 +1890,6 @@ private fun isHiddenActivityItem(item: DisplayItem): Boolean {
 
 private fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
     is DisplayItem.Plain -> item.block is ContentBlock.Thinking || item.block is ContentBlock.ToolResult
-    is DisplayItem.Exploration -> true
     is DisplayItem.Tool -> shouldCollapseToolInActivity(item.use.name) && !toolShowsImage(item.use)
 }
 
@@ -1797,6 +1897,12 @@ private fun toolShowsImage(use: ContentBlock.ToolUse): Boolean {
     val candidate = use.input.str("file_path") ?: use.input.str("path") ?: use.input.str("url") ?: ""
     return WandImage.isImagePath(candidate)
 }
+
+/** 活动滚动窗口的固定高度：活动再多也不撑爆对话流，内部自己滚。 */
+private val ACTIVITY_WINDOW_HEIGHT = 220.dp
+
+/** 离底超过这个距离就算「在读历史」：新的活动不再把用户拽回尾部。 */
+private val ACTIVITY_TAIL_PIN = 24.dp
 
 @Composable
 private fun ActivityFoldCard(
@@ -1808,35 +1914,57 @@ private fun ActivityFoldCard(
     onAskSubmit: (String, String) -> Unit,
     showSubagentTags: Boolean,
 ) {
-    var expanded by rememberSaveable(group.key) { mutableStateOf(false) }
+    // 滚动窗口只开最新的一段：新的活动一出现，这一段就收回状态条。用户手动收放的
+    // 偏好按 group.key 记住（rememberSaveable），重新组合不会把展开态重置。
+    var expanded by rememberSaveable(group.key) { mutableStateOf(group.newest) }
     val scrollState = rememberScrollState()
     val refreshToken = remember(group.items) { activityItemsRefreshToken(group.items) }
-    val liveMotion = rememberInfiniteTransition(label = "activityLive")
-    val textScan by liveMotion.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "activityTextScan",
-    )
-    var latestWidthPx by remember { mutableFloatStateOf(1f) }
 
-    LaunchedEffect(expanded, refreshToken) {
-        if (!expanded) return@LaunchedEffect
+    val density = LocalDensity.current
+    val tailThresholdPx = remember(density) { with(density) { ACTIVITY_TAIL_PIN.roundToPx() } }
+    var pinned by rememberSaveable(group.key) { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+    // 只有用户自己的拖拽改「贴尾」状态：程序滚动到底仍然算贴尾，避免自己把自己判成离尾。
+    LaunchedEffect(scrollState, tailThresholdPx) {
+        snapshotFlow {
+            Triple(scrollState.isScrollInProgress, scrollState.value, scrollState.maxValue)
+        }.collect { (inProgress, value, maxValue) ->
+            if (inProgress) pinned = maxValue - value <= tailThresholdPx
+        }
+    }
+    // 展开、或新活动到达时贴到尾部；用户上滚看历史后就不再打扰他。
+    LaunchedEffect(expanded, refreshToken, pinned) {
+        if (!expanded || !pinned) return@LaunchedEffect
         withFrameNanos { }
         scrollState.scrollTo(scrollState.maxValue)
     }
-    LaunchedEffect(expanded, scrollState) {
+    LaunchedEffect(expanded, scrollState, pinned) {
         if (!expanded) return@LaunchedEffect
         snapshotFlow { scrollState.maxValue }.collect { maxValue ->
-            scrollState.scrollTo(maxValue)
+            if (pinned) scrollState.scrollTo(maxValue)
         }
     }
+    val canScrollUp by remember { derivedStateOf { scrollState.value > 2 } }
+    val canScrollDown by remember { derivedStateOf { scrollState.maxValue - scrollState.value > 2 } }
+    val windowBackground = WandColors.surfaceSoft
+    val reduceMotion = reduceMotionEnabled()
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(windowBackground)
+            .border(
+                width = 1.dp,
+                color = if (expanded) {
+                    WandColors.brand.copy(alpha = 0.28f)
+                } else {
+                    WandColors.border
+                },
+                shape = WandShapes.md,
+            )
+            // 减弱动效时展开/收起是瞬时的（可预期的原位变化）。
+            .animateContentSize(if (reduceMotion) snap() else WandMotion.tweenNormal()),
     ) {
         Column(
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1844,12 +1972,15 @@ private fun ActivityFoldCard(
                 .fillMaxWidth()
                 .clickableWithoutRipple(
                     onClickLabel = if (expanded) "收起活动" else "展开活动",
-                    onClick = { expanded = !expanded },
+                    onClick = {
+                        expanded = !expanded
+                        if (expanded) pinned = true
+                    },
                 )
                 .semantics(mergeDescendants = true) {
                     stateDescription = if (expanded) "已展开" else "已收起"
                 }
-                .padding(horizontal = 2.dp, vertical = 4.dp),
+                .padding(horizontal = 10.dp, vertical = 7.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1892,58 +2023,100 @@ private fun ActivityFoldCard(
                     contentDescription = null,
                 )
             }
-            if (group.running) {
-                val band = latestWidthPx * 0.34f
-                val startX = textScan * (latestWidthPx + band) - band
-                Text(
-                    group.latest,
-                    style = TextStyle(
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                        fontFamily = FontFamily.Monospace,
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                WandColors.textMuted,
-                                WandColors.textMuted,
-                                WandColors.brand,
-                                WandColors.textMuted,
-                                WandColors.textMuted,
-                            ),
-                            start = Offset(startX, 0f),
-                            end = Offset(startX + band, 0f),
-                        ),
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onSizeChanged { latestWidthPx = it.width.toFloat().coerceAtLeast(1f) },
-                )
-            }
         }
         if (expanded) {
             HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.6f))
-            NoOverscroll {
-                CompositionLocalProvider(LocalActivityFoldCompact provides true) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .verticalScroll(scrollState)
-                            .padding(horizontal = 2.dp, vertical = 6.dp),
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(ACTIVITY_WINDOW_HEIGHT),
+            ) {
+                NoOverscroll {
+                    CompositionLocalProvider(
+                        LocalActivityFoldCompact provides true,
+                        LocalActivityWindowTail provides group.items.lastIndex,
                     ) {
-                        group.items.forEachIndexed { index, item ->
-                            RenderDisplayItem(
-                                item = item,
-                                itemIndex = index,
-                                itemCount = group.items.size,
-                                isLastTurn = isLastTurn,
-                                isResponding = isResponding,
-                                askSelections = askSelections,
-                                onAskToggle = onAskToggle,
-                                onAskSubmit = onAskSubmit,
-                                showSubagentTags = showSubagentTags,
-                            )
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            group.items.forEachIndexed { index, item ->
+                                RenderDisplayItem(
+                                    item = item,
+                                    itemIndex = index,
+                                    itemCount = group.items.size,
+                                    isLastTurn = isLastTurn,
+                                    isResponding = isResponding,
+                                    askSelections = askSelections,
+                                    onAskToggle = onAskToggle,
+                                    onAskSubmit = onAskSubmit,
+                                    showSubagentTags = showSubagentTags,
+                                )
+                            }
                         }
+                    }
+                }
+                // 上下渐隐：被裁掉的条目看起来是「窗口外」，而不是被切了一半。
+                if (canScrollUp) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .height(14.dp)
+                            .background(
+                                Brush.verticalGradient(listOf(windowBackground, Color.Transparent)),
+                            ),
+                    )
+                }
+                if (canScrollDown) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(18.dp)
+                            .background(
+                                Brush.verticalGradient(listOf(Color.Transparent, windowBackground)),
+                            ),
+                    )
+                }
+                if (!pinned) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 12.dp, bottom = 12.dp)
+                            .clip(WandShapes.full)
+                            .background(windowBackground)
+                            .border(1.dp, WandColors.brand.copy(alpha = 0.24f), WandShapes.full)
+                            .clickableWithoutRipple(onClickLabel = "回到最新活动") {
+                                pinned = true
+                                scope.launch {
+                                    if (reduceMotion) {
+                                        scrollState.scrollTo(scrollState.maxValue)
+                                    } else {
+                                        scrollState.animateScrollTo(scrollState.maxValue)
+                                    }
+                                }
+                            }
+                            .padding(start = 6.dp, end = 9.dp, top = 3.dp, bottom = 3.dp),
+                    ) {
+                        Icon(
+                            WandIcons.expand,
+                            contentDescription = null,
+                            tint = WandColors.textSecondary,
+                            modifier = Modifier.size(11.dp),
+                        )
+                        Text(
+                            "回到最新",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = WandColors.textSecondary,
+                            maxLines = 1,
+                        )
                     }
                 }
             }
@@ -1952,7 +2125,6 @@ private fun ActivityFoldCard(
 }
 
 private data class ActivityRunSummary(
-    val latest: String,
     val meta: String,
     val count: Int,
 )
@@ -1969,14 +2141,11 @@ private val ACTIVITY_KIND_META = linkedMapOf(
 
 private fun summarizeActivityItems(items: List<DisplayItem>): ActivityRunSummary {
     val counts = ACTIVITY_KIND_META.keys.associateWith { 0 }.toMutableMap()
-    var latest = ""
     var count = 0
 
     fun addTool(use: ContentBlock.ToolUse) {
         val kind = activityKindOf(use.name)
         counts[kind] = (counts[kind] ?: 0) + 1
-        val label = activityToolLabel(use.name, use.input)
-        if (label.isNotEmpty()) latest = label
         count += 1
     }
 
@@ -1986,18 +2155,15 @@ private fun summarizeActivityItems(items: List<DisplayItem>): ActivityRunSummary
                 val thinking = (item.block as? ContentBlock.Thinking)?.thinking.orEmpty()
                 if (thinking.isBlank()) return@forEach
                 counts["thinking"] = (counts["thinking"] ?: 0) + 1
-                latest = activityThinkingLabel(thinking)
                 count += 1
             }
             is DisplayItem.Tool -> addTool(item.use)
-            is DisplayItem.Exploration -> item.tools.forEach { addTool(it.use) }
         }
     }
     val meta = ACTIVITY_KIND_META.mapNotNull { (kind, label) ->
         counts[kind]?.takeIf { it > 0 }?.let { "$label $it" }
     }.joinToString(" · ")
     return ActivityRunSummary(
-        latest = latest.ifBlank { "处理中" },
         meta = meta,
         count = count,
     )
@@ -2015,10 +2181,6 @@ private fun activityItemsRefreshToken(items: List<DisplayItem>): Int {
                 mix(item.use.input.toString())
                 mix(item.result?.text)
             }
-            is DisplayItem.Exploration -> item.tools.forEach { tool ->
-                mix(tool.use.input.toString())
-                mix(tool.result?.text)
-            }
             is DisplayItem.Plain -> when (val block = item.block) {
                 is ContentBlock.Thinking -> mix(block.thinking)
                 is ContentBlock.Text -> mix(block.text)
@@ -2028,37 +2190,6 @@ private fun activityItemsRefreshToken(items: List<DisplayItem>): Int {
         }
     }
     return token
-}
-
-internal fun truncateInline(value: String, max: Int): String {
-    val text = value.replace(Regex("\\s+"), " ").trim()
-    if (text.isEmpty()) return ""
-    return if (text.length > max) text.take(max - 1) + "…" else text
-}
-
-internal fun tailInline(value: String, max: Int): String {
-    val text = value.replace(Regex("\\s+"), " ").trim()
-    if (text.isEmpty()) return ""
-    return if (text.length > max) "…" + text.takeLast(max - 1) else text
-}
-
-internal fun activityThinkingLabel(thinking: String): String =
-    tailInline(thinking, 240).ifBlank { "深度思考" }
-
-internal fun activityToolLabel(name: String, input: JSONObject): String {
-    val command = input.str("command") ?: input.str("cmd").orEmpty()
-    val path = input.str("file_path") ?: input.str("path").orEmpty()
-    val query = input.str("pattern") ?: input.str("query").orEmpty()
-    val url = input.str("url").orEmpty()
-    return when (name) {
-        "Bash" -> if (command.isNotEmpty()) "运行 ${truncateInline(command, 240)}" else "运行命令"
-        "Read" -> if (path.isNotEmpty()) "读取 ${truncateInline(path, 240)}" else "读取文件"
-        "Grep", "Glob", "WebSearch" -> if (query.isNotEmpty()) "搜索 ${truncateInline(query, 240)}" else "搜索"
-        "WebFetch" -> if (url.isNotEmpty()) "抓取 ${truncateInline(url, 240)}" else "抓取网页"
-        "Edit", "MultiEdit" -> "修改 ${if (path.isNotEmpty()) truncateInline(path, 240) else "文件"}"
-        "Write" -> "写入 ${if (path.isNotEmpty()) truncateInline(path, 240) else "文件"}"
-        else -> toolLabel(name)
-    }
 }
 
 internal fun activityKindOf(name: String): String {
@@ -2071,37 +2202,6 @@ internal fun activityKindOf(name: String): String {
         listOf("web", "fetch", "http", "url", "browser").any { it in lower } -> "web"
         else -> "other"
     }
-}
-
-/**
- * 连续读取、搜索、网页获取通常只是模型探索上下文，不需要逐张占满对话流。
- * 连续 4 次及以上才合并；1～3 次操作仍保留完整工具卡。
- */
-private fun collapseConsecutiveExplorationTools(paired: List<DisplayItem>): List<DisplayItem> {
-    val items = mutableListOf<DisplayItem>()
-    val exploration = mutableListOf<ExplorationToolItem>()
-
-    fun flushExploration() {
-        if (exploration.size >= TOOL_CALL_GROUP_THRESHOLD) {
-            items.add(DisplayItem.Exploration(exploration.toList()))
-        } else {
-            exploration.forEach { tool ->
-                items.add(DisplayItem.Tool(tool.use, tool.result))
-            }
-        }
-        exploration.clear()
-    }
-
-    for (item in paired) {
-        if (item is DisplayItem.Tool && isCollapsibleExplorationTool(item.use, item.result)) {
-            exploration.add(ExplorationToolItem(item.use, item.result))
-        } else {
-            flushExploration()
-            items.add(item)
-        }
-    }
-    flushExploration()
-    return items
 }
 
 /**
@@ -2154,7 +2254,7 @@ internal fun pairToolBlocks(content: List<ContentBlock>): List<DisplayItem> {
             items.add(DisplayItem.Plain(block))
         }
     }
-    return collapseConsecutiveExplorationTools(items)
+    return items
 }
 
 // MARK: - 内容块
@@ -2603,14 +2703,15 @@ fun ExplorationGroupCard(
 ) {
     val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
     val summary = remember(items) { summarizeActivityItems(items) }
-    val group = remember(items, running, summary) {
+    val group = remember(items, running, summary, expandAll) {
         ActivityGroup(
             key = "exploration:${items.firstOrNull()?.let(::displayItemStableKey) ?: tools.size}",
-            latest = summary.latest,
             meta = summary.meta,
             count = summary.count,
             items = items,
             running = running,
+            // 当前轮的那一段默认展开；历史轮次保持紧凑。
+            newest = expandAll,
         )
     }
     ActivityFoldCard(
@@ -2622,186 +2723,6 @@ fun ExplorationGroupCard(
         onAskSubmit = { _, _ -> },
         showSubagentTags = true,
     )
-}
-
-@Composable
-private fun ExplorationDetailCard(
-    tools: List<ExplorationToolItem>,
-    running: Boolean,
-    initiallyExpanded: Boolean = false,
-) {
-    var expanded by remember(tools, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
-    val completedCount = tools.count { it.result != null }
-    val failedCount = tools.count { it.result?.isError == true }
-    val progress = if (tools.isEmpty()) 0f else completedCount.toFloat() / tools.size
-    val tint = when {
-        failedCount > 0 -> WandColors.danger
-        running -> WandColors.brand
-        else -> WandColors.success
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(WandShapes.md)
-            .background(WandColors.textPrimary.copy(alpha = 0.035f))
-            .animateContentSize(WandMotion.tweenNormal()),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(11.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickableWithoutRipple { expanded = !expanded }
-                .padding(horizontal = 11.dp, vertical = 10.dp),
-        ) {
-            ToolStatusIconBox(statusColor = tint, running = running) {
-                Icon(
-                    WandIcons.search,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            Column(
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "探索上下文",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.textPrimary,
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                        "$completedCount/${tools.size}",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        fontFamily = FontFamily.Monospace,
-                        color = tint,
-                    )
-                }
-                Text(
-                    explorationSummary(tools),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = WandColors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                LinearProgressIndicator(
-                    progress = { progress },
-                    color = tint,
-                    trackColor = WandColors.border,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            if (failedCount > 0) {
-                Text(
-                    "失败 $failedCount",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.danger,
-                    modifier = Modifier
-                        .clip(WandShapes.full)
-                        .background(WandColors.danger.copy(alpha = 0.10f))
-                        .padding(horizontal = 7.dp, vertical = 4.dp),
-                )
-            }
-            ExpandChevron(
-                expanded = expanded,
-                tint = WandColors.textSecondary,
-                size = 14.dp,
-            )
-        }
-        if (expanded) {
-            HorizontalDivider(
-                thickness = 0.5.dp,
-                color = WandColors.border.copy(alpha = 0.7f),
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
-            ) {
-                tools.forEach { tool ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            when {
-                                tool.result?.isError == true -> WandIcons.statusFail
-                                tool.result != null -> WandIcons.statusDone
-                                else -> WandIcons.statusPending
-                            },
-                            contentDescription = null,
-                            tint = when {
-                                tool.result?.isError == true -> WandColors.danger
-                                tool.result != null -> WandColors.success
-                                else -> WandColors.brand
-                            },
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Text(
-                            toolLabel(tool.use.name),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textPrimary,
-                            maxLines = 1,
-                            modifier = Modifier.width(54.dp),
-                        )
-                        Text(
-                            explorationToolSummary(tool),
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = WandColors.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** 探索卡摘要：「读取 3 · 搜索 2 · 网页 1」（对齐 iOS activitySummary）。 */
-private fun explorationSummary(tools: List<ExplorationToolItem>): String {
-    val counts = mutableMapOf<String, Int>()
-    for (tool in tools) {
-        val label = explorationActivityLabel(tool.use.name)
-        counts[label] = (counts[label] ?: 0) + 1
-    }
-    return listOf("读取", "搜索", "网页", "待办")
-        .mapNotNull { label -> counts[label]?.let { "$label $it" } }
-        .joinToString(" · ")
-}
-
-private fun explorationActivityLabel(name: String): String {
-    val lower = name.lowercase()
-    return when {
-        lower.contains("web") -> "网页"
-        lower == "todoread" -> "待办"
-        lower.startsWith("read") -> "读取"
-        else -> "搜索"
-    }
-}
-
-/** 探索卡单行参数摘要（对齐 iOS toolSummary：路径/查询词/URL 优先）。 */
-private fun explorationToolSummary(tool: ExplorationToolItem): String {
-    val keys = listOf("file_path", "path", "pattern", "query", "url", "file", "filename")
-    for (key in keys) {
-        if (tool.use.input.has(key) && !tool.use.input.isNull(key)) {
-            val text = summaryText(tool.use.input.opt(key))
-            if (text.isNotEmpty()) return text
-        }
-    }
-    tool.use.description?.takeIf { it.isNotEmpty() }?.let { return it }
-    val firstKey = tool.use.input.keys().asSequence().firstOrNull() ?: return "无参数"
-    return "$firstKey: ${summaryText(tool.use.input.opt(firstKey))}"
 }
 
 private data class ToolInputEntry(val key: String, val value: String)

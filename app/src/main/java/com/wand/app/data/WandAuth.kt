@@ -70,27 +70,28 @@ object WandAuth {
             try {
                 client.newCall(request).execute().use { response ->
                     when (response.code) {
-                        200 -> WandLog.i(AUTH_TAG, "登录成功 $normalized")
+                        200 -> WandLog.i(AUTH_TAG, "登录成功")
                         401 -> {
-                            WandLog.w(AUTH_TAG, "登录被拒 401 $normalized（连接码可能已过期）")
+                            WandLog.w(AUTH_TAG, "登录被拒 401（连接码可能已过期）")
                             throw AuthException(
                                 "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
                                 retryable = false,
                             )
                         }
                         429 -> {
-                            WandLog.w(AUTH_TAG, "登录限流 429 $normalized")
+                            WandLog.w(AUTH_TAG, "登录限流 429")
                             throw AuthException("登录尝试次数过多，请稍后再试")
                         }
                         else -> {
-                            WandLog.w(AUTH_TAG, "登录异常状态码 ${response.code} $normalized")
+                            WandLog.w(AUTH_TAG, "登录异常状态码 ${response.code}")
                             throw AuthException("服务器返回异常状态码：${response.code}")
                         }
                     }
                 }
-            } catch (e: IOException) {
-                WandLog.e(AUTH_TAG, "登录网络错误 $normalized：${e.message}", e)
-                throw AuthException("无法连接到服务器：${e.message ?: "网络错误"}")
+            } catch (_: IOException) {
+                // 固定诊断：网络异常 message/堆栈/URL 凭据参数一律不落日志、不进用户文案。
+                WandLog.e(AUTH_TAG, "登录网络错误")
+                throw AuthException("无法连接到服务器，请检查网络")
             }
         }
     }

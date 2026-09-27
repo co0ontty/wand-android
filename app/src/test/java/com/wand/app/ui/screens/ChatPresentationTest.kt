@@ -47,6 +47,31 @@ class ChatPresentationTest {
         assertEquals(true, earlierLoadAdvanced(anchor, turnOffset = 40, blockOffset = 0))
     }
 
+    /** 顶部翻页文案只报服务端算好的可见条数；旧服务端不报数字，也不拿块数冒充。 */
+    @Test
+    fun earlierLoadLabelReportsVisibleStepsInsteadOfBlocks() {
+        assertEquals(
+            "加载更早步骤 · 还有 2 条",
+            earlierLoadLabel(loading = false, blockPaging = true, visibleCount = 2),
+        )
+        assertEquals(
+            "加载更早步骤",
+            earlierLoadLabel(loading = false, blockPaging = true, visibleCount = 0),
+        )
+        assertEquals(
+            "加载更早步骤",
+            earlierLoadLabel(loading = false, blockPaging = true, visibleCount = null),
+        )
+        assertEquals(
+            "加载更早消息",
+            earlierLoadLabel(loading = false, blockPaging = false, visibleCount = null),
+        )
+        assertEquals(
+            "正在加载更早内容…",
+            earlierLoadLabel(loading = true, blockPaging = true, visibleCount = 2),
+        )
+    }
+
     @Test
     fun quickCommitStatusRefreshWaitsForIdleLoadedSession() {
         assertEquals(false, shouldRefreshQuickCommitStatus(isLoading = true, isResponding = false))

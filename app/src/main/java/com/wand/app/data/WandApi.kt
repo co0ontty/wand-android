@@ -464,12 +464,14 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         autoTag: Boolean,
         push: Boolean,
         submodule: Boolean,
+        archiveRelatedTasks: Boolean = false,
     ): QuickCommitResult {
         val body = JSONObject()
             .put("autoMessage", customMessage == null)
             .put("autoTag", autoTag)
             .put("push", push)
             .put("submodule", submodule)
+            .put("archiveRelatedTasks", archiveRelatedTasks)
         if (customMessage != null) body.put("customMessage", customMessage)
         if (!tag.isNullOrEmpty()) body.put("tag", tag)
         return QuickCommitResult.parse(
@@ -522,8 +524,9 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         priority: String,
         workspaceId: String?,
         agent: BoardTaskAgent?,
+        parentTaskId: String?,
     ): BoardTask = BoardTask.parse(
-        requestObject("POST", "/api/wand-tasks", createBoardTaskBody(title, description, status, priority, workspaceId, agent)),
+        requestObject("POST", "/api/wand-tasks", createBoardTaskBody(title, description, status, priority, workspaceId, agent, parentTaskId)),
     ) ?: throw WandApiException(500, "创建任务响应无效。")
 
     override suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask =
@@ -557,6 +560,50 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
     override suspend fun listBoardWorkspaces(): List<Workspace> = listWorkspaces()
 
     override suspend fun boardModels(): ModelsResponse = models()
+
+    // MARK: - AI 团队（契约真源 src/server-ai-team-routes.ts）
+
+    override suspend fun listAiTeams(): List<AiTeam> =
+        AiTeam.parseList(requestArray("GET", "/api/ai-teams"))
+
+    override suspend fun teamRunsForTask(taskId: String): List<AiTeamRun> =
+        AiTeamRun.parseList(requestArray("GET", "/api/wand-tasks/${encode(taskId)}/team-runs"))
+
+    override suspend fun aiTeamRunDetail(runId: String): AiTeamRunDetail =
+        aiTeamRunDetailOrThrow(requestObject("GET", "/api/ai-team-runs/${encode(runId)}"))
+
+    override suspend fun startTeamRun(taskId: String, teamId: String, note: String): AiTeamRunDetail =
+        aiTeamRunDetailOrThrow(
+            requestObject(
+                "POST",
+                "/api/wand-tasks/${encode(taskId)}/team-runs",
+                JSONObject().put("teamId", teamId).put("note", note),
+            ),
+        )
+
+    /** 直接开工（POST /api/ai-teams/{id}/runs，§4.2）：服务端自建 team_direct 卡再起 run，无 cwd 入参。 */
+    override suspend fun startDirectTeamRun(
+        teamId: String,
+        workspaceId: String,
+        note: String,
+    ): AiTeamDirectRun =
+        AiTeamDirectRun.parse(
+            requestObject(
+                "POST",
+                "/api/ai-teams/${encode(teamId)}/runs",
+                JSONObject().put("workspaceId", workspaceId).put("note", note),
+            ),
+        ) ?: throw WandApiException(500, "团队开工响应无效。")
+
+    /** 运行动作统一走这里；响应仍是 run detail（src/server-ai-team-routes.ts:279-286）。 */
+    override suspend fun actOnTeamRun(runId: String, action: TeamRunAction): AiTeamRunDetail {
+        val (path, body) = teamRunActionRequest(runId, action)
+        return aiTeamRunDetailOrThrow(requestObject("POST", path, body))
+    }
+
+    private fun aiTeamRunDetailOrThrow(response: JSONObject): AiTeamRunDetail =
+        AiTeamRunDetail.parse(response)
+            ?: throw WandApiException(500, "团队运行响应无效。")
 
     override suspend fun boardTaskAgentDefaults(): BoardTaskAgent =
         BoardTaskAgent.parse(requestObject("GET", "/api/wand-task-agent-defaults"))
@@ -612,8 +659,9 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         worktree: Boolean?,
         cwd: String?,
         description: String?,
+        parentTaskId: String?,
     ): WorkspaceTaskCreation {
-        val body = createWorkspaceTaskRequestBody(name, baseRef, worktree, cwd, description)
+        val body = createWorkspaceTaskRequestBody(name, baseRef, worktree, cwd, description, parentTaskId)
         return WorkspaceTaskCreation.parse(
             requestObject("POST", "/api/workspaces/${encode(workspaceId)}/tasks", body),
         ) ?: throw WandApiException(500, "任务创建响应无效。")
@@ -624,8 +672,9 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         cwd: String?,
         worktree: Boolean?,
         description: String?,
+        parentTaskId: String?,
     ): WorkspaceTaskCreation {
-        val body = createStandaloneTaskRequestBody(name, cwd, worktree, description)
+        val body = createStandaloneTaskRequestBody(name, cwd, worktree, description, parentTaskId)
         return WorkspaceTaskCreation.parse(
             requestObject("POST", "/api/tasks", body),
         ) ?: throw WandApiException(500, "任务创建响应无效。")
@@ -770,6 +819,21 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             defaultSessionKind = defaultSessionKind,
             defaultTaskWorktree = defaultTaskWorktree,
         )
+    }
+}
+
+/**
+ * 团队运行动作 → 请求路径 + 请求体的映射（对齐 src/server-ai-team-routes.ts:279-286）。
+ * 纯函数便于单测断言，WandApi.actOnTeamRun 是它唯一的生产调用方。
+ */
+fun teamRunActionRequest(runId: String, action: TeamRunAction): Pair<String, JSONObject> {
+    val base = "/api/ai-team-runs/${URLEncoder.encode(runId, "UTF-8")}"
+    return when (action) {
+        is TeamRunAction.Approve -> base + "/approve" to JSONObject()
+        is TeamRunAction.Reject -> base + "/reject" to JSONObject().put("feedback", action.feedback)
+        is TeamRunAction.Reply -> base + "/reply" to JSONObject().put("text", action.text)
+        is TeamRunAction.Continue -> base + "/continue" to JSONObject().put("extraSteps", action.extraSteps)
+        is TeamRunAction.Stop -> base + "/stop" to JSONObject()
     }
 }
 

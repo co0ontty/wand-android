@@ -145,6 +145,9 @@ object SessionWatcher {
         api = null
         helper = null
         serverStore = null
+        // 标题 / 权限 overlay 是按会话累积的运行期缓存，连接结束就整体清掉：
+        // 否则地图只增不减，而且会把上一台服务器的「等待授权」带到新服务器的列表上。
+        SessionTitleStore.clear()
     }
 
     private fun registerForegroundTracking() {

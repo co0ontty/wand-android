@@ -10,6 +10,8 @@ data class ChatSessionEventState(
     /** 块级窗口游标：messages[0] 被切掉的头部块数 / 这条 turn 的完整块数。 */
     val leadingBlockOffset: Int = 0,
     val leadingBlockTotal: Int = 0,
+    /** 头部里用户可感知的条数（默认收起的工具 / 思考块不计入）；null = 旧服务端未下发。 */
+    val leadingVisibleCount: Int? = null,
     val status: String = "running",
     val isResponding: Boolean = false,
     val queuedMessages: List<String> = emptyList(),
@@ -53,6 +55,7 @@ object ChatSessionEventReducer {
                     snapshot.messageTotal,
                     snapshot.leadingBlockOffset,
                     snapshot.leadingBlockTotal,
+                    snapshot.leadingVisibleCount,
                 ),
             )
         }
@@ -152,6 +155,7 @@ object ChatSessionEventReducer {
         val snapTotal = update.total ?: maxOf(snapOffset + incoming.size, incoming.size)
         val incomingLeadingOffset = (update.leadingOffset ?: 0).coerceAtLeast(0)
         val incomingLeadingTotal = update.leadingTotal ?: (incoming.firstOrNull()?.content?.size ?: 0)
+        val incomingLeadingVisible = update.leadingVisible ?: current.leadingVisibleCount
         // 空快照不清屏：终端 ended 事件常带空 messages/0 总数，不能把可见历史干掉。
         if (incoming.isEmpty() && current.messages.isNotEmpty() && snapTotal == 0) return current
 
@@ -162,6 +166,7 @@ object ChatSessionEventReducer {
                 messageTotal = maxOf(snapTotal, snapOffset + incoming.size),
                 leadingBlockOffset = incomingLeadingOffset,
                 leadingBlockTotal = incomingLeadingTotal,
+                leadingVisibleCount = incomingLeadingVisible,
             )
         }
 
@@ -175,6 +180,7 @@ object ChatSessionEventReducer {
                 messageTotal = maxOf(snapTotal, snapOffset + incoming.size),
                 leadingBlockOffset = incomingLeadingOffset,
                 leadingBlockTotal = incomingLeadingTotal,
+                leadingVisibleCount = incomingLeadingVisible,
             )
         }
 
@@ -187,6 +193,7 @@ object ChatSessionEventReducer {
                 messageTotal = maxOf(snapTotal, snapOffset + incoming.size),
                 leadingBlockOffset = incomingLeadingOffset,
                 leadingBlockTotal = incomingLeadingTotal,
+                leadingVisibleCount = incomingLeadingVisible,
             )
         }
 
@@ -202,6 +209,11 @@ object ChatSessionEventReducer {
         } else {
             incomingLeadingTotal
         }
+        var resolvedLeadingVisible = if (mergedOffset == current.loadedOffset) {
+            current.leadingVisibleCount
+        } else {
+            incomingLeadingVisible
+        }
         val merged = ArrayList<ConversationTurn>(mergedEnd - mergedOffset)
         for (absoluteIndex in mergedOffset until mergedEnd) {
             val local = current.messages.getOrNull(absoluteIndex - current.loadedOffset)
@@ -214,9 +226,11 @@ object ChatSessionEventReducer {
                         local = local,
                         localOffset = current.leadingBlockOffset,
                         localTotal = current.leadingBlockTotal,
+                        localVisible = current.leadingVisibleCount,
                         incoming = replacement,
                         incomingOffset = incomingLeadingOffset,
                         incomingTotal = incomingLeadingTotal,
+                        incomingVisible = incomingLeadingVisible,
                     )
                 } else {
                     null
@@ -225,12 +239,14 @@ object ChatSessionEventReducer {
                     merged += leadingMerge.turn
                     resolvedLeadingOffset = leadingMerge.blockOffset
                     resolvedLeadingTotal = leadingMerge.blockTotal
+                    resolvedLeadingVisible = leadingMerge.visibleCount
                 } else {
                     val keepLocal = shouldKeepLocalTurn(local, replacement)
                     merged += mergeOverlappingTurns(local, replacement)
                     if (absoluteIndex == mergedOffset && current.loadedOffset == snapOffset) {
                         resolvedLeadingOffset = if (keepLocal) current.leadingBlockOffset else incomingLeadingOffset
                         resolvedLeadingTotal = if (keepLocal) current.leadingBlockTotal else incomingLeadingTotal
+                        resolvedLeadingVisible = if (keepLocal) current.leadingVisibleCount else incomingLeadingVisible
                     }
                 }
             } else {
@@ -244,6 +260,7 @@ object ChatSessionEventReducer {
             messageTotal = maxOf(snapTotal, mergedOffset + merged.size),
             leadingBlockOffset = resolvedLeadingOffset,
             leadingBlockTotal = resolvedLeadingTotal,
+            leadingVisibleCount = resolvedLeadingVisible,
         )
     }
 
@@ -258,12 +275,14 @@ object ChatSessionEventReducer {
         )
         var leadingBlockOffset = current.leadingBlockOffset
         var leadingBlockTotal = current.leadingBlockTotal
+        var leadingVisibleCount = current.leadingVisibleCount
         val messages = when {
             last != null && last.role == update.message.role -> {
                 val keepLocal = shouldKeepLocalTurn(last, incoming)
                 if (current.messages.size == 1 && !keepLocal) {
                     leadingBlockOffset = 0
                     leadingBlockTotal = incoming.content.size
+                    leadingVisibleCount = 0
                 }
                 current.messages.dropLast(1) + mergeOverlappingTurns(last, incoming)
             }
@@ -275,6 +294,7 @@ object ChatSessionEventReducer {
             messages = messages,
             leadingBlockOffset = leadingBlockOffset,
             leadingBlockTotal = leadingBlockTotal,
+            leadingVisibleCount = leadingVisibleCount,
             messageTotal = if (expected > 0) maxOf(current.messageTotal, expected) else current.messageTotal,
         )
     }
@@ -407,6 +427,7 @@ internal data class LeadingTurnMerge(
     val turn: ConversationTurn,
     val blockOffset: Int,
     val blockTotal: Int,
+    val visibleCount: Int?,
 )
 
 /**
@@ -421,6 +442,8 @@ internal fun mergeLeadingAssistantTurn(
     incoming: ConversationTurn,
     incomingOffset: Int,
     incomingTotal: Int,
+    localVisible: Int? = null,
+    incomingVisible: Int? = null,
 ): LeadingTurnMerge? {
     if (local.role != "assistant" || incoming.role != "assistant") return null
     val localStart = localOffset.coerceAtLeast(0)
@@ -453,6 +476,8 @@ internal fun mergeLeadingAssistantTurn(
             .copy(content = blocks, usage = incoming.usage ?: local.usage),
         blockOffset = mergedStart,
         blockTotal = maxOf(localTotal, incomingTotal, mergedEnd),
+        // 剩余可见条数跟窗口起点走：谁的前缀更早，就用谁的计数。
+        visibleCount = if (mergedStart == localStart) localVisible else incomingVisible,
     )
 }
 

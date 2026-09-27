@@ -234,4 +234,20 @@ class AppNavTest {
     fun roundTrip_settingsScreen() {
         assertEquals(Screen.Settings, roundTrip(Screen.Settings))
     }
+
+    @Test
+    fun roundTrip_aiTeamScreens() {
+        assertEquals(Screen.AiTeams, roundTrip(Screen.AiTeams))
+        val detail = roundTrip(Screen.AiTeamDetail("team_1"))
+        assertEquals(Screen.AiTeamDetail("team_1"), detail)
+        // teamId 里的特殊字符不破坏恢复（\u0001 才是字段分隔符）。
+        val odd = roundTrip(Screen.AiTeamDetail("team:1\n开发\u0002组"))
+        assertEquals(Screen.AiTeamDetail("team:1\n开发\u0002组"), odd)
+    }
+
+    @Test
+    fun aiTeamDetailKeyWithBlankTeamIdRestoresToRoot() {
+        // 空 teamId 不恢复成半吊子详情页：Saver 校验失败时整体退回初始栈（只有根）。
+        assertEquals(listOf(Screen.SessionList), restoreKeys("ai-team-detail\u0001"))
+    }
 }

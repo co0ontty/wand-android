@@ -5,7 +5,8 @@
 `pty_resize`、`pty_ack` 双向通信，不加载 WebView。软键盘的按键直接写入 PTY；
 底部草稿框用于整段提示、语音和附件。显示使用内置 JetBrains Mono（OFL）和暖色
 ANSI 调色板。终端仿真依赖 `org.connectbot:termlib:0.0.10`（Apache-2.0；锁定与
-Kotlin 2.2 / compileSdk 36 兼容的版本）。
+Kotlin 2.2 / compileSdk 36 兼容的版本）。构建会改写它的触摸判定：滚动按按下点的
+累计距离计算，避免慢滑被当成文字选择；长按后的复制、粘贴和整行在客户端里补上。
 
 ## 约定
 

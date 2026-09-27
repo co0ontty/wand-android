@@ -3,7 +3,6 @@ package com.wand.app.ui.screens
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTaskStatus
-import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.workspaceProviderLabel
 
 internal const val UNNAMED_TASK_NAME = "未命名任务"
@@ -19,9 +18,6 @@ enum class HomeListMode(val storageValue: String) {
     /** 分段控件上的短标签：控件本身已经表达了「模式」，标题里再重复一遍只是占宽度。 */
     val segmentLabel: String
         get() = if (this == Tasks) "任务" else "会话"
-
-    val next: HomeListMode
-        get() = if (this == Tasks) Sessions else Tasks
 
     companion object {
         fun fromStorage(value: String?): HomeListMode = when (value) {
@@ -46,37 +42,19 @@ internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDir
         )
     }.filter { !it.isGlobal || it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
 
-/** 目录内任务顺序以 GET /api/tasks 返回为准。 */
-internal fun orderedTaskSummaries(tasks: List<WorkspaceTaskSummary>): List<WorkspaceTaskSummary> =
-    tasks
-
-internal fun groupHasLiveActivity(group: TaskDirectoryGroup): Boolean =
-    group.standaloneSessions.any(::sessionHasLiveActivity) ||
-        group.tasks.any { task -> task.sessions.any(::sessionHasLiveActivity) }
-
-private fun sessionHasLiveActivity(session: WorkspaceSessionSummary): Boolean =
-    session.inFlight == true || session.status in setOf(
-        "running",
-        "thinking",
-        "permission",
-        "waiting-input",
-        "reconnecting",
-    )
-
-/** Even a single workspace can be collapsed; the disclosure never changes meaning. */
-@Suppress("UNUSED_PARAMETER")
-internal fun showsDirectoryDisclosure(directoryCount: Int): Boolean = true
-
-/** 任务下没有终端时不显示箭头；空状态直接展示，无需先展开。 */
+/** 任务下没有终端时不显示箭头。 */
 internal fun showsTaskSessionDisclosure(sessionCount: Int): Boolean = sessionCount > 0
 
 /** 目录默认展开，尊重用户折叠选择。 */
-internal fun isDirectoryExpanded(userCollapsed: Boolean, directoryCount: Int): Boolean =
-    !showsDirectoryDisclosure(directoryCount) || !userCollapsed
+internal fun isDirectoryExpanded(userCollapsed: Boolean): Boolean = !userCollapsed
 
-/** 终端默认展开。无终端时始终展示空提示。 */
-internal fun isTaskSessionsExpanded(userCollapsed: Boolean, sessionCount: Int): Boolean =
-    !showsTaskSessionDisclosure(sessionCount) || !userCollapsed
+/** 终端默认展开。无终端的任务默认折叠、不显示空提示；只有当它是目录里唯一任务时才展开引导创建首个会话。 */
+internal fun isTaskSessionsExpanded(
+    userCollapsed: Boolean,
+    sessionCount: Int,
+    isOnlyTask: Boolean = false,
+): Boolean =
+    if (!showsTaskSessionDisclosure(sessionCount)) isOnlyTask else !userCollapsed
 
 /**
  * 侧栏任务行只在「当前详情就是这个任务」时高亮。

@@ -36,6 +36,8 @@ class QuickCommitStore(
     // 表单（直接由 UI 双向编辑）
     var messageDraft by mutableStateOf("")
     var tagDraft by mutableStateOf("")
+    /** 仅本次提交生效；归档由服务端按本次关联任务与项目范围执行。 */
+    var archiveRelatedTasks by mutableStateOf(false)
 
     /** 用户手动改过 tag 后，AI 推荐不再覆盖它（对齐网页 tagEdited）。 */
     var tagEdited by mutableStateOf(false)
@@ -95,6 +97,7 @@ class QuickCommitStore(
     fun openPanel() {
         messageDraft = ""
         tagDraft = ""
+        archiveRelatedTasks = false
         tagEdited = false
         generating = false
         submitting = false
@@ -143,6 +146,7 @@ class QuickCommitStore(
         val message = messageDraft.trim()
         val autoMessage = message.isEmpty()
         val before = status
+        val archiveIntent = archiveRelatedTasks
 
         submitting = true
         beginEntryLoading()
@@ -162,6 +166,7 @@ class QuickCommitStore(
                     autoTag = withTag && userTag.isEmpty(),
                     push = push,
                     submodule = includeSubmodule,
+                    archiveRelatedTasks = archiveIntent,
                 )
                 val outcome = QuickCommitOutcome(
                     includeSubmodule = includeSubmodule,
@@ -178,6 +183,11 @@ class QuickCommitStore(
                 val toastMessage = buildString {
                     append(outcome.summaryText())
                     if (push && outcome.pushError == null) append("，已推送")
+                    if (archiveIntent) {
+                        if (r.archiveError != null) append("，归档失败：").append(r.archiveError)
+                        else if (r.archivedTaskCount > 0) append("，已归档 ${r.archivedTaskCount} 个关联任务")
+                        else append("，没有已完成的关联任务")
+                    }
                     outcome.pushError?.let { append("，推送失败：").append(it) }
                 }
                 if (outcome.pushError == null) {

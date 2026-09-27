@@ -23,11 +23,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.repeatOnLifecycle
+import com.wand.app.data.AiTeam
+import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TaskBoardPort
+import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.boardTaskStatusLabel
@@ -62,6 +65,8 @@ fun TaskBoardTaskScreen(
     var task by remember(taskId) { mutableStateOf<BoardTask?>(null) }
     var workspaces by remember { mutableStateOf<List<Workspace>>(emptyList()) }
     var models by remember { mutableStateOf<ModelsResponse?>(null) }
+    var teams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
+    var teamRun by remember(taskId) { mutableStateOf<AiTeamRunDetail?>(null) }
     var lastAgent by remember { mutableStateOf(BoardTaskAgent.default()) }
     var loading by remember(taskId) { mutableStateOf(true) }
     var error by remember(taskId) { mutableStateOf<String?>(null) }
@@ -78,10 +83,24 @@ fun TaskBoardTaskScreen(
         error = null
     }
 
+    /**
+     * 最近一次团队运行（对齐 Web TaskTeamRunPanel：只展示最新一条）。
+     * list / detail 任一请求失败都保留上一次的结果（老服务端 404 时保持为空），
+     * 只有「确实没有 run」才清空，否则瞬时网络抖动会让运行卡 6s 闪烁消失。
+     */
+    suspend fun refreshTeamRun() {
+        val runs = runCatching { api.teamRunsForTask(taskId) }.getOrNull() ?: return
+        val latest = runs.firstOrNull() ?: run { teamRun = null; return }
+        // 同一轮直接覆盖；换轮了但 detail 拉不下来时保留旧的，下一轮刷新再切。
+        val detail = runCatching { api.aiTeamRunDetail(latest.id) }.getOrNull() ?: return
+        teamRun = detail
+    }
+
     suspend fun refresh(showProgress: Boolean = false) {
         if (showProgress) loading = true
         try {
             applyLoaded(api.getBoardTask(taskId))
+            refreshTeamRun()
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             error = e.message ?: "无法加载任务"
@@ -94,6 +113,7 @@ fun TaskBoardTaskScreen(
         refresh(showProgress = true)
         workspaces = runCatching { api.listBoardWorkspaces() }.getOrDefault(emptyList())
         models = runCatching { api.boardModels() }.getOrNull()
+        teams = runCatching { api.listAiTeams() }.getOrDefault(emptyList())
         lastAgent = runCatching { api.boardTaskAgentDefaults() }.getOrDefault(BoardTaskAgent.default())
     }
 
@@ -122,32 +142,61 @@ fun TaskBoardTaskScreen(
         }
     }
 
-    fun dispatch(agent: BoardTaskAgent, prompt: String) {
+    /** teamId 非空 = 交给团队（POST /api/wand-tasks/{id}/team-runs）；返回 true 供表单原位收起。 */
+    suspend fun dispatch(agent: BoardTaskAgent, prompt: String, teamId: String): Boolean {
+        if (busy) return false
+        busy = true
+        var succeeded = false
+        try {
+            if (teamId.isNotBlank()) {
+                onTaskChanged()
+                teamRun = api.startTeamRun(taskId, teamId, prompt)
+                error = null
+                // 任务卡与运行进度由既有的 taskChanges / 6s 刷新通道继续同步，这里不加新轮询。
+                return true
+            }
+            runCatching { api.saveBoardTaskAgentDefaults(agent) }
+            onTaskChanged()
+            val result = api.dispatchBoardTask(taskId, agent, prompt, task?.workspaceId)
+            succeeded = true
+            // 成功即清掉上一轮红字；refresh 失败会写入新的 error。
+            error = null
+            refresh()
+            // 派发成功直接进入新 Agent 的会话：创建/指派之后不用再自己找一遍。
+            // PTY 会话要落到终端页，不能一律当成结构化聊天。
+            boardDispatchSessionId(result.sessionId)?.let { sessionId ->
+                val current = task
+                onOpenSession(
+                    TaskSessionRoute(
+                        sessionId = sessionId,
+                        structured = result.isStructured,
+                        workspaceId = current?.workspaceId,
+                        taskId = taskId,
+                        workspaceName = current?.workspace?.name,
+                        taskName = current?.title,
+                    ),
+                )
+            }
+        } catch (e: Exception) {
+            error = e.message ?: if (teamId.isNotBlank()) "交给团队失败" else "派发 Agent 失败"
+        } finally {
+            busy = false
+        }
+        return succeeded
+    }
+
+    /** 动作成功后重拉；失败只记 error，下一次 6s 刷新会再同步。 */
+    fun teamRunAction(action: TeamRunAction) {
+        val runId = teamRun?.run?.id ?: return
         if (busy) return
         busy = true
         scope.launch {
             try {
-                runCatching { api.saveBoardTaskAgentDefaults(agent) }
+                teamRun = api.actOnTeamRun(runId, action)
+                error = null
                 onTaskChanged()
-                val result = api.dispatchBoardTask(taskId, agent, prompt, task?.workspaceId)
-                refresh()
-                // 派发成功直接进入新 Agent 的会话：创建/指派之后不用再自己找一遍。
-                // PTY 会话要落到终端页，不能一律当成结构化聊天。
-                boardDispatchSessionId(result.sessionId)?.let { sessionId ->
-                    val current = task
-                    onOpenSession(
-                        TaskSessionRoute(
-                            sessionId = sessionId,
-                            structured = result.isStructured,
-                            workspaceId = current?.workspaceId,
-                            taskId = taskId,
-                            workspaceName = current?.workspace?.name,
-                            taskName = current?.title,
-                        ),
-                    )
-                }
             } catch (e: Exception) {
-                error = e.message ?: "派发 Agent 失败"
+                error = e.message ?: "团队操作失败"
             } finally {
                 busy = false
             }
@@ -217,13 +266,17 @@ fun TaskBoardTaskScreen(
                     workspaces = workspaces,
                     models = models,
                     lastAgent = lastAgent,
+                    teams = teams,
+                    teamRun = teamRun,
                     busy = busy,
+                    actionError = error,
                     onPatch = { body -> patch(body) },
                     onRemember = { agent ->
                         lastAgent = agent
                         scope.launch { runCatching { api.saveBoardTaskAgentDefaults(agent) } }
                     },
-                    onDispatch = ::dispatch,
+                    onDispatch = { agent, prompt, teamId -> dispatch(agent, prompt, teamId) },
+                    onTeamRunAction = ::teamRunAction,
                     onDelete = delete@{
                         if (busy) return@delete
                         busy = true

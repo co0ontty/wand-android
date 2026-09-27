@@ -42,6 +42,16 @@ class WorkspaceTaskCreationTest {
     }
 
     @Test
+    fun taskCreationIncludesParentOnlyWhenSelected() {
+        val projectChild = createWorkspaceTaskRequestBody("子任务", null, false, parentTaskId = "parent-id")
+        val globalChild = createStandaloneTaskRequestBody("子任务", parentTaskId = "global-parent")
+        val independent = createWorkspaceTaskRequestBody("独立任务", null, false)
+        assertEquals("parent-id", projectChild.getString("parentTaskId"))
+        assertEquals("global-parent", globalChild.getString("parentTaskId"))
+        assertFalse(independent.has("parentTaskId"))
+    }
+
+    @Test
     fun allSixProvidersMapToBoundCommandBodies() {
         val cases = listOf(
             WorkspaceSessionTarget.Claude to "claude",

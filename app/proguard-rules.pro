@@ -16,3 +16,18 @@
 -dontwarn org.openjsse.**
 
 # kotlinx-coroutines / Compose / ZXing 均自带 consumer rules，无需在此重复。
+
+# termlib 手势补丁按这个类名和签名调用。R8 改名后，库里的 invokestatic 会找不到方法。
+-keep class com.wand.app.ui.terminal.PtyScrollSlop {
+    public static void noteDown(java.lang.Object, long);
+    public static float displacementSquared(java.lang.Object, long);
+}
+
+# 长按菜单通过这些公开类型读取选区和屏幕文字。改名后菜单无法判断是否正在拖动。
+-keep class org.connectbot.terminal.SelectionManager { *; }
+-keep class org.connectbot.terminal.SelectionMode { *; }
+-keep class org.connectbot.terminal.SelectionRange { *; }
+-keep class org.connectbot.terminal.TerminalScreenState { *; }
+-keep class org.connectbot.terminal.TerminalSnapshot { *; }
+-keep class org.connectbot.terminal.TerminalLine { *; }
+-keep class org.connectbot.terminal.TerminalLine$Cell { *; }

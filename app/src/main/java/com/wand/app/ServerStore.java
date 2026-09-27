@@ -249,10 +249,6 @@ public class ServerStore {
         prefs.edit().putString(channelKey("skipped_apk_version", channel), version).apply();
     }
 
-    public void setDownloadedApkVersion(String version, String channel) {
-        prefs.edit().putString(channelKey("downloaded_apk_version", channel), version).apply();
-    }
-
     // MARK: - 更新安装状态
     // 点「安装更新」后系统安装器会杀掉本进程；这几个时间戳/版本号让重启后的客户端
     // 能判断「更新是否已经生效、当前进程是否还是安装前的旧代码」，从而自动回到前台

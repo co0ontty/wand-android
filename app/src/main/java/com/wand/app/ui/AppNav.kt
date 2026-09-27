@@ -34,6 +34,10 @@ sealed class Screen {
         val taskId: String? = null,
     ) : Screen()
     data object Settings : Screen()
+    /** AI 团队页：只读团队定义列表（团队编辑留 Web，§11-Q6）。 */
+    data object AiTeams : Screen()
+    /** 团队详情：成员组织图（只读）+「直接开工」表单（§6.2 A2/A3）。 */
+    data class AiTeamDetail(val teamId: String) : Screen()
     /**
      * 任务详情宿主页：导航参数只携带稳定的 workspaceId/taskId 和编码短显示名，
      * 不携带 cwd、layout 或凭据。Saver 用结构化 save record，避免任务名中的
@@ -200,6 +204,8 @@ class NavState {
         private const val MISSIONS_KEY = "missions"
         private const val TASK_BOARD_KEY = "task-board"
         private const val SETTINGS_KEY = "settings"
+        private const val AI_TEAMS_KEY = "ai-teams"
+        private const val AI_TEAM_DETAIL_KEY = "ai-team-detail"
         private const val WORKSPACES_KEY = "workspaces"
         private const val WORKSPACE_TASK_KEY = "workspace-task"
         private const val FIELD_SEP = "\u0001"
@@ -234,6 +240,8 @@ class NavState {
                 TASK_BOARD_KEY + FIELD_SEP + workspaceId.orEmpty() + FIELD_SEP + taskId.orEmpty()
             }
             Screen.Settings -> SETTINGS_KEY
+            Screen.AiTeams -> AI_TEAMS_KEY
+            is Screen.AiTeamDetail -> AI_TEAM_DETAIL_KEY + FIELD_SEP + teamId
             // 结构化分隔：用 \u0001 作为不可打印分隔符，避免任务名中的 `:`
             // 或换行破坏恢复（与 Web 不同，这里 ID 不含控制字符）。
             is Screen.WorkspaceTask ->
@@ -274,6 +282,12 @@ class NavState {
                 )
             }
             this == SETTINGS_KEY -> Screen.Settings
+            this == AI_TEAMS_KEY -> Screen.AiTeams
+            startsWith(AI_TEAM_DETAIL_KEY + FIELD_SEP) ->
+                removePrefix(AI_TEAM_DETAIL_KEY + FIELD_SEP)
+                    .split(FIELD_SEP, limit = 2)
+                    .firstOrNull()?.takeIf(String::isNotBlank)
+                    ?.let { Screen.AiTeamDetail(it) }
             // 旧版项目根页升级后统一恢复到任务根页。
             this == WORKSPACES_KEY -> Screen.SessionList
             startsWith(WORKSPACE_TASK_KEY + FIELD_SEP) -> {

@@ -621,14 +621,19 @@ private fun FormPanel(
         hasSubmodule = hasSubmodule,
         busy = qc.submitting,
         busyLabel = busyLabel,
+        archiveSelected = qc.archiveRelatedTasks,
+        onArchiveToggle = { qc.archiveRelatedTasks = !qc.archiveRelatedTasks },
         isHapticEnabled = isHapticEnabled,
-        onAction = { action, sub -> qc.submit(action, sub) },
+        onAction = { action, sub, archive ->
+            qc.archiveRelatedTasks = archive
+            qc.submit(action, sub)
+        },
     )
 
     val hint = when {
         qc.submitting -> ""
         !hasChanges -> "工作区干净，无可提交"
-        else -> "拖动磁吸组合 · 丢进提交区执行 · 单击直接执行该项" +
+        else -> "拖动磁吸组合 · 丢进提交区执行 · 点归档球切换本次归档" +
             (if (hasSubmodule) "\nSub 球可选，纳入后递归处理 submodule" else "")
     }
     if (hint.isNotEmpty()) {
@@ -879,8 +884,10 @@ private fun MagneticDock(
     hasSubmodule: Boolean,
     busy: Boolean,
     busyLabel: String,
+    archiveSelected: Boolean,
+    onArchiveToggle: () -> Unit,
     isHapticEnabled: () -> Boolean,
-    onAction: (action: String, includeSubmodule: Boolean) -> Unit,
+    onAction: (action: String, includeSubmodule: Boolean, archive: Boolean) -> Unit,
 ) {
     // 执行中：dock 整体替换为 busy 面板（对齐网页 qc-dock-busy）。
     if (busy) {
@@ -908,16 +915,19 @@ private fun MagneticDock(
     val scope = rememberCoroutineScope()
 
     val allIds = remember(hasSubmodule) {
-        if (hasSubmodule) ACTION_ORDER + "sub" else ACTION_ORDER
+        ACTION_ORDER + "archive" + if (hasSubmodule) listOf("sub") else emptyList()
     }
     val commitColor = WandColors.brand
     val tagColor = WandColors.info
     val pushColor = WandColors.success
     val subColor = lerp(WandColors.info, WandColors.success, 0.45f)
-    val chipColors = remember(commitColor, tagColor, pushColor, subColor) {
-        mapOf("commit" to commitColor, "tag" to tagColor, "push" to pushColor, "sub" to subColor)
+    val archiveColor = WandColors.warning
+    val chipColors = remember(commitColor, tagColor, pushColor, subColor, archiveColor) {
+        mapOf("commit" to commitColor, "tag" to tagColor, "push" to pushColor,
+            "sub" to subColor, "archive" to archiveColor)
     }
-    val chipLabels = mapOf("commit" to "Commit", "tag" to "Tag", "push" to "Push", "sub" to "Sub")
+    val chipLabels = mapOf("commit" to "Commit", "tag" to "Tag", "push" to "Push",
+        "sub" to "Sub", "archive" to "归档")
 
     var fieldSize by remember { mutableStateOf(IntSize.Zero) }
     val chipSizes = remember { mutableStateMapOf<String, IntSize>() }
@@ -940,31 +950,24 @@ private fun MagneticDock(
     fun cw(id: String): Float = chipSizes[id]?.width?.toFloat() ?: defaultChipWPx
     fun chipH(): Float = chipSizes.values.firstOrNull()?.height?.toFloat() ?: defaultChipHPx
 
-    // 原位布局（px）：无 Sub 时 ∧ 三角（Commit 顶中 / Tag 左下 / Push 右下），
-    // 有 Sub 时 2×2 网格 —— 对齐网页窄屏 homePositions()。
+    // 四颗气泡排成 2×2；有 Sub 时增加底部中央一颗，归档球仍在固定位置。
     fun homePositions(): Map<String, Offset> {
         val fw = fieldSize.width.toFloat()
         val fh = fieldSize.height.toFloat()
         val h = chipH()
         val pos = mutableMapOf<String, Offset>()
+        val topY = (fh * 0.18f - h / 2f).coerceAtLeast(marginPx)
+        val botY = (fh * (if (hasSubmodule) 0.55f else 0.72f) - h / 2f)
+            .coerceAtMost(fh - h - marginPx)
+        fun colL(w: Float) = (fw * 0.27f - w / 2f).coerceAtLeast(marginPx)
+        fun colR(w: Float) = (fw * 0.73f - w / 2f).coerceAtMost(fw - w - marginPx)
+        pos["commit"] = Offset(colL(cw("commit")), topY)
+        pos["tag"] = Offset(colR(cw("tag")), topY)
+        pos["push"] = Offset(colL(cw("push")), botY)
+        pos["archive"] = Offset(colR(cw("archive")), botY)
         if (hasSubmodule) {
-            val topY = (fh * 0.20f - h / 2f).coerceAtLeast(marginPx)
-            val botY = (fh * 0.70f - h / 2f).coerceAtMost(fh - h - marginPx)
-            fun colL(w: Float) = (fw * 0.27f - w / 2f).coerceAtLeast(marginPx)
-            fun colR(w: Float) = (fw * 0.73f - w / 2f).coerceAtMost(fw - w - marginPx)
-            pos["commit"] = Offset(colL(cw("commit")), topY)
-            pos["tag"] = Offset(colR(cw("tag")), topY)
-            pos["push"] = Offset(colL(cw("push")), botY)
-            pos["sub"] = Offset(colR(cw("sub")), botY)
-        } else {
-            val topY = (fh * 0.18f - h / 2f).coerceAtLeast(marginPx)
-            val botY = (fh * 0.72f - h / 2f).coerceAtMost(fh - h - marginPx)
-            pos["commit"] = Offset(((fw - cw("commit")) / 2f).coerceAtLeast(marginPx), topY)
-            pos["tag"] = Offset((fw * 0.24f - cw("tag") / 2f).coerceAtLeast(marginPx), botY)
-            pos["push"] = Offset(
-                (fw * 0.76f - cw("push") / 2f).coerceAtMost(fw - cw("push") - marginPx),
-                botY,
-            )
+            pos["sub"] = Offset((fw - cw("sub")) / 2f,
+                (fh * 0.86f - h / 2f).coerceAtMost(fh - h - marginPx))
         }
         return pos
     }
@@ -1039,6 +1042,8 @@ private fun MagneticDock(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                     },
+                    archiveSelected = archiveSelected,
+                    onArchiveToggle = onArchiveToggle,
                     onAction = onAction,
                 ),
         ) {
@@ -1057,7 +1062,7 @@ private fun MagneticDock(
             // 气泡们
             allIds.forEach { id ->
                 val anim = animFor(id)
-                val active = dragMembers?.contains(id) == true
+                val active = dragMembers?.contains(id) == true || (id == "archive" && archiveSelected)
                 val color = chipColors[id] ?: commitColor
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1108,7 +1113,7 @@ private fun MagneticDock(
         Spacer(Modifier.width(12.dp))
 
         // —— 发射区 ——
-        // 始终走 glassCard，与左侧力场同源浮起（rim 带 launchTone）；热区（拖入命中）
+        // 始终走 wandCardSurface，与左侧力场同源浮起（rim 带 launchTone）；热区（拖入命中）
         // 再覆盖一层 launchTone 强调底 + 高亮描边，明确「松手即执行」的落点。
         val launchShape = RoundedCornerShape(14.dp)
         Column(
@@ -1127,7 +1132,7 @@ private fun MagneticDock(
                         Modifier
                     }
                 )
-                .clickable(enabled = enabled) { onAction("commit", false) },
+                .clickable(enabled = enabled) { onAction("commit", false, archiveSelected) },
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowForward,
@@ -1146,9 +1151,9 @@ private fun MagneticDock(
 }
 
 /**
- * dock 手势：场地坐标系内 hit-test 气泡 → 跟手拖动 → 磁吸拾取（只吸主动作球，
- * Sub 永不被路过吸附）→ 出场地右缘即「热」（悬在发射区上方）→
- * 松手：未动=单击直发；热区=组合执行；否则全员弹回。
+ * dock 手势：场地坐标系内 hit-test 气泡 → 跟手拖动 → 磁吸拾取（场地内任意气泡
+ * 都可被吸进组合）→ 出场地右缘即「热」（悬在发射区上方）→
+ * 松手：归档单击只切换选择，其余单击直发；热区=组合执行；否则全员弹回。
  */
 private fun Modifier.pointerInputDock(
     enabled: Boolean,
@@ -1168,8 +1173,10 @@ private fun Modifier.pointerInputDock(
     snapTo: (String, Offset) -> Unit,
     tick: () -> Unit,
     thud: () -> Unit,
-    onAction: (String, Boolean) -> Unit,
-): Modifier = pointerInput(enabled, allIds) {
+    archiveSelected: Boolean,
+    onArchiveToggle: () -> Unit,
+    onAction: (String, Boolean, Boolean) -> Unit,
+): Modifier = pointerInput(enabled, allIds, archiveSelected) {
     if (!enabled) return@pointerInput
     awaitEachGesture {
         val down = awaitFirstDown()
@@ -1196,10 +1203,8 @@ private fun Modifier.pointerInputDock(
             if (!moved && (pos - down.position).getDistance() > slop) moved = true
             if (!moved) return@drag
 
-            // 磁吸拾取：指尖扫过松散气泡的原位中心即入队。
-            // 只遍历主动作球 —— Sub 永不被「路过吸附」（默认不纳入），
-            // 但它可以作为锚点被显式抓起、反向吸附动作球。
-            for (id in ACTION_ORDER) {
+            // 磁吸拾取：指尖扫过松散气泡的原位中心即入队（含 Sub / 归档）。
+            for (id in allIds) {
                 if (id in members) continue
                 val hp = homesAtDown[id] ?: continue
                 val center = Offset(hp.x + cw(id) / 2f, hp.y + h / 2f)
@@ -1250,12 +1255,17 @@ private fun Modifier.pointerInputDock(
 
         if (!completed) return@awaitEachGesture
         if (!moved) {
-            // 原地单击 → 直接执行该气泡自己的动作。
-            val (action, sub) = tapIntent(anchor)
-            onAction(action, sub)
+            if (anchor == "archive") {
+                onArchiveToggle()
+            } else {
+                // 原地单击 → 直接执行该气泡自己的动作。
+                val (action, sub) = tapIntent(anchor)
+                onAction(action, sub, archiveSelected)
+            }
         } else if (endHot) {
             // 丢进发射区 → 执行组合动作（commit 永远隐含）。
-            onAction(composeAction(endMembers), "sub" in endMembers)
+            onAction(composeAction(endMembers), "sub" in endMembers,
+                archiveSelected || "archive" in endMembers)
         }
         // 松手在别处：springHome() 已让全员弹回，不执行任何动作。
     }

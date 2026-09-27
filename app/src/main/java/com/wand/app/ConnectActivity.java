@@ -565,7 +565,7 @@ public class ConnectActivity extends AppCompatActivity {
     }
 
     private ProbeResult testConnectionWithToken(String baseUrl, String appToken, int timeout) {
-        WandLog.i("connect", "探测连接（连接码） " + baseUrl);
+        WandLog.i("connect", "探测连接（连接码）");
         try {
             JSONObject body = new JSONObject();
             body.put("appToken", appToken);
@@ -573,10 +573,10 @@ public class ConnectActivity extends AppCompatActivity {
                     baseUrl + "/api/login", body.toString(), timeout, baseUrl);
             int code = response.getCode();
             if (code == 200) {
-                WandLog.i("connect", "探测成功 " + baseUrl);
+                WandLog.i("connect", "探测成功");
                 return ProbeResult.success(baseUrl);
             } else if (code == 401) {
-                WandLog.w("connect", "连接码被拒 401 " + baseUrl, null);
+                WandLog.w("connect", "连接码被拒 401", null);
                 return new ProbeResult(
                         "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
                         false
@@ -586,19 +586,20 @@ public class ConnectActivity extends AppCompatActivity {
             }
             return new ProbeResult("服务器返回了异常状态码: " + code, false);
         } catch (Exception e) {
-            WandLog.w("connect", "探测异常 " + baseUrl + "：" + e.getClass().getSimpleName(), e);
+            // URL 中可能含认证信息；异常文本和 endpoint 不进入日志或界面。
+            WandLog.w("connect", "探测连接失败", null);
             ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(
                     baseUrl, appToken, timeout, e);
             if (upgraded != null) return upgraded;
             return new ProbeResult(
-                    NetworkErrorHelper.describeError(e, "connect"),
+                    "无法连接服务器，请检查地址、连接码与网络",
                     isTransientConnectionError(e)
             );
         }
     }
 
     private ProbeResult testConnection(String baseUrl, int timeout) {
-        WandLog.i("connect", "探测连接（无凭据） " + baseUrl);
+        WandLog.i("connect", "探测连接（无凭据）");
         try {
             WandHttp.SimpleResponse response = WandHttp.get(baseUrl + "/api/config", timeout, baseUrl);
             int code = response.getCode();
@@ -610,11 +611,11 @@ public class ConnectActivity extends AppCompatActivity {
             }
             return new ProbeResult("服务器返回了异常状态码: " + code, false);
         } catch (Exception e) {
-            WandLog.w("connect", "探测异常 " + baseUrl + "：" + e.getClass().getSimpleName(), e);
+            WandLog.w("connect", "探测连接失败", null);
             ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(baseUrl, null, timeout, e);
             if (upgraded != null) return upgraded;
             return new ProbeResult(
-                    NetworkErrorHelper.describeError(e, "connect"),
+                    "无法连接服务器，请检查地址与网络",
                     isTransientConnectionError(e)
             );
         }
@@ -635,7 +636,7 @@ public class ConnectActivity extends AppCompatActivity {
         if (!WandHttp.looksLikeHttpOnTlsPort(cause)) return null;
         String httpsUrl = WandHttp.preferHttpsUrl(baseUrl);
         if (httpsUrl == null) return null;
-        WandLog.i("connect", "明文打到 TLS 端口，改用 https 重试 " + httpsUrl);
+        WandLog.i("connect", "明文打到 TLS 端口，改用 https 重试");
         try {
             if (appToken != null) {
                 JSONObject body = new JSONObject();
@@ -673,7 +674,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     /** 连接成功后进入原生主界面（HomeActivity）。 */
     private void launchHome(ServerProfile profile) {
-        WandLog.i("connect", "进入主界面 server=" + profile.getId() + " url=" + profile.getBaseUrl());
+        WandLog.i("connect", "进入主界面");
         SessionWatcher.INSTANCE.stop();
         stopService(new Intent(this, WandForegroundService.class));
         Intent intent = new Intent(this, HomeActivity.class);

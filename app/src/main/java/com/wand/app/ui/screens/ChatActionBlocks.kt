@@ -152,8 +152,8 @@ fun AskUserQuestionCard(
     }
     val allAnswered = questions.indices.all { !selection.selected[it].isNullOrEmpty() }
 
-    // 状态色通过 glassCard 的 rimTint 表达（已答绿 / 待答品牌），
-    // 不再叠手写 background + border —— 那会与 glassCard 自带的描边/底色撞成双重描边。
+    // 状态色通过 wandCardSurface 的 rimTint 表达（已答绿 / 待答品牌），
+    // 不再叠手写 background + border —— 那会与卡片自带的描边/底色撞成双重描边。
     Column(
         modifier = Modifier
             .fillMaxWidth()

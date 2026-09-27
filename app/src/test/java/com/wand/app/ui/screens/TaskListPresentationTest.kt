@@ -269,7 +269,7 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun taskTreeKeepsCreatedOrderWithNewTasksFirst() {
+    fun taskTreeKeepsServerOrderWithoutLocalResorting() {
         val done = task().copy(
             task = task().task.copy(
                 id = "done",
@@ -294,9 +294,14 @@ class TaskListPresentationTest {
             sessions = listOf(session("structured", "structured").copy(status = "running")),
         )
 
+        // 顺序只有一个真源（服务端）：客户端不再按时间/状态二次排序，
+        // 已完成的卡片只从会话树里隐藏（看板仍保留）。
         assertEquals(
-            listOf("older", "done", "newer"),
-            orderedTaskSummaries(listOf(older, done, newer)).map { it.id },
+            listOf("older", "newer"),
+            directoryTreeGroups(listOf(groupWithTasks(listOf(older, done, newer))))
+                .single()
+                .tasks
+                .map { it.id },
         )
     }
 
@@ -340,15 +345,13 @@ class TaskListPresentationTest {
 
     @Test
     fun treeDisclosureHidesNeedlessCaretsAndKeepsTerminalsOpen() {
-        assertTrue(showsDirectoryDisclosure(1))
-        assertTrue(showsDirectoryDisclosure(2))
-        assertFalse(isDirectoryExpanded(userCollapsed = true, directoryCount = 1))
-        assertFalse(isDirectoryExpanded(userCollapsed = true, directoryCount = 2))
-        assertTrue(isDirectoryExpanded(userCollapsed = false, directoryCount = 2))
+        assertFalse(isDirectoryExpanded(userCollapsed = true))
+        assertTrue(isDirectoryExpanded(userCollapsed = false))
 
         assertFalse(showsTaskSessionDisclosure(0))
         assertTrue(showsTaskSessionDisclosure(1))
-        assertTrue(isTaskSessionsExpanded(userCollapsed = true, sessionCount = 0))
+        assertFalse(isTaskSessionsExpanded(userCollapsed = false, sessionCount = 0))
+        assertTrue(isTaskSessionsExpanded(userCollapsed = false, sessionCount = 0, isOnlyTask = true))
         assertFalse(isTaskSessionsExpanded(userCollapsed = true, sessionCount = 2))
         assertTrue(isTaskSessionsExpanded(userCollapsed = false, sessionCount = 2))
     }
@@ -507,8 +510,6 @@ class TaskListPresentationTest {
         assertEquals(HomeListMode.Tasks, HomeListMode.fromStorage("board"))
         assertEquals("任务模式", HomeListMode.Tasks.label)
         assertEquals("会话模式", HomeListMode.Sessions.label)
-        assertEquals(HomeListMode.Tasks, HomeListMode.Sessions.next)
-        assertEquals(HomeListMode.Sessions, HomeListMode.Tasks.next)
         assertEquals("board", HomeListMode.Tasks.storageValue)
         assertEquals("sessions", HomeListMode.Sessions.storageValue)
     }
@@ -546,12 +547,14 @@ class TaskListPresentationTest {
         assertEquals(screen, nav.current)
     }
 
-    private fun group() = TaskDirectoryGroup(
+    private fun group() = groupWithTasks(listOf(task()))
+
+    private fun groupWithTasks(tasks: List<WorkspaceTaskSummary>) = TaskDirectoryGroup(
         workspaceId = "workspace-1",
         workspaceName = "Repo",
         workspaceCwd = "/repo",
         synthetic = false,
-        tasks = listOf(task()),
+        tasks = tasks,
         standaloneSessions = emptyList(),
     )
 

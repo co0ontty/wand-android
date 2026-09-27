@@ -39,12 +39,11 @@ final class NotificationHelper {
     private static final long PROGRESS_UPDATE_DEBOUNCE_MS = 50;
     private static final long PROGRESS_STALE_MS = 5 * 60 * 1000;
 
-    static final String[][] SOUND_PRESETS = {
-        {"chime",  "叮咚"},
-        {"bubble", "气泡"},
-        {"meow",   "喵~"},
-        {"bell",   "铃声"},
-    };
+    /**
+     * 旧版本按提示音名各建过一个 channel（wand_notif_chime 等），升级后要逐个删掉。
+     * 现在通知声音由应用内播放，不再按音名分 channel。
+     */
+    private static final String[] LEGACY_SOUND_CHANNEL_SUFFIXES = {"chime", "bubble", "meow", "bell"};
 
     private static final AudioAttributes NOTIF_AUDIO_ATTRS = new AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_NOTIFICATION)
@@ -67,8 +66,8 @@ final class NotificationHelper {
         if (nm == null) return;
 
         nm.deleteNotificationChannel(CHANNEL_ID_LEGACY);
-        for (String[] preset : SOUND_PRESETS) {
-            nm.deleteNotificationChannel(CHANNEL_ID_PREFIX_LEGACY + preset[0]);
+        for (String suffix : LEGACY_SOUND_CHANNEL_SUFFIXES) {
+            nm.deleteNotificationChannel(CHANNEL_ID_PREFIX_LEGACY + suffix);
         }
 
         if (nm.getNotificationChannel(CHANNEL_ID_SILENT) == null) {
@@ -157,13 +156,6 @@ final class NotificationHelper {
             case "bell": return R.raw.notif_bell;
             default: return 0;
         }
-    }
-
-    static boolean isValidSound(String name) {
-        for (String[] preset : SOUND_PRESETS) {
-            if (preset[0].equals(name)) return true;
-        }
-        return false;
     }
 
     String resolveChannel(String tag) {

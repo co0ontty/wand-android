@@ -217,6 +217,24 @@ internal data class EarlierLoadAnchor(
 internal fun earlierLoadAdvanced(anchor: EarlierLoadAnchor, turnOffset: Int, blockOffset: Int): Boolean =
     turnOffset < anchor.turnOffset || (turnOffset == anchor.turnOffset && blockOffset < anchor.blockOffset)
 
+/**
+ * 顶部翻页入口的文案。
+ *
+ * `visibleCount` 是服务端算好的「头部里用户可感知的条数」——默认收起的工具 / 思考块不计入，
+ * 它们在结构化视图里本来就合并成一条折叠条，不该被当成几十条更早消息（那会让人以为还得翻
+ * 几十次）。旧服务端不下发该字段（null）时干脆不报数字，不拿块数冒充条数。
+ */
+internal fun earlierLoadLabel(
+    loading: Boolean,
+    blockPaging: Boolean,
+    visibleCount: Int?,
+): String = when {
+    loading -> "正在加载更早内容…"
+    !blockPaging -> "加载更早消息"
+    visibleCount == null || visibleCount <= 0 -> "加载更早步骤"
+    else -> "加载更早步骤 · 还有 $visibleCount 条"
+}
+
 /** 状态坞只承接流式状态 / 子 Agent；完成时间和用量留在各轮消息里，避免右下角再显一遍。 */
 internal fun shouldShowStructuredActivityDock(
     isStructured: Boolean,
@@ -770,11 +788,11 @@ fun ChatScreen(
                                     }
                                     val blockPaging = store.leadingBlockOffset > 0
                                     Text(
-                                        when {
-                                            store.loadingEarlier -> "正在加载更早内容…"
-                                            blockPaging -> "加载更早步骤 · 还有 ${store.leadingBlockOffset} 条"
-                                            else -> "加载更早消息"
-                                        },
+                                        earlierLoadLabel(
+                                            loading = store.loadingEarlier,
+                                            blockPaging = blockPaging,
+                                            visibleCount = store.leadingVisibleCount,
+                                        ),
                                         fontSize = 12.sp,
                                         color = WandColors.textSecondary,
                                     )
@@ -2361,6 +2379,7 @@ internal fun ComposerChoiceSheet(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
     searchable: Boolean = false,
+    searchPlaceholder: String = "搜索模型",
 ) {
     var query by remember { mutableStateOf("") }
     val visibleOptions = if (searchable) {
@@ -2391,7 +2410,7 @@ internal fun ComposerChoiceSheet(
                     WandTextField(
                         value = query,
                         onValueChange = { query = it },
-                        placeholder = "搜索模型",
+                        placeholder = searchPlaceholder,
                         singleLine = true,
                         leadingIcon = {
                             Icon(

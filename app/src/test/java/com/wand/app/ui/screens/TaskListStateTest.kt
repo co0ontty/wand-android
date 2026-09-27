@@ -95,6 +95,19 @@ class TaskListStateTest {
     }
 
     @Test
+    fun createChildTaskPassesParentIdToBothCreationRoutes() = runBlocking {
+        val workspace = workspace("ws-existing", "/repo")
+        val port = FakeWorkspacePort().apply { workspaces += workspace }
+        val state = TaskListState(port)
+
+        state.createTask("子任务", "/repo", false, workspaceId = workspace.id, parentTaskId = "board-parent")
+        state.createTask("全局子任务", "", false, parentTaskId = "global-parent")
+
+        assertEquals("board-parent", port.taskRequests.single().parentTaskId)
+        assertEquals("global-parent", port.standaloneRequests.single().parentTaskId)
+    }
+
+    @Test
     fun createTaskInNewDirectoryCreatesWorkspaceWithoutWorktree() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
@@ -384,6 +397,47 @@ class TaskListStateTest {
         assertTrue(port.renamedTasks.isEmpty())
     }
 
+    @Test
+    fun draggingExpandedWorkspacePersistsCollapsedState() = runBlocking {
+        val group = group("a", "/a").copy(tasks = listOf(WorkspaceTaskSummary(
+            task = task("task-1", "任务"),
+            cwd = "/a",
+            isolated = false,
+            worktreeError = null,
+            sessions = emptyList(),
+            totalSessions = 0,
+        )))
+        val store = MemoryTaskListExpansionStore()
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
+        assertTrue(state.load())
+        assertFalse(state.isDirectoryCollapsed(group.id))
+
+        state.startDirectoryReorder(group.id)
+        assertTrue(state.isDirectoryCollapsed(group.id))
+        assertEquals(setOf(group.id), store.collapsedIds(TASK_LIST_EXPANSION_DIRS))
+        state.finishDirectoryReorder()
+        assertTrue(state.isDirectoryCollapsed(group.id))
+        state.toggleDirectory(group.id)
+        assertFalse(state.isDirectoryCollapsed(group.id))
+
+        state.startDirectoryReorder(group.id)
+        state.cancelDirectoryReorder()
+        assertTrue(state.isDirectoryCollapsed(group.id))
+        assertEquals(setOf(group.id), store.collapsedIds(TASK_LIST_EXPANSION_DIRS))
+    }
+
+    @Test
+    fun draggingEmptyWorkspaceDoesNotSaveAnInvisibleCollapse() = runBlocking {
+        val group = group("empty", "/empty")
+        val store = MemoryTaskListExpansionStore()
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
+        assertTrue(state.load())
+        state.startDirectoryReorder(group.id)
+        state.finishDirectoryReorder()
+        assertFalse(state.isDirectoryCollapsed(group.id))
+        assertTrue(store.collapsedIds(TASK_LIST_EXPANSION_DIRS).isEmpty())
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun dragSavesOnceOnReleaseAndKeepsLatestOrderAcrossOverlappingSaves() = runTest {
@@ -396,7 +450,7 @@ class TaskListStateTest {
         val state = TaskListState(port)
         try {
             state.load()
-            state.startDirectoryReorder()
+            state.startDirectoryReorder("a")
             state.moveDirectory("a", "b")
             state.moveDirectory("a", "c")
             assertEquals(listOf("b", "c", "a"), state.groups.map { it.id })
@@ -404,7 +458,7 @@ class TaskListStateTest {
             state.finishDirectoryReorder()
             assertEquals(listOf(listOf("b", "c", "a")), port.savedGroupOrders)
 
-            state.startDirectoryReorder()
+            state.startDirectoryReorder("c")
             state.moveDirectory("c", "b")
             state.finishDirectoryReorder()
             assertEquals(listOf("c", "b", "a"), state.groups.map { it.id })
@@ -432,7 +486,7 @@ class TaskListStateTest {
         val state = TaskListState(port)
         try {
             state.load()
-            state.startDirectoryReorder()
+            state.startDirectoryReorder("a")
             state.moveDirectory("a", "b")
             state.finishDirectoryReorder()
             assertEquals("服务端未更新", state.orderSaveError)
@@ -461,11 +515,11 @@ class TaskListStateTest {
         val state = TaskListState(port)
         try {
             state.load()
-            state.startDirectoryReorder()
+            state.startDirectoryReorder("a")
             state.moveDirectory("a", "b")
             state.cancelDirectoryReorder()
             assertEquals(listOf("a", "b"), state.groups.map { it.id })
-            state.startDirectoryReorder()
+            state.startDirectoryReorder("a")
             state.moveDirectory("a", "b")
             state.moveDirectory("a", "b")
             state.finishDirectoryReorder()
@@ -566,8 +620,9 @@ class TaskListStateTest {
             worktree: Boolean?,
             cwd: String?,
             description: String?,
+            parentTaskId: String?,
         ): WorkspaceTaskCreation {
-            taskRequests += TaskRequest(workspaceId, name, worktree, cwd, description)
+            taskRequests += TaskRequest(workspaceId, name, worktree, cwd, description, parentTaskId)
             return WorkspaceTaskCreation(
                 id = "task-${taskRequests.size}",
                 workspaceId = workspaceId,
@@ -583,8 +638,9 @@ class TaskListStateTest {
             cwd: String?,
             worktree: Boolean?,
             description: String?,
+            parentTaskId: String?,
         ): WorkspaceTaskCreation {
-            standaloneRequests += StandaloneRequest(name, cwd, worktree, description)
+            standaloneRequests += StandaloneRequest(name, cwd, worktree, description, parentTaskId)
             return WorkspaceTaskCreation(
                 id = "task-standalone-${standaloneRequests.size}",
                 workspaceId = "wand-global",
@@ -663,6 +719,7 @@ class TaskListStateTest {
         val worktree: Boolean?,
         val cwd: String? = null,
         val description: String? = null,
+        val parentTaskId: String? = null,
     )
 
     private data class StandaloneRequest(
@@ -670,6 +727,7 @@ class TaskListStateTest {
         val cwd: String?,
         val worktree: Boolean?,
         val description: String? = null,
+        val parentTaskId: String? = null,
     )
 
     companion object {

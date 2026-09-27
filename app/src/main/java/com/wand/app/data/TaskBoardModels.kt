@@ -124,6 +124,7 @@ data class BoardTask(
     val workspace: BoardTaskWorkspace?,
     val milestone: BoardTaskMilestone?,
     val workspaceTaskId: String? = null,
+    val parentTaskId: String? = null,
 ) {
     companion object {
         fun parse(item: JSONObject): BoardTask? {
@@ -148,6 +149,7 @@ data class BoardTask(
                 workspace = BoardTaskWorkspace.parse(item.obj("workspace")),
                 milestone = BoardTaskMilestone.parse(item.obj("milestone")),
                 workspaceTaskId = item.str("workspaceTaskId")?.takeIf { it.isNotBlank() },
+                parentTaskId = item.str("parentTaskId")?.takeIf { it.isNotBlank() },
             )
         }
 
@@ -308,6 +310,40 @@ fun boardTaskAgentLabels(sessions: List<BoardTaskSession>, assigned: BoardTaskAg
     return labels.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
+/** 服务端只允许关联同项目、正在处理的任务；全局任务的 workspaceId 是 null。 */
+fun boardParentTaskOptions(tasks: List<BoardTask>, workspaceId: String?): List<Pair<String, String>> =
+    listOf("" to "不关联父任务") + tasks.filter { it.workspaceId == workspaceId && it.status == "doing" }
+        .map { task ->
+            task.id to listOfNotNull(task.identifier.takeIf { it.isNotBlank() }, task.title)
+                .joinToString(" · ")
+        }
+
+/**
+ * workspace task 与看板卡是两张表、两个 id：看板 DTO 上的 `workspaceTaskId`
+ * 是唯一把两者对起来的字段，老服务端没有别的查询口。找不到返回 null，由调用方决定文案。
+ */
+fun findBoardTaskByWorkspaceTaskId(
+    cards: List<BoardTask>,
+    workspaceTaskId: String?,
+): BoardTask? =
+    workspaceTaskId?.takeIf { it.isNotBlank() }
+        ?.let { id -> cards.firstOrNull { it.workspaceTaskId == id } }
+
+/** 老服务端的 /api/tasks 创建仍忽略 parentTaskId：以看板 DTO 核对，必要时 PATCH 补写。 */
+suspend fun ensureBoardTaskParent(
+    api: TaskBoardPort,
+    workspaceTaskId: String,
+    parentTaskId: String,
+) {
+    val card = findBoardTaskByWorkspaceTaskId(api.listBoardTasks(), workspaceTaskId)
+        ?: throw IllegalStateException("新任务已创建，但暂时找不到对应的看板任务")
+    if (card.parentTaskId == parentTaskId) return
+    val linked = api.updateBoardTask(card.id, JSONObject().put("parentTaskId", parentTaskId))
+    if (linked.parentTaskId != parentTaskId) {
+        throw IllegalStateException("服务端未保存父任务关联")
+    }
+}
+
 fun createBoardTaskBody(
     title: String,
     description: String,
@@ -315,6 +351,7 @@ fun createBoardTaskBody(
     priority: String,
     workspaceId: String?,
     agent: BoardTaskAgent? = null,
+    parentTaskId: String? = null,
 ): JSONObject {
     val body = JSONObject()
         .put("title", title)
@@ -325,6 +362,7 @@ fun createBoardTaskBody(
     if (workspaceId.isNullOrBlank()) body.put("workspaceId", JSONObject.NULL)
     else body.put("workspaceId", workspaceId)
     if (agent != null) body.put("agent", agent.toJson())
+    if (!parentTaskId.isNullOrBlank()) body.put("parentTaskId", parentTaskId)
     return body
 }
 
@@ -382,6 +420,7 @@ interface TaskBoardPort : TaskChangeSource {
         priority: String,
         workspaceId: String?,
         agent: BoardTaskAgent? = null,
+        parentTaskId: String? = null,
     ): BoardTask
     suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask
     suspend fun deleteBoardTask(id: String)
@@ -395,4 +434,32 @@ interface TaskBoardPort : TaskChangeSource {
     suspend fun boardModels(): ModelsResponse
     suspend fun boardTaskAgentDefaults(): BoardTaskAgent
     suspend fun saveBoardTaskAgentDefaults(agent: BoardTaskAgent): BoardTaskAgent
+
+    // MARK: - AI 团队（服务端 src/server-ai-team-routes.ts；鉴权同普通登录）
+
+    /** 团队定义列表，供指派选择器。缺省 = 该端口不提供团队能力。 */
+    suspend fun listAiTeams(): List<AiTeam> =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    /** 任务上按创建倒序的团队运行；面板只展示最近一次。 */
+    suspend fun teamRunsForTask(taskId: String): List<AiTeamRun> =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    suspend fun aiTeamRunDetail(runId: String): AiTeamRunDetail =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    /** 把任务交给团队（POST /api/wand-tasks/{id}/team-runs）；note 可为空。 */
+    suspend fun startTeamRun(taskId: String, teamId: String, note: String): AiTeamRunDetail =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    /** 直接开工（POST /api/ai-teams/{id}/runs，§4.2）：workspaceId 必须是非 global 的已有项目。 */
+    suspend fun startDirectTeamRun(
+        teamId: String,
+        workspaceId: String,
+        note: String,
+    ): AiTeamDirectRun =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    suspend fun actOnTeamRun(runId: String, action: TeamRunAction): AiTeamRunDetail =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
 }

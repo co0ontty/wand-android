@@ -107,6 +107,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         private set
     var leadingBlockTotal by mutableIntStateOf(0)
         private set
+    /** 头部里用户可感知的条数（默认收起的工具 / 思考块不计入）；null = 旧服务端未下发。 */
+    var leadingVisibleCount by mutableStateOf<Int?>(null)
+        private set
     var loadingEarlier by mutableStateOf(false)
         private set
     val canLoadEarlier: Boolean get() = leadingBlockOffset > 0 || loadedOffset > 0
@@ -236,6 +239,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         messageTotal = messageTotal,
         leadingBlockOffset = leadingBlockOffset,
         leadingBlockTotal = leadingBlockTotal,
+        leadingVisibleCount = leadingVisibleCount,
         status = status,
         isResponding = isResponding,
         queuedMessages = queuedMessages,
@@ -266,6 +270,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         if (messageTotal != next.messageTotal) messageTotal = next.messageTotal
         if (leadingBlockOffset != next.leadingBlockOffset) leadingBlockOffset = next.leadingBlockOffset
         if (leadingBlockTotal != next.leadingBlockTotal) leadingBlockTotal = next.leadingBlockTotal
+        if (leadingVisibleCount != next.leadingVisibleCount) leadingVisibleCount = next.leadingVisibleCount
         if (status != next.status) status = next.status
         if (isResponding != next.isResponding) isResponding = next.isResponding
         if (queuedMessages !== next.queuedMessages) queuedMessages = next.queuedMessages
@@ -727,6 +732,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     messages = listOf(current.copy(content = page.blocks + current.content)) + messages.drop(1)
                     leadingBlockOffset = page.blockOffset
                     leadingBlockTotal = maxOf(leadingBlockTotal, page.blockTotal)
+                    // 翻上来的这一页同样不需要用户数着走：剩余条数以服务端为准（工具块不计入）。
+                    leadingVisibleCount = page.blockVisible
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "加载更早步骤失败"
@@ -755,6 +762,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     // 整条翻页拿到的最旧一条是完整 turn，leading 归零并指向新的 messages[0]。
                     leadingBlockOffset = 0
                     leadingBlockTotal = messages.firstOrNull()?.content?.size ?: 0
+                    leadingVisibleCount = 0
                 }
             } catch (e: Exception) {
                 toast = e.message ?: "加载更早消息失败"

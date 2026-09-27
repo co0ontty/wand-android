@@ -212,8 +212,6 @@ class HomeActivity : AppCompatActivity() {
             activeDownload = manager.download(
                 update.downloadUrl,
                 update.fileName,
-                update.latestVersion,
-                update.channel,
                 update.sha256,
                 update.size,
                 object : UpdateManager.DownloadListener {
@@ -401,8 +399,9 @@ class HomeActivity : AppCompatActivity() {
                                 api.baseUrl,
                                 appToken,
                             )
-                            // 自动检查必须等认证完成：更新接口会复用登录后的 Cookie。没有更新、
-                            // 已跳过或已下载的版本都静默处理；只有确有新包才呈现 Compose 更新页。
+                            // 自动检查必须等认证完成：更新接口会复用登录后的 Cookie。
+                            // 没有更新或已被用户跳过的版本都是静默处理（noUpdate 回调为 null）；
+                            // 只有确有新包才呈现 Compose 更新页。
                             if (!autoUpdateCheckStarted) {
                                 autoUpdateCheckStarted = true
                                 checkUpdate(manual = false)

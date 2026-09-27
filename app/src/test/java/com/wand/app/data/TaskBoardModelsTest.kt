@@ -10,11 +10,47 @@ import org.junit.Test
 
 class TaskBoardModelsTest {
     @Test
+    fun findBoardTaskByWorkspaceTaskIdMapsTwoIdSpaces() {
+        val cards = listOf(
+            boardTaskFixture("card-1", "wt-1"),
+            boardTaskFixture("card-2", null),
+            boardTaskFixture("card-3", "wt-3"),
+        )
+        // 命中：workspace task id → 看板卡 id（team-runs 只认后者）。
+        assertEquals("card-1", findBoardTaskByWorkspaceTaskId(cards, "wt-1")?.id)
+        assertEquals("card-3", findBoardTaskByWorkspaceTaskId(cards, "wt-3")?.id)
+        // 未命中：不存在、卡片缺 workspaceTaskId、空 id 一律不猜。
+        assertNull(findBoardTaskByWorkspaceTaskId(cards, "wt-2"))
+        assertNull(findBoardTaskByWorkspaceTaskId(cards, ""))
+        assertNull(findBoardTaskByWorkspaceTaskId(cards, null))
+        assertNull(findBoardTaskByWorkspaceTaskId(emptyList(), "wt-1"))
+        // 两个 id 空间不许互换：拿看板卡 id 来找只会命中不了（服务端回「任务不存在。」的根因）。
+        assertNull(findBoardTaskByWorkspaceTaskId(cards, "card-1"))
+    }
+
+    private fun boardTaskFixture(id: String, workspaceTaskId: String?): BoardTask =
+        requireNotNull(
+            BoardTask.parse(
+                JSONObject()
+                    .put("id", id)
+                    .put("workspaceId", "ws-1")
+                    .put("title", "标题 $id")
+                    .put("description", "")
+                    .put("status", "todo")
+                    .put("priority", "none")
+                    .apply {
+                        if (workspaceTaskId != null) put("workspaceTaskId", workspaceTaskId)
+                    },
+            ),
+        )
+
+    @Test
     fun boardTaskParserReadsWorkspaceAgentAndSessions() {
         val task = BoardTask.parse(
             JSONObject()
                 .put("id", "task-1")
                 .put("workspaceId", "ws-1")
+                .put("parentTaskId", "task-parent")
                 .put("identifier", "TASK-1")
                 .put("title", "修顶栏")
                 .put("description", "对齐 iOS")
@@ -53,6 +89,7 @@ class TaskBoardModelsTest {
         requireNotNull(task)
         assertEquals("task-1", task.id)
         assertEquals("ws-1", task.workspaceId)
+        assertEquals("task-parent", task.parentTaskId)
         assertEquals("TASK-1", task.identifier)
         assertEquals("doing", task.status)
         assertEquals("high", task.priority)
@@ -71,6 +108,7 @@ class TaskBoardModelsTest {
         val task = BoardTask.parse(JSONObject().put("id", "task-2").put("title", "草稿"))
         requireNotNull(task)
         assertNull(task.workspaceId)
+        assertNull(task.parentTaskId)
         assertNull(task.agent)
         assertEquals("todo", task.status)
         assertEquals("none", task.priority)
@@ -104,6 +142,24 @@ class TaskBoardModelsTest {
             BoardTaskAgent("pi", "default", "off"),
         )
         assertEquals("pi", withAgent.getJSONObject("agent").getString("provider"))
+        val child = createBoardTaskBody("子任务", "", "todo", "none", "ws-1", parentTaskId = "parent")
+        assertEquals("parent", child.getString("parentTaskId"))
+        assertFalse(assigned.has("parentTaskId"))
+    }
+
+    @Test
+    fun parentChoicesOnlyIncludeDoingTasksInTheSelectedWorkspace() {
+        val tasks = listOf(
+            JSONObject().put("id", "doing").put("identifier", "TASK-1")
+                .put("title", "父任务").put("status", "doing").put("workspaceId", "ws-1"),
+            JSONObject().put("id", "closed").put("status", "done").put("workspaceId", "ws-1"),
+            JSONObject().put("id", "other").put("status", "doing").put("workspaceId", "ws-2"),
+            JSONObject().put("id", "global").put("status", "doing"),
+        ).map { requireNotNull(BoardTask.parse(it)) }
+        assertEquals(listOf("" to "不关联父任务", "doing" to "TASK-1 · 父任务"),
+            boardParentTaskOptions(tasks, "ws-1"))
+        assertEquals(listOf("" to "不关联父任务", "global" to "任务"),
+            boardParentTaskOptions(tasks, null))
     }
 
     @Test

@@ -31,8 +31,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -667,18 +665,3 @@ fun Modifier.wandLongPressDrag(
 
 /** 越过邻居 60% 才交换：太灵敏会在一次拖动里连跳好几格。 */
 private const val DRAG_SWAP_RATIO = 0.6f
-
-/** 面板/卡片左侧的状态引导条：颜色即健康度（等你 > 在跑 > 普通）。 */
-@Composable
-fun WandStatusRail(
-    color: Color,
-    modifier: Modifier = Modifier,
-    width: Dp = 2.dp,
-) {
-    Box(
-        modifier = modifier
-            .width(width)
-            .clip(CircleShape)
-            .background(color),
-    )
-}

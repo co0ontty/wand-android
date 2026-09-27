@@ -163,7 +163,44 @@ android {
     }
 }
 
+configurations {
+    termlibPatchAsm
+    termlibOriginal {
+        transitive = false
+    }
+}
+
+def patchedTermlib = layout.buildDirectory.file('generated/termlib/termlib-0.0.10-gesture.aar')
+
+tasks.register('compileTermlibPatcher', JavaCompile) {
+    source = fileTree(dir: "${rootDir}/tools", include: 'TermlibGesturePatch.java')
+    classpath = configurations.termlibPatchAsm
+    destinationDirectory.set(layout.buildDirectory.dir('termlib-patcher'))
+    sourceCompatibility = JavaVersion.VERSION_17.toString()
+    targetCompatibility = JavaVersion.VERSION_17.toString()
+}
+
+// termlib 0.0.10 把滚动阈值用在每一帧的位移上，慢滑会误触发文字选择。
+// 构建时改写这一处比较，改成相对按下点的累计距离。
+tasks.register('patchTermlibGesture', JavaExec) {
+    dependsOn('compileTermlibPatcher')
+    classpath = files(layout.buildDirectory.dir('termlib-patcher')) + configurations.termlibPatchAsm
+    mainClass.set('com.wand.tools.TermlibGesturePatch')
+    inputs.files(configurations.termlibOriginal)
+    inputs.file(rootProject.file('tools/TermlibGesturePatch.java'))
+    outputs.file(patchedTermlib)
+    argumentProviders.add({
+        [
+            configurations.termlibOriginal.singleFile.absolutePath,
+            patchedTermlib.get().asFile.absolutePath,
+        ]
+    } as org.gradle.process.CommandLineArgumentProvider)
+}
+
 dependencies {
+    termlibPatchAsm 'org.ow2.asm:asm:9.7.1'
+    termlibPatchAsm 'org.ow2.asm:asm-tree:9.7.1'
+    termlibOriginal('org.connectbot:termlib:0.0.10') { transitive = false }
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0'
@@ -184,8 +221,9 @@ dependencies {
     // 注意：该库用 Kotlin 2.3 / Compose 1.10 编译 → 本工程 Kotlin ≥ 2.2、BOM ≥ 2025.12。
     // 钉 1.0.6（Android-only 末版）：2.0.0 的 AAR 要求 compileSdk 37，AGP 8.10 最高支持 36。
     implementation 'io.github.kyant0:backdrop:1.0.6'
-    // Compose terminal renderer backed by libvterm; PTY transport stays in WandSocket.
-    implementation 'org.connectbot:termlib:0.0.10'
+    // Compose terminal renderer backed by libvterm. The AAR is termlib 0.0.10 with
+    // the scroll/selection gesture patch applied by patchTermlibGesture.
+    implementation files(tasks.named('patchTermlibGesture'))
     implementation 'androidx.compose.material3:material3'
     // 全量 Material Icons（BOM 2025.05 不再带该工件，必须显式版本号）
     implementation 'androidx.compose.material:material-icons-extended:1.7.8'

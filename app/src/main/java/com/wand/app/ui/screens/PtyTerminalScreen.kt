@@ -192,9 +192,10 @@ fun PtyTerminalScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    // 软键盘直接写 PTY。草稿抽屉默认收起，只在整段提示、语音或附件时打开。
+    // 软键盘直接写 PTY。打开页面时不弹键盘，点一下终端再打开。
+    // 草稿抽屉默认收起，只在整段提示、语音或附件时打开。
     var inputDrawerOpen by remember(sessionId) { mutableStateOf(false) }
-    var keyboardRequested by remember(sessionId) { mutableStateOf(true) }
+    var keyboardRequested by remember(sessionId) { mutableStateOf(false) }
     var draft by remember(sessionId) { mutableStateOf("") }
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
@@ -463,7 +464,9 @@ fun PtyTerminalScreen(
                 NativePtyTerminalSurface(
                     terminal,
                     fontSize = terminalFontSp(terminalScale).sp,
+                    provider = snapshot?.provider,
                     onTerminalTap = { requestDirectKeyboard() },
+                    onNotice = { toast = it },
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                 )
                 if (terminal.ready.value) {

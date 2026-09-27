@@ -60,9 +60,11 @@ sealed interface MessageUpdate {
         val messages: List<ConversationTurn>,
         val offset: Int?,
         val total: Int?,
-        /** 块级窗口字段（服务端按 blockBudget 下发时才有）。 */
+        /** 块级窗口字段（服务端按 blockBudget 下发时才有）。
+         *  leadingVisible = 被切掉的头部里用户可感知的条数（默认收起的工具块不计入）。 */
         val leadingOffset: Int? = null,
         val leadingTotal: Int? = null,
+        val leadingVisible: Int? = null,
     ) : MessageUpdate
 
     data class Incremental(
@@ -100,7 +102,14 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
                 sessionId = sessionId,
                 snapshot = it.toSnapshot(),
                 messages = it.messages?.let { turns ->
-                    MessageUpdate.Full(turns, it.messageOffset, it.messageTotal, it.leadingBlockOffset, it.leadingBlockTotal)
+                    MessageUpdate.Full(
+                        turns,
+                        it.messageOffset,
+                        it.messageTotal,
+                        it.leadingBlockOffset,
+                        it.leadingBlockTotal,
+                        it.leadingVisibleCount,
+                    )
                 },
                 responding = if (it.providerCliActive == false) false
                 else it.structuredState?.let { state -> state.inFlight ?: false },
@@ -133,7 +142,14 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
         "ended" -> SessionEvent.Ended(
             sessionId = sessionId,
             messages = payload?.messages?.let {
-                MessageUpdate.Full(it, payload.messageOffset, payload.messageTotal, payload.leadingBlockOffset, payload.leadingBlockTotal)
+                MessageUpdate.Full(
+                    it,
+                    payload.messageOffset,
+                    payload.messageTotal,
+                    payload.leadingBlockOffset,
+                    payload.leadingBlockTotal,
+                    payload.leadingVisibleCount,
+                )
             },
             status = payload?.status ?: "exited",
             exitCode = payload?.exitCode,
@@ -147,7 +163,14 @@ internal fun WsIncoming.toSessionEvent(): SessionEvent? {
 }
 
 private fun WsData.toMessageUpdate(): MessageUpdate = when {
-    messages != null -> MessageUpdate.Full(messages, messageOffset, messageTotal, leadingBlockOffset, leadingBlockTotal)
+    messages != null -> MessageUpdate.Full(
+        messages,
+        messageOffset,
+        messageTotal,
+        leadingBlockOffset,
+        leadingBlockTotal,
+        leadingVisibleCount,
+    )
     incremental == true && lastMessage != null -> MessageUpdate.Incremental(lastMessage, messageCount ?: 0)
     else -> MessageUpdate.None
 }

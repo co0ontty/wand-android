@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.BOARD_TASK_STATUSES
+import com.wand.app.data.AiTeam
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.boardTaskAgentLabels
@@ -64,6 +65,10 @@ internal fun groupedBoardTasks(tasks: List<BoardTask>): List<Pair<String, List<B
 
 internal fun boardArchivedTasks(tasks: List<BoardTask>): List<BoardTask> =
     tasks.filter { it.status == "archived" }
+
+/** 默认收起已完成；搜索时仍显示命中的任务，避免把搜索结果藏起来。 */
+internal fun boardDoneSectionOpen(collapsed: Boolean, query: String): Boolean =
+    !collapsed || query.isNotBlank()
 
 internal fun boardTaskToggledStatus(status: String): String =
     if (status == "done" || status == "archived") "todo" else "done"
@@ -234,5 +239,54 @@ internal fun boardTaskProcessingLabel(task: BoardTask): String? {
         task.sessions.isNotEmpty() -> "暂停处理"
         else -> "等待派发"
     }
+}
+
+// MARK: - 新建对话框的「指派对象」（对齐 Web 看板新建的第一次指派，§5.1）
+
+/**
+ * 团队组是否出现在「指派对象」里：只有「进行中」列新建（创建即决定要跑）且有团队时。
+ * 「待办」列只建卡，不给选团队（选了也没有派发时机）。
+ */
+internal fun boardCreateTeamChoiceVisible(teams: List<AiTeam>, dispatches: Boolean): Boolean =
+    dispatches && teams.isNotEmpty()
+
+/** 「指派对象」选项："" = CLI 工具；团队标签 `名字（N 人）`，与 TaskBoardDetailPane 派发表单同口径。 */
+internal fun boardCreateTargetOptions(
+    teams: List<AiTeam>,
+    dispatches: Boolean,
+): List<Pair<String, String>> = buildList {
+    add("" to "CLI 工具")
+    if (boardCreateTeamChoiceVisible(teams, dispatches)) {
+        teams.forEach { add(it.id to "${it.name}（${it.members.size} 人）") }
+    }
+}
+
+/**
+ * 「本次提交要不要走交给团队链路」的唯一判定：handler 的跳过建卡取 id、重发调用、
+ * 按钮文案三处都读它，不再各写一份条件（上轮 dispatches 口径不一致的根因）。
+ */
+internal fun boardDispatchesToTeam(
+    teamSelected: Boolean,
+    dispatches: Boolean,
+    hasDescription: Boolean,
+): Boolean = teamSelected && dispatches && hasDescription
+
+/**
+ * 确认按钮文案：创建中 / 交给团队 / 重试交给团队 / 创建并指派 / 纯创建。
+ * teamRunRetry = 上一次「建卡成功但交给团队失败」——再点只重发第二步，绝不重复建卡。
+ */
+internal fun boardCreateActionLabel(
+    teamSelected: Boolean,
+    dispatches: Boolean,
+    hasDescription: Boolean,
+    busy: Boolean,
+    teamRunRetry: Boolean = false,
+): String = when {
+    busy && teamSelected -> "正在交给团队…"
+    busy -> "创建中…"
+    boardDispatchesToTeam(teamSelected, dispatches, hasDescription) && teamRunRetry -> "重试交给团队"
+    teamSelected && dispatches && hasDescription -> "创建并交给团队"
+    !teamSelected && dispatches && hasDescription -> "创建并指派"
+    else -> "创建任务"
 }
 

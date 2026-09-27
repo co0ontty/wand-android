@@ -72,6 +72,13 @@ class TaskBoardPresentationTest {
     }
 
     @Test
+    fun completedSectionStartsClosedButShowsSearchMatches() {
+        assertFalse(boardDoneSectionOpen(collapsed = true, query = ""))
+        assertTrue(boardDoneSectionOpen(collapsed = true, query = "登录"))
+        assertTrue(boardDoneSectionOpen(collapsed = false, query = ""))
+    }
+
+    @Test
     fun completeToggleReopensDoneTasks() {
         assertEquals("done", boardTaskToggledStatus("todo"))
         assertEquals("done", boardTaskToggledStatus("doing"))
@@ -306,6 +313,109 @@ class TaskBoardPresentationTest {
         workspace = workspaceName?.let { BoardTaskWorkspace(workspaceId ?: "workspace", it, "/tmp") },
         milestone = milestoneName?.let { BoardTaskMilestone("milestone-1", it) },
     )
+
+    @Test
+    fun createTeamChoiceOnlyVisibleForDispatchingCreateWithTeams() {
+        val teams = listOf(
+            com.wand.app.data.AiTeam(
+                id = "team_1", name = "开发三人组", description = "",
+                members = listOf(
+                    com.wand.app.data.AiTeamMember(
+                        id = "m_a", name = "甲", duty = "",
+                        agents = listOf(BoardTaskAgent.default()), isLeader = true,
+                    ),
+                    com.wand.app.data.AiTeamMember(
+                        id = "m_b", name = "乙", duty = "",
+                        agents = listOf(BoardTaskAgent.default("codex")), isLeader = false,
+                    ),
+                ),
+            ),
+        )
+        // 「待办」列建卡 / 没有团队：都不出现团队组，也不给带 teamId 提交。
+        assertFalse(boardCreateTeamChoiceVisible(teams, dispatches = false))
+        assertFalse(boardCreateTeamChoiceVisible(emptyList(), dispatches = true))
+        assertTrue(boardCreateTeamChoiceVisible(teams, dispatches = true))
+
+        val cliOnly = boardCreateTargetOptions(emptyList(), dispatches = true)
+        assertEquals(listOf("" to "CLI 工具"), cliOnly)
+
+        val options = boardCreateTargetOptions(teams, dispatches = true)
+        assertEquals("", options.first().first)
+        assertEquals("CLI 工具", options.first().second)
+        // 取值编码 = teamId；文案与 TaskBoardDetailPane 的「名字（N 人）」一致。
+        assertEquals("team_1", options[1].first)
+        assertEquals("开发三人组（2 人）", options[1].second)
+
+        // 「待办」列即使有团队也只给 CLI 项（不显示条件同时约束选项）。
+        assertEquals(1, boardCreateTargetOptions(teams, dispatches = false).size)
+    }
+
+    @Test
+    fun createActionLabelCoversTeamAndCliBranches() {
+        assertEquals("创建任务", boardCreateActionLabel(false, dispatches = false, hasDescription = false, busy = false))
+        assertEquals("创建任务", boardCreateActionLabel(false, dispatches = true, hasDescription = false, busy = false))
+        assertEquals("创建并指派", boardCreateActionLabel(false, dispatches = true, hasDescription = true, busy = false))
+        assertEquals("创建中…", boardCreateActionLabel(false, dispatches = true, hasDescription = true, busy = true))
+        // 选中团队：文案换成「交给团队」，与详情页按钮口径一致。
+        assertEquals("创建并交给团队", boardCreateActionLabel(true, dispatches = true, hasDescription = true, busy = false))
+        assertEquals("正在交给团队…", boardCreateActionLabel(true, dispatches = true, hasDescription = true, busy = true))
+        // 选了团队但没写描述：服务端起不了 run（目标 = 标题+描述），文案退回「创建任务」。
+        assertEquals("创建任务", boardCreateActionLabel(true, dispatches = true, hasDescription = false, busy = false))
+        // 建卡成功但交给团队失败：再点只重发 team-runs，按钮说清「重试」而不是「创建」。
+        assertEquals(
+            "重试交给团队",
+            boardCreateActionLabel(true, dispatches = true, hasDescription = true, busy = false, teamRunRetry = true),
+        )
+        // 重试态只跟团队分支走：没选团队（或没描述）时仍是老文案，不骗用户「只重试不建卡」。
+        assertEquals(
+            "创建并指派",
+            boardCreateActionLabel(false, dispatches = true, hasDescription = true, busy = false, teamRunRetry = true),
+        )
+        // 没描述时 handler 根本不会重发 team-runs，所以按钮也不许承诺「重试」。
+        assertEquals(
+            "创建任务",
+            boardCreateActionLabel(true, dispatches = true, hasDescription = false, busy = false, teamRunRetry = true),
+        )
+        // 失败后把状态改回「待办」：handler 里有 boardCreateDispatches 守卫，按钮必须同步收窄。
+        assertEquals(
+            "创建任务",
+            boardCreateActionLabel(true, dispatches = false, hasDescription = true, busy = false, teamRunRetry = true),
+        )
+        assertEquals(
+            "正在交给团队…",
+            boardCreateActionLabel(true, dispatches = true, hasDescription = true, busy = true, teamRunRetry = true),
+        )
+    }
+
+    @Test
+    fun retryLabelAndSkipCardCreationShareOneCondition() {
+        // 「复用旧卡 / 重发 team-runs / 按钮写重试」必须是同一份判定（boardDispatchesToTeam），
+        // 否则失败后改回「待办」再点「创建任务」会不建新卡直接跳旧卡 —— 语义与行为矛盾。
+        val combos = listOf(
+            true to listOf(true to true, true to false, false to true, false to false),
+            false to listOf(true to true, true to false, false to true, false to false),
+        )
+        combos.forEach { (teamSelected, rest) ->
+            rest.forEach { (dispatches, hasDescription) ->
+                val dispatchesToTeam =
+                    boardDispatchesToTeam(teamSelected, dispatches, hasDescription)
+                val label = boardCreateActionLabel(
+                    teamSelected, dispatches = dispatches, hasDescription = hasDescription,
+                    busy = false, teamRunRetry = true,
+                )
+                assertEquals(
+                    "dispatchesToTeam=$dispatchesToTeam 时文案=$label",
+                    dispatchesToTeam,
+                    label == "重试交给团队",
+                )
+            }
+        }
+        // 复现口径：doing+团队+描述失败后改回「待办」→ 不再走团队链路 → 真的建新卡。
+        assertFalse(boardDispatchesToTeam(true, dispatches = false, hasDescription = true))
+        assertTrue(boardDispatchesToTeam(true, dispatches = true, hasDescription = true))
+        assertFalse("没描述起不了 run", boardDispatchesToTeam(true, dispatches = true, hasDescription = false))
+        assertFalse("CLI 目标永不复用团队旧卡", boardDispatchesToTeam(false, dispatches = true, hasDescription = true))
+    }
 
     private fun session(
         id: String = "session-1",

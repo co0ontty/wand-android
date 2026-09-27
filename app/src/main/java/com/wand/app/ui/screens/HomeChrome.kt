@@ -117,6 +117,7 @@ internal fun HomeTopBar(
     onRefresh: () -> Unit,
     onStartSelection: (() -> Unit)?,
     onOpenTaskBoard: () -> Unit,
+    onOpenAiTeams: () -> Unit,
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)?,
@@ -256,6 +257,11 @@ internal fun HomeTopBar(
                         text = { Text("任务管理") },
                         leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
                         onClick = { menuOpen = false; onOpenTaskBoard() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("AI 团队") },
+                        leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
+                        onClick = { menuOpen = false; onOpenAiTeams() },
                     )
                     DropdownMenuItem(
                         text = { Text("设置") },
@@ -447,6 +453,7 @@ internal fun HomeWorkspaceCard(
     group: TaskDirectoryGroup,
     modifier: Modifier = Modifier,
     expanded: Boolean,
+    dragging: Boolean = false,
     standaloneCollapsed: Boolean,
     taskCollapsed: (String) -> Boolean,
     forceExpandTasks: Boolean = false,
@@ -606,7 +613,9 @@ internal fun HomeWorkspaceCard(
                 }
             }
         }
-        if (isEmpty) return@WandCard
+        // 抓起时不再组合正文：即使 AnimatedVisibility 正在退场，也不能让其残影
+        // 透过悬浮标题行。普通点按收起仍保留完整的反向动画。
+        if (isEmpty || dragging) return@WandCard
         AnimatedVisibility(
             visible = expanded,
             enter = if (reduceMotion) {
@@ -628,7 +637,8 @@ internal fun HomeWorkspaceCard(
                     .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                orderedTaskSummaries(group.tasks).forEachIndexed { index, task ->
+                val visibleTasks = group.tasks
+                visibleTasks.forEachIndexed { index, task ->
                     // 任务块不再有底色，兄弟任务之间用一条发丝线分隔，边界才看得清。
                     if (index > 0) HomeHairline()
                     HomeTaskBlock(
@@ -638,6 +648,7 @@ internal fun HomeWorkspaceCard(
                         expanded = forceExpandTasks || isTaskSessionsExpanded(
                             userCollapsed = taskCollapsed(task.id),
                             sessionCount = task.totalSessions,
+                            isOnlyTask = visibleTasks.size == 1,
                         ),
                         selected = isTaskRowSelected(
                             taskId = task.id,

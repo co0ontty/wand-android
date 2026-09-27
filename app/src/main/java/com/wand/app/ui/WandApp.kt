@@ -75,6 +75,8 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
+import com.wand.app.ui.screens.AiTeamDetailScreen
+import com.wand.app.ui.screens.AiTeamsScreen
 import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.TaskBoardScreen
@@ -558,6 +560,18 @@ private fun SessionDetailScreen(
             onBack = { nav.pop() },
             embedded = embedded,
         )
+        is Screen.AiTeams -> AiTeamsScreen(
+            api = api,
+            onBack = { nav.pop() },
+            onOpenTeam = { teamId -> nav.push(Screen.AiTeamDetail(teamId)) },
+        )
+        is Screen.AiTeamDetail -> AiTeamDetailScreen(
+            api = api,
+            workspaceApi = api,
+            teamId = screen.teamId,
+            onBack = { nav.pop() },
+            onOpenTask = { taskId -> nav.push(Screen.TaskBoard(taskId = taskId)) },
+        )
         is Screen.WorkspaceTask -> WorkspaceTaskScreen(
             api = api,
             workspaceId = screen.workspaceId,
@@ -659,6 +673,7 @@ private fun SinglePaneContent(
                 onTaskClosed = nav::closeWorkspaceTask,
                 onSessionClosed = nav::closeSession,
                 onOpenSettings = onOpenSettings,
+                onOpenAiTeams = { nav.push(Screen.AiTeams) },
                 onSwitchServer = actions.navigation.switchServer,
             )
         } else {
@@ -814,6 +829,7 @@ private fun WideReadyContent(
                                 onTaskClosed = nav::closeWorkspaceTask,
                                 onSessionClosed = nav::closeSession,
                                 onOpenSettings = onOpenSettings,
+                                onOpenAiTeams = { nav.push(Screen.AiTeams) },
                                 onSwitchServer = actions.navigation.switchServer,
                                 onCollapseSidebar = onToggleSidebarCollapsed,
                                 // 宽屏时这里是侧栏：主操作留在主区，侧栏底部不再塞一条输入条。
@@ -1033,6 +1049,8 @@ private fun Screen.transitionKey(): String = when (this) {
     is Screen.Missions -> "missions:${taskId.orEmpty()}"
     is Screen.TaskBoard -> "task-board:${workspaceId.orEmpty()}:${taskId.orEmpty()}"
     Screen.Settings -> "settings"
+    Screen.AiTeams -> "ai-teams"
+    is Screen.AiTeamDetail -> "ai-team-detail:$teamId"
     is Screen.WorkspaceTask -> "workspace-task:$taskId"
 }
 
@@ -1122,7 +1140,9 @@ private fun Screen.taskIdOrNull(): String? = when (this) {
     Screen.SessionList,
     is Screen.Missions,
     is Screen.TaskBoard,
-    Screen.Settings -> null
+    Screen.Settings,
+    Screen.AiTeams,
+    is Screen.AiTeamDetail -> null
 }
 
 private fun Screen.sessionIdOrNull(): String? = when (this) {
@@ -1132,5 +1152,7 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Missions,
     is Screen.TaskBoard,
     Screen.Settings,
+    Screen.AiTeams,
+    is Screen.AiTeamDetail,
     is Screen.WorkspaceTask -> null
 }

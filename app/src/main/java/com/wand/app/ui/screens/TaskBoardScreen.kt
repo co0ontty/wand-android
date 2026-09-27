@@ -3,6 +3,7 @@ package com.wand.app.ui.screens
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -70,6 +71,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.data.AiTeam
+import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BOARD_TASK_EFFORTS
 import com.wand.app.data.BOARD_TASK_KINDS
 import com.wand.app.data.BOARD_TASK_PRIORITIES
@@ -80,8 +83,10 @@ import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TaskBoardPort
+import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
 import com.wand.app.data.boardAgentModelOptions
+import com.wand.app.data.boardParentTaskOptions
 import com.wand.app.data.groupBoardSessionsByAgent
 import com.wand.app.data.boardTaskEffortLabel
 import com.wand.app.data.boardTaskKindLabel
@@ -108,6 +113,7 @@ import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
+import com.wand.app.ui.components.WandTeamRunPanel
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
@@ -159,6 +165,20 @@ fun TaskBoardScreen(
     var createStatus by remember { mutableStateOf("todo") }
     var busy by remember { mutableStateOf(false) }
     var lastAgent by remember { mutableStateOf(BoardTaskAgent.default()) }
+    // 新建对话框的「指派对象」团队列表：拉取失败回落空，不影响看板本身。
+    var teams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
+    // 「建卡成功但交给团队失败」的卡 id：重发只走 startTeamRun，绝不重复建卡。
+    // 生命周期收敛在「进入新建流程」（openCreateDialog）与「重试消费后」（成功/失败赋值），
+    // onDismiss 只是额外保险：任何再开新建对话框的路径都从干净初始态开始。
+    var teamRetryTaskId by remember { mutableStateOf<String?>(null) }
+
+    fun openCreateDialog(initialStatus: String) {
+        teamRetryTaskId = null
+        error = null
+        busy = false
+        createStatus = initialStatus
+        showCreate = true
+    }
     val refreshMutex = remember(api) { kotlinx.coroutines.sync.Mutex() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
@@ -222,6 +242,7 @@ fun TaskBoardScreen(
         workspaces = runCatching { api.listBoardWorkspaces() }.getOrDefault(emptyList())
         models = runCatching { api.boardModels() }.getOrNull()
         lastAgent = runCatching { api.boardTaskAgentDefaults() }.getOrDefault(BoardTaskAgent.default())
+        teams = runCatching { api.listAiTeams() }.getOrDefault(emptyList())
     }
 
     LaunchedEffect(api, lifecycleOwner) {
@@ -266,8 +287,7 @@ fun TaskBoardScreen(
             if (!boardSwipeOpen) {
                 FloatingActionButton(
                     onClick = {
-                        createStatus = "todo"
-                        showCreate = true
+                        openCreateDialog("todo")
                     },
                     containerColor = WandColors.success,
                     contentColor = Color.White,
@@ -326,10 +346,7 @@ fun TaskBoardScreen(
                         }
                     },
                     onOpenSession = ::openSession,
-                    onCreateForStatus = { status ->
-                        createStatus = status
-                        showCreate = true
-                    },
+                    onCreateForStatus = { status -> openCreateDialog(status) },
                     modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
                 )
             }
@@ -348,30 +365,68 @@ fun TaskBoardScreen(
     if (showCreate) {
         CreateBoardTaskDialog(
             workspaces = workspaces,
+            tasks = tasks,
+            teams = teams,
             models = models,
             lastAgent = lastAgent,
             defaultWorkspaceId = filterWorkspaceId,
             initialStatus = createStatus,
             busy = busy,
             error = error,
-            onDismiss = { if (!busy) showCreate = false },
-            onCreate = create@{ title, description, status, priority, workspaceId, agent ->
+            onDismiss = {
+                if (!busy) {
+                    showCreate = false
+                    teamRetryTaskId = null
+                }
+            },
+            teamRunRetry = teamRetryTaskId != null,
+            onCreate = create@{ title, description, status, priority, workspaceId, agent, parentTaskId, teamId ->
                 if (busy) return@create
                 busy = true
                 error = null
                 scope.launch {
                     try {
-                        val created = api.createBoardTask(title, description, status, priority, workspaceId, agent)
-                        lastAgent = agent
-                        runCatching { api.saveBoardTaskAgentDefaults(agent) }
+                        // 上一步「交给团队」失败的卡还在手里：只在本次仍会走团队链路时才复用旧卡，
+                        // 条件与下面的重发、按钮文案同一份（boardDispatchesToTeam）——
+                        // 改回「待办」再点「创建任务」就真的是建新卡。
+                        val teamDispatch = boardDispatchesToTeam(
+                            teamSelected = teamId != null,
+                            dispatches = boardCreateDispatches(status),
+                            hasDescription = description.isNotBlank(),
+                        )
+                        val retriedTaskId = if (teamDispatch) teamRetryTaskId else null
+                        val createdTask: BoardTask? = if (retriedTaskId != null) null else api.createBoardTask(
+                            title, description, status, priority, workspaceId, agent, parentTaskId,
+                        )
+                        val createdId = retriedTaskId ?: createdTask!!.id
+                        if (createdTask != null) {
+                            lastAgent = agent
+                            runCatching { api.saveBoardTaskAgentDefaults(agent) }
+                        }
+                        // 交给团队：建卡 + startTeamRun（note 传空，目标由卡片标题+描述在服务端拼装）
+                        // 整条链都成功才算成；失败保留对话框并原位显示错误原文，卡已建好则照常刷新列表。
+                        if (teamDispatch) {
+                            try {
+                                api.startTeamRun(createdId, teamId!!, "")
+                                teamRetryTaskId = null
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                teamRetryTaskId = createdId
+                                refresh()
+                                error = "任务已创建，但交给团队失败：${e.message ?: "可稍后在详情里再交给团队"}"
+                                return@launch
+                            }
+                        }
                         showCreate = false
-                        onOpenTaskDetail(created.id)
-                        // 只有「进行中」列的新建才顺带第一次指派；「待办」列只创建任务。
+                        onOpenTaskDetail(createdId)
+                        // 只有「进行中」列的新建才顺带第一次指派；「待办」列只创建任务；团队分支不再派 CLI。
                         var dispatchError: String? = null
                         var dispatchedSessionId: String? = null
                         var dispatchedStructured = true
-                        if (boardCreateDispatches(status) && description.isNotBlank()) {
-                            runCatching { api.dispatchBoardTask(created.id, agent, description, workspaceId) }
+                        if (teamId == null && retriedTaskId == null &&
+                            boardCreateDispatches(status) && description.isNotBlank()
+                        ) {
+                            runCatching { api.dispatchBoardTask(createdId, agent, description, workspaceId) }
                                 .onSuccess {
                                     dispatchedSessionId = boardDispatchSessionId(it.sessionId)
                                     dispatchedStructured = it.isStructured
@@ -382,8 +437,10 @@ fun TaskBoardScreen(
                         if (dispatchError != null) error = dispatchError
                         // 创建并指派成功后直接落到新 Agent 的会话，不让用户再自己找一遍。
                         dispatchedSessionId?.let { openSession(it, dispatchedStructured) }
-                        if (title.isBlank() && created.titleSource == "auto") {
-                            scope.launch { awaitGeneratedBoardTaskTitle(created.id, created.title) }
+                        createdTask?.let { fresh ->
+                            if (title.isBlank() && fresh.titleSource == "auto") {
+                                scope.launch { awaitGeneratedBoardTaskTitle(fresh.id, fresh.title) }
+                            }
                         }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
@@ -421,6 +478,7 @@ private fun TaskBoardList(
     val grouped = groupedBoardTasks(tasks)
     val archived = boardArchivedTasks(tasks)
     var archiveCollapsed by remember { mutableStateOf(true) }
+    var doneCollapsed by remember { mutableStateOf(true) }
     // 同一时刻只允许一张卡划开：新划开的卡接管，旧卡在自身 LaunchedEffect 里收起。
     // 这份状态必须留在列表内部：手势每帧都会改它，上提到屏幕层会让整屏逐帧重组，卡片就直接拖不动了。
     // 只把「有没有张开」这个布尔量报上去，用来给右下角悬浮按钮让位。
@@ -446,6 +504,8 @@ private fun TaskBoardList(
     // 展开的卡片先吃返回键：再按一次才轮到页面返回。
     BackHandler(enabled = expandedTaskId != null) { expandedTaskId = null }
     val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
+    val doneOpen = boardDoneSectionOpen(doneCollapsed, query)
+    val motionEnabled = !reduceMotionEnabled()
     val showWorkspace = filterWorkspaceId.isBlank()
     // 分组行、归档行与筛选结果三个分支渲染的是同一条任务卡，只保留这一处构造。
     val taskRow: @Composable LazyItemScope.(BoardTask) -> Unit = { task ->
@@ -465,7 +525,7 @@ private fun TaskBoardList(
                 setSwipedTaskId(null)
                 pendingSwipe = task to action
             },
-            modifier = Modifier.animateItem(),
+            modifier = if (motionEnabled) Modifier.animateItem() else Modifier,
         )
     }
     LazyColumn(
@@ -530,9 +590,17 @@ private fun TaskBoardList(
                 val sectionArchived = if (status == "done") archived else emptyList()
                 if (items.isEmpty() && sectionArchived.isEmpty()) return@forEach
                 item(key = "header-$status") {
-                    BoardSectionHeader(status = status, count = items.size, onAdd = onCreateForStatus)
+                    BoardSectionHeader(
+                        status = status,
+                        count = items.size,
+                        onAdd = onCreateForStatus,
+                        expanded = status != "done" || doneOpen,
+                        onToggle = if (status == "done") ({ doneCollapsed = !doneCollapsed }) else null,
+                    )
                 }
-                items(items, key = { it.id }) { task -> taskRow(task) }
+                if (status != "done" || doneOpen) {
+                    items(items, key = { it.id }) { task -> taskRow(task) }
+                }
                 if (status == "done" && sectionArchived.isNotEmpty()) {
                     item(key = "archive-header") {
                         BoardArchiveHeader(
@@ -814,10 +882,23 @@ private fun BoardArchiveHeader(
 }
 
 @Composable
-private fun BoardSectionHeader(status: String, count: Int, onAdd: (String) -> Unit) {
+private fun BoardSectionHeader(
+    status: String,
+    count: Int,
+    onAdd: (String) -> Unit,
+    expanded: Boolean = true,
+    onToggle: (() -> Unit)? = null,
+) {
     val color = boardStatusColor(status)
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenNormal()),
+        label = "doneSectionChevron",
+    )
     Row(
-        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+        modifier = Modifier
+            .then(if (onToggle != null) Modifier.clickable(role = Role.Button, onClick = onToggle) else Modifier)
+            .padding(top = 6.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -839,6 +920,14 @@ private fun BoardSectionHeader(status: String, count: Int, onAdd: (String) -> Un
             style = MaterialTheme.typography.labelSmall,
         )
         Spacer(Modifier.weight(1f))
+        if (onToggle != null) {
+            Icon(
+                WandIcons.expand,
+                contentDescription = if (expanded) "收起已完成任务" else "展开已完成任务",
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = rotation },
+            )
+        }
         WandIconButton(
             icon = WandIcons.add,
             contentDescription = "在${boardTaskStatusLabel(status)}中新建任务",
@@ -1316,20 +1405,32 @@ internal fun TaskBoardDetailPane(
     workspaces: List<Workspace>,
     models: ModelsResponse?,
     lastAgent: BoardTaskAgent,
+    teams: List<AiTeam>,
+    teamRun: AiTeamRunDetail?,
     busy: Boolean,
+    /** 派发 / 团队操作的失败文案；成功刷新后由调用方清空。 */
+    actionError: String? = null,
     onPatch: (JSONObject) -> Unit,
     onRemember: (BoardTaskAgent) -> Unit,
-    onDispatch: (BoardTaskAgent, String) -> Unit,
+    /** (agent, prompt, teamId)；teamId 非空即「交给团队」。返回 true = 派发成功，表单据此原位收起。 */
+    onDispatch: suspend (BoardTaskAgent, String, String) -> Boolean,
+    onTeamRunAction: (TeamRunAction) -> Unit,
     onDelete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onMoveSession: (com.wand.app.data.BoardTaskSession) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scope = rememberCoroutineScope()
     var title by remember(task.id, task.title) { mutableStateOf(task.title) }
     var agent by remember(task.id, task.agent) { mutableStateOf(task.agent ?: lastAgent) }
+    var dispatchTeamId by remember(task.id) { mutableStateOf("") }
     val hasAgents = task.sessions.isNotEmpty()
     var composeOpen by remember(task.id) { mutableStateOf(!hasAgents) }
     var composePrompt by remember(task.id) { mutableStateOf(if (hasAgents) "" else task.description) }
+    // 选中的团队被别的端删除 / 不在列表里时退回 CLI 指派，避免拿旧 teamId 发必失败的请求。
+    LaunchedEffect(teams, dispatchTeamId) {
+        if (dispatchTeamId.isNotBlank() && teams.none { it.id == dispatchTeamId }) dispatchTeamId = ""
+    }
     val done = task.status == "done" || task.status == "archived"
     val workspaceChoices = buildList {
         add("" to "未归属工作区（使用临时目录）")
@@ -1487,17 +1588,22 @@ internal fun TaskBoardDetailPane(
             }
         }
         if (composeOpen) {
+            val teamTarget = teams.firstOrNull { it.id == dispatchTeamId }
             WandCard(
                 containerColor = WandColors.successSoft,
                 contentPadding = PaddingValues(14.dp),
             ) {
                 Text(
-                    if (task.sessions.isEmpty()) "指派 Agent" else "再指派一个 Agent",
+                    when {
+                        teamTarget != null -> if (task.sessions.isEmpty()) "交给团队" else "再交给团队处理"
+                        else -> if (task.sessions.isEmpty()) "指派 Agent" else "再指派一个 Agent"
+                    },
                     color = WandColors.textPrimary,
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    "先输入提示词，再选参数直接派发",
+                    if (teamTarget != null) "输入这次交给团队的提示词，直接开工"
+                    else "先输入提示词，再选参数直接派发",
                     color = WandColors.textMuted,
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(bottom = 8.dp),
@@ -1506,27 +1612,54 @@ internal fun TaskBoardDetailPane(
                     value = composePrompt,
                     onValueChange = { composePrompt = it },
                     label = "提示词",
-                    placeholder = "输入这次派给 Agent 的提示词…",
+                    placeholder = if (teamTarget != null)
+                        "输入这次交给团队的提示词。任务卡里的旧描述不会自动带上。留空则按任务内容开工。"
+                    else "输入这次派给 Agent 的提示词。任务卡里的旧描述不会自动带上。",
                     minLines = 4,
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
-                BoardAgentParamChoices(
-                    models = models,
-                    agent = agent,
-                    providerLabel = "CLI 工具",
-                    enabled = !busy,
-                    onChange = { next ->
-                        agent = next
-                        onRemember(next)
-                    },
-                )
+                if (teams.isNotEmpty()) {
+                    BoardChoice(
+                        label = "指派对象 · ${teamTarget?.name ?: "CLI 工具"}",
+                        options = buildList {
+                            add("" to "CLI 工具")
+                            teams.forEach { add(it.id to "${it.name}（${it.members.size} 人）") }
+                        },
+                        onSelect = { dispatchTeamId = it },
+                        enabled = !busy,
+                    )
+                }
+                if (teamTarget == null) {
+                    BoardAgentParamChoices(
+                        models = models,
+                        agent = agent,
+                        providerLabel = "CLI 工具",
+                        enabled = !busy,
+                        onChange = { next ->
+                            agent = next
+                            onRemember(next)
+                        },
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 WandButton(
-                    label = if (busy) "正在派发…" else "派发 Agent",
-                    onClick = { onDispatch(agent, composePrompt.trim()) },
-                    enabled = !busy && composePrompt.trim().isNotEmpty(),
+                    label = when {
+                        busy -> if (teamTarget != null) "正在交给团队…" else "正在派发…"
+                        else -> if (teamTarget != null) "交给团队" else "派发 Agent"
+                    },
+                    onClick = {
+                        val teamId = dispatchTeamId
+                        scope.launch {
+                            if (onDispatch(agent, composePrompt.trim(), teamId) && teamId.isNotBlank()) {
+                                // 成功后收起表单，run 摘要在同一位置出现（对齐「提交后原位显示结果」）。
+                                composeOpen = false
+                                composePrompt = ""
+                            }
+                        }
+                    },
+                    enabled = !busy && (dispatchTeamId.isNotBlank() || composePrompt.trim().isNotEmpty()),
                     loading = busy,
                     variant = WandButtonVariant.Success,
                     modifier = Modifier.fillMaxWidth(),
@@ -1546,6 +1679,19 @@ internal fun TaskBoardDetailPane(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        actionError?.let {
+            Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall)
+        }
+        WandInlinePanel(visible = teamRun != null) {
+            teamRun?.let { detail ->
+                WandTeamRunPanel(
+                    detail = detail,
+                    busy = busy,
+                    onAction = onTeamRunAction,
+                    onOpenGroupChat = { sessionId -> onOpenSession(sessionId, true) },
+                )
+            }
+        }
         WandButton(
             label = "归档",
             onClick = onDelete,
@@ -1560,31 +1706,55 @@ internal fun TaskBoardDetailPane(
 @Composable
 private fun CreateBoardTaskDialog(
     workspaces: List<Workspace>,
+    tasks: List<BoardTask>,
+    teams: List<AiTeam>,
     models: ModelsResponse?,
     lastAgent: BoardTaskAgent,
     defaultWorkspaceId: String,
     initialStatus: String,
     busy: Boolean,
     error: String?,
+    teamRunRetry: Boolean = false,
     onDismiss: () -> Unit,
-    onCreate: (title: String, description: String, status: String, priority: String, workspaceId: String?, agent: BoardTaskAgent) -> Unit,
+    onCreate: (title: String, description: String, status: String, priority: String, workspaceId: String?, agent: BoardTaskAgent, parentTaskId: String?, teamId: String?) -> Unit,
 ) {
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var status by remember { mutableStateOf(initialStatus) }
     var priority by remember { mutableStateOf("none") }
     var workspaceId by remember { mutableStateOf(defaultWorkspaceId) }
+    var parentTaskId by remember { mutableStateOf("") }
     var agent by remember { mutableStateOf(lastAgent) }
-    // 「进行中」列的新建代表已经决定要跑，所以创建后立刻派 Agent；其他列只落库。
+    var dispatchTeamId by remember { mutableStateOf("") }
+    val parentOptions = boardParentTaskOptions(tasks, workspaceId.ifBlank { null })
+    // 「进行中」列的新建代表已经决定要跑，所以创建后立刻派 Agent / 交给团队；其他列只落库。
     val dispatches = boardCreateDispatches(status)
+    // 闭环回落：状态切离「进行中」、或团队列表刷新后选中项消失时，不许带着失效 teamId 提交
+    // （照 TaskBoardDetailPane 派发表单的 LaunchedEffect 写法）。
+    LaunchedEffect(dispatches, teams, dispatchTeamId) {
+        if (dispatchTeamId.isNotBlank() &&
+            (!dispatches || teams.none { it.id == dispatchTeamId })
+        ) {
+            dispatchTeamId = ""
+        }
+    }
+    val teamTarget = teams.firstOrNull { it.id == dispatchTeamId }
     WandDialog(
         title = "新建任务",
         onDismissRequest = onDismiss,
         confirm = WandDialogAction(
-            label = if (busy) "创建中…" else if (dispatches && description.trim().isNotEmpty()) "创建并指派" else "创建任务",
+            label = boardCreateActionLabel(
+                teamSelected = teamTarget != null,
+                dispatches = dispatches,
+                hasDescription = description.trim().isNotEmpty(),
+                busy = busy,
+                teamRunRetry = teamRunRetry,
+            ),
             enabled = !busy && (title.trim().isNotEmpty() || description.trim().isNotEmpty()),
             onClick = {
-                onCreate(title.trim(), description.trim(), status, priority, workspaceId.ifBlank { null }, agent)
+                onCreate(title.trim(), description.trim(), status, priority, workspaceId.ifBlank { null }, agent,
+                    parentTaskId.takeIf { id -> parentOptions.any { it.first == id } },
+                    teamTarget?.id)
             },
         ),
         dismiss = WandDialogAction(label = "取消", onClick = onDismiss, enabled = !busy),
@@ -1605,7 +1775,11 @@ private fun CreateBoardTaskDialog(
             value = description,
             onValueChange = { description = it },
             label = "描述",
-            placeholder = if (dispatches) "将作为第一个 Agent 的指派内容" else "只创建任务，不指派 Agent",
+            placeholder = when {
+                teamTarget != null -> "将作为交给团队的开工内容"
+                dispatches -> "将作为第一个 Agent 的指派内容"
+                else -> "只创建任务，不指派 Agent"
+            },
             minLines = 3,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1613,26 +1787,48 @@ private fun CreateBoardTaskDialog(
         BoardChoice(
             label = "工作区 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "未归属工作区"}",
             options = listOf("" to "未归属工作区（使用临时目录）") + workspaces.map { it.id to it.name },
-            onSelect = { workspaceId = it },
+            onSelect = { workspaceId = it; parentTaskId = "" },
         )
-        if (dispatches) {
-            BoardAgentParamChoices(
-                models = models,
-                agent = agent,
-                providerLabel = "第一次指派",
-                onChange = { agent = it },
+        BoardChoice(
+            label = "归属父任务 · ${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联父任务"}",
+            options = parentOptions,
+            onSelect = { parentTaskId = it },
+        )
+        if (boardCreateTeamChoiceVisible(teams, dispatches)) {
+            BoardChoice(
+                label = "指派对象 · ${teamTarget?.name ?: "CLI 工具"}",
+                options = boardCreateTargetOptions(teams, dispatches),
+                onSelect = { dispatchTeamId = it },
+                enabled = !busy,
             )
         }
-        BoardChoice(
-            label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
-            options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
-            onSelect = { agent = agent.copy(kind = it) },
-        )
-        BoardChoice(
-            label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
-            options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
-            onSelect = { agent = agent.copy(mode = it) },
-        )
+        if (teamTarget == null) {
+            if (dispatches) {
+                BoardAgentParamChoices(
+                    models = models,
+                    agent = agent,
+                    providerLabel = "第一次指派",
+                    onChange = { agent = it },
+                )
+            }
+            BoardChoice(
+                label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
+                options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
+                onSelect = { agent = agent.copy(kind = it) },
+            )
+            BoardChoice(
+                label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
+                options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
+                onSelect = { agent = agent.copy(mode = it) },
+            )
+        } else {
+            // 团队分支的参数由团队定义决定，这里只留一条原位说明（对齐 Web 文案口径）。
+            Text(
+                "有描述时会立刻交给团队，由负责人拆解分派",
+                color = WandColors.textMuted,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
         BoardChoice(
             label = "状态 · ${boardTaskStatusLabel(status)}",
             options = BOARD_TASK_STATUSES.map { it to boardTaskStatusLabel(it) },

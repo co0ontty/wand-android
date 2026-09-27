@@ -7,14 +7,12 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -48,12 +46,18 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wand.app.data.AiTeam
+import com.wand.app.data.BoardTask
 import com.wand.app.data.DirectoryListing
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.Workspace
 import com.wand.app.data.TaskBoardPort
+import com.wand.app.data.ensureBoardTaskParent
+import com.wand.app.data.GLOBAL_WORKSPACE_ID
+import com.wand.app.data.boardParentTaskOptions
+import com.wand.app.data.findBoardTaskByWorkspaceTaskId
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
@@ -65,7 +69,6 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
 import com.wand.app.ui.components.WandBottomSheet
-import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
@@ -120,6 +123,8 @@ fun TaskListScreen(
     onTaskClosed: (taskId: String) -> Unit = {},
     onSessionClosed: (sessionId: String) -> Unit = {},
     onOpenSettings: () -> Unit,
+    /** 首页顶栏「更多」→「AI 团队」：纯穿透回调，与 onOpenTaskBoard 同样的穿过方式。 */
+    onOpenAiTeams: () -> Unit = {},
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
     showComposer: Boolean = true,
@@ -132,7 +137,21 @@ fun TaskListScreen(
     var newTaskPrompt by remember { mutableStateOf("") }
     var newTaskWorktree by remember { mutableStateOf(false) }
     var newTaskName by remember { mutableStateOf("") }
+    var newTaskParentId by remember { mutableStateOf("") }
+    // 补关联失败时保留已建任务；重试只重发关联请求，绝不能再创建一条。
+    var pendingParentLink by remember { mutableStateOf<Pair<TaskCreationResult, String>?>(null) }
+    var parentLinkBusy by remember { mutableStateOf(false) }
+    var parentLinkError by remember { mutableStateOf<String?>(null) }
+    var parentTasks by remember { mutableStateOf<List<BoardTask>>(emptyList()) }
+    var parentsLoading by remember { mutableStateOf(false) }
+    var parentError by remember { mutableStateOf<String?>(null) }
     var newTaskTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
+    // 新建任务「交给团队」：与 CLI 目标互斥；workspace task 已建但 team-run 失败时记住两种 id，
+    // 重试只补「找卡 → 派团队」这两步，绝不重复建卡。
+    var newTaskTeams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
+    var newTaskTeamId by remember { mutableStateOf<String?>(null) }
+    var teamRunRetry by remember { mutableStateOf<NewTaskTeamRetry?>(null) }
+    var teamRunError by remember { mutableStateOf<String?>(null) }
     var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
     var newTaskModel by remember { mutableStateOf("default") }
     var newTaskThinkingEffort by remember { mutableStateOf("off") }
@@ -208,7 +227,33 @@ fun TaskListScreen(
     fun updateTaskCwd(value: String) {
         taskCwdDraft = value
         newTaskWorkspaceId = workspaceForPath(value)
+        newTaskParentId = "" // 父任务必须与所选目录属于同一项目。
+        // 团队选择绑定在旧目录的项目上：目录一变（不再命中已有非 global 项目）就清零，
+        // 重试态也随之作废（老卡不属于这里）。
+        if (!isTeamPickAllowed(newTaskWorkspaceId)) {
+            newTaskTeamId = null
+            teamRunRetry = null
+            teamRunError = null
+        }
         state.clearMutationError()
+    }
+
+    fun loadParentTasks(openingId: Long) {
+        parentsLoading = true
+        parentError = null
+        scope.launch {
+            try {
+                val loaded = boardApi.listBoardTasks()
+                if (newTaskOpen && openingId == newTaskOpeningId) parentTasks = loaded
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                if (newTaskOpen && openingId == newTaskOpeningId) {
+                    parentError = error.message ?: "无法加载父任务"
+                }
+            } finally {
+                if (newTaskOpen && openingId == newTaskOpeningId) parentsLoading = false
+            }
+        }
     }
 
     fun beginNewTask(
@@ -224,7 +269,14 @@ fun TaskListScreen(
         newTaskPrompt = initialPrompt
         newTaskWorktree = false
         newTaskName = ""
+        newTaskParentId = ""
+        pendingParentLink = null
+        parentLinkError = null
+        parentTasks = emptyList()
         newTaskTarget = WorkspaceSessionTarget.Claude
+        newTaskTeamId = null
+        teamRunRetry = null
+        teamRunError = null
         newTaskKind = WorkspaceSessionKind.Structured
         newTaskModel = "default"
         newTaskThinkingEffort = "off"
@@ -234,12 +286,14 @@ fun TaskListScreen(
         val defaultsRevision = newTaskDraftRevision
         val openingId = newTaskOpeningId
         newTaskOpen = true
+        loadParentTasks(openingId)
         scope.launch {
             state.loadCreationDefaults()
             if (!newTaskOpen || openingId != newTaskOpeningId) return@launch
             if (taskCwdDraft.isBlank()) {
                 taskCwdDraft = state.defaultCwd.orEmpty()
                 newTaskWorkspaceId = workspaceForPath(taskCwdDraft)
+                newTaskParentId = ""
             }
             if (defaultsRevision == newTaskDraftRevision) {
                 newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: newTaskTarget
@@ -306,6 +360,13 @@ fun TaskListScreen(
     LaunchedEffect(state.newTaskRequest) {
         if (state.consumeNewTaskRequest()) beginNewTask()
     }
+    // 每次打开对话框拉一次团队；失败回落空列表 = 不显示团队区，绝不挡新建任务本身。
+    // 不进 30s/轮询环：团队定义只在 Web 端编辑，频率对不上。
+    LaunchedEffect(newTaskOpen, newTaskOpeningId) {
+        if (newTaskOpen) {
+            newTaskTeams = runCatching { boardApi.listAiTeams() }.getOrDefault(emptyList())
+        }
+    }
     LaunchedEffect(selectedTaskId, selectedSessionId, visibleGroups) {
         state.expandPathToSelection(selectedTaskId, selectedSessionId)
     }
@@ -369,13 +430,28 @@ fun TaskListScreen(
     if (newTaskOpen) {
         val context = androidx.compose.ui.platform.LocalContext.current
         val cwd = taskCwdDraft.trim()
+        val parentOptions = if (newTaskWorkspaceId != null || cwd.isEmpty()) {
+            boardParentTaskOptions(parentTasks, newTaskWorkspaceId?.takeUnless { it == GLOBAL_WORKSPACE_ID })
+        } else listOf("" to "不关联父任务")
         val groupedName = newTaskName.trim()
         // 任务身份不再依赖首个会话提示词：名称留空时由提示词自动命名。
         val taskPrompt = newTaskPrompt.trim().ifEmpty { null }
-        val canCreateTask = cwd.isNotEmpty() && TaskListState.isValidOptionalTaskName(groupedName) &&
-            (groupedName.isNotEmpty() || taskPrompt != null)
+        val teamSelected = newTaskTeamId != null && newTaskTeams.any { it.id == newTaskTeamId }
+        val teamSubmitError =
+            newTaskTeamSubmitError(newTaskPrompt, teamSelected, isTeamPickAllowed(newTaskWorkspaceId))
+        val canCreateTask = (pendingParentLink != null && newTaskTeamId == null) ||
+            (cwd.isNotEmpty() &&
+                TaskListState.isValidOptionalTaskName(groupedName) &&
+                (groupedName.isNotEmpty() || taskPrompt != null) &&
+                teamSubmitError == null)
         val submitNewTask: () -> Unit = submit@{
-            if (state.mutationBusy || !canCreateTask) return@submit
+            if (state.mutationBusy || parentLinkBusy || !canCreateTask) return@submit
+            // 提交侧兜底：目录被改成未登记项目后团队选择即使还挂着，也不许走团队分支（§5.1 R2）。
+            if (teamSubmitError != null) {
+                teamRunError = teamSubmitError
+                return@submit
+            }
+            teamRunError = null
             val submittedTarget = newTaskTarget
             val submittedKind = newTaskKind
             val submittedModel = newTaskModel.takeUnless { it == "default" }
@@ -383,20 +459,115 @@ fun TaskListScreen(
             val submittedStartSession = startFirstSession
             val submittedWorktree = newTaskWorktree
             val submittedWorkspaceId = newTaskWorkspaceId
+            val submittedTeamId = newTaskTeamId.takeIf { id ->
+                newTaskTeams.any { it.id == id } && isTeamPickAllowed(newTaskWorkspaceId)
+            }
+            // 重试态只认团队分支记下的 id 对；CLI 分支的老 retry id 不复用，跨分支不复用。
+            val submittedTeamRunRetry =
+                if (newTaskTeamRetryActive(submittedTeamId != null, teamRunRetry)) teamRunRetry else null
+            val submittedParentId = pendingParentLink?.second
+                ?: newTaskParentId.takeIf { id -> id.isNotEmpty() && parentOptions.any { it.first == id } }
             newTaskDraftRevision += 1
             scope.launch {
+                if (submittedTeamId != null) {
+                    // 团队分支：`needCreate` 是唯一决定建不建卡的闸（纯函数
+                    // newTaskNeedsCardCreation），重试态恒 false → :createTask 不可达。
+                    val needCreate = newTaskNeedsCardCreation(submittedTeamRunRetry)
+                    val created = if (needCreate) {
+                        state.createTask(
+                            name = groupedName,
+                            cwd = cwd,
+                            worktree = submittedWorktree,
+                            workspaceId = submittedWorkspaceId,
+                            description = taskPrompt,
+                            parentTaskId = submittedParentId,
+                        ) ?: return@launch
+                    } else {
+                        null
+                    }
+                    // 两种 id 分开：`workspaceTaskId` 给导航（Screen.WorkspaceTask），
+                    // `boardCardId` 给 POST /api/wand-tasks/{id}/team-runs。看板卡是另一张表，
+                    // 传 workspace task id 服务端查不到，必然回「任务不存在。」。
+                    val workspaceTaskId = created?.task?.id
+                        ?: submittedTeamRunRetry?.workspaceTaskId.orEmpty()
+                    val card = submittedTeamRunRetry?.boardCardId
+                        ?.let { id -> runCatching { boardApi.getBoardTask(id) }.getOrNull() }
+                        ?: try {
+                            findBoardTaskByWorkspaceTaskId(boardApi.listBoardTasks(), workspaceTaskId)
+                        } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            teamRunRetry = NewTaskTeamRetry(workspaceTaskId)
+                            teamRunError = newTaskTeamCardMissingMessage(error.message)
+                            return@launch
+                        }
+                    if (card == null) {
+                        teamRunRetry = NewTaskTeamRetry(workspaceTaskId, submittedTeamRunRetry?.boardCardId)
+                        teamRunError = newTaskTeamCardMissingMessage(null)
+                        return@launch
+                    }
+                    val cardId = card.id
+                    // 派团队只发这一条：note 传空，目标 = 标题+描述在服务端拼装，与看板新建同口径；
+                    // **不起 CLI 会话**。
+                    try {
+                        boardApi.startTeamRun(cardId, submittedTeamId, "")
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        // 失败保留对话框、记住两种 id，重试只重发这一步；错误原位显示服务端原文，不加 Toast。
+                        teamRunRetry = NewTaskTeamRetry(workspaceTaskId, cardId)
+                        teamRunError = "任务已创建，但交给团队失败：${error.message ?: "可稍后在详情里再交给团队"}"
+                        return@launch
+                    }
+                    teamRunRetry = null
+                    // 成功导航必须落在真正派了团队的那张卡上（重试态 = 旧卡）。
+                    val navigationWorkspaceTaskId = created?.task?.id ?: card.workspaceTaskId.orEmpty()
+                    val workspaceId = created?.workspace?.id ?: card.workspaceId ?: card.workspace?.id ?: ""
+                    if (workspaceId.isNotBlank() && navigationWorkspaceTaskId.isNotBlank()) {
+                        val workspaceName = created?.workspace?.name
+                            ?: state.groups.firstOrNull { it.workspaceId == workspaceId }?.workspaceName.orEmpty()
+                        newTaskOpen = false
+                        onOpenTask(
+                            workspaceId,
+                            navigationWorkspaceTaskId,
+                            workspaceName,
+                            created?.task?.name ?: card.title.takeIf { it.isNotBlank() } ?: "任务",
+                        )
+                    } else {
+                        // 兑不到这张卡的归属就不假装成功，也**不关窗**：这句话的唯一可见通道是
+                        // 对话框的 error 位（teamRunError 优先），关窗即卸载等于凭空消失。
+                        // 同时记住卡 id：用户再点一次只会对这张卡重发 team-runs，不会建二卡。
+                        teamRunRetry = NewTaskTeamRetry(workspaceTaskId, cardId)
+                        teamRunError = "已交给团队，但没取到这张任务卡的归属，请点「取消」关闭后在任务看板查看。"
+                    }
+                    return@launch
+                }
                 state.rememberCreationChoice(
                     defaultProvider = submittedTarget.raw.takeUnless { submittedTarget.isShell },
                     defaultSessionKind = submittedKind,
                 )
-                val result = state.createTask(
+                val result = pendingParentLink?.first ?: state.createTask(
                     name = groupedName,
                     cwd = cwd,
                     worktree = submittedWorktree,
                     workspaceId = submittedWorkspaceId,
                     description = taskPrompt,
+                    parentTaskId = submittedParentId,
                 )
                 if (result != null) {
+                    if (submittedParentId != null) {
+                        pendingParentLink = result to submittedParentId
+                        parentLinkBusy = true
+                        parentLinkError = null
+                        try {
+                            ensureBoardTaskParent(boardApi, result.task.id, submittedParentId)
+                        } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            parentLinkError = "任务已创建，但关联父任务失败：${error.message ?: "请稍后重试"}。点击提交重试，不会重复创建任务。"
+                            return@launch
+                        } finally {
+                            parentLinkBusy = false
+                        }
+                    }
+                    pendingParentLink = null
                     newTaskOpen = false
                     val snapshot = if (submittedStartSession) state.createTaskWindow(
                         result.task.id, submittedTarget, submittedKind, taskPrompt,
@@ -430,10 +601,30 @@ fun TaskListScreen(
             onPromptChange = { newTaskPrompt = it; state.clearMutationError() },
             cwd = cwd,
             onChooseDirectory = ::openDirectoryPicker,
+            parentOptions = parentOptions,
+            parentTaskId = newTaskParentId,
+            fieldsLocked = pendingParentLink != null,
+            onParentTaskChange = { newTaskParentId = it; state.clearMutationError() },
+            parentsLoading = parentsLoading,
+            parentError = parentError,
+            onReloadParents = { loadParentTasks(newTaskOpeningId) },
             target = newTaskTarget,
+            teams = newTaskTeams,
+            teamId = newTaskTeamId,
+            teamAllowed = isTeamPickAllowed(newTaskWorkspaceId),
+            onTeamChange = { id ->
+                // 互斥：选团队即放弃 CLI 目标（CLI 与团队不能同时作为派发对象）。
+                newTaskDraftRevision += 1
+                newTaskTeamId = id
+                teamRunRetry = null
+                teamRunError = null
+            },
             onTargetChange = { option ->
                 newTaskDraftRevision += 1
                 newTaskTarget = option
+                newTaskTeamId = null
+                teamRunRetry = null
+                teamRunError = null
                 newTaskModel = "default"
                 val available = com.wand.app.ui.thinkingEffortOptions(
                     option.raw, "default", newTaskModels?.defaultModelFor(option.raw),
@@ -468,12 +659,19 @@ fun TaskListScreen(
             onStartFirstSessionChange = { startFirstSession = it },
             worktree = newTaskWorktree,
             onWorktreeChange = { newTaskWorktree = it },
-            busy = state.mutationBusy,
-            error = state.mutationError,
+            busy = state.mutationBusy || parentLinkBusy,
+            error = teamRunError ?: parentLinkError ?: state.mutationError,
+            teamRunRetry = teamRunRetry != null,
             canCreate = canCreateTask,
             onSubmit = submitNewTask,
             directoryPickerContent = directoryPickerContent,
-            onDismiss = { if (!state.mutationBusy) newTaskOpen = false },
+            onDismiss = {
+                if (!state.mutationBusy) {
+                    newTaskOpen = false
+                    teamRunRetry = null
+                    teamRunError = null
+                }
+            },
         )
     }
 
@@ -870,6 +1068,7 @@ fun TaskListScreen(
                         onHomeListModeChange(HomeListMode.Tasks)
                         attentionOnly = false
                     },
+                    onOpenAiTeams = onOpenAiTeams,
                     onCollapseSidebar = onCollapseSidebar,
                     onStartSelection = if (!showingBoard && hasAnyContent) {
                         {
@@ -1022,16 +1221,17 @@ fun TaskListScreen(
                         ) {
                     val canReorder = !selecting && !searching && !attentionOnly && visibleGroups.size > 1
                     itemsIndexed(visibleGroups, key = { _, group -> group.id }) { _, group ->
+                        val dragging = dragState.isDragging(group.id)
                         HomeWorkspaceCard(
                             group = group,
                             modifier = dragState.itemLiftModifier(group.id)
-                                .then(if (reduceMotion) Modifier else Modifier.animateItem()),
+                                .then(if (reduceMotion || dragging) Modifier else Modifier.animateItem()),
                             headerDragModifier = Modifier.wandLongPressDrag(
                                 state = dragState,
                                 itemKey = group.id,
                                 listState = homeListState,
                                 enabled = canReorder,
-                                onDragStarted = state::startDirectoryReorder,
+                                onDragStarted = { state.startDirectoryReorder(group.id) },
                                 onDragFinished = state::finishDirectoryReorder,
                                 onDragCancelled = state::cancelDirectoryReorder,
                                 onMove = { fromKey, toKey ->
@@ -1042,10 +1242,10 @@ fun TaskListScreen(
                                 },
                             ),
                             // 搜索中一律展开：命中的会话如果藏在折叠节点里，看起来就像搜不到。
-                            expanded = searching || isDirectoryExpanded(
+                            expanded = !dragging && (searching || isDirectoryExpanded(
                                 userCollapsed = state.isDirectoryCollapsed(group.id),
-                                directoryCount = visibleGroups.size,
-                            ),
+                            )),
+                            dragging = dragging,
                             forceExpandTasks = searching,
                             standaloneCollapsed = !searching && state.isStandaloneCollapsed(group.id),
                             taskCollapsed = state::isTaskCollapsed,
