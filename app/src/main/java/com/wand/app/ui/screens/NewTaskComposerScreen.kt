@@ -1,9 +1,17 @@
 package com.wand.app.ui.screens
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,11 +25,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -31,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,13 +46,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -55,16 +64,14 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.boardAgentModelOptions
-import com.wand.app.ui.SendActionVisual
 import com.wand.app.ui.components.BrandLogos
+import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
-import com.wand.app.ui.components.WandInlinePanelAction
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.thinkingEffortOptions
-
-/** 团队态整行反馈位预留的一行高度：提示出现/消失都不改变输入区位置。 */
-private val ComposerTeamFeedbackLineHeight = 22.dp
 
 /** 单独任务的新建窗口：保留任务创建链路，不进入任务看板的新建/指派表单。 */
 @Composable
@@ -117,15 +124,17 @@ internal fun NewTaskComposerDialog(
     val selectedModelLabel = modelOptions.firstOrNull { it.id == model }?.label ?: model
     val effortOptions = thinkingEffortOptions(target.raw, model, defaultModel, models?.modelsFor(target.raw).orEmpty())
     val effortLabel = effortOptions.firstOrNull { it.id == thinkingEffort }?.label ?: "自动"
-    // 控制行 chip 与对应面板的可开性共用这一份判定，不再各写一遍 !teamSelected。
+    // 会话参数行与选择器可开性共用这份判定。
     val controlChips = newTaskComposerControlChips(teamSelected, startFirstSession, target.isShell)
+    var displayedControlChips by remember { mutableStateOf(controlChips) }
+    LaunchedEffect(controlChips) {
+        if (controlChips.isNotEmpty()) displayedControlChips = controlChips
+    }
     var providerOpen by remember { mutableStateOf(false) }
     var modelOpen by remember { mutableStateOf(false) }
     var effortOpen by remember { mutableStateOf(false) }
     var kindOpen by remember { mutableStateOf(false) }
     var parentOpen by remember { mutableStateOf(false) }
-    var actionsOpen by remember { mutableStateOf(false) }
-    BackHandler(enabled = actionsOpen) { actionsOpen = false }
 
     Dialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -140,6 +149,7 @@ internal fun NewTaskComposerDialog(
             controller?.isAppearanceLightStatusBars = lightBackground
             onDispose { if (previous != null) controller.isAppearanceLightStatusBars = previous }
         }
+        val motionEnabled = !reduceMotionEnabled()
         Column(
             modifier = Modifier.fillMaxSize().background(WandColors.bgPrimary)
                 .statusBarsPadding().navigationBarsPadding().imePadding(),
@@ -154,60 +164,83 @@ internal fun NewTaskComposerDialog(
             }
             Column(
                 modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
-                    .padding(horizontal = 22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Spacer(Modifier.height(58.dp))
+                Text("任务内容", style = MaterialTheme.typography.titleSmall,
+                    color = WandColors.textPrimary, modifier = Modifier.padding(top = 12.dp))
+                WandTextField(
+                    value = prompt, onValueChange = onPromptChange,
+                    label = "描述要做的事",
+                    placeholder = if (teamSelected) "告诉团队要做什么" else "输入任务内容",
+                    minLines = 4, maxLines = 8, enabled = !busy && !fieldsLocked,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                WandTextField(
+                    value = name, onValueChange = onNameChange,
+                    label = "任务名称（可选）", placeholder = "留空自动命名",
+                    singleLine = true, enabled = !busy && !fieldsLocked,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("执行方式", style = MaterialTheme.typography.titleSmall,
+                    color = WandColors.textPrimary, modifier = Modifier.padding(top = 8.dp))
                 Box {
-                    Box(
-                        modifier = Modifier.clip(RoundedCornerShape(18.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .background(WandColors.surfaceSoft)
                             .clickable(enabled = !busy && !fieldsLocked, role = Role.Button,
-                                onClickLabel = if (teamSelected) "更换派发对象，当前团队 ${teamTarget?.name}"
-                                    else "更换工具，当前 ${target.label}") {
-                                actionsOpen = false
-                                providerOpen = true
-                            }
-                            .padding(8.dp),
-                        contentAlignment = Alignment.Center,
+                                onClickLabel = "选择派发对象") { providerOpen = true }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (teamTarget != null) {
+                        if (teamSelected) {
                             Icon(WandIcons.agent, contentDescription = null, tint = WandColors.brand,
-                                modifier = Modifier.size(68.dp))
+                                modifier = Modifier.size(28.dp))
                         } else {
-                            ProviderBrandMark(target.raw.takeUnless { target.isShell }, size = 68)
+                            Image(
+                                painter = BrandLogos.painterForProvider(
+                                    target.raw.takeUnless { target.isShell },
+                                ),
+                                contentDescription = null, modifier = Modifier.size(28.dp),
+                            )
                         }
-                        Box(
-                            modifier = Modifier.align(Alignment.BottomEnd).size(22.dp)
-                                .clip(RoundedCornerShape(11.dp)).background(WandColors.brandSoft),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(WandIcons.expand, contentDescription = null, tint = WandColors.brand,
-                                modifier = Modifier.size(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("派发对象", style = MaterialTheme.typography.labelSmall,
+                                color = WandColors.textMuted)
+                            Text(teamTarget?.let { newTaskTeamOptionLabel(it) } ?: target.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = WandColors.textPrimary, fontWeight = FontWeight.SemiBold)
                         }
+                        Icon(WandIcons.expand, contentDescription = null, tint = WandColors.textMuted)
                     }
                     DropdownMenu(expanded = providerOpen, onDismissRequest = { providerOpen = false }) {
                         WorkspaceSessionTarget.OPTIONS.forEach { option ->
                             DropdownMenuItem(
                                 text = { Text(option.label) },
                                 leadingIcon = {
-                                    Image(painter = BrandLogos.painterForProvider(option.raw.takeUnless { option.isShell }),
-                                        contentDescription = null, modifier = Modifier.size(20.dp))
+                                    Image(
+                                        painter = BrandLogos.painterForProvider(
+                                            option.raw.takeUnless { option.isShell },
+                                        ),
+                                        contentDescription = null, modifier = Modifier.size(20.dp),
+                                    )
                                 },
-                                onClick = { providerOpen = false; onTargetChange(option) },
+                                onClick = {
+                                    providerOpen = false
+                                    modelOpen = false
+                                    effortOpen = false
+                                    kindOpen = false
+                                    onTargetChange(option)
+                                },
                             )
                         }
-                        // AI 团队区段：可点项完全由 newTaskTeamOptions 决定；算不出可点项
-                        // （R2 不满足）就整段不渲染——菜单里不留只剩灰色标题的空块，
-                        // 禁用说明由 Logo 下方那一行常驻给出。
                         val teamOptions = newTaskTeamOptions(teams, teamAllowed)
                         if (teamOptions.isNotEmpty()) {
                             DropdownMenuItem(
-                                text = {
-                                    Text("AI 团队", style = MaterialTheme.typography.labelSmall,
-                                        color = WandColors.textMuted)
-                                },
-                                enabled = false,
-                                onClick = {},
+                                text = { Text("AI 团队", style = MaterialTheme.typography.labelSmall,
+                                    color = WandColors.textMuted) },
+                                enabled = false, onClick = {},
                             )
                             teamOptions.forEach { (id, label) ->
                                 DropdownMenuItem(
@@ -217,238 +250,138 @@ internal fun NewTaskComposerDialog(
                                             tint = WandColors.textSecondary,
                                             modifier = Modifier.size(20.dp))
                                     },
-                                    onClick = { providerOpen = false; onTeamChange(id) },
+                                    onClick = {
+                                        providerOpen = false
+                                        modelOpen = false
+                                        effortOpen = false
+                                        kindOpen = false
+                                        onTeamChange(id)
+                                    },
                                 )
                             }
                         }
                     }
                 }
-                Text(
-                    teamTarget?.let { newTaskTeamOptionLabel(it) } ?: target.label,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = WandColors.textPrimary, fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    when {
-                        teamSelected -> "点 Logo 更换派发对象"
-                        else -> "点 Logo 更换工具"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.brand,
-                    modifier = Modifier.clickable(enabled = !busy && !fieldsLocked) {
-                        actionsOpen = false
-                        providerOpen = true
-                    },
-                )
-                // 禁用原因常驻原位一行，与菜单里的同一句话同源。
                 if (teamDisabledReason != null && !teamSelected) {
-                    Text(teamDisabledReason, style = MaterialTheme.typography.labelSmall,
+                    Text(teamDisabledReason, style = MaterialTheme.typography.bodySmall,
                         color = WandColors.textMuted)
                 }
                 if (teamTarget != null) {
-                    Text(
-                        "${teamTarget.name} · ${teamTarget.members.size} 人 · 由负责人拆解分派，先建任务卡再开工",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = WandColors.textSecondary, modifier = Modifier.padding(top = 12.dp),
-                    )
-                } else {
-                    Text(
-                        when {
-                            !startFirstSession -> "写下任务内容，稍后再开始"
-                            target.isShell -> "写下任务内容，在终端中开始工作"
-                            else -> "输入消息，让它帮你完成任务"
+                    Text(teamTarget.name + " · " + teamTarget.members.size + " 人 · 由负责人拆解分派",
+                        style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+                }
+                if (!teamSelected) {
+                    NewTaskToggleRow(
+                        icon = WandIcons.todo, label = "创建后启动会话",
+                        checked = startFirstSession,
+                        onLabel = "启动会话", offLabel = "仅建分组",
+                        description = newTaskStartSessionDescription(startFirstSession),
+                        enabled = !busy && !fieldsLocked,
+                        onToggle = {
+                            kindOpen = false
+                            modelOpen = false
+                            effortOpen = false
+                            onStartFirstSessionChange(it)
                         },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = WandColors.textSecondary, modifier = Modifier.padding(top = 12.dp),
                     )
                 }
-                Spacer(Modifier.height(36.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                        .background(WandColors.surfaceSoft)
-                        .clickable(enabled = !busy && !fieldsLocked) { actionsOpen = false; onChooseDirectory() }
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                NewTaskToggleRow(
+                    icon = WandIcons.commit, label = "工作目录方式",
+                    checked = worktree,
+                    onLabel = "独立工作树", offLabel = "共用目录",
+                    description = newTaskWorktreeDescription(worktree),
+                    enabled = !busy && !fieldsLocked, onToggle = onWorktreeChange,
+                )
+                AnimatedVisibility(
+                    visible = controlChips.isNotEmpty(),
+                    enter = if (motionEnabled) {
+                        fadeIn(WandMotion.tweenFast()) + expandVertically(WandMotion.tweenNormal())
+                    } else EnterTransition.None,
+                    exit = if (motionEnabled) {
+                        fadeOut(WandMotion.tweenFast()) + shrinkVertically(WandMotion.tweenNormal())
+                    } else ExitTransition.None,
                 ) {
-                    Icon(WandIcons.folder, contentDescription = null, tint = WandColors.brand)
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("工作目录", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-                        Text(cwd.ifEmpty { "选择目录" }, style = MaterialTheme.typography.bodyMedium,
-                            color = WandColors.textPrimary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
-                    }
-                    Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
-                        .clip(RoundedCornerShape(14.dp)).background(WandColors.surfaceSoft)
-                        .clickable(enabled = !busy && !fieldsLocked, role = Role.Button,
-                            onClickLabel = "选择归属父任务") {
-                            actionsOpen = false
-                            if (parentError != null) onReloadParents() else parentOpen = true
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        val chipsForAnimation = controlChips.ifEmpty { displayedControlChips }
+                        chipsForAnimation.forEach { chip ->
+                            val controlsEnabled = !busy && !fieldsLocked && chip in controlChips
+                            when (chip) {
+                                NewTaskComposerControlChip.SessionKind -> NewTaskSettingRow(
+                                    icon = WandIcons.terminal, label = "会话类型", value = kind.label,
+                                    enabled = controlsEnabled, onClick = { kindOpen = true },
+                                )
+                                NewTaskComposerControlChip.Model -> NewTaskSettingRow(
+                                    icon = WandIcons.tune, label = "模型", value = selectedModelLabel,
+                                    enabled = controlsEnabled, onClick = { modelOpen = true },
+                                )
+                                NewTaskComposerControlChip.ThinkingEffort -> NewTaskSettingRow(
+                                    icon = WandIcons.thinking, label = "思考深度", value = effortLabel,
+                                    enabled = controlsEnabled, onClick = { effortOpen = true },
+                                )
+                            }
                         }
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Icon(WandIcons.todo, contentDescription = null, tint = WandColors.brand)
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("归属父任务", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-                        Text(
-                            when {
-                                parentError != null -> "加载失败，点此重试"
-                                parentsLoading -> "正在加载任务…"
-                                else -> parentOptions.firstOrNull { it.first == parentTaskId }?.second
-                                    ?: "不关联父任务"
-                            },
-                            style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
                     }
-                    Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
                 }
-                if (!parentsLoading && parentError == null && parentOptions.size == 1) {
-                    Text("当前目录没有进行中的任务", style = MaterialTheme.typography.labelSmall,
-                        color = WandColors.textMuted, modifier = Modifier.align(Alignment.Start).padding(top = 4.dp))
-                }
-                WandTextField(
-                    value = name, onValueChange = onNameChange,
-                    placeholder = "任务名称（可选，留空自动命名）", singleLine = true,
+                Text("工作区", style = MaterialTheme.typography.titleSmall,
+                    color = WandColors.textPrimary, modifier = Modifier.padding(top = 8.dp))
+                NewTaskSettingRow(
+                    icon = WandIcons.folder, label = "工作目录",
+                    value = cwd.ifEmpty { "选择目录" },
+                    enabled = !busy && !fieldsLocked, onClick = onChooseDirectory,
+                )
+                NewTaskSettingRow(
+                    icon = WandIcons.todo, label = "归属父任务",
+                    value = when {
+                        parentError != null -> "加载失败，点此重试"
+                        parentsLoading -> "正在加载任务…"
+                        else -> parentOptions.firstOrNull { it.first == parentTaskId }?.second
+                            ?: "不关联父任务"
+                    },
                     enabled = !busy && !fieldsLocked,
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    onClick = {
+                        if (parentError != null) onReloadParents() else parentOpen = true
+                    },
                 )
-                Text(
-                    newTaskComposerStatusLine(teamSelected, startFirstSession, worktree),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.align(Alignment.Start).padding(top = 12.dp),
-                )
-                Spacer(Modifier.height(24.dp))
+                if (!parentsLoading && parentError == null && parentOptions.size == 1) {
+                    Text("当前目录没有进行中的任务",
+                        style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                }
+                Spacer(Modifier.height(12.dp))
             }
-            if (error != null) {
-                Text(error, color = WandColors.danger, style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp))
-            }
-            // 团队必填/R2 说明：整行、输入区之外，且团队态常驻预留一行高度，
-            // 提示出现/消失不推动输入行与提交按钮（宽度、位置与 CLI 态一致）。
-            // 只放团队自己的提示：`error` 由上面的错误位渲染，这里重复会同一句出现两遍。
-            if (teamSelected) {
+            Column(
+                modifier = Modifier.fillMaxWidth().background(WandColors.bgPrimary)
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Box(
-                    modifier = Modifier.fillMaxWidth().height(ComposerTeamFeedbackLineHeight)
-                        .padding(horizontal = 20.dp),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
-                    Text(
-                        newTaskComposerFeedbackLine(teamError),
-                        color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+                    val visibleError = error ?: teamError.takeIf { teamSelected }
+                    if (visibleError != null) {
+                        Text(
+                            visibleError, color = WandColors.danger,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        )
+                    } else {
+                        Text(
+                            newTaskComposerStatusLine(teamSelected, startFirstSession, worktree),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = WandColors.textSecondary,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
+                WandButton(
+                    label = if (teamSelected) {
+                        newTaskTeamActionLabel(busy, teamRunRetry, prompt.isNotBlank())
+                    } else if (busy) "创建中…" else if (startFirstSession) "创建并启动会话"
+                    else "创建任务分组",
+                    onClick = onSubmit, enabled = canCreate && !busy,
+                    loading = busy, modifier = Modifier.fillMaxWidth(),
+                )
             }
-            NativeComposerSurface(
-                backdrop = null,
-                expanded = true,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                panelVisible = actionsOpen,
-                panelContent = {
-                    newTaskComposerPanelActions(teamSelected).forEach { action ->
-                        when (action) {
-                            NewTaskComposerPanelAction.StartSessionToggle -> WandInlinePanelAction(
-                                icon = WandIcons.todo,
-                                label = if (startFirstSession) "仅建分组" else "启动会话",
-                                enabled = !busy && !fieldsLocked,
-                                onClick = {
-                                    actionsOpen = false
-                                    onStartFirstSessionChange(!startFirstSession)
-                                },
-                            )
-                            NewTaskComposerPanelAction.WorktreeToggle -> WandInlinePanelAction(
-                                icon = WandIcons.commit,
-                                label = if (worktree) "共用目录" else "独立工作树",
-                                enabled = !busy && !fieldsLocked,
-                                onClick = {
-                                    actionsOpen = false
-                                    onWorktreeChange(!worktree)
-                                },
-                            )
-                        }
-                    }
-                },
-                inputContent = {
-                    BasicTextField(
-                        value = prompt,
-                        onValueChange = { actionsOpen = false; onPromptChange(it) },
-                        enabled = !busy && !fieldsLocked,
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = WandColors.textPrimary),
-                        cursorBrush = SolidColor(WandColors.brand),
-                        minLines = 2,
-                        maxLines = 6,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                        modifier = Modifier.weight(1f).heightIn(min = 58.dp, max = 132.dp)
-                            .padding(start = 12.dp, top = 8.dp, bottom = 6.dp),
-                        decorationBox = { inner ->
-                            Box(contentAlignment = Alignment.TopStart) {
-                                if (prompt.isEmpty()) Text(
-                                    when {
-                                        teamSelected -> "告诉团队要做什么"
-                                        startFirstSession && !target.isShell -> "输入消息"
-                                        else -> "输入任务内容"
-                                    },
-                                    color = WandColors.textMuted,
-                                    style = MaterialTheme.typography.bodyLarge)
-                                inner()
-                            }
-                        },
-                    )
-                    // 必填/R2 说明在 composer 之外的整行反馈位，不占输入行宽度。
-                    SubmitMorphButton(
-                        visual = when {
-                            busy -> SendActionVisual.Sending
-                            error != null -> SendActionVisual.Failed
-                            else -> SendActionVisual.Send
-                        },
-                        contentDescription = if (teamSelected) {
-                            newTaskTeamActionLabel(busy, teamRunRetry, prompt.isNotBlank())
-                        } else if (busy) "创建中" else "创建任务",
-                        onClick = { actionsOpen = false; onSubmit() },
-                        enabled = canCreate && !busy,
-                        fillColor = when {
-                            error != null -> WandColors.danger
-                            canCreate -> WandColors.brand
-                            else -> WandColors.surfaceSoft
-                        },
-                        contentTint = if (canCreate) androidx.compose.ui.graphics.Color.White else WandColors.textMuted,
-                    )
-                },
-                expandedControls = { compact ->
-                    ControlChip(
-                        icon = WandIcons.add, text = "更多", tint = WandColors.textSecondary,
-                        contentDescription = "更多任务选项", showText = false,
-                    ) { if (!busy && !fieldsLocked) actionsOpen = !actionsOpen }
-                    controlChips.forEach { chip ->
-                        when (chip) {
-                            NewTaskComposerControlChip.SessionKind -> ControlChip(
-                                icon = WandIcons.terminal, text = kind.label,
-                                tint = WandColors.textSecondary,
-                                contentDescription = "会话类型：${kind.label}", showText = !compact,
-                            ) { if (!busy && !fieldsLocked) { actionsOpen = false; kindOpen = true } }
-                            NewTaskComposerControlChip.Model -> ControlChip(
-                                icon = WandIcons.tune, text = selectedModelLabel,
-                                tint = WandColors.brand, contentDescription = "模型：$selectedModelLabel",
-                                showText = true, modifier = Modifier.weight(1f),
-                            ) { if (!busy && !fieldsLocked) { actionsOpen = false; modelOpen = true } }
-                            NewTaskComposerControlChip.ThinkingEffort -> ControlChip(
-                                icon = WandIcons.thinking, text = effortLabel,
-                                tint = WandColors.brand, contentDescription = "思考深度：$effortLabel",
-                                showText = true,
-                            ) { if (!busy && !fieldsLocked) { actionsOpen = false; effortOpen = true } }
-                        }
-                    }
-                    // 模型 chip 自己占 weight(1f)；没有它时由 Spacer 撑开，两者互斥，
-                    // 保证控制行的伸缩与收敛前逐像素一致。
-                    if (NewTaskComposerControlChip.Model !in controlChips) Spacer(Modifier.weight(1f))
-                },
-            )
         }
         if (parentOpen) {
             ComposerChoiceSheet(
@@ -458,8 +391,8 @@ internal fun NewTaskComposerDialog(
                 onDismiss = { parentOpen = false },
             )
         }
-        // 会话类型 / 模型 / 思考深度是 CLI 专属参数，团队分支不读：面板可开性与 chip
-        // 同源（controlChips），不留「能点但被忽略」的开关。切回 CLI 目标后 chip 与已选值原样恢复。
+        // 会话类型 / 模型 / 思考深度是 CLI 专属参数，团队分支不读：选择器
+        // 与设置行同源（controlChips），切回 CLI 后已选值原样恢复。
         if (modelOpen && NewTaskComposerControlChip.Model in controlChips) {
             ComposerChoiceSheet(
                 title = "模型", options = modelOptions.map { it.id to it.label },
@@ -485,5 +418,80 @@ internal fun NewTaskComposerDialog(
             )
         }
         directoryPickerContent()
+    }
+}
+
+@Composable
+private fun NewTaskSettingRow(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .background(WandColors.surfaceSoft)
+            .clickable(enabled = enabled, role = Role.Button,
+                onClickLabel = "更改$label") { onClick() }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = WandColors.brand,
+            modifier = Modifier.size(22.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+            Text(value, style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textPrimary, maxLines = 1,
+                overflow = TextOverflow.MiddleEllipsis)
+        }
+        Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
+    }
+}
+
+@Composable
+private fun NewTaskToggleRow(
+    icon: ImageVector,
+    label: String,
+    checked: Boolean,
+    onLabel: String,
+    offLabel: String,
+    description: String,
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    val motionEnabled = !reduceMotionEnabled()
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(WandColors.surfaceSoft)
+            .toggleable(value = checked, enabled = enabled, role = Role.Switch,
+                onValueChange = onToggle)
+            .semantics { stateDescription = if (checked) onLabel else offLabel }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = WandColors.brand,
+            modifier = Modifier.size(22.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textPrimary, fontWeight = FontWeight.Medium)
+            Text(description, style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textSecondary, maxLines = 2)
+        }
+        Box(modifier = Modifier.widthIn(min = 80.dp), contentAlignment = Alignment.CenterEnd) {
+            Crossfade(
+                targetState = checked,
+                animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+                label = "newTaskSettingState",
+            ) {
+                Text(if (it) onLabel else offLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (it) WandColors.brand else WandColors.textSecondary,
+                    maxLines = 1)
+            }
+        }
     }
 }

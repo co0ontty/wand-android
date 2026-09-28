@@ -94,7 +94,7 @@ internal fun newTaskTargetChangeResetsCliParams(
 ): Boolean = previous != next
 
 /**
- * composer 控制行在三种状态下各显示哪些 chip（渲染层只遍历这个结果，面板可开性同源）：
+ * 新建任务表单在三种状态下显示哪些会话参数行（选择器可开性同源）：
  * 团队态 / 仅建分组 → 全收（团队不读 CLI 参数，仅建分组没有会话可配）；
  * 空白终端只配会话类型；CLI + 启动会话 → 类型 + 模型 + 思考深度。
  */
@@ -114,33 +114,16 @@ internal fun newTaskComposerControlChips(
     )
 }
 
-/**
- * 「＋更多」面板在两种状态下各显示哪些动作（渲染层只遍历这个结果）。
- * 团队建卡只用到 name/cwd/worktree/workspaceId/描述/父任务，**不读**「创建后启动会话」，
- * 所以团队态只留工作树这一项（TaskListScreen 的 `createTask(worktree = submittedWorktree)`）；
- * 会话类型 / 模型 / 思考深度三个 chip 在团队态同样整体收掉（§5.1）。
- */
-internal enum class NewTaskComposerPanelAction { StartSessionToggle, WorktreeToggle }
+/** 常驻设置行说明的是当前选择的结果，不再让用户从加号里的反向动作猜状态。 */
+internal fun newTaskStartSessionDescription(enabled: Boolean): String =
+    if (enabled) "建卡后直接进入会话" else "只创建任务，稍后再开始"
 
-internal fun newTaskComposerPanelActions(
-    teamSelected: Boolean,
-): List<NewTaskComposerPanelAction> =
-    if (teamSelected) {
-        listOf(NewTaskComposerPanelAction.WorktreeToggle)
-    } else {
-        listOf(NewTaskComposerPanelAction.StartSessionToggle, NewTaskComposerPanelAction.WorktreeToggle)
-    }
+internal fun newTaskWorktreeDescription(enabled: Boolean): String =
+    if (enabled) "在独立目录中工作，隔离当前修改" else "直接使用所选工作目录"
 
 /**
- * 团队态预留行**只**说团队自己的事（必填 / R2）：`error` 由它自己的整行错误位渲染，
- * 这里再优先一次会让同一句话在同一屏出现两遍。
- * 恒返回非 null（没有提示时是空串），调用方据此常驻预留一行，
- * 保证提示出现/消失不推动输入行与提交按钮。
- */
-internal fun newTaskComposerFeedbackLine(teamError: String?): String = teamError ?: ""
-
-/**
- * 标题下方那行小字说明：团队态不得出现「会话/启动会话」语义，且要如实反映工作树状态。
+ * 底部提交按钮上方的摘要：团队态不得出现「会话/启动会话」语义，
+ * 且要如实反映工作树状态。
  * CLI 态沿用原文案。
  */
 internal fun newTaskComposerStatusLine(

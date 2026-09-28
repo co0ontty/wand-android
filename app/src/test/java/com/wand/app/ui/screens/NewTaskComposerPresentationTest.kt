@@ -120,16 +120,11 @@ class NewTaskComposerPresentationTest {
     }
 
     @Test
-    fun panelActionsDropSessionToggleForTeam() {
-        assertEquals(
-            listOf(NewTaskComposerPanelAction.StartSessionToggle, NewTaskComposerPanelAction.WorktreeToggle),
-            newTaskComposerPanelActions(teamSelected = false),
-        )
-        // 团队建卡不读「创建后启动会话」，只留真的作用到 createTask(worktree=…) 的那一项。
-        assertEquals(
-            listOf(NewTaskComposerPanelAction.WorktreeToggle),
-            newTaskComposerPanelActions(teamSelected = true),
-        )
+    fun settingRowsDescribeCurrentOutcome() {
+        assertEquals("建卡后直接进入会话", newTaskStartSessionDescription(true))
+        assertEquals("只创建任务，稍后再开始", newTaskStartSessionDescription(false))
+        assertEquals("在独立目录中工作，隔离当前修改", newTaskWorktreeDescription(true))
+        assertEquals("直接使用所选工作目录", newTaskWorktreeDescription(false))
     }
 
     @Test
@@ -149,15 +144,6 @@ class NewTaskComposerPresentationTest {
             newTaskComposerStatusLine(teamSelected = false, startFirstSession = true, worktree = true))
         assertEquals("仅创建任务分组 · 共用工作区",
             newTaskComposerStatusLine(teamSelected = false, startFirstSession = false, worktree = false))
-    }
-
-    @Test
-    fun feedbackLineOnlyCarriesTeamHint() {
-        assertEquals("交给团队需要先填写任务内容。",
-            newTaskComposerFeedbackLine("交给团队需要先填写任务内容。"))
-        assertEquals("团队态无提示时也要占住同一行", "", newTaskComposerFeedbackLine(null))
-        // 预留行只说团队自己的事：`error` 由它自己的整行错误位渲染，这里不再优先一次，
-        // 否则同一句话会在团队态出现两遍。签名里没有 error，重复渲染不可能发生。
     }
 
     @Test
