@@ -527,7 +527,9 @@ private fun TeamOfficeStrip(detail: AiTeamRunDetail, onOpenSession: (String) -> 
                 ).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = WandColors.textMuted,
-                modifier = Modifier.padding(start = 8.dp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = 8.dp),
             )
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
