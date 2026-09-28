@@ -250,4 +250,44 @@ class AppNavTest {
         // 空 teamId 不恢复成半吊子详情页：Saver 校验失败时整体退回初始栈（只有根）。
         assertEquals(listOf(Screen.SessionList), restoreKeys("ai-team-detail\u0001"))
     }
+    @Test
+    fun roundTrip_aiTeamChatKeepsRunIdAndShortNumber() {
+        val restored = roundTrip(Screen.AiTeamChat("run_1", "TASK-108"))
+        assertEquals(Screen.AiTeamChat("run_1", "TASK-108"), restored)
+        // 没有看板短号时（从会话列表进群聊）只恢复 runId。
+        assertEquals(Screen.AiTeamChat("run_1", null), roundTrip(Screen.AiTeamChat("run_1")))
+    }
+
+    @Test
+    fun roundTrip_aiTeamEditorKeepsTeamOrTemplate() {
+        // 编辑既有团队：带 teamId。
+        assertEquals(
+            Screen.AiTeamEditor(teamId = "team_1"),
+            roundTrip(Screen.AiTeamEditor(teamId = "team_1")),
+        )
+        // 新建：带模板 id，没有 teamId。
+        assertEquals(
+            Screen.AiTeamEditor(templateId = "dev"),
+            roundTrip(Screen.AiTeamEditor(templateId = "dev")),
+        )
+        // 两个都带（模板起步后又保存成功的情形）也能原样恢复。
+        assertEquals(
+            Screen.AiTeamEditor(teamId = "team_2", templateId = "blank"),
+            roundTrip(Screen.AiTeamEditor(teamId = "team_2", templateId = "blank")),
+        )
+    }
+
+    @Test
+    fun aiTeamEditorKeyWithBothParamsBlankRestoresToRoot() {
+        // 既没有要编辑的团队、也没有起步模板 = 无意义的目的地，不恢复成半吊子空页。
+        assertEquals(listOf(Screen.SessionList), restoreKeys("ai-team-editor\u0001\u0001"))
+        // 两个 key 前缀共享 "ai-team"：编辑器与详情/群聊各归各的，不串味。
+        assertEquals(Screen.AiTeamDetail("team_1"), roundTrip(Screen.AiTeamDetail("team_1")))
+    }
+
+    @Test
+    fun aiTeamChatKeyDoesNotCollideWithTeamDetail() {
+        // 两个 key 前缀共享 "ai-team"，恢复必须各归各的。
+        assertEquals(Screen.AiTeamDetail("team_1"), roundTrip(Screen.AiTeamDetail("team_1")))
+    }
 }

@@ -73,7 +73,11 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 
 **引擎优先级**：sherpa 本地模型 + 已下载引擎 → 系统识别器（GMS 设备）→ 弹出启用对话框。未启用本地语音时，APK 不含 sherpa 原生库，不会自动下载；确认启用才下载约 38 MB 的官方 AAR，提取约 22 MB arm64 库，同时按需下载所选模型。已有模型的升级用户只需下载引擎一次。国产无谷歌服务 ROM 上系统识别器普遍不可用（OPPO 返回 false、华为挂假服务），因此对话框会提供本地路径；官方 GitHub 不可达时提示错误而不是运行未校验的库。启用后转写完全离线。
 
-**构建说明**：`app/libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar` 是仓库内锁定的构建依赖（38 MB），Gradle 只提取 API 类（替换上游两个强制 `loadLibrary` 的 wrapper），不把 AAR 或 `.so` 放进 APK；APK 仅带 arm64 相关其他小型库。升级 sherpa 时须同时更新 AAR、wrapper JNI 签名以及 `SpeechNativeLibrary` 固定版本/文件大小/SHA-256。DEX 使用 `useLegacyPackaging = true` 压缩，优先降低自分发下载体积（安装时可能额外占用磁盘）。本地端侧验收运行 `cd android && ./gradlew :app:connectedDebugAndroidTest`（不带分发版本参数，测试变体需保留测试运行器的 Kotlin 类）。
+**构建说明**：仓库只保留 `app/libs/sherpa-onnx-api-1.13.2.jar`（约 535 KiB），包括官方 JVM API、Kotlin 元数据及许可证。`sherpa-onnx-api-1.13.2.json` 固定官方 AAR、classes.jar 和过滤后 API 的 SHA-256；Gradle 每次构建校验 API，不下载完整 AAR。已移除上游两个强制 `loadLibrary` 的 wrapper，由本仓库同名 JNI wrapper 替代；APK 不包含 sherpa `.so`。
+
+升级时先下载对应官方 AAR 到仓库外，更新 manifest、JNI 签名与 `SpeechNativeLibrary` 的固定版本/文件大小/SHA-256，再用 `python3 tools/prepare-sherpa-api.py /path/to/official.aar` 可复现生成 API（固定顺序、时间与无压缩 ZIP，剩余 class 字节不变）。不要把完整 AAR 加回仓库。常规语音单测使用小型 fixture 验证大小/哈希/路径/只读与失败清理；官方产物集成验证可运行 `./gradlew :app:testDebugUnitTest -PSHERPA_AAR=/path/to/official.aar`。
+
+DEX 使用 `useLegacyPackaging = true` 压缩，优先降低自分发下载体积（安装时可能额外占用磁盘）。本地端侧验收运行 `./gradlew :app:connectedDebugAndroidTest`（不带分发版本参数，测试变体需保留测试运行器的 Kotlin 类）。
 
 ## 后续演进
 

@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -33,13 +34,17 @@ import androidx.compose.ui.unit.dp
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamMember
 import com.wand.app.data.BoardTaskAgent
+import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TaskBoardPort
+import com.wand.app.data.boardAgentModelName
+import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspacePort
+import com.wand.app.ui.components.WandBreadcrumb
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandCard
-import com.wand.app.ui.components.WandDetailBackButton
+import com.wand.app.ui.components.WandCrumb
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIcons
@@ -48,8 +53,9 @@ import com.wand.app.ui.theme.WandColors
 import kotlinx.coroutines.launch
 
 /**
- * 团队详情（§6.2 A2/A3）：成员组织图只读 + 「直接开工」。
- * 不提供成员 / 候选编辑（§11-Q6），不提供增删；提交结果全部原位呈现，不用 Toast。
+ * 团队详情（§6.2 A2/A3）：成员组织图 + 「直接开工」，顶栏进编辑器改成员。
+ * 组织图本身只读（点卡片不改人设，避免与编辑器的展开手势冲突）；
+ * 提交结果全部原位呈现，不用 Toast。
  */
 @Composable
 fun AiTeamDetailScreen(
@@ -58,9 +64,15 @@ fun AiTeamDetailScreen(
     teamId: String,
     onBack: () -> Unit,
     onOpenTask: (String) -> Unit,
+    /** 「直接开工」成功后进 IM 群聊页（参数是运行 id，不是任务 id）。 */
+    onOpenGroupChat: (String) -> Unit = onOpenTask,
+    /** 顶栏「编辑」：进团队编辑器改名字、成员与执行候选。 */
+    onEditTeam: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var team by remember { mutableStateOf<AiTeam?>(null) }
+    // 执行候选的模型名要把 `default` 哨兵换成一个具体的默认模型（同 Web 目录口径）。
+    var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var projects by remember { mutableStateOf<List<Workspace>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -85,6 +97,8 @@ fun AiTeamDetailScreen(
         }
         // 项目列表失败不挡组织图展示：候选为空时开工区自己原位说明。
         projects = runCatching { workspaceApi.listWorkspaces() }.getOrDefault(projects)
+        // 模型目录失败只影响候选行的模型名，不挡团队详情。
+        models = runCatching { api.boardModels() }.getOrDefault(models)
     }
 
     val candidates = teamStartProjectCandidates(projects)
@@ -106,12 +120,17 @@ fun AiTeamDetailScreen(
         scope.launch {
             try {
                 val direct = api.startDirectTeamRun(teamId, effectiveWorkspaceId, note.trim())
-                val taskId = aiTeamDirectRunTaskId(direct)
-                if (taskId.isNotBlank()) {
-                    // 成功 = 跳看板详情页，那里有团队运行面板与「打开群聊」。
-                    onOpenTask(taskId)
+                // 成功 = 直接落到这一轮的群聊页：那里能看到派工、能立刻补一句要求。
+                val runId = direct.detail.run.id
+                if (runId.isNotBlank()) {
+                    onOpenGroupChat(runId)
                 } else {
-                    submitError = "已开工，但响应里没带任务卡，请在任务看板里查找。"
+                    val taskId = aiTeamDirectRunTaskId(direct)
+                    if (taskId.isNotBlank()) {
+                        onOpenTask(taskId)
+                    } else {
+                        submitError = "已开工，但响应里没带运行 id，请在任务看板里查找。"
+                    }
                 }
             } catch (e: Exception) {
                 // 服务端 400/404 文案原样显示（如「AI 团队不能在全局暂存工作区运行…」）。
@@ -126,10 +145,38 @@ fun AiTeamDetailScreen(
         containerColor = Color.Transparent,
         topBar = {
             WandDetailTopBar(
-                title = team?.name ?: "AI 团队",
-                subtitle = "团队详情 · 只读",
-                leading = { WandDetailBackButton(onClick = onBack) },
+                title = "",
+                // 返回入口只留一个：面包屑首段。原来的箭头与它同功能、同一条栏，属重复。
+                leading = null,
+                // 单层标题：面包屑「AI 团队 › 团队名」，副行说明当前可做的事（不再是「只读」）。
+                titleContent = {
+                    Column(modifier = Modifier.weight(1f)) {
+                        WandBreadcrumb(
+                            crumbs = listOf(
+                                // 返回入口只留一个：面包屑首段，且**永远可点**——它与任务详情不同：
+                                // 宽屏左栏只有会话/任务列表（TaskListScreen 里没有团队列表），
+                                // 本页在宽屏也是经 nav.push 进入，栈里下一层恒为「AI 团队」列表，
+                                // 恒有可回的去处。所以这里不存在「宽屏右栏即顶层」那种态，
+                                // showBack 门控是走不到的分支，按 AGENTS.md 删掉（第 22 步实测取证）。
+                                WandCrumb("AI 团队", onClick = onBack),
+                                WandCrumb(team?.name ?: "AI 团队"),
+                            ),
+                        )
+                        Text(
+                            "团队详情 · 可编辑成员与执行配置",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = WandColors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                },
                 actions = {
+                    WandIconButton(
+                        icon = WandIcons.edit,
+                        contentDescription = "编辑团队",
+                        onClick = onEditTeam,
+                    )
                     WandIconButton(
                         icon = WandIcons.refresh,
                         contentDescription = "刷新",
@@ -192,7 +239,7 @@ fun AiTeamDetailScreen(
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 // 组织图：负责人在最前、成员在后（aiTeamOrderedMembers）。
                                 aiTeamOrderedMembers(currentTeam).forEach { member ->
-                                    AiTeamMemberCard(member)
+                                    AiTeamMemberCard(member, models)
                                 }
                             }
                         }
@@ -227,7 +274,7 @@ fun AiTeamDetailScreen(
 }
 
 @Composable
-private fun AiTeamMemberCard(member: AiTeamMember) {
+private fun AiTeamMemberCard(member: AiTeamMember, models: ModelsResponse?) {
     WandCard(contentPadding = PaddingValues(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -238,11 +285,13 @@ private fun AiTeamMemberCard(member: AiTeamMember) {
                 modifier = Modifier.weight(1f, fill = false),
             )
             if (member.isLeader) {
-                Text(
-                    "负责人",
-                    color = WandColors.brand,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(start = 8.dp),
+                // §2.3 F1：名字原样保留，角色改用矢量星形标记，不在标题再写一遍「负责人」
+                // （成员名恰为「负责人」时，文字角色会变成同义重复，且掩盖真实名字）。
+                Icon(
+                    WandIcons.leader,
+                    contentDescription = "团队角色：负责人",
+                    tint = WandColors.brand,
+                    modifier = Modifier.padding(start = 8.dp).size(13.dp),
                 )
             }
         }
@@ -267,7 +316,7 @@ private fun AiTeamMemberCard(member: AiTeamMember) {
                         modifier = Modifier.widthIn(min = 40.dp),
                     )
                     Text(
-                        aiTeamAgentLabel(agent),
+                        aiTeamAgentLabel(agent, models),
                         color = WandColors.textSecondary,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 1,
@@ -279,10 +328,14 @@ private fun AiTeamMemberCard(member: AiTeamMember) {
     }
 }
 
-/** 候选一行：provider · model · effort；default/off 这类缺省值不占篇幅。 */
-fun aiTeamAgentLabel(agent: BoardTaskAgent): String = buildString {
-    append(agent.provider)
-    if (agent.model.isNotBlank() && agent.model != "default") append(" · ").append(agent.model)
+/**
+ * 候选一行：provider · model · effort；off 这类缺省值不占篇幅。
+ * `model` 是 `default` 哨兵时换成服务端配置的默认模型名（拿不到名字才省掉这一段，不写「默认模型」）。
+ */
+fun aiTeamAgentLabel(agent: BoardTaskAgent, models: ModelsResponse? = null): String = buildString {
+    append(boardTaskProviderLabel(agent.provider))
+    val model = boardAgentModelName(models, agent.provider, agent.model)
+    if (model.isNotBlank()) append(" · ").append(model)
     if (agent.thinkingEffort.isNotBlank() && agent.thinkingEffort != "off") {
         append(" · ").append(agent.thinkingEffort)
     }

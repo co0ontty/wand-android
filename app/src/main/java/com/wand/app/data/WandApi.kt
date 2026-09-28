@@ -566,11 +566,32 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
     override suspend fun listAiTeams(): List<AiTeam> =
         AiTeam.parseList(requestArray("GET", "/api/ai-teams"))
 
+    override suspend fun createAiTeam(draft: AiTeamDraft): AiTeam =
+        AiTeam.parse(requestObject("POST", "/api/ai-teams", draft.toJson()))
+            ?: throw WandApiException(500, "新建团队响应无效。")
+
+    override suspend fun updateAiTeam(teamId: String, draft: AiTeamDraft): AiTeam =
+        AiTeam.parse(requestObject("PUT", "/api/ai-teams/${encode(teamId)}", draft.toJson()))
+            ?: throw WandApiException(500, "保存团队响应无效。")
+
+    override suspend fun deleteAiTeam(teamId: String) {
+        requestObject("DELETE", "/api/ai-teams/${encode(teamId)}")
+    }
+
     override suspend fun teamRunsForTask(taskId: String): List<AiTeamRun> =
         AiTeamRun.parseList(requestArray("GET", "/api/wand-tasks/${encode(taskId)}/team-runs"))
 
     override suspend fun aiTeamRunDetail(runId: String): AiTeamRunDetail =
         aiTeamRunDetailOrThrow(requestObject("GET", "/api/ai-team-runs/${encode(runId)}"))
+
+    /**
+     * 运行中步骤的 live 文本（§4.9.1，`GET /api/ai-team-runs/:id/live`）。
+     * Android 没有可用的系统通知通道，所以移动端按约定轮询这个端点；不在 port 接口上声明，
+     * 免得 Web 侧共用契约被误当成 detail 的一部分。
+     */
+    suspend fun aiTeamRunLive(runId: String): AiTeamRunLive =
+        AiTeamRunLive.parse(requestObject("GET", "/api/ai-team-runs/${encode(runId)}/live"))
+            ?: throw WandApiException(500, "团队实时输出响应无效。")
 
     override suspend fun startTeamRun(taskId: String, teamId: String, note: String): AiTeamRunDetail =
         aiTeamRunDetailOrThrow(

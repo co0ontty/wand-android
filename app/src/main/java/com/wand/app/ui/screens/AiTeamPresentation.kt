@@ -37,7 +37,7 @@ fun teamDirectNoteError(note: String): String? = when {
     else -> null
 }
 
-/** 组织图排序：负责人在最前，其余保持团队定义顺序。 */
+/** 组织图排序：负责人在最前，其余保持团队定义顺序（只读页面用）。 */
 fun aiTeamOrderedMembers(team: AiTeam): List<AiTeamMember> {
     val leaders = team.members.filter { it.isLeader }
     val rest = team.members.filterNot { it.isLeader }
@@ -52,11 +52,10 @@ fun aiTeamPreferredAgent(member: AiTeamMember): BoardTaskAgent? = member.agents.
 fun aiTeamCandidateRoleLabel(index: Int): String =
     if (index == 0) "首选" else "备用 $index"
 
-/** 列表卡副标题：N 位成员 · 负责人 xxx。 */
+/** 列表卡副标题：N 位成员 · 1 位负责人。负责人名字已经在标题行的徽标旁说过一次，这里不再拼第二遍。 */
 fun aiTeamSummaryLine(team: AiTeam): String {
-    val leader = aiTeamLeader(team)
     val base = "${team.members.size} 位成员"
-    return if (leader == null) base else "$base · 负责人 ${leader.name}"
+    return if (aiTeamLeader(team) == null) base else "$base · 1 位负责人"
 }
 
 /** 直发结果的落点任务卡：优先顶层 taskId，旧服务端缺失时回落 run 快照里的 taskId。 */

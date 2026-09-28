@@ -38,6 +38,9 @@ import kotlin.Pair;
 public class ConnectActivity extends AppCompatActivity {
 
     private static final int REQUEST_CAMERA_PERMISSION = 4242;
+    // 401 就地重探的次数与退避基数，与 WandAuth.loginWithToken 的同一条规则对齐。
+    private static final int LOGIN_PROBE_MAX_ATTEMPTS = 2;
+    private static final long LOGIN_PROBE_RETRY_DELAY_MS = 1_000L;
     public static final String EXTRA_MANAGEMENT_MODE = "management_mode";
     public static final String EXTRA_RETURN_SERVER_ID = "return_server_id";
     private static final String EXTRA_PROFILES_CHANGED = "profiles_changed";
@@ -566,36 +569,54 @@ public class ConnectActivity extends AppCompatActivity {
 
     private ProbeResult testConnectionWithToken(String baseUrl, String appToken, int timeout) {
         WandLog.i("connect", "探测连接（连接码）");
+        return loginProbe(baseUrl, appToken, timeout, 1);
+    }
+
+    /**
+     * POST /api/login 探测 + 失败归类（判定与文案都在 WandAuth 里，与冷启动登录同一份）。
+     *
+     * 单次 401 不再判死：口令轮换后 appToken 换发会话有竞态窗口，先就地退避重探一次；
+     * 只有重探仍被拒才提示「连接失败，请重试；若一直失败，再重新获取连接码」。
+     * 之前那句「连接码可能已过期（密码已更改），请重新获取连接码」是任何一次 401 都直接甩出来的，
+     * 把还能用的客户端推去换码 —— 换码本身又在制造下一轮凭据漂移。
+     */
+    private ProbeResult loginProbe(String baseUrl, String appToken, int timeout, int attempt) {
+        int code;
         try {
             JSONObject body = new JSONObject();
             body.put("appToken", appToken);
             WandHttp.SimpleResponse response = WandHttp.postJson(
                     baseUrl + "/api/login", body.toString(), timeout, baseUrl);
-            int code = response.getCode();
-            if (code == 200) {
-                WandLog.i("connect", "探测成功");
-                return ProbeResult.success(baseUrl);
-            } else if (code == 401) {
-                WandLog.w("connect", "连接码被拒 401", null);
-                return new ProbeResult(
-                        "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
-                        false
-                );
-            } else if (code == 429 || code >= 500) {
-                return new ProbeResult("服务器暂时不可用，请稍后再试", true);
-            }
-            return new ProbeResult("服务器返回了异常状态码: " + code, false);
+            code = response.getCode();
         } catch (Exception e) {
             // URL 中可能含认证信息；异常文本和 endpoint 不进入日志或界面。
             WandLog.w("connect", "探测连接失败", null);
-            ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(
-                    baseUrl, appToken, timeout, e);
+            ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(baseUrl, appToken, timeout, e);
             if (upgraded != null) return upgraded;
+            WandAuth.AuthFailure failure =
+                    WandAuth.classifyLoginFailure(null, WandAuth.localErrorOf(e), attempt);
             return new ProbeResult(
-                    "无法连接服务器，请检查地址、连接码与网络",
-                    isTransientConnectionError(e)
-            );
+                    WandAuth.loginFailureMessage(failure, null), failure.getRetryable());
         }
+        if (code >= 200 && code < 300) {
+            WandLog.i("connect", "探测成功");
+            return ProbeResult.success(baseUrl);
+        }
+        WandAuth.AuthFailure failure = WandAuth.classifyLoginFailure(code, null, attempt);
+        if (failure == WandAuth.AuthFailure.AuthPending && attempt < LOGIN_PROBE_MAX_ATTEMPTS) {
+            WandLog.i("connect", "连接码被拒 401，退避后重探（第 " + (attempt + 1) + " 次）");
+            try {
+                Thread.sleep(LOGIN_PROBE_RETRY_DELAY_MS * attempt);
+            } catch (InterruptedException interrupted) {
+                // 用户已取消这一轮连接：交回可重试语义，由 generation 校验丢弃结果。
+                Thread.currentThread().interrupt();
+                return new ProbeResult(
+                        WandAuth.loginFailureMessage(WandAuth.AuthFailure.Unreachable, null), true);
+            }
+            return loginProbe(baseUrl, appToken, timeout, attempt + 1);
+        }
+        WandLog.w("connect", "登录探测失败 " + failure, null);
+        return new ProbeResult(WandAuth.loginFailureMessage(failure, code), failure.getRetryable());
     }
 
     private ProbeResult testConnection(String baseUrl, int timeout) {
@@ -614,10 +635,10 @@ public class ConnectActivity extends AppCompatActivity {
             WandLog.w("connect", "探测连接失败", null);
             ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(baseUrl, null, timeout, e);
             if (upgraded != null) return upgraded;
+            WandAuth.AuthFailure failure =
+                    WandAuth.classifyLoginFailure(null, WandAuth.localErrorOf(e), 1);
             return new ProbeResult(
-                    "无法连接服务器，请检查地址与网络",
-                    isTransientConnectionError(e)
-            );
+                    WandAuth.loginFailureMessage(failure, null), failure.getRetryable());
         }
     }
 
@@ -637,24 +658,9 @@ public class ConnectActivity extends AppCompatActivity {
         String httpsUrl = WandHttp.preferHttpsUrl(baseUrl);
         if (httpsUrl == null) return null;
         WandLog.i("connect", "明文打到 TLS 端口，改用 https 重试");
+        // httpsUrl 已是 https，preferHttpsUrl 会返回 null，所以这里不会再套一层，递归有界。
+        if (appToken != null) return loginProbe(httpsUrl, appToken, timeout, 1);
         try {
-            if (appToken != null) {
-                JSONObject body = new JSONObject();
-                body.put("appToken", appToken);
-                WandHttp.SimpleResponse response = WandHttp.postJson(
-                        httpsUrl + "/api/login", body.toString(), timeout, httpsUrl);
-                if (response.getCode() == 200) return ProbeResult.success(httpsUrl);
-                if (response.getCode() == 401) {
-                    return new ProbeResult(
-                            "认证失败，连接码可能已过期（密码已更改），请重新获取连接码",
-                            false
-                    );
-                }
-                return new ProbeResult(
-                        "服务器返回了异常状态码: " + response.getCode(),
-                        response.getCode() == 429 || response.getCode() >= 500
-                );
-            }
             WandHttp.SimpleResponse response = WandHttp.get(httpsUrl + "/api/config", timeout, httpsUrl);
             int code = response.getCode();
             if (code == 200 || code == 401) return ProbeResult.success(httpsUrl);
@@ -665,11 +671,6 @@ public class ConnectActivity extends AppCompatActivity {
         } catch (Exception stillFailing) {
             return null;
         }
-    }
-
-    private boolean isTransientConnectionError(Exception error) {
-        return !(error instanceof java.net.MalformedURLException)
-                && !(error instanceof IllegalArgumentException);
     }
 
     /** 连接成功后进入原生主界面（HomeActivity）。 */

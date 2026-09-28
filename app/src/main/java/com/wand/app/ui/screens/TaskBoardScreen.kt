@@ -1,5 +1,6 @@
 package com.wand.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -85,6 +86,7 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
+import com.wand.app.data.boardAgentModelName
 import com.wand.app.data.boardAgentModelOptions
 import com.wand.app.data.boardParentTaskOptions
 import com.wand.app.data.groupBoardSessionsByAgent
@@ -99,10 +101,11 @@ import com.wand.app.data.patchBoardTaskBody
 import com.wand.app.data.supportedBoardTaskModes
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
+import com.wand.app.ui.components.WandAgentFields
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandCard
-import androidx.activity.compose.BackHandler
+import com.wand.app.ui.components.WandChoice
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandDetailBackButton
@@ -545,7 +548,7 @@ private fun TaskBoardList(
         }
         item(key = "filters") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                BoardChoice(
+                WandChoice(
                     label = workspaces.firstOrNull { it.id == filterWorkspaceId }?.name ?: "所有项目",
                     options = listOf("" to "所有项目") + workspaces.map { it.id to it.name },
                     onSelect = onFilterWorkspace,
@@ -930,7 +933,7 @@ private fun BoardSectionHeader(
         }
         WandIconButton(
             icon = WandIcons.add,
-            contentDescription = "在${boardTaskStatusLabel(status)}中新建任务",
+            contentDescription = boardGroupAddTaskDescription(status),
             onClick = { onAdd(status) },
             variant = WandIconButtonVariant.Compact,
         )
@@ -1418,6 +1421,8 @@ internal fun TaskBoardDetailPane(
     onDelete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onMoveSession: (com.wand.app.data.BoardTaskSession) -> Unit,
+    /** 「打开群聊」：参数是团队运行 id，由上层落到 IM 群聊页。 */
+    onOpenTeamChat: (runId: String, taskIdentifier: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -1496,13 +1501,13 @@ internal fun TaskBoardDetailPane(
             }
         }
         WandCard(contentPadding = PaddingValues(12.dp)) {
-            BoardChoice(
+            WandChoice(
                 label = "优先级 · ${boardTaskPriorityLabel(task.priority)}",
                 options = BOARD_TASK_PRIORITIES.map { it to boardTaskPriorityLabel(it) },
                 onSelect = { onPatch(patchBoardTaskBody(priority = it)) },
                 enabled = !busy,
             )
-            BoardChoice(
+            WandChoice(
                 label = "工作区 · ${task.workspace?.name ?: "未归属工作区"}",
                 options = workspaceChoices,
                 onSelect = { onPatch(patchBoardTaskBody(workspaceId = it.ifBlank { null })) },
@@ -1520,10 +1525,10 @@ internal fun TaskBoardDetailPane(
         } else {
             agentGroups.forEach { group ->
                 Text(
-                    boardTaskProviderLabel(group.provider) +
-                        (group.agent?.let {
-                            " · ${if (it.model == "default") "默认模型" else it.model} · ${boardTaskModeLabel(it.mode)}"
-                        } ?: ""),
+                    boardTaskProviderLabel(group.provider) + group.agent?.let {
+                        val model = boardAgentModelName(models, it.provider, it.model)
+                        (if (model.isBlank()) "" else " · $model") + " · ${boardTaskModeLabel(it.mode)}"
+                    }.orEmpty(),
                     color = WandColors.textPrimary,
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(top = 4.dp),
@@ -1568,7 +1573,7 @@ internal fun TaskBoardDetailPane(
                                     }
                                     Text(
                                         listOfNotNull(
-                                            session.model.takeIf { it.isNotBlank() && it != "default" },
+                                            boardAgentModelName(models, group.provider, session.model).takeIf { it.isNotBlank() },
                                             boardSessionStatusLabel(session.status),
                                         ).joinToString(" · "),
                                         color = WandColors.textMuted,
@@ -1621,7 +1626,7 @@ internal fun TaskBoardDetailPane(
                 )
                 Spacer(Modifier.height(8.dp))
                 if (teams.isNotEmpty()) {
-                    BoardChoice(
+                    WandChoice(
                         label = "指派对象 · ${teamTarget?.name ?: "CLI 工具"}",
                         options = buildList {
                             add("" to "CLI 工具")
@@ -1632,7 +1637,7 @@ internal fun TaskBoardDetailPane(
                     )
                 }
                 if (teamTarget == null) {
-                    BoardAgentParamChoices(
+                    WandAgentFields(
                         models = models,
                         agent = agent,
                         providerLabel = "CLI 工具",
@@ -1688,7 +1693,7 @@ internal fun TaskBoardDetailPane(
                     detail = detail,
                     busy = busy,
                     onAction = onTeamRunAction,
-                    onOpenGroupChat = { sessionId -> onOpenSession(sessionId, true) },
+                    onOpenGroupChat = { runId -> onOpenTeamChat(runId, task.identifier) },
                 )
             }
         }
@@ -1784,18 +1789,18 @@ private fun CreateBoardTaskDialog(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
-        BoardChoice(
+        WandChoice(
             label = "工作区 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "未归属工作区"}",
             options = listOf("" to "未归属工作区（使用临时目录）") + workspaces.map { it.id to it.name },
             onSelect = { workspaceId = it; parentTaskId = "" },
         )
-        BoardChoice(
+        WandChoice(
             label = "归属父任务 · ${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联父任务"}",
             options = parentOptions,
             onSelect = { parentTaskId = it },
         )
         if (boardCreateTeamChoiceVisible(teams, dispatches)) {
-            BoardChoice(
+            WandChoice(
                 label = "指派对象 · ${teamTarget?.name ?: "CLI 工具"}",
                 options = boardCreateTargetOptions(teams, dispatches),
                 onSelect = { dispatchTeamId = it },
@@ -1804,19 +1809,19 @@ private fun CreateBoardTaskDialog(
         }
         if (teamTarget == null) {
             if (dispatches) {
-                BoardAgentParamChoices(
+                WandAgentFields(
                     models = models,
                     agent = agent,
                     providerLabel = "第一次指派",
                     onChange = { agent = it },
                 )
             }
-            BoardChoice(
+            WandChoice(
                 label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
                 options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
                 onSelect = { agent = agent.copy(kind = it) },
             )
-            BoardChoice(
+            WandChoice(
                 label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
                 options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
                 onSelect = { agent = agent.copy(mode = it) },
@@ -1829,12 +1834,12 @@ private fun CreateBoardTaskDialog(
                 style = MaterialTheme.typography.labelSmall,
             )
         }
-        BoardChoice(
+        WandChoice(
             label = "状态 · ${boardTaskStatusLabel(status)}",
             options = BOARD_TASK_STATUSES.map { it to boardTaskStatusLabel(it) },
             onSelect = { status = it },
         )
-        BoardChoice(
+        WandChoice(
             label = "优先级 · ${boardTaskPriorityLabel(priority)}",
             options = BOARD_TASK_PRIORITIES.map { it to boardTaskPriorityLabel(it) },
             onSelect = { priority = it },
@@ -1877,137 +1882,6 @@ private fun BoardFilterChip(
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
     )
-}
-
-/**
- * 指派参数五连：CLI 工具 / 模型 / 思考深度 / 会话类型 / 运行模式。
- * 看板卡片的「再指派」表单与新建任务弹窗共用，避免两处下拉选项漂移。
- *
- * 会话类型与运行模式始终可选：只创建的任务也会把形态 / 模式记进服务端全局默认，
- * 否则下次派发会退回结构化与标准模式，用户在下拉里的选择会静默丢失。
- */
-@Composable
-private fun BoardAgentParamChoices(
-    models: ModelsResponse?,
-    agent: BoardTaskAgent,
-    providerLabel: String,
-    onChange: (BoardTaskAgent) -> Unit,
-    enabled: Boolean = true,
-) {
-    val modelOptions = boardAgentModelOptions(models, agent.provider)
-    BoardChoice(
-        label = "$providerLabel · ${boardTaskProviderLabel(agent.provider)}",
-        options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
-        onSelect = { provider ->
-            val nextModels = boardAgentModelOptions(models, provider)
-            val model = nextModels.firstOrNull { it.id == agent.model }?.id
-                ?: nextModels.firstOrNull()?.id
-                ?: "default"
-            onChange(
-                agent.copy(
-                    provider = provider,
-                    model = model,
-                    mode = normalizeBoardTaskAgentMode(provider, agent.mode),
-                ),
-            )
-        },
-        enabled = enabled,
-    )
-    BoardChoice(
-        label = "模型 · ${modelOptions.firstOrNull { it.id == agent.model }?.label ?: agent.model}",
-        options = modelOptions.map { it.id to it.label },
-        onSelect = { onChange(agent.copy(model = it)) },
-        enabled = enabled,
-    )
-    BoardChoice(
-        label = "思考深度 · ${boardTaskEffortLabel(agent.thinkingEffort)}",
-        options = BOARD_TASK_EFFORTS.map { it to boardTaskEffortLabel(it) },
-        onSelect = { onChange(agent.copy(thinkingEffort = it)) },
-        enabled = enabled,
-    )
-    BoardChoice(
-        label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
-        options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
-        onSelect = { onChange(agent.copy(kind = it)) },
-        enabled = enabled,
-    )
-    BoardChoice(
-        label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
-        options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
-        onSelect = { onChange(agent.copy(mode = it)) },
-        enabled = enabled,
-    )
-}
-
-@Composable
-private fun BoardChoice(
-    label: String,
-    options: List<Pair<String, String>>,
-    onSelect: (String) -> Unit,
-    enabled: Boolean = true,
-    leadingIcon: ImageVector? = null,
-    chip: Boolean = false,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        Row(
-            modifier = Modifier
-                .then(
-                    if (chip) {
-                        Modifier
-                            .clip(WandShapes.full)
-                            .background(WandColors.surfaceSoft.copy(alpha = 0.8f))
-                            .padding(horizontal = 10.dp, vertical = 7.dp)
-                    } else {
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(WandShapes.sm)
-                            .padding(horizontal = 4.dp, vertical = 6.dp)
-                    },
-                )
-                .clickable(enabled = enabled) { expanded = true },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (leadingIcon != null) {
-                Icon(
-                    leadingIcon,
-                    contentDescription = null,
-                    tint = WandColors.success,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            Text(
-                label,
-                color = if (enabled) WandColors.textPrimary else WandColors.textMuted,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = if (chip) Modifier else Modifier.weight(1f),
-            )
-            Icon(
-                WandIcons.expand,
-                contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            containerColor = WandColors.bgElevated,
-        ) {
-            options.forEach { (value, optionLabel) ->
-                DropdownMenuItem(
-                    text = { Text(optionLabel) },
-                    onClick = {
-                        expanded = false
-                        onSelect(value)
-                    },
-                )
-            }
-        }
-    }
 }
 
 @Composable

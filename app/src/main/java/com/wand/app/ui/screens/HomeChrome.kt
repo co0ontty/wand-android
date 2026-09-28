@@ -21,6 +21,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -56,6 +58,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -63,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
@@ -79,6 +83,7 @@ import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandInlineSearchField
 import com.wand.app.ui.components.WandMorphIconButton
+import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandSegmentedTrack
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
@@ -124,6 +129,7 @@ internal fun HomeTopBar(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val motionEnabled = !reduceMotionEnabled()
+    val focusManager = LocalFocusManager.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -220,60 +226,66 @@ internal fun HomeTopBar(
             iconSize = 19.dp,
             rotationDegrees = 0f,
         )
-        if (!searchOpen && onCollapseSidebar != null) {
+        // 入口的存在性只由布局决定，不随搜索态变化：搜索期间 5 个入口仍然可达（§2.7 B1）。
+        if (onCollapseSidebar != null) {
             WandIconButton(
                 icon = WandIcons.panelCollapse,
                 contentDescription = "收起任务侧边栏",
                 onClick = onCollapseSidebar,
+                enabled = interactionEnabled,
                 variant = WandIconButtonVariant.Toolbar,
             )
         }
-        if (!searchOpen) {
-            Box {
-                WandIconButton(
-                    icon = WandIcons.more,
-                    contentDescription = "更多选项",
-                    onClick = { menuOpen = true },
-                    variant = WandIconButtonVariant.Toolbar,
-                )
-                DropdownMenu(
-                    expanded = menuOpen,
-                    onDismissRequest = { menuOpen = false },
-                    containerColor = WandColors.bgElevated,
-                ) {
-                    if (onStartSelection != null) {
-                        DropdownMenuItem(
-                            text = { Text("选择多项") },
-                            leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                            onClick = { menuOpen = false; onStartSelection() },
-                        )
-                    }
+        Box {
+            WandIconButton(
+                icon = WandIcons.more,
+                contentDescription = "更多选项",
+                // ⋮ 常驻后会在搜索展开时点到：先清焦点收键盘，菜单才不会被 IME 顶起；
+                // 搜索词保留，菜单关闭后也不自动重新聚焦。
+                onClick = {
+                    focusManager.clearFocus()
+                    menuOpen = true
+                },
+                enabled = interactionEnabled,
+                variant = WandIconButtonVariant.Toolbar,
+            )
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                containerColor = WandColors.bgElevated,
+            ) {
+                if (onStartSelection != null) {
                     DropdownMenuItem(
-                        text = { Text("刷新") },
-                        leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
-                        onClick = { menuOpen = false; onRefresh() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("任务管理") },
+                        text = { Text("选择多项") },
                         leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                        onClick = { menuOpen = false; onOpenTaskBoard() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("AI 团队") },
-                        leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
-                        onClick = { menuOpen = false; onOpenAiTeams() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("设置") },
-                        leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
-                        onClick = { menuOpen = false; onOpenSettings() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("切换服务器") },
-                        leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
-                        onClick = { menuOpen = false; onSwitchServer() },
+                        onClick = { menuOpen = false; onStartSelection() },
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text("刷新") },
+                    leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
+                    onClick = { menuOpen = false; onRefresh() },
+                )
+                DropdownMenuItem(
+                    text = { Text("任务管理") },
+                    leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
+                    onClick = { menuOpen = false; onOpenTaskBoard() },
+                )
+                DropdownMenuItem(
+                    text = { Text("AI 团队") },
+                    leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
+                    onClick = { menuOpen = false; onOpenAiTeams() },
+                )
+                DropdownMenuItem(
+                    text = { Text("设置") },
+                    leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
+                    onClick = { menuOpen = false; onOpenSettings() },
+                )
+                DropdownMenuItem(
+                    text = { Text("切换服务器") },
+                    leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
+                    onClick = { menuOpen = false; onSwitchServer() },
+                )
             }
         }
     }
@@ -336,48 +348,189 @@ internal fun HomeModeTabs(
 // MARK: - 状态总览
 
 /**
- * 一行状态胶囊：几个在跑、几个等你。安静时整条不渲染，
- * 让首页在没有活动的时候也保持干净（不是留一条空壳）。
+ * 首页状态行要显示的数（§2.8 B2、§2.28 S24）。
+ *
+ * 口径只有一条：这一行的「在跑 / 等你 / 计数」全部取自已过完整条筛选链的 [overview]
+ * （调用处传入的 `visibleGroups` = 搜索 ∩ 只看等你的**最终**结果），[totalCount] 才是全量数 M。
+ * 组件不再自己算第二遍，避免出现「列表 0 条、状态行挂着 `11 / 27 条匹配`」的两种批次混排。
  */
+internal data class HomeActivityStats(
+    val overview: HomeOverview,
+    val totalCount: Int,
+    val searching: Boolean,
+    val attentionOnly: Boolean,
+) {
+    /**
+     * 计数文案的单一来源：搜索词在场时「匹配」优先，其次「待处理」，
+     * 两层筛选都不在时只报全量数。三种单位不混用，也不在调用处再拼一遍。
+     */
+    val countLabel: String
+        get() = when {
+            searching -> "${overview.sessions} / $totalCount 条匹配"
+            attentionOnly -> "${overview.sessions} / $totalCount 条待处理"
+            else -> "$totalCount 个会话"
+        }
+
+    /** 只读「在跑」胶囊：只看最终交集里是不是真的有在跑。 */
+    fun showsRunningPill(): Boolean = overview.running > 0
+
+    /** 只读「在跑」胶囊文案，与等你胶囊同源于 [overview]。 */
+    fun runningPillLabel(): String = "${overview.running} 个在跑"
+
+    /**
+     * 「只看等你」胶囊是否渲染。胶囊是这个筛选的**唯一开关**，所以选中态必须渲染：
+     * 一旦在筛选打开时（含交集为 0）把它藏起来，用户在原地就关不掉了（S24）。
+     */
+    fun showsAttentionPill(): Boolean = overview.needsYou > 0 || attentionOnly
+
+    /**
+     * 胶囊文案的单一来源：有等待数就报数（选中与否同一份），
+     * 选中且零结果是「已选等你」——不复用未选中式祈使文案，否则读起来像没开、找不到关闭点。
+     */
+    fun attentionPillLabel(): String =
+        if (overview.needsYou > 0) "${overview.needsYou} 个等你" else "已选等你"
+
+    /** 无障碍动作名同样只从这里出：选中态读「取消」，才知道再点同一坐标就是关闭路径。 */
+    fun attentionPillDescription(): String =
+        if (attentionOnly) "取消只看需要处理的会话" else "只看需要处理的会话"
+
+    /** 开关本身的状态：读屏靠它知道现在是开着还是关着，不用猜底色。 */
+    fun attentionPillStateDescription(): String = if (attentionOnly) "已开启" else "未开启"
+
+    /**
+     * 极端大的等待数被固定触控槽省略时补的完整语义（§2.28）：
+     * 视觉被截掉的只有报数，动作名仍由 [attentionPillDescription] 给出，这里把完整 W 找回来。
+     */
+    fun attentionPillFullDescription(): String =
+        "${attentionPillDescription()}，${overview.needsYou} 个等你"
+}
+
+/**
+ * 状态行的数据只在调用处算一次：`globalOverview` 给分母，
+ * `finalOverview` 给这一行显示的全部数字。
+ */
+internal fun homeActivityStats(
+    globalOverview: HomeOverview,
+    finalOverview: HomeOverview,
+    searching: Boolean,
+    attentionOnly: Boolean,
+): HomeActivityStats = HomeActivityStats(
+    overview = finalOverview,
+    totalCount = globalOverview.sessions,
+    searching = searching,
+    attentionOnly = attentionOnly,
+)
+
+/**
+ * 整行是否渲染的**唯一**门（D13）：调用处直接用它，组件内不得有第二套显隐表达式。
+ * 安静且没开任何筛选时不留空壳；但搜索态（含命中 0 条）与筛选选中态必须留在原地，
+ * 否则计数会和空态互相矛盾、开关自己无处可点。任务分段不渲染这条会话状态行。
+ */
+internal fun homeActivityStripVisible(showingBoard: Boolean, stats: HomeActivityStats): Boolean =
+    !showingBoard && (
+        stats.searching || stats.attentionOnly ||
+            stats.overview.running > 0 || stats.overview.needsYou > 0
+    )
+
+/** 会话列表空态的两段文案（图标之外）：一行一种组合，只有一份实现。 */
+internal data class HomeSessionEmptyCopy(
+    val title: String,
+    val subtitle: String,
+)
+
+/**
+ * 有数据、但最终 `visibleGroups` 为空时的空态（§2.28）。
+ * 建议必须指向**当前真正挡着列表的那一层**：只看等你时指回「已选等你」这枚胶囊，
+ * 而不是叫用户去关一个他根本没开的搜索。不加按钮型 CTA。
+ */
+internal fun homeSessionEmptyCopy(searching: Boolean, attentionOnly: Boolean): HomeSessionEmptyCopy = when {
+    searching && attentionOnly -> HomeSessionEmptyCopy(
+        title = "没有匹配的待处理会话",
+        subtitle = "换个词试试，或者再点「已选等你」查看搜索结果。",
+    )
+    searching -> HomeSessionEmptyCopy(
+        title = "没有匹配的会话",
+        subtitle = "换个词试试，或者关掉搜索看全部。",
+    )
+    else -> HomeSessionEmptyCopy(
+        title = "没有需要处理的会话",
+        subtitle = "当前没有会话等你处理。再点「已选等你」查看全部会话。",
+    )
+}
+
+/** 「等你」筛选胶囊的固定触控槽（§2.28）：两态同宽同坐标，零结果也不缩、不消失。 */
+private val AttentionPillSlotWidth = 120.dp
+
+/** 前导标识槽：未选时 7dp 圆点居中、选中时 13dp 矢量勾，都在同一槽里换，不动文字起点。 */
+private val PillLeadingSlotSize = 13.dp
+private val PillLeadingDotSize = 7.dp
+
+/** 胶囊的纵向内边距，计数文本共用：两者同为 `labelMedium`，首行才能对齐。 */
+private val PillVerticalPadding = 5.dp
+
+/**
+ * 一行状态：左端第一槽是可点的「等你」筛选胶囊，右边才是只读的在跑与计数。
+ * 显隐由调用处的 [homeActivityStripVisible] 唯一决定，这里不再早退。
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun HomeActivityStrip(
-    overview: HomeOverview,
-    attentionOnly: Boolean,
+    stats: HomeActivityStats,
     enabled: Boolean,
     onToggleAttention: () -> Unit,
 ) {
-    val showNeedsYou = overview.needsYou > 0 || attentionOnly
-    if (overview.running == 0 && !showNeedsYou) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 14.dp, end = 14.dp, top = 2.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // 首行左右两端固定是筛选触发点与计数；放不下时落下去的只有只读在跑胶囊。
+        verticalAlignment = Alignment.Top,
     ) {
-        if (overview.running > 0) {
-            HomeStatPill(
-                label = "${overview.running} 个在跑",
-                tone = WandStatusTone.Success,
-                selected = false,
-                onClick = null,
-            )
+        FlowRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            maxLines = 2,
+        ) {
+            if (stats.showsAttentionPill()) {
+                HomeStatPill(
+                    label = stats.attentionPillLabel(),
+                    tone = WandStatusTone.Permission,
+                    selected = stats.attentionOnly,
+                    onClick = { if (enabled) onToggleAttention() },
+                    contentDescription = stats.attentionPillDescription(),
+                    stateDescription = stats.attentionPillStateDescription(),
+                    ellipsizedContentDescription = stats.attentionPillFullDescription(),
+                    slotWidth = AttentionPillSlotWidth,
+                )
+            }
+            if (stats.showsRunningPill()) {
+                HomeStatPill(
+                    label = stats.runningPillLabel(),
+                    tone = WandStatusTone.Success,
+                    selected = false,
+                    onClick = null,
+                )
+            }
         }
-        if (showNeedsYou) {
-            HomeStatPill(
-                label = if (overview.needsYou > 0) "${overview.needsYou} 个等你" else "只看等你",
-                tone = WandStatusTone.Permission,
-                selected = attentionOnly,
-                onClick = { if (enabled) onToggleAttention() },
-                contentDescription = if (attentionOnly) "取消只看需要处理的会话" else "只看需要处理的会话",
-            )
+        // 计数文本右端固定：换文案时在同一位置交叉淡入，不推动布局。
+        // 纵向补和胶囊一样的内边距，两行时它仍停在首行右端。
+        Box(
+            modifier = Modifier
+                .width(IntrinsicSize.Max)
+                .padding(vertical = PillVerticalPadding),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            WandInPlaceSwap(contentKey = stats.countLabel) {
+                Text(
+                    stats.countLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
-        Spacer(Modifier.weight(1f))
-        Text(
-            "${overview.sessions} 个会话",
-            style = MaterialTheme.typography.labelMedium,
-            color = WandColors.textMuted,
-        )
     }
 }
 
@@ -388,6 +541,9 @@ private fun HomeStatPill(
     selected: Boolean,
     onClick: (() -> Unit)?,
     contentDescription: String? = null,
+    stateDescription: String? = null,
+    ellipsizedContentDescription: String? = null,
+    slotWidth: Dp? = null,
 ) {
     val color = when (tone) {
         WandStatusTone.Success -> WandColors.success
@@ -407,7 +563,19 @@ private fun HomeStatPill(
         animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
         label = "homeStatPillStroke",
     )
-    val base = Modifier
+    // 圆点 ⇄ 勾的淡入淡出：只在同一前导槽里换标识，按钮盒与文字起点都不动。
+    val dotAlpha by animateFloatAsState(
+        targetValue = if (selected) 0f else 1f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "homeStatPillDotAlpha",
+    )
+    val checkAlpha by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "homeStatPillCheckAlpha",
+    )
+    val slot = if (slotWidth != null) Modifier.width(slotWidth) else Modifier
+    val base = slot
         .clip(WandShapes.full)
         .background(fill)
         .border(0.8.dp, stroke, WandShapes.full)
@@ -416,31 +584,59 @@ private fun HomeStatPill(
     } else {
         base
     }
+    // 固定槽把报数挤掉时，读屏改用带完整数字的描述；普通计数不受影响。
+    var ellipsized by remember(label) { mutableStateOf(false) }
+    val pillDescription = if (ellipsized && ellipsizedContentDescription != null) {
+        ellipsizedContentDescription
+    } else {
+        contentDescription
+    }
+    val leadingModifier = if (pillDescription != null || stateDescription != null) {
+        Modifier.semantics {
+            if (pillDescription != null) this.contentDescription = pillDescription
+            if (stateDescription != null) this.stateDescription = stateDescription
+        }
+    } else {
+        Modifier
+    }
     Row(
         modifier = clickable
-            .then(
-                if (contentDescription != null) {
-                    Modifier.semantics { this.contentDescription = contentDescription }
-                } else {
-                    Modifier
-                },
-            )
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .then(leadingModifier)
+            .padding(horizontal = 10.dp, vertical = PillVerticalPadding),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
     ) {
         Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(WandShapes.full)
-                .background(color),
-        )
+            modifier = Modifier.size(PillLeadingSlotSize),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(PillLeadingDotSize)
+                    .graphicsLayer(alpha = dotAlpha)
+                    .clip(WandShapes.full)
+                    .background(color),
+            )
+            Icon(
+                imageVector = WandIcons.check,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier
+                    .size(PillLeadingSlotSize)
+                    .graphicsLayer(alpha = checkAlpha),
+            )
+        }
         Text(
             label,
             style = MaterialTheme.typography.labelMedium,
             color = color,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { layout ->
+                val overflow = layout.hasVisualOverflow
+                if (overflow != ellipsized) ellipsized = overflow
+            },
         )
     }
 }
@@ -1044,19 +1240,33 @@ internal fun HomeSessionRow(
                 ManageCheck(checked = managedSelected)
             }
             // provider 标是列表里最省字的身份信息：一眼分清 Claude / Codex / Grok。
+            // 群聊会话是个「多人房间」而不是某个 CLI，用团队图标替掉 provider 标（对齐 Web）。
+            val teamChat = session.teamChat
             Box(
                 // 只给淡底、不加描边：Pi / Claude 这些 logo 自带外框，
                 // 再套一层圆角描边会变成「双框」，远看像个禁止符号。
                 modifier = Modifier
                     .size(30.dp)
                     .clip(WandShapes.sm)
-                    .background(WandColors.surface.copy(alpha = 0.72f)),
+                    .background(
+                        if (teamChat == null) WandColors.surface.copy(alpha = 0.72f)
+                        else WandColors.brandSoft.copy(alpha = 0.55f),
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
-                WandProviderMark(
-                    provider = session.provider,
-                    modifier = Modifier.size(20.dp),
-                )
+                if (teamChat != null) {
+                    Icon(
+                        WandIcons.agent,
+                        contentDescription = null,
+                        tint = WandColors.brand,
+                        modifier = Modifier.size(18.dp),
+                    )
+                } else {
+                    WandProviderMark(
+                        provider = session.provider,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
             Column(
                 modifier = Modifier
@@ -1076,6 +1286,20 @@ internal fun HomeSessionRow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    if (teamChat != null) {
+                        // 「群聊 · 团队名 · N 人」：一眼看出这是团队房间，点进去是 IM 页而不是普通聊天。
+                        Text(
+                            "群聊 · ${teamChat.teamName.ifBlank { "AI 团队" }} · ${teamChat.memberCount} 人",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = WandColors.brand,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .clip(WandShapes.xs)
+                                .background(WandColors.brandSoft.copy(alpha = 0.5f))
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
                     SessionStatusPill(presentation = presentation)
                     Text(
                         sessionMetaLine(live, nowMillis),

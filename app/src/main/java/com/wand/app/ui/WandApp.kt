@@ -75,7 +75,9 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
+import com.wand.app.ui.screens.AiTeamChatScreen
 import com.wand.app.ui.screens.AiTeamDetailScreen
+import com.wand.app.ui.screens.AiTeamEditorScreen
 import com.wand.app.ui.screens.AiTeamsScreen
 import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.MissionsScreen
@@ -531,8 +533,19 @@ private fun SessionDetailScreen(
                 taskId = screen.taskId,
                 showBack = showBack,
                 onBack = { nav.pop() },
+                // 面包屑首段与 Web 同口径：永远落到「任务看板列表」。落点由 taskBoardLanding
+                // 这个纯函数决定（pop / 换栈顶），两个分支都有单测，见 TaskBoardLandingTest。
+                onBackToBoard = {
+                    when (taskBoardLanding(nav.stack.getOrNull(nav.stack.lastIndex - 1))) {
+                        TaskBoardLanding.Pop -> nav.pop()
+                        TaskBoardLanding.ReplaceTop -> nav.replaceTop(Screen.TaskBoard())
+                    }
+                },
                 onTaskGone = { nav.pop() },
                 onOpenSession = { route -> nav.push(route.toScreen()) },
+                onOpenTeamChat = { runId, identifier ->
+                    nav.push(Screen.AiTeamChat(runId, identifier.takeIf { it.isNotBlank() }))
+                },
             )
         } else {
             TaskBoardScreen(
@@ -562,8 +575,13 @@ private fun SessionDetailScreen(
         )
         is Screen.AiTeams -> AiTeamsScreen(
             api = api,
+            // 团队这一支刻意不走 openDetail：宽屏左栏是会话/任务列表，没有团队列表，
+            // setDetail 会把栈里的团队列表覆盖掉，用户就回不去了。push 保留「可回上一层」，
+            // 于是团队详情/群聊的首段面包屑恒有真实落点（与任务详情同栏有列表的情形不同）。
             onBack = { nav.pop() },
             onOpenTeam = { teamId -> nav.push(Screen.AiTeamDetail(teamId)) },
+            onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
+            onEditTeam = { teamId -> nav.push(Screen.AiTeamEditor(teamId = teamId)) },
         )
         is Screen.AiTeamDetail -> AiTeamDetailScreen(
             api = api,
@@ -571,6 +589,29 @@ private fun SessionDetailScreen(
             teamId = screen.teamId,
             onBack = { nav.pop() },
             onOpenTask = { taskId -> nav.push(Screen.TaskBoard(taskId = taskId)) },
+            onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
+            onEditTeam = { nav.push(Screen.AiTeamEditor(teamId = screen.teamId)) },
+        )
+        is Screen.AiTeamEditor -> AiTeamEditorScreen(
+            api = api,
+            teamId = screen.teamId,
+            templateId = screen.templateId,
+            onBack = { nav.pop() },
+            // 删掉的团队不能留着它的详情页：编辑器一律由列表或详情 push 上来，
+            // 出栈后如果下一层还是团队详情，再出栈一次。
+            onDeleted = {
+                nav.pop()
+                if (nav.current is Screen.AiTeamDetail) nav.pop()
+            },
+        )
+        is Screen.AiTeamChat -> AiTeamChatScreen(
+            api = api,
+            runId = screen.runId,
+            taskIdentifier = screen.taskIdentifier,
+            showBack = showBack,
+            onBack = { nav.pop() },
+            onOpenMemberSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
+            onOpenFullSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
         )
         is Screen.WorkspaceTask -> WorkspaceTaskScreen(
             api = api,
@@ -1051,6 +1092,8 @@ private fun Screen.transitionKey(): String = when (this) {
     Screen.Settings -> "settings"
     Screen.AiTeams -> "ai-teams"
     is Screen.AiTeamDetail -> "ai-team-detail:$teamId"
+    is Screen.AiTeamEditor -> "ai-team-editor:${teamId.orEmpty()}:${templateId.orEmpty()}"
+    is Screen.AiTeamChat -> "ai-team-chat:$runId"
     is Screen.WorkspaceTask -> "workspace-task:$taskId"
 }
 
@@ -1068,8 +1111,11 @@ private fun sessionScreen(
     Screen.PtyTerminal(sessionId, workspaceName, taskName, workspaceId, taskId)
 }
 
-private fun TaskSessionRoute.toScreen(): Screen =
-    sessionScreen(sessionId, structured, workspaceName, taskName, workspaceId, taskId)
+private fun TaskSessionRoute.toScreen(): Screen {
+    // 群聊会话行优先：同一 sessionId 走普通聊天页会丢掉公告卡 / 派工 / 状态芯片那套层次。
+    teamChatRunId?.takeIf { it.isNotBlank() }?.let { return Screen.AiTeamChat(it) }
+    return sessionScreen(sessionId, structured, workspaceName, taskName, workspaceId, taskId)
+}
 
 private fun SessionSnapshot.detailScreen(): Screen =
     sessionScreen(
@@ -1142,7 +1188,11 @@ private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.TaskBoard,
     Screen.Settings,
     Screen.AiTeams,
-    is Screen.AiTeamDetail -> null
+    is Screen.AiTeamDetail,
+    // 群聊页的运行 id 不是任务/会话 id：会话 id 由服务端 run 详情给出，不在导航里。
+    is Screen.AiTeamChat,
+    // 团队编辑器只认团队 / 模板参数，不携带任务与会话。
+    is Screen.AiTeamEditor -> null
 }
 
 private fun Screen.sessionIdOrNull(): String? = when (this) {
@@ -1154,5 +1204,23 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     Screen.Settings,
     Screen.AiTeams,
     is Screen.AiTeamDetail,
+    is Screen.AiTeamChat,
+    is Screen.AiTeamEditor,
     is Screen.WorkspaceTask -> null
 }
+
+/** 任务详情面包屑首段「回看板列表」的两种落点，见 [taskBoardLanding]。 */
+internal enum class TaskBoardLanding { Pop, ReplaceTop }
+
+/**
+ * 纯决策，不碰导航栈也不碰渲染 —— 两个分支由单测钉死，不靠模拟器走到哪一层。
+ *
+ * 下一层已经是看板列表（`TaskBoard` 且 `taskId == null`）就 pop 回去；否则把当前层换成
+ * 看板列表：从首页会话列表「打开完整任务页」进来时栈里根本没有看板层，pop 会落到首页。
+ */
+internal fun taskBoardLanding(belowDetail: Screen?): TaskBoardLanding =
+    if (belowDetail is Screen.TaskBoard && belowDetail.taskId == null) {
+        TaskBoardLanding.Pop
+    } else {
+        TaskBoardLanding.ReplaceTop
+    }

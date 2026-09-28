@@ -49,11 +49,13 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SignalCellularAlt
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -226,6 +228,9 @@ object WandIcons {
     /** 新建。 */
     val add: ImageVector = Icons.Outlined.Add
 
+    /** 减少（计数型步进器的 −，与 [add] 成对；不要用 close 代替，那个是「关闭」语义）。 */
+    val minus: ImageVector = Icons.Outlined.Remove
+
     /** 更多菜单。 */
     val more: ImageVector = Icons.Outlined.MoreVert
 
@@ -249,6 +254,9 @@ object WandIcons {
 
     /** 任务卡截止日期芯片。 */
     val due: ImageVector = Icons.Outlined.Event
+
+    /** 团队负责人徽标（替代裸字符 `★`，放大不糊、TalkBack 可朗读）。 */
+    val leader: ImageVector = Icons.Outlined.Star
 }
 
 /**

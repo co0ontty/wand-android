@@ -6,8 +6,10 @@ import com.wand.app.data.AiTeamMember
 import com.wand.app.data.AiTeamRun
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BoardTaskAgent
+import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.Workspace
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -81,7 +83,7 @@ class AiTeamPresentationTest {
         )
         assertEquals(listOf("m_lead", "m_work", "m_review"), aiTeamOrderedMembers(team).map { it.id })
         assertEquals("开发三人组", team.name)
-        assertEquals("3 位成员 · 负责人 负责人", aiTeamSummaryLine(team))
+        assertEquals("3 位成员 · 1 位负责人", aiTeamSummaryLine(team))
         val leader = aiTeamLeader(team)!!
         assertEquals("codex", aiTeamPreferredAgent(leader)?.provider)
         assertEquals("首选", aiTeamCandidateRoleLabel(0))
@@ -109,5 +111,65 @@ class AiTeamPresentationTest {
         )
         assertEquals("1 位成员", aiTeamSummaryLine(team))
         assertNull(aiTeamLeader(team))
+    }
+
+    /**
+     * §2.3 文案去重：负责人角色写一遍，成员名不再进摘要 ——
+     * 旧实现把「负责人」前缀和成员名「负责人」拼成 `负责人 负责人`。
+     */
+    @Test
+    fun summaryNeverRepeatsLeaderRoleWordOrName() {
+        val team = AiTeam(
+            id = "team_3",
+            name = "开发四人组",
+            description = "",
+            members = listOf(
+                member("m_lead", "负责人", true, listOf(agent("pi"))),
+                member("m_work", "实现者", false, listOf(agent("qoder"))),
+                member("m_review", "审查者", false, listOf(agent("codex"))),
+                member("m_design", "设计师", false, listOf(agent("claude"))),
+            ),
+        )
+        assertEquals("4 位成员 · 1 位负责人", aiTeamSummaryLine(team))
+        // 「负责人」只出现一次，不是靠角色词 + 成员名的巧合拼接。
+        assertEquals(1, Regex("负责人").findAll(aiTeamSummaryLine(team)).count())
+    }
+
+    /** 无负责人时连「· 1 位负责人」都不补；零成员按现状显示 0 位成员（§2.3 空态）。 */
+    @Test
+    fun summaryCoversNoLeaderAndNoMembers() {
+        val leaderless = AiTeam(
+            id = "team_4",
+            name = "无人负责",
+            description = "",
+            members = listOf(member("m_b", "实现者", false, listOf(agent("claude")))),
+        )
+        assertEquals("1 位成员", aiTeamSummaryLine(leaderless))
+        val empty = AiTeam(id = "team_5", name = "空团队", description = "", members = emptyList())
+        assertEquals("0 位成员", aiTeamSummaryLine(empty))
+    }
+
+    /**
+     * §2.3 provider 统一口径：候选行首段用 `boardTaskProviderLabel`，
+     * 不再输出小写裸 id（`pi` / `qoder`）；model / effort 两段维持原样。
+     */
+    @Test
+    fun agentLabelUsesDisplayNameForProviderOnly() {
+        assertEquals("Pi", aiTeamAgentLabel(BoardTaskAgent("pi", "default", "off")))
+        assertEquals("Qoder", aiTeamAgentLabel(BoardTaskAgent("qoder", "default", "off")))
+        // model 非哨兵值时原样保留；effort = off 不占篇幅（现状）。
+        assertEquals("Claude · opus-4", aiTeamAgentLabel(BoardTaskAgent("claude", "opus-4", "off")))
+        assertEquals("Codex · max", aiTeamAgentLabel(BoardTaskAgent("codex", "default", "max")))
+        // 认不出的 provider 原样透传，不猜显示名（boardTaskProviderLabel 现状口径）。
+        assertEquals("mystery", aiTeamAgentLabel(BoardTaskAgent("mystery", "default", "off")))
+    }
+
+    /** 列表卡成员行与详情候选行读同一个 agent、同一套文案函数，不各写一份。 */
+    @Test
+    fun memberRowAndCandidateRowShareProviderLabel() {
+        val leader = member("m_lead", "负责人", true, listOf(agent("pi"), agent("qoder")))
+        val preferred = aiTeamPreferredAgent(leader)!!
+        assertEquals("pi", preferred.provider)
+        assertEquals(boardTaskProviderLabel(preferred.provider), aiTeamAgentLabel(preferred))
     }
 }

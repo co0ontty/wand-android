@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.AiTeam
+import com.wand.app.data.WorkspaceSessionTarget
 
 /**
  * 侧栏「新建任务」的团队分支纯逻辑（对齐 Web §5.1 入口矩阵 / §6.2 A4）：
@@ -81,6 +82,76 @@ internal fun newTaskNeedsCardCreation(retry: NewTaskTeamRetry?): Boolean = retry
 /** 找不到看板卡时只走对话框原有的原位错误位，不发注定 404 的请求。 */
 internal fun newTaskTeamCardMissingMessage(detail: String?): String =
     "任务已创建，但暂时找不到对应的看板任务，无法交给团队：${detail ?: "可点「重试交给团队」再试一次"}"
+
+/**
+ * 「换工具即重置 CLI 参数」只对**真的换了目标**成立。派发对象菜单里再点一次当前目标
+ * （团队 ⇄ 同一个 CLI 往返就是这个形状）不该清掉用户手选的模型/思考深度：
+ * 团队分支根本不读这两个值，切回来没有重置的理由。
+ */
+internal fun newTaskTargetChangeResetsCliParams(
+    previous: WorkspaceSessionTarget?,
+    next: WorkspaceSessionTarget,
+): Boolean = previous != next
+
+/**
+ * composer 控制行在三种状态下各显示哪些 chip（渲染层只遍历这个结果，面板可开性同源）：
+ * 团队态 / 仅建分组 → 全收（团队不读 CLI 参数，仅建分组没有会话可配）；
+ * 空白终端只配会话类型；CLI + 启动会话 → 类型 + 模型 + 思考深度。
+ */
+internal enum class NewTaskComposerControlChip { SessionKind, Model, ThinkingEffort }
+
+internal fun newTaskComposerControlChips(
+    teamSelected: Boolean,
+    startFirstSession: Boolean,
+    shellTarget: Boolean,
+): List<NewTaskComposerControlChip> = when {
+    teamSelected || !startFirstSession -> emptyList()
+    shellTarget -> listOf(NewTaskComposerControlChip.SessionKind)
+    else -> listOf(
+        NewTaskComposerControlChip.SessionKind,
+        NewTaskComposerControlChip.Model,
+        NewTaskComposerControlChip.ThinkingEffort,
+    )
+}
+
+/**
+ * 「＋更多」面板在两种状态下各显示哪些动作（渲染层只遍历这个结果）。
+ * 团队建卡只用到 name/cwd/worktree/workspaceId/描述/父任务，**不读**「创建后启动会话」，
+ * 所以团队态只留工作树这一项（TaskListScreen 的 `createTask(worktree = submittedWorktree)`）；
+ * 会话类型 / 模型 / 思考深度三个 chip 在团队态同样整体收掉（§5.1）。
+ */
+internal enum class NewTaskComposerPanelAction { StartSessionToggle, WorktreeToggle }
+
+internal fun newTaskComposerPanelActions(
+    teamSelected: Boolean,
+): List<NewTaskComposerPanelAction> =
+    if (teamSelected) {
+        listOf(NewTaskComposerPanelAction.WorktreeToggle)
+    } else {
+        listOf(NewTaskComposerPanelAction.StartSessionToggle, NewTaskComposerPanelAction.WorktreeToggle)
+    }
+
+/**
+ * 团队态预留行**只**说团队自己的事（必填 / R2）：`error` 由它自己的整行错误位渲染，
+ * 这里再优先一次会让同一句话在同一屏出现两遍。
+ * 恒返回非 null（没有提示时是空串），调用方据此常驻预留一行，
+ * 保证提示出现/消失不推动输入行与提交按钮。
+ */
+internal fun newTaskComposerFeedbackLine(teamError: String?): String = teamError ?: ""
+
+/**
+ * 标题下方那行小字说明：团队态不得出现「会话/启动会话」语义，且要如实反映工作树状态。
+ * CLI 态沿用原文案。
+ */
+internal fun newTaskComposerStatusLine(
+    teamSelected: Boolean,
+    startFirstSession: Boolean,
+    worktree: Boolean,
+): String {
+    val tree = if (worktree) "独立工作树" else "共用工作区"
+    return if (teamSelected) "建卡后立即交给团队开工 · $tree"
+    else (if (startFirstSession) "创建后启动会话" else "仅创建任务分组") + " · $tree"
+}
 
 /**
  * 提交按钮语义（纯函数）：`submitting` = 已经点下、正在跑「建卡 → 交给团队」链路。

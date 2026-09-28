@@ -3,6 +3,7 @@ package com.wand.app.ui.screens
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamMember
 import com.wand.app.data.BoardTaskAgent
+import com.wand.app.data.WorkspaceSessionTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -116,5 +117,78 @@ class NewTaskComposerPresentationTest {
         // 与 handler 行为严格一致：没内容时不会重发 team-run，按钮也不许承诺「重试」。
         assertEquals("创建并交给团队", newTaskTeamActionLabel(submitting = false, retry = true, hasPrompt = false))
         assertEquals("正在交给团队…", newTaskTeamActionLabel(submitting = true, retry = true, hasPrompt = false))
+    }
+
+    @Test
+    fun panelActionsDropSessionToggleForTeam() {
+        assertEquals(
+            listOf(NewTaskComposerPanelAction.StartSessionToggle, NewTaskComposerPanelAction.WorktreeToggle),
+            newTaskComposerPanelActions(teamSelected = false),
+        )
+        // 团队建卡不读「创建后启动会话」，只留真的作用到 createTask(worktree=…) 的那一项。
+        assertEquals(
+            listOf(NewTaskComposerPanelAction.WorktreeToggle),
+            newTaskComposerPanelActions(teamSelected = true),
+        )
+    }
+
+    @Test
+    fun statusLineDropsSessionSemanticsForTeamAndKeepsWorktreeState() {
+        assertEquals(
+            "建卡后立即交给团队开工 · 独立工作树",
+            newTaskComposerStatusLine(teamSelected = true, startFirstSession = true, worktree = true),
+        )
+        assertEquals(
+            "建卡后立即交给团队开工 · 共用工作区",
+            newTaskComposerStatusLine(teamSelected = true, startFirstSession = false, worktree = false),
+        )
+        val teamLine = newTaskComposerStatusLine(true, true, true)
+        assertFalse("团队态说明行不得出现会话语义", teamLine.contains("会话"))
+        // CLI 态原文案保持不变。
+        assertEquals("创建后启动会话 · 独立工作树",
+            newTaskComposerStatusLine(teamSelected = false, startFirstSession = true, worktree = true))
+        assertEquals("仅创建任务分组 · 共用工作区",
+            newTaskComposerStatusLine(teamSelected = false, startFirstSession = false, worktree = false))
+    }
+
+    @Test
+    fun feedbackLineOnlyCarriesTeamHint() {
+        assertEquals("交给团队需要先填写任务内容。",
+            newTaskComposerFeedbackLine("交给团队需要先填写任务内容。"))
+        assertEquals("团队态无提示时也要占住同一行", "", newTaskComposerFeedbackLine(null))
+        // 预留行只说团队自己的事：`error` 由它自己的整行错误位渲染，这里不再优先一次，
+        // 否则同一句话会在团队态出现两遍。签名里没有 error，重复渲染不可能发生。
+    }
+
+    @Test
+    fun controlChipsAreTheSingleSourceForTeamAndCliStates() {
+        assertEquals(
+            listOf(
+                NewTaskComposerControlChip.SessionKind,
+                NewTaskComposerControlChip.Model,
+                NewTaskComposerControlChip.ThinkingEffort,
+            ),
+            newTaskComposerControlChips(teamSelected = false, startFirstSession = true, shellTarget = false),
+        )
+        // 团队分支不读这三个参数：chip 与对应面板一起收掉（删掉团队分支这条必须变红）。
+        assertEquals(emptyList<NewTaskComposerControlChip>(),
+            newTaskComposerControlChips(teamSelected = true, startFirstSession = true, shellTarget = false))
+        // 仅建分组没有会话可配；空白终端只配会话类型。
+        assertEquals(emptyList<NewTaskComposerControlChip>(),
+            newTaskComposerControlChips(teamSelected = false, startFirstSession = false, shellTarget = false))
+        assertEquals(listOf(NewTaskComposerControlChip.SessionKind),
+            newTaskComposerControlChips(teamSelected = false, startFirstSession = true, shellTarget = true))
+        // 模型 chip 是控制行里唯一的 weight(1f) 项：它缺席时由 Spacer 补位，二者互斥。
+        assertTrue(NewTaskComposerControlChip.Model in newTaskComposerControlChips(false, true, false))
+        assertFalse(NewTaskComposerControlChip.Model in newTaskComposerControlChips(true, true, false))
+    }
+
+    @Test
+    fun sameTargetDoesNotResetCliParams() {
+        assertFalse("团队 ⇄ 同一个 CLI 目标往返：手选的模型/思考深度要保留",
+            newTaskTargetChangeResetsCliParams(WorkspaceSessionTarget.Codex, WorkspaceSessionTarget.Codex))
+        assertTrue("真的换工具才重置",
+            newTaskTargetChangeResetsCliParams(WorkspaceSessionTarget.Codex, WorkspaceSessionTarget.Qoder))
+        assertTrue(newTaskTargetChangeResetsCliParams(null, WorkspaceSessionTarget.Claude))
     }
 }

@@ -438,4 +438,32 @@ class WorkspaceModelsTest {
             cwd = "/dir",
             startedAt = startedAt,
         )
+    // MARK: - 团队群聊标记（GET /api/tasks 的会话摘要）
+
+    @Test
+    fun sessionSummaryParsesTeamChatMark() {
+        val marked = WorkspaceSessionSummary.parse(
+            JSONObject()
+                .put("id", "s_chat")
+                .put("sessionKind", "structured")
+                .put("runner", "ai-team-relay")
+                .put(
+                    "teamChat",
+                    JSONObject().put("runId", "run_1").put("teamName", "开发三人组").put("memberCount", 3),
+                ),
+        )!!
+        assertEquals("run_1", marked.teamChat?.runId)
+        assertEquals("开发三人组", marked.teamChat?.teamName)
+        assertEquals(3, marked.teamChat?.memberCount)
+
+        // 老服务端没有该字段：按普通会话解析，不崩、不猜。
+        val plain = WorkspaceSessionSummary.parse(JSONObject().put("id", "s_plain").put("sessionKind", "pty"))!!
+        assertNull(plain.teamChat)
+
+        // 有 teamChat 但缺 runId：这条标记不可用（点了没有目标运行），同样降级为普通会话。
+        val broken = WorkspaceSessionSummary.parse(
+            JSONObject().put("id", "s_x").put("teamChat", JSONObject().put("teamName", "开发三人组")),
+        )!!
+        assertNull(broken.teamChat)
+    }
 }

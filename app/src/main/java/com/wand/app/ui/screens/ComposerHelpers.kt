@@ -38,12 +38,16 @@ import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.WandAsyncImage
 import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
+import com.wand.app.ui.appendComposerVoiceText
+import com.wand.app.ui.attachmentPrompt
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 
 internal data class VoiceInputHandle(
     val voice: VoiceInputController,
@@ -55,13 +59,14 @@ internal fun rememberVoiceInputHandle(
     isHapticEnabled: () -> Boolean,
     onToast: (String) -> Unit,
     onCommit: (String) -> Unit,
+    sessionKey: Any? = null,
 ): VoiceInputHandle {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val currentIsHapticEnabled = rememberUpdatedState(isHapticEnabled)
     val currentOnToast = rememberUpdatedState(onToast)
     val currentOnCommit = rememberUpdatedState(onCommit)
-    val voice = remember(context) { VoiceInputController(context) }
+    val voice = remember(context, sessionKey) { VoiceInputController(context) }
 
     DisposableEffect(voice) {
         voice.onToast = { message -> currentOnToast.value(message) }
@@ -84,7 +89,10 @@ internal fun rememberVoiceInputHandle(
                 if (currentIsHapticEnabled.value()) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 }
-                voice.beginPress { text -> currentOnCommit.value(text) }
+                // Capture the destination when recording begins, before navigation can
+                // replace rememberUpdatedState with another session's composer.
+                val commitForPress = currentOnCommit.value
+                voice.beginPress(commitForPress)
             } else {
                 micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
@@ -99,27 +107,42 @@ internal data class AttachmentPickerActions(
     val pickFile: () -> Unit,
 )
 
+private class AttachmentPickerRequest {
+    var onResult: ((List<Uri>) -> Unit)? = null
+    fun finish(uris: List<Uri>) {
+        val destination = onResult
+        onResult = null
+        destination?.invoke(uris)
+    }
+}
+
 @Composable
 internal fun rememberAttachmentPickerActions(
     onUris: (List<Uri>) -> Unit,
 ): AttachmentPickerActions {
     val currentOnUris = rememberUpdatedState(onUris)
+    val documentRequest = remember { AttachmentPickerRequest() }
+    val photoRequest = remember { AttachmentPickerRequest() }
     val attachmentPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris -> currentOnUris.value(uris.orEmpty()) }
+    ) { uris -> documentRequest.finish(uris.orEmpty()) }
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(5),
-    ) { uris -> currentOnUris.value(uris) }
+    ) { uris -> photoRequest.finish(uris) }
 
     val pickPhoto = remember(photoPicker) {
         {
+            photoRequest.onResult = currentOnUris.value
             photoPicker.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
             )
         }
     }
     val pickFile = remember(attachmentPicker) {
-        { attachmentPicker.launch(arrayOf("*/*")) }
+        {
+            documentRequest.onResult = currentOnUris.value
+            attachmentPicker.launch(arrayOf("*/*"))
+        }
     }
 
     return remember(pickPhoto, pickFile) { AttachmentPickerActions(pickPhoto, pickFile) }
@@ -138,18 +161,30 @@ internal fun CoroutineScope.launchAttachmentUpload(
     onUploadingChange(true)
     launch {
         try {
-            val files = withContext(Dispatchers.IO) {
-                uris.take(5).map { uri -> readAttachment(context, uri) }
-            }
-            val uploaded = api.uploadAttachments(sessionId, files)
+            val uploaded = uploadComposerAttachments(context, api, sessionId, uris, 5)
             onUploaded(uploaded)
             onToast("已上传 ${uploaded.size} 个附件")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             onToast(e.message ?: "附件上传失败")
         } finally {
             onUploadingChange(false)
         }
     }
+}
+
+internal suspend fun uploadComposerAttachments(
+    context: Context,
+    api: WandApi,
+    sessionId: String,
+    uris: List<Uri>,
+    limit: Int,
+): List<UploadedFile> {
+    val files = withContext(Dispatchers.IO) {
+        uris.take(limit).map { uri -> readAttachment(context, uri) }
+    }
+    return api.uploadAttachments(sessionId, files)
 }
 
 /** 从 content Uri 读出 (文件名, 字节)，供 multipart 上传。 */
@@ -161,24 +196,33 @@ internal fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray>
             cursor.getString(index)?.takeIf { it.isNotEmpty() }?.let { name = it }
         }
     }
-    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (output.size() + count > MAX_ATTACHMENT_BYTES) {
+                throw WandApiException(413, "$name 超过 10MB 附件上限")
+            }
+            output.write(buffer, 0, count)
+        }
+        output.toByteArray()
+    }
         ?: throw WandApiException(null, "无法读取 $name")
     return name to bytes
 }
 
 /** 识别文本追加进草稿（不覆盖已有内容，对齐 Web commitVoiceTranscript / iOS appendTranscriptToDraft）。 */
 internal fun appendVoiceText(existing: String, text: String): String {
-    val clean = text.trim()
-    if (clean.isEmpty()) return existing
-    val base = existing.trimEnd()
-    return if (base.isEmpty()) clean else "$base $clean"
+    return appendComposerVoiceText(existing, text)
 }
 
 internal fun buildAttachmentPrompt(attachments: List<UploadedFile>, body: String): String {
-    if (attachments.isEmpty()) return body
-    val paths = attachments.joinToString("\n") { it.savedPath }
-    return "[附件已上传，请查看以下文件:\n$paths\n]\n\n$body"
+    return attachmentPrompt(attachments, body)
 }
+
+private const val MAX_ATTACHMENT_BYTES = 10 * 1_024 * 1_024
 
 @Composable
 internal fun PendingAttachmentsPreview(

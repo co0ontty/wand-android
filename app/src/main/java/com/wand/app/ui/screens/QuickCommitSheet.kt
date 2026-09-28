@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.wand.app.data.GitStatusResult
 import com.wand.app.ui.QuickCommitEntryPhase
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.components.GitBranchIcon
@@ -406,8 +407,11 @@ fun QuickCommitSheet(
     isHapticEnabled: () -> Boolean,
     onDismiss: () -> Unit,
 ) {
+    // 打开即全展开（§2.22 S12）：半展开态是「上滑展开」手势与内层滚动争抢的根源，
+    // 快速上滑会把面板关掉并丢掉已输入的提交信息。收起只保留 4 条路径：
+    // 拖 handle 向下 / 点遮罩 / 右上关闭 / 返回键（外加「取消」与提交后自动关闭）。
     val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = false,
+        skipPartiallyExpanded = true,
     )
     WandBottomSheet(
         // 关闭只隐藏面板，不会取消已经发出的 Git 请求。这样网络等待或服务端耗时
@@ -442,7 +446,7 @@ fun QuickCommitSheet(
                         .imePadding()
                         .padding(bottom = 20.dp),
                 ) {
-                    SheetHeader(qc, onDismiss)
+                    SheetHeader(onDismiss)
                     if (qc.result != null) {
                         ResultPanel(qc, onDismiss)
                     } else {
@@ -454,51 +458,22 @@ fun QuickCommitSheet(
     }
 }
 
+// 头部不再放分支/改动数摘要（§2.11 B5）：同一屏下面的 CommitWorkspaceLens 已经写了一遍，
+// 两处同数据会互相打架。头部只留标题与关闭按钮，标题行高度随之减小。
 @Composable
-private fun SheetHeader(qc: QuickCommitStore, onDismiss: () -> Unit) {
-    val s = qc.status
-    val parts = mutableListOf<String>()
-    if (s != null && s.isGit) {
-        parts.add(s.branch ?: "(no branch)")
-        val count = s.modifiedCount ?: 0
-        parts.add(if (count > 0) "$count 个改动" else "工作区干净")
-        s.ahead?.takeIf { it > 0 }?.let { parts.add("↑$it") }
-        s.behind?.takeIf { it > 0 }?.let { parts.add("↓$it") }
-    }
+private fun SheetHeader(onDismiss: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        val summary = when {
-            qc.statusLoading && s == null -> "读取中"
-            s != null && !s.isGit -> "非 Git 仓库"
-            parts.isNotEmpty() -> parts.joinToString(" · ")
-            else -> null
-        }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                "快捷提交",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
-            )
-            summary?.let {
-                Text(
-                    it,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(WandColors.surfaceSoft.copy(alpha = 0.72f))
-                        .padding(horizontal = 9.dp, vertical = 5.dp)
-                        .widthIn(max = 240.dp),
-                )
-            }
-        }
+        Text(
+            "快捷提交",
+            modifier = Modifier.weight(1f),
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WandColors.textPrimary,
+        )
         IconButton(
             onClick = onDismiss,
             modifier = Modifier.size(44.dp),
@@ -525,12 +500,16 @@ private fun FormPanel(
     val hasChanges = (s?.modifiedCount ?: 0) > 0
     val hasSubmodule = s?.hasSubmodule == true
 
-    CommitWorkspaceLens(
-        branch = s?.branch,
-        changeCount = s?.modifiedCount ?: 0,
-        ahead = s?.ahead ?: 0,
-        hasChanges = hasChanges,
-    )
+    CommitWorkspaceLens(commitLensState(status = s, loading = qc.statusLoading))
+
+    // 非 Git 目录：lens 报状态，表单区解释为什么下面的控件都用不了（§2.11「信息不丢失」）。
+    if (s != null && !s.isGit) {
+        Text(
+            "非 Git 仓库，无法快捷提交。",
+            fontSize = 12.sp,
+            color = WandColors.textMuted,
+        )
+    }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -592,10 +571,7 @@ private fun FormPanel(
         PairOldLine(label = "Tag", old = s?.latestTag ?: "无 tag")
         WandTextField(
             value = qc.tagDraft,
-            onValueChange = {
-                qc.tagDraft = it
-                qc.tagEdited = true
-            },
+            onValueChange = { qc.tagDraft = it },
             label = "Tag（可选）",
             placeholder = "可选 tag",
             singleLine = true,
@@ -674,23 +650,68 @@ private fun FormPanel(
     }
 }
 
+/** lens 的语义色档位；色值由 Composable 侧从 `WandColors` 取，纯函数不碰主题。 */
+internal enum class CommitLensTone { Brand, Success, Neutral }
+
+/**
+ * lens 要显示的那一句分支/改动数（§2.11 B5）：分支、改动数、↑↓ 从头部摘要搬到这里，
+ * 全 sheet 只在这一处出现。[statusLine] 永不为空 —— 加载/非 Git/取不到状态都不能留白行。
+ */
+internal data class CommitLensState(
+    val branch: String?,
+    val statusLine: String,
+    /** [CommitLensTone.Neutral] = 无数据态（读取中 / 非 Git 仓库 / 未获取到仓库状态）：
+     *  中性灰语义色 + 13sp `textMuted`，不装作“一切正常”。 */
+    val tone: CommitLensTone,
+    /** `↑2 ↓1`；两位都为 0、或状态行已经报过这个数时为 null（不占位）。 */
+    val aheadBehindLine: String?,
+)
+
+internal fun commitLensState(status: GitStatusResult?, loading: Boolean): CommitLensState {
+    if (status == null) {
+        val line = if (loading) "读取中…" else "未获取到仓库状态"
+        return CommitLensState(
+            branch = null,
+            statusLine = line,
+            tone = CommitLensTone.Neutral,
+            aheadBehindLine = null,
+        )
+    }
+    if (!status.isGit) {
+        return CommitLensState(
+            branch = null,
+            statusLine = "非 Git 仓库",
+            tone = CommitLensTone.Neutral,
+            aheadBehindLine = null,
+        )
+    }
+    val changeCount = status.modifiedCount ?: 0
+    val ahead = status.ahead ?: 0
+    val behind = status.behind ?: 0
+    return CommitLensState(
+        branch = status.branch ?: "未识别分支",
+        statusLine = when {
+            changeCount > 0 -> "$changeCount 个改动待处理"
+            ahead > 0 -> "$ahead 个 commit 待推送"
+            else -> "工作区干净"
+        },
+        tone = if (changeCount > 0) CommitLensTone.Brand else CommitLensTone.Success,
+        // 无改动时状态行本身就是「N 个 commit 待推送」，再挂一行 ↑N 就变成这一条目要消灭的
+        // 「同屏同数据两遍」，所以 ↑ 只在状态行讲的是改动数时补；↓（落后远端）永远是新信息。
+        aheadBehindLine = buildList {
+            if (ahead > 0 && changeCount > 0) add("↑$ahead")
+            if (behind > 0) add("↓$behind")
+        }.takeIf { it.isNotEmpty() }?.joinToString(" "),
+    )
+}
+
 /** 提交前的上下文透镜：先回答“我要在哪个分支处理多少改动”，再进入表单。 */
 @Composable
-private fun CommitWorkspaceLens(
-    branch: String?,
-    changeCount: Int,
-    ahead: Int,
-    hasChanges: Boolean,
-) {
-    val tone = when {
-        hasChanges -> WandColors.brand
-        ahead > 0 -> WandColors.success
-        else -> WandColors.success
-    }
-    val status = when {
-        hasChanges -> "$changeCount 个改动待处理"
-        ahead > 0 -> "$ahead 个 commit 待推送"
-        else -> "工作区干净"
+private fun CommitWorkspaceLens(state: CommitLensState) {
+    val tone = when (state.tone) {
+        CommitLensTone.Brand -> WandColors.brand
+        CommitLensTone.Success -> WandColors.success
+        CommitLensTone.Neutral -> WandColors.textMuted
     }
     Row(
         modifier = Modifier
@@ -716,29 +737,43 @@ private fun CommitWorkspaceLens(
             )
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                branch ?: "未识别分支",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(status, fontSize = 12.sp, color = WandColors.textSecondary)
-        }
-        if (ahead > 0 && hasChanges) {
-            Text(
-                "↑$ahead",
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Medium,
-                color = WandColors.success,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(WandColors.successSoft)
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-            )
+            state.branch?.let {
+                Text(
+                    it,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (state.tone == CommitLensTone.Neutral) {
+                Text(
+                    state.statusLine,
+                    fontSize = 13.sp,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Text(
+                    state.statusLine,
+                    fontSize = 12.sp,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            state.aheadBehindLine?.let {
+                Text(
+                    it,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = WandColors.success,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

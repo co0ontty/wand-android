@@ -1,10 +1,12 @@
 package com.wand.app.ui.screens
 
+import com.wand.app.data.BOARD_TASK_STATUSES
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.BoardTaskMilestone
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.BoardTaskWorkspace
+import com.wand.app.data.boardTaskStatusLabel
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -273,6 +275,70 @@ class TaskBoardPresentationTest {
             "从描述生成",
             boardTaskDetailTitle(task(title = "  ", description = "从描述生成\n项目：wand")),
         )
+    }
+
+    /**
+     * §2.20 已知标识映射：服务端写进 labels 的 `team_direct` 只换显示文案，
+     * 卡片不再出现裸枚举，也不因为映射少掉一枚芯片。
+     */
+    @Test
+    fun knownInternalLabelIsMappedForDisplay() {
+        assertEquals("团队直发", boardTaskLabelDisplay("team_direct"))
+        val model = boardTaskCardModel(
+            task(id = "t_direct", labels = listOf("team_direct", "优化")),
+            showWorkspace = false,
+        )
+        assertEquals(listOf("团队直发", "优化"), model.labels)
+        assertFalse("裸枚举不得再出现在卡片上", model.labels.contains("team_direct"))
+    }
+
+    /**
+     * §2.20 + 负责人裁定 §0.6-3：映射表之外的标签一律原样，
+     * 包括**看着像内部标识**的 `snake_case` —— 那是用户自己的数据，不能按格式规则隐藏。
+     */
+    @Test
+    fun unknownLabelsAlwaysRenderVerbatimEvenWhenTheyLookInternal() {
+        for (label in listOf("some_unknown_label", "pty_session", "team_review", "auto_archived")) {
+            assertEquals(label, boardTaskLabelDisplay(label))
+        }
+        // 大小写完全一致才映射：`Team_Direct` 是用户标签，不猜。
+        assertEquals("Team_Direct", boardTaskLabelDisplay("Team_Direct"))
+        val model = boardTaskCardModel(
+            task(id = "t_user", labels = listOf("some_unknown_label", "显示优化", "Team_Direct")),
+            showWorkspace = false,
+        )
+        assertEquals(listOf("some_unknown_label", "显示优化"), model.labels)
+        assertEquals(1, model.extraLabelCount)
+    }
+
+    /** 映射只是换文案：芯片数量、超出折叠计数与「有元信息行」判定都不受影响。 */
+    @Test
+    fun labelMappingKeepsChipCountAndRowVisibility() {
+        val mapped = boardTaskCardModel(task(id = "t_1", labels = listOf("team_direct", "a", "b")), showWorkspace = false)
+        assertEquals(2, mapped.labels.size)
+        assertEquals(1, mapped.extraLabelCount)
+        assertTrue(mapped.hasChips)
+        // 全空标签（含空白项）不渲染标签行，与现状一致。
+        val bare = boardTaskCardModel(task(id = "t_2", labels = listOf("", "  ")), showWorkspace = false)
+        assertTrue(bare.labels.isEmpty())
+        assertFalse(bare.hasChips)
+    }
+
+    /**
+     * §2.16 分组 ＋ 按钮文案：分组名带引号，「进行中」不再读成「在进行中中新建任务」。
+     * 归档分组也走同一模板。
+     */
+    @Test
+    fun groupAddButtonDescriptionQuotesStatusName() {
+        assertEquals("在「待办」中新建任务", boardGroupAddTaskDescription("todo"))
+        assertEquals("在「进行中」中新建任务", boardGroupAddTaskDescription("doing"))
+        assertEquals("在「已完成」中新建任务", boardGroupAddTaskDescription("done"))
+        for (status in BOARD_TASK_STATUSES) {
+            val description = boardGroupAddTaskDescription(status)
+            val label = boardTaskStatusLabel(status)
+            assertTrue("每条文案都要点名分组：$description", description.contains("「$label」"))
+            assertFalse("不得再出现叠字「中中」：$description", description.contains("中中"))
+        }
     }
 
     private fun task(

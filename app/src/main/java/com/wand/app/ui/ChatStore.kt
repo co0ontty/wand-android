@@ -18,7 +18,7 @@ import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import com.wand.app.wlog
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -411,70 +411,59 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     // MARK: - 用户动作
 
-    /** 发送一条消息。PTY 会话走 chat 视图语义（结尾补换行），结构化会话直接发文本。 */
-    /** 提交按钮的状态机（规则 3：加载 → 完成 → 结果，全程同一位置）。 */
-    var sendPhase by mutableStateOf(SendPhase.Idle)
-        private set
-    private var sendPhaseJob: Job? = null
-
-    private fun advanceSendPhase(event: SendEvent, dwellMs: Long? = null) {
-        sendPhase = nextSendPhase(sendPhase, event)
-        sendPhaseJob?.cancel()
-        if (dwellMs == null) return
-        sendPhaseJob = scope.launch {
-            delay(dwellMs)
-            sendPhase = nextSendPhase(sendPhase, SendEvent.Dwell)
-        }
-    }
-
-    fun send(text: String) {
+    /** Protocol send only: composer owns content, submit concurrency and inline feedback. */
+    suspend fun submitInput(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
-        val queueing = isStructured && isResponding && status == "running"
+        val structured = snapshot?.isStructured
+            ?: throw IllegalStateException("会话尚未加载完成")
+        val queueing = structured && isResponding && status == "running"
         if (queueing && lastSubmittedStructuredInput() == trimmed) {
-            // 被去重拦下：明确给一个「已收到但不发」的完成态，而不是静默什么都不发生。
-            advanceSendPhase(SendEvent.Accepted, SEND_SENT_DWELL_MS)
             toast = "与上一条消息相同，已忽略，不会加入排队。"
             return
         }
-        advanceSendPhase(SendEvent.Submit)
         applyProvisionalTopic(trimmed)
         val previousMessages = messages
         val previousQueue = queuedMessages
-        if (isStructured) {
+        val wasResponding = isResponding
+        var optimisticMessages: List<ConversationTurn>? = null
+        var optimisticQueue: List<String>? = null
+        if (structured) {
             if (queueing) {
-                queuedMessages = queuedMessages + trimmed
+                optimisticQueue = queuedMessages + trimmed
+                queuedMessages = optimisticQueue
                 toast = "已加入排队，等当前回复完成会自动发送。"
             } else {
-                messages = messages + ConversationTurn(
+                optimisticMessages = messages + ConversationTurn(
                     role = "user",
                     content = listOf(com.wand.app.data.ContentBlock.Text(trimmed, null)),
                     createdAt = Instant.now().toString(),
                 )
+                messages = optimisticMessages
                 isResponding = true
             }
         }
-        scope.launch {
-            try {
-                if (isStructured) {
-                    // 结构化回复通过事件流持续更新；HTTP 只需确认服务端已接收。
-                    // 若等待整轮完成，首轮生成标题与模型回复可能超过 30 秒并被误报为网络超时。
-                    val accepted = api.sendInput(sessionId, trimmed, respondImmediately = !queueing)
-                    apply(accepted)
-                    socket.requestResync()
-                    advanceSendPhase(SendEvent.Accepted, SEND_SENT_DWELL_MS)
-                } else {
-                    sendPtyChatInput(trimmed)
-                }
-            } catch (e: Exception) {
-                wlog("chat", "发送失败 session=$sessionId：${e.message}", e)
-                advanceSendPhase(SendEvent.Rejected, SEND_FAILED_DWELL_MS)
-                toast = e.message ?: "发送失败"
-                if (isStructured) {
-                    if (queueing) queuedMessages = previousQueue else messages = previousMessages
-                    if (!queueing) isResponding = false
-                }
+        try {
+            if (structured) {
+                // HTTP confirms receipt; model output continues through the event stream.
+                apply(api.sendInput(sessionId, trimmed, respondImmediately = !queueing))
+                socket.requestResync()
+            } else {
+                sendPtyChatInput(trimmed)
             }
+        } catch (e: Exception) {
+            // A later WS snapshot is authoritative. Roll back only our untouched local
+            // insertion rather than replacing newer messages/queue with the old snapshot.
+            if (optimisticQueue != null && queuedMessages === optimisticQueue) queuedMessages = previousQueue
+            if (optimisticMessages != null && messages === optimisticMessages) {
+                messages = previousMessages
+                isResponding = wasResponding
+            }
+            if (e !is CancellationException) {
+                wlog("chat", "发送失败 session=$sessionId：${e.message}", e)
+                socket.requestResync()
+            }
+            throw e
         }
     }
 
@@ -506,7 +495,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private suspend fun sendPtyChatInput(text: String) {
         val chunks = ptyComposerSubmitChunks(text, "chat")
         for ((index, chunk) in chunks.withIndex()) {
-            if (index > 0) delay(30)
+            if (index > 0) delay(PTY_CHAT_SUBMIT_CHUNK_INTERVAL_MS)
             api.sendPtyInputChunk(sessionId, chunk.input, chunk.view, chunk.shortcutKey)
         }
     }
@@ -783,3 +772,6 @@ internal fun chatRealtimeStartKind(active: Boolean, started: Boolean): ChatRealt
     if (active) return ChatRealtimeStartKind.Skip
     return if (started) ChatRealtimeStartKind.Reconnect else ChatRealtimeStartKind.FirstConnect
 }
+
+/** Match browser sendTerminalChunks: text and CR remain separate PTY input requests. */
+private const val PTY_CHAT_SUBMIT_CHUNK_INTERVAL_MS = 30L

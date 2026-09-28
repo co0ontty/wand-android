@@ -1,0 +1,9 @@
+sherpa-onnx v1.13.2 JVM API
+Upstream: https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.2
+License: Apache-2.0 (see sherpa-onnx-LICENSE.txt).
+
+Wand distribution changes: extracted JVM classes and Kotlin module metadata
+from the pinned official AAR; excluded OnlineRecognizer and OnlineStream and
+their Companion classes. Wand supplies compatible wrappers in source so the
+verified JNI library loads only after explicit activation. Remaining class
+bytes are unchanged. Native binaries are not included.

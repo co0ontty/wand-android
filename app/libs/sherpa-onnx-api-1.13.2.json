@@ -1,0 +1,14 @@
+{
+  "version": "1.13.2",
+  "sourceUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-static-link-onnxruntime-1.13.2.aar",
+  "sourceSize": 38208264,
+  "sourceSha256": "9b2a290b8c7f31bd0aba35abb4628e87fe8d0eb71796a98aa12f3acd089ceaed",
+  "classesSha256": "2e946a8643ed1abb24d78a6e13eb2b0fb5df893a063d42be1e35ec768314b353",
+  "removedClasses": [
+    "com/k2fsa/sherpa/onnx/OnlineRecognizer.class",
+    "com/k2fsa/sherpa/onnx/OnlineRecognizer$Companion.class",
+    "com/k2fsa/sherpa/onnx/OnlineStream.class",
+    "com/k2fsa/sherpa/onnx/OnlineStream$Companion.class"
+  ],
+  "apiSha256": "c78807ffcf7e5a8583bf56868240c72880269e022ebb6cc65dcbcf5ed5ed14fd"
+}

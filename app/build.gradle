@@ -4,45 +4,24 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
-import java.util.zip.ZipEntry
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
 import java.util.zip.ZipFile
-import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
 
-// 构建时只取 sherpa AAR 的 JVM API 类；原生 .so 仅在用户启用端侧语音后下载。
-// 上游 OnlineRecognizer / OnlineStream 的静态初始化会强制 System.loadLibrary，
-// 这里用本地的同名 JNI wrapper 替换它们，以便按需 System.load(绝对路径)。
-def sherpaAar = file('libs/sherpa-onnx-static-link-onnxruntime-1.13.2.aar')
-def sherpaApiJarFile = layout.buildDirectory.file('generated/sherpa/sherpa-api.jar')
-def sherpaWrappers = [
-    'com/k2fsa/sherpa/onnx/OnlineRecognizer.class',
-    'com/k2fsa/sherpa/onnx/OnlineRecognizer$Companion.class',
-    'com/k2fsa/sherpa/onnx/OnlineStream.class',
-    'com/k2fsa/sherpa/onnx/OnlineStream$Companion.class',
-] as Set
-
-def prepareSherpaApiJar = tasks.register('prepareSherpaApiJar') {
-    inputs.file(sherpaAar)
-    inputs.property('replacedWrappers', sherpaWrappers.toList().sort().join(','))
-    outputs.file(sherpaApiJarFile)
+// 只带固定官方版本的 JVM API；原生引擎在用户启用语音后按需下载。
+// tools/prepare-sherpa-api.py 可从官方 AAR 字节级复现，普通构建不下载/提取 AAR。
+def sherpaApiJar = file('libs/sherpa-onnx-api-1.13.2.jar')
+def sherpaApiManifest = file('libs/sherpa-onnx-api-1.13.2.json')
+def verifySherpaApi = tasks.register('verifySherpaApi') {
+    inputs.files(sherpaApiJar, sherpaApiManifest)
     doLast {
-        def target = sherpaApiJarFile.get().asFile
-        target.parentFile.mkdirs()
-        new ZipFile(sherpaAar).withCloseable { aar ->
-            def classes = aar.getEntry('classes.jar')
-            if (classes == null) throw new GradleException('sherpa AAR 缺少 classes.jar')
-            new ZipInputStream(aar.getInputStream(classes)).withCloseable { input ->
-                new ZipOutputStream(target.newOutputStream()).withCloseable { output ->
-                    for (def entry = input.nextEntry; entry != null; entry = input.nextEntry) {
-                        if (entry.name.endsWith('.class') && !sherpaWrappers.contains(entry.name)) {
-                            def jarEntry = new ZipEntry(entry.name)
-                            jarEntry.time = 0L
-                            output.putNextEntry(jarEntry)
-                            input.transferTo(output)
-                            output.closeEntry()
-                        }
-                    }
-                }
+        def spec = new JsonSlurper().parse(sherpaApiManifest)
+        def hash = MessageDigest.getInstance('SHA-256').digest(sherpaApiJar.bytes).encodeHex().toString()
+        if (hash != spec.apiSha256) throw new GradleException('sherpa JVM API SHA-256 不匹配')
+        new ZipFile(sherpaApiJar).withCloseable { jar ->
+            if (spec.removedClasses.any { jar.getEntry(it) != null } ||
+                jar.entries().toList().any { it.name.endsWith('.so') }) {
+                throw new GradleException('sherpa JVM API 不得含 eager-load wrapper 或原生库')
             }
         }
     }
@@ -237,9 +216,9 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // Compose 图片加载（聊天内联缩略图 / 全屏预览）：用 WandHttp.client 走自签证书 + cookie 鉴权。
     implementation 'io.coil-kt:coil-compose:2.7.0'
-    // AAR 仅作确定性的构建源；APK 只带轻量 API，绝不打包 22 MB 原生库。
+    // 固定来源的 API jar 不含 eager-load wrapper 或 22 MB 原生库。
     // 启用语音时从同版本官方发行包下载并校验（见 SpeechNativeLibrary）。
-    implementation files(prepareSherpaApiJar)
+    implementation files(sherpaApiJar)
 }
 
 // UI 页面只能跨 Wand 设计系统 seam 使用 Material 3。底层 Material/玻璃实现集中在
@@ -276,8 +255,10 @@ tasks.register('verifyWandDesignSystem') {
     }
 }
 
-tasks.named('preBuild').configure { dependsOn('verifyWandDesignSystem') }
+tasks.named('preBuild').configure { dependsOn('verifyWandDesignSystem', verifySherpaApi) }
 
 tasks.withType(Test).configureEach {
-    systemProperty 'wand.sherpaAar', sherpaAar.absolutePath
+    // 可选官方产物集成验证；常规单测使用小型 fixture，不要求完整 AAR。
+    def archive = providers.gradleProperty('SHERPA_AAR').orNull
+    if (archive != null) systemProperty 'wand.sherpaAar', file(archive).absolutePath
 }

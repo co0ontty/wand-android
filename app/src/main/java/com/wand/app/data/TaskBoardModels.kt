@@ -259,6 +259,31 @@ fun boardTaskProviderLabel(provider: String): String =
         else -> provider
     }
 
+/** 模型字段里的「跟随服务端默认」哨兵值：不是模型 id，写进请求前必须换掉。 */
+const val BOARD_AGENT_DEFAULT_MODEL = "default"
+
+/** 「跟随 X 默认」这种没写明模型的文案不算名字，其余去掉「（X 默认）」尾巴后就是 CLI 报出来的默认模型。 */
+private val DEFAULT_MODEL_LABEL_TAIL = Regex("""\s*[（(][^（()）]*默认[^（()）]*[）)]\s*$""")
+private val GENERIC_DEFAULT_MODEL_LABEL = Regex("""^跟随.*默认$""")
+
+/**
+ * 界面上要显示的模型名：`default` / 空值是「跟随服务端默认」的哨兵值、不是模型名，
+ * 换成真正会用的那个模型：先看服务端为该 CLI 配置的默认模型，再看 CLI 自己报出来的默认项
+ * （Codex / Grok 的目录项里写了具体模型名）。三处都拿不到名字返回空串，由调用方决定兜底。
+ * 口径与 Web `wandModelDisplayName` 一致。
+ */
+fun boardAgentModelName(models: ModelsResponse?, provider: String, model: String?): String {
+    val id = model?.trim().orEmpty()
+    if (id.isNotEmpty() && id != BOARD_AGENT_DEFAULT_MODEL) return id
+    // 认不出的 provider（`session` / `shell` = 终端）不猜默认模型，否则会把 Claude 的默认值安到别人头上。
+    if (WandProvider.fromId(provider) == null) return ""
+    val configured = models?.defaultModelFor(provider)?.trim().orEmpty()
+    if (configured.isNotEmpty() && configured != BOARD_AGENT_DEFAULT_MODEL) return configured
+    val label = models?.modelsFor(provider)?.firstOrNull { it.id == BOARD_AGENT_DEFAULT_MODEL }?.label.orEmpty()
+    val stripped = DEFAULT_MODEL_LABEL_TAIL.replace(label, "").trim()
+    return if (GENERIC_DEFAULT_MODEL_LABEL.matches(stripped)) "" else stripped
+}
+
 data class BoardAgentGroup(
     val provider: String,
     val agent: BoardTaskAgent?,
@@ -437,9 +462,22 @@ interface TaskBoardPort : TaskChangeSource {
 
     // MARK: - AI 团队（服务端 src/server-ai-team-routes.ts；鉴权同普通登录）
 
-    /** 团队定义列表，供指派选择器。缺省 = 该端口不提供团队能力。 */
+    /** 团队定义列表，供指派选择器与团队页。缺省 = 该端口不提供团队能力。 */
     suspend fun listAiTeams(): List<AiTeam> =
         throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    /** 新建团队（POST /api/ai-teams），返回服务端归一后的定义（成员 id 由服务端生成）。 */
+    suspend fun createAiTeam(draft: AiTeamDraft): AiTeam =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    /** 整体替换团队（PUT /api/ai-teams/{id}）：服务端按请求体重写，未带的字段回落到旧值。 */
+    suspend fun updateAiTeam(teamId: String, draft: AiTeamDraft): AiTeam =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    /** 删除团队定义（已有运行保留自己的快照，不受影响）。 */
+    suspend fun deleteAiTeam(teamId: String) {
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+    }
 
     /** 任务上按创建倒序的团队运行；面板只展示最近一次。 */
     suspend fun teamRunsForTask(taskId: String): List<AiTeamRun> =

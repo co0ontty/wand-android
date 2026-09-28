@@ -6,6 +6,7 @@ import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.boardTaskAgentLabels
 import com.wand.app.data.boardTaskProviderLabel
+import com.wand.app.data.boardTaskStatusLabel
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -93,6 +94,26 @@ internal fun boardTaskCardTitle(task: BoardTask): String {
 internal const val BOARD_TASK_CARD_SESSION_LIMIT = 3
 internal const val BOARD_TASK_CARD_LABEL_LIMIT = 2
 
+/**
+ * 标签芯片的展示映射表（§2.20）：只登记**本轮已确证**的服务端内部标识，
+ * 以后新增标识往这张表里加一行，不写成格式判断。
+ * 表外的标签一律按用户数据原样渲染 —— 按 `snake_case` 之类规则批量隐藏会误删用户自己的标签
+ * （负责人裁定 §0.6-3）。
+ */
+private val BOARD_TASK_LABEL_DISPLAY = mapOf(
+    "team_direct" to "团队直发",
+)
+
+/** 一枚标签的展示文案：已知内部标识换成中文，其余原样。大小写完全一致才映射。 */
+internal fun boardTaskLabelDisplay(label: String): String = BOARD_TASK_LABEL_DISPLAY[label] ?: label
+
+/**
+ * 分组标题行 ＋ 按钮的无障碍文案（§2.16）：分组名要加引号 —— 「进行中」本身以「中」结尾，
+ * 裸拼接会读成「在进行中中新建任务」。文案写成纯函数，改动可被单测钉住。
+ */
+internal fun boardGroupAddTaskDescription(status: String): String =
+    "在「${boardTaskStatusLabel(status)}」中新建任务"
+
 /** 卡片上的会话行：标题优先，没标题就退回工具名。 */
 internal data class BoardTaskCardSession(
     val id: String,
@@ -139,7 +160,7 @@ internal fun boardTaskCardModel(
     today: LocalDate = LocalDate.now(ZoneId.systemDefault()),
 ): BoardTaskCardModel {
     val workspaceName = task.workspace?.name?.trim().orEmpty()
-    val labels = task.labels.filter { it.isNotBlank() }
+    val labels = task.labels.filter { it.isNotBlank() }.map(::boardTaskLabelDisplay)
     val sessions = boardTaskCardSessions(task.sessions)
     val milestoneName = task.milestone?.name?.trim().orEmpty()
     return BoardTaskCardModel(

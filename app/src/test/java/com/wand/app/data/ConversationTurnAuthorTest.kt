@@ -73,4 +73,33 @@ class ConversationTurnAuthorTest {
 
         assertNull(turn.author)
     }
+
+    /** 署名要显示「CLI · 模型 · 思考深度」；老服务端不带这两个字段时回落 null，由页面只显 provider。 */
+    @Test
+    fun parsesAuthorModelAndThinkingEffortAndToleratesMissing() {
+        val full = ConversationTurn.parse(
+            JSONObject()
+                .put("role", "assistant")
+                .put(
+                    "author",
+                    JSONObject()
+                        .put("name", "实现者")
+                        .put("provider", "qoder")
+                        .put("model", "Qwen3.8-Flash")
+                        .put("thinkingEffort", "deep"),
+                )
+                .put("content", org.json.JSONArray().put(JSONObject().put("type", "text").put("text", "在跑"))),
+        )
+        assertEquals("Qwen3.8-Flash", full.author?.model)
+        assertEquals("deep", full.author?.thinkingEffort)
+
+        val legacy = ConversationTurn.parse(
+            JSONObject()
+                .put("role", "assistant")
+                .put("author", JSONObject().put("name", "实现者").put("provider", "qoder"))
+                .put("content", org.json.JSONArray().put(JSONObject().put("type", "text").put("text", "在跑"))),
+        )
+        assertNull(legacy.author?.model)
+        assertNull(legacy.author?.thinkingEffort)
+    }
 }

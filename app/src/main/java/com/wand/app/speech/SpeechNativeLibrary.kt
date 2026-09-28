@@ -7,7 +7,6 @@ import okhttp3.Request
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
-import java.util.zip.ZipFile
 
 /**
  * sherpa-onnx v1.13.2 is optional: the APK contains only its JVM API, not the 22 MB JNI library.
@@ -83,44 +82,8 @@ object SpeechNativeLibrary {
         }
     }
 
-    /** Only this exact entry can be extracted; bound its size to prevent zip bombs. */
     internal fun installFromArchive(archive: File, target: File) {
-        val parent = target.parentFile ?: throw IOException("无法创建语音引擎目录")
-        if (!parent.exists() && !parent.mkdirs()) throw IOException("无法创建语音引擎目录")
-        val tmp = File(parent, "$SO_NAME.part")
-        val complete = File(parent, ".complete")
-        complete.delete()
-        try {
-            ZipFile(archive).use { zip ->
-                val entry = zip.getEntry(SO_ENTRY) ?: throw IOException("语音引擎缺少 arm64 库")
-                if (entry.size != SO_SIZE) throw IOException("语音引擎文件大小异常")
-                val digest = MessageDigest.getInstance("SHA-256")
-                var received = 0L
-                tmp.outputStream().use { out ->
-                    zip.getInputStream(entry).use { input ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            received += n
-                            if (received > SO_SIZE) throw IOException("语音引擎文件大小异常")
-                            digest.update(buffer, 0, n)
-                            out.write(buffer, 0, n)
-                        }
-                    }
-                }
-                if (received != SO_SIZE || digest.hex() != SO_SHA256) {
-                    throw IOException("语音引擎校验失败，请重试")
-                }
-            }
-            // Android 17+ requires dynamically loaded native code to be read-only before load.
-            if (!tmp.setReadOnly()) throw IOException("无法保护语音引擎文件")
-            target.delete()
-            if (!tmp.renameTo(target)) throw IOException("无法安装语音引擎")
-            complete.writeText(SO_SHA256)
-        } finally {
-            tmp.delete()
-        }
+        installVerifiedNativeEntry(archive, target, NativeArchiveEntry(SO_ENTRY, SO_SIZE, SO_SHA256))
     }
 
     /** Always verify on disk on the background recognition/warm-up thread before executing it. */

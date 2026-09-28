@@ -65,6 +65,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -74,6 +75,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -403,19 +405,20 @@ private fun ChatNoticeView(turn: ConversationTurn) {
     if (text.isBlank()) return
     val clock = conversationTurnClock(turn)
     val author = turn.author?.name?.takeIf { it.isNotBlank() }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    // 提示行必须完整可读：原来是单行 Row + maxLines=3 + 省略号，长提示（团队派工、
+    // 权限说明）会被裁掉尾巴，时刻也会被挤没。改成竖向堆叠 + 居中折行，不裁剪。
+    Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(modifier = Modifier.weight(1f))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
             modifier = Modifier
+                .widthIn(max = NoticeMaxWidth)
                 .clip(WandShapes.sm)
                 .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 10.dp, vertical = 5.dp),
         ) {
             if (author != null) {
                 Text(
@@ -423,7 +426,6 @@ private fun ChatNoticeView(turn: ConversationTurn) {
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = WandColors.textSecondary,
-                    maxLines = 1,
                 )
             }
             Text(
@@ -431,8 +433,7 @@ private fun ChatNoticeView(turn: ConversationTurn) {
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
                 color = WandColors.textSecondary,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
             )
             if (clock.isNotBlank()) {
                 Text(
@@ -440,13 +441,13 @@ private fun ChatNoticeView(turn: ConversationTurn) {
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     color = WandColors.textMuted,
-                    maxLines = 1,
                 )
             }
         }
-        Spacer(modifier = Modifier.weight(1f))
     }
 }
+
+private val NoticeMaxWidth = 520.dp
 
 /** 折叠态下名字后的一行正文预览：优先取文本，纯工具调用时给「N 个工具调用」线索。 */
 private fun replyPreview(content: List<ContentBlock>): String = conversationTurnPreview(
@@ -503,7 +504,11 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
     }
 }
 
-/** 输入栏上方的紧凑状态坞：Agent 气泡独占上层；用量与回复状态只在流式期间以纯文字展示。 */
+/**
+ * 输入栏上方的紧凑状态坞。收起态只有一行摘要（图标 + 标题 + 计数 + 状态词）加一行
+ * 「最后一步动作」——卡名与气泡上重复的状态词不携带信息；展开后先看结论，
+ * 气泡选择器移进面板，用量与回复状态只在流式期间以纯文字展示。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun SubagentActivityDock(
@@ -521,6 +526,8 @@ internal fun SubagentActivityDock(
     val selectedIndex = activities.indexOfFirst { it.id == selectedAgentId }
         .takeIf { it >= 0 } ?: 0
     val activityIds = activities.map { it.id }
+    // 系统关闭动画时展开/收起退化瞬时；收起即展开的倒放，不引入第二套曲线。
+    val motionEnabled = !reduceMotionEnabled()
 
     LaunchedEffect(activityIds) {
         if (activities.isEmpty()) {
@@ -538,7 +545,9 @@ internal fun SubagentActivityDock(
         if (expanded && activities.isNotEmpty()) {
             withFrameNanos { }
             val target = activities.indexOfFirst { it.id == selectedAgentId }.takeIf { it >= 0 } ?: 0
-            if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+            if (pagerState.currentPage != target) {
+                if (motionEnabled) pagerState.animateScrollToPage(target) else pagerState.scrollToPage(target)
+            }
         }
     }
     LaunchedEffect(pagerState, activityIds) {
@@ -567,10 +576,18 @@ internal fun SubagentActivityDock(
     ) {
         AnimatedVisibility(
             visible = expanded && activities.isNotEmpty(),
-            enter = fadeIn(WandMotion.tweenFast()) +
-                expandVertically(animationSpec = WandMotion.settleSpringSpec(), expandFrom = Alignment.Bottom),
-            exit = fadeOut(WandMotion.tweenFast()) +
-                shrinkVertically(animationSpec = WandMotion.settleSpringSpec(), shrinkTowards = Alignment.Bottom),
+            enter = if (motionEnabled) {
+                fadeIn(WandMotion.tweenFast()) +
+                    expandVertically(animationSpec = WandMotion.settleSpringSpec(), expandFrom = Alignment.Bottom)
+            } else {
+                fadeIn(snap()) + expandVertically(snap(), expandFrom = Alignment.Bottom)
+            },
+            exit = if (motionEnabled) {
+                fadeOut(WandMotion.tweenFast()) +
+                    shrinkVertically(animationSpec = WandMotion.settleSpringSpec(), shrinkTowards = Alignment.Bottom)
+            } else {
+                fadeOut(snap()) + shrinkVertically(snap(), shrinkTowards = Alignment.Bottom)
+            },
         ) {
             Column(
                 modifier = Modifier
@@ -582,26 +599,33 @@ internal fun SubagentActivityDock(
                     )
                     .padding(top = 4.dp, bottom = 7.dp),
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxWidth().height(34.dp),
-                ) {
-                    Text(
-                        "${pagerState.currentPage + 1} / ${activities.size}",
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = WandColors.textMuted,
+                if (activities.size > 1) {
+                    // 多 Agent：气泡即选择器（身份色区分谁是谁），替代原来只有「1 / N」的占位行。
+                    AgentBubbleRail(
+                        backdrop = backdrop,
+                        activities = activities,
+                        selectedIndex = selectedIndex,
+                        expanded = expanded,
+                        sessionRunning = sessionRunning,
+                        onAgentClick = selectAgent,
+                        onStackClick = { selectAgent(selectedIndex) },
                     )
-                    IconButton(
-                        onClick = { expanded = false },
-                        modifier = Modifier.align(Alignment.CenterEnd).size(30.dp),
+                } else {
+                    Box(
+                        contentAlignment = Alignment.CenterEnd,
+                        modifier = Modifier.fillMaxWidth().height(30.dp),
                     ) {
-                        Icon(
-                            WandIcons.close,
-                            contentDescription = "收起 Agent 卡片",
-                            tint = WandColors.textSecondary,
-                            modifier = Modifier.size(15.dp),
-                        )
+                        IconButton(
+                            onClick = { expanded = false },
+                            modifier = Modifier.size(30.dp),
+                        ) {
+                            Icon(
+                                WandIcons.close,
+                                contentDescription = "收起 Agent 卡片",
+                                tint = WandColors.textSecondary,
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
                     }
                 }
                 HorizontalPager(
@@ -620,20 +644,12 @@ internal fun SubagentActivityDock(
         }
 
         if (activities.isNotEmpty()) {
-            AgentBubbleRail(
+            SubagentSummaryRow(
                 backdrop = backdrop,
                 activities = activities,
-                selectedIndex = selectedIndex,
+                sessionRunning = sessionRunning,
                 expanded = expanded,
-                onAgentClick = selectAgent,
-                onStackClick = {
-                    val target = if (expanded) {
-                        selectedIndex
-                    } else {
-                        activities.indexOfFirst { it.running }.takeIf { it >= 0 } ?: selectedIndex
-                    }
-                    selectAgent(target)
-                },
+                onClick = { expanded = !expanded },
             )
         }
         if (sessionRunning) {
@@ -649,19 +665,235 @@ internal fun SubagentActivityDock(
     }
 }
 
+/** 收起态摘要行：图标 + 标题 + 计数 + 状态词（完成态只图标 + contentDescription）+ 副行动作。 */
+@Composable
+private fun SubagentSummaryRow(
+    backdrop: GlassBackdrop?,
+    activities: List<SubagentActivity>,
+    sessionRunning: Boolean,
+    expanded: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val status = SubagentActivity.overallStatus(activities)
+    val statusLabel = subagentStatusLabel(status, sessionRunning)
+    val title = subagentCardTitle(activities)
+    val topic = subagentCardTopic(activities)
+    val typeChip = subagentTypeChip(activities)
+    val latest = subagentPrimaryActivity(activities)?.let { subagentLastAction(it) }.orEmpty()
+    val motionEnabled = !reduceMotionEnabled()
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.morph()),
+        label = "subagentChevron",
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(WandShapes.lg)
+            .glassSurface(
+                backdrop,
+                WandShapes.lg,
+                WandGlass.regular.tinted(subagentStatusColor(status), if (expanded) 0.18f else 0.10f),
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClickLabel = if (expanded) "收起 Agent 卡片" else "查看 Agent 卡片",
+            ) { onClick() }
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                stateDescription = "$title，$statusLabel，${if (expanded) "详情已展开" else "详情已收起"}"
+            }
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+    ) {
+        SubagentStatusIcon(status, size = 17.dp)
+        Column(
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    title,
+                    fontSize = 12.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (topic.isNotBlank()) {
+                    Text(
+                        "· $topic",
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        color = WandColors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                if (typeChip.isNotBlank()) {
+                    Text(
+                        typeChip,
+                        fontSize = 9.sp,
+                        lineHeight = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(WandColors.textMuted.copy(alpha = 0.10f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp),
+                    )
+                }
+                // 状态词只在需要解释时出现，一屏只说一次。
+                if (subagentStatusNeedsText(status)) {
+                    Text(
+                        statusLabel,
+                        fontSize = 10.sp,
+                        lineHeight = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = subagentStatusColor(status),
+                        maxLines = 1,
+                    )
+                }
+            }
+            if (latest.isNotBlank()) {
+                Text(
+                    latest,
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Icon(
+            WandIcons.expand,
+            contentDescription = null,
+            tint = WandColors.textSecondary,
+            modifier = Modifier.size(16.dp).rotate(chevronRotation),
+        )
+    }
+}
+
 internal data class AgentLogoVariant(val paletteIndex: Int, val facetIndex: Int)
+
+private const val AGENT_PALETTE_SIZE = 5
+private const val AGENT_FACET_SIZE = 3
 
 /** task id 派生稳定伪随机外观，避免流式重组或重开卡片时 Logo 跳变。 */
 internal fun agentLogoVariant(id: String): AgentLogoVariant {
     val seed = id.hashCode()
     return AgentLogoVariant(
-        paletteIndex = Math.floorMod(seed, 5),
-        facetIndex = Math.floorMod(seed * 31 + 17, 3),
+        paletteIndex = Math.floorMod(seed, AGENT_PALETTE_SIZE),
+        facetIndex = Math.floorMod(seed * 31 + 17, AGENT_FACET_SIZE),
     )
 }
 
-private fun agentBubbleTitle(activity: SubagentActivity): String =
-    activity.meta.agentType?.trim().takeUnless { it.isNullOrEmpty() } ?: "Agent"
+/**
+ * 卡内身份色去重（同 Web `agentRunAccent`）：按出现顺序先让前面的 Agent 占好色位，
+ * 后来的撞色就顺延一格。种子只用 taskId —— 同批次并行 Agent 的 agentType 往往相同，
+ * 用类型取色会让整卡撞成一色。
+ */
+internal fun dedupeAgentLogoVariants(ids: List<String>): List<AgentLogoVariant> {
+    val taken = mutableListOf<Int>()
+    return ids.map { id ->
+        var slot = Math.floorMod(id.hashCode(), AGENT_PALETTE_SIZE)
+        var shifts = 0
+        while (taken.contains(slot) && shifts < AGENT_PALETTE_SIZE) {
+            slot = (slot + 1) % AGENT_PALETTE_SIZE
+            shifts++
+        }
+        taken += slot
+        AgentLogoVariant(slot, Math.floorMod(id.hashCode() * 31 + 17, AGENT_FACET_SIZE))
+    }
+}
+
+/**
+ * 标题取名（Web 设计 A）：任务描述优先（能区分谁在干什么），其次类型，最后兜底「子 Agent」。
+ * 类型兜底保留既有的「猫猫」品牌前缀；任务描述是用户自己的文字，不加前缀。
+ */
+internal fun agentBubbleTitle(activity: SubagentActivity): String {
+    activity.meta.taskDescription?.trim().takeUnless { it.isNullOrEmpty() }?.let { return it }
+    val fallback = activity.meta.agentType?.trim().takeUnless { it.isNullOrEmpty() } ?: "子 Agent"
+    return if (fallback.startsWith("猫猫")) fallback else "猫猫 $fallback"
+}
+
+/** 整卡标题：单 Agent 用任务本身；多 Agent 用计数 + 主 Agent 描述，卡名不再占位。 */
+internal fun subagentCardTitle(activities: List<SubagentActivity>): String {
+    val single = activities.firstOrNull() ?: return "子 Agent"
+    if (activities.size < 2) return agentBubbleTitle(single)
+    return "${activities.size} 个子 Agent"
+}
+
+/** 多 Agent 卡的主 Agent：正在跑/转后台的优先，否则第一条（保持稳定，不随刷新跳字）。 */
+internal fun subagentPrimaryActivity(activities: List<SubagentActivity>): SubagentActivity? {
+    return activities.firstOrNull {
+        it.status == SubagentStatus.Running || it.status == SubagentStatus.Background
+    } ?: activities.firstOrNull()
+}
+
+internal fun subagentCardTopic(activities: List<SubagentActivity>): String {
+    if (activities.size < 2) return ""
+    val primary = subagentPrimaryActivity(activities) ?: return ""
+    return primary.meta.taskDescription?.trim().takeUnless { it.isNullOrEmpty() }
+        ?: primary.meta.agentType?.trim().takeUnless { it.isNullOrEmpty() }
+        ?: ""
+}
+
+/** 这些类型名不携带信息（“通用 Agent”），不配占一个 chip 位；集合与 Web `AGENT_RUN_DEFAULT_TYPES` 逐字相同。 */
+private val subagentDefaultTypes = setOf("general", "general-purpose", "generalist", "default")
+
+internal fun isDefaultSubagentType(type: String?): Boolean {
+    val value = type?.trim().orEmpty()
+    return value.isEmpty() || value.lowercase() in subagentDefaultTypes
+}
+
+/** 类型 chip：整卡单一类型且非默认时才出现一次；多个类型混在一行等于没写。 */
+internal fun subagentTypeChip(activities: List<SubagentActivity>): String {
+    val types = activities.mapNotNull { it.meta.agentType?.trim() }.filter { it.isNotEmpty() }.distinct()
+    if (types.size != 1) return ""
+    return if (isDefaultSubagentType(types.first())) "" else types.first()
+}
+
+/**
+ * 副行「最后一步动作」：从后往前找第一个能说明在干什么的块（工具步 / 非空正文 / 思考），
+ * 压平成一行纯文本。整份最终报告不进副行——那是展开体的结论。
+ * 顺序与 Web `agentRunLastActionText` 一致：先扫过程块，扫不到才用回执文案，再回落结果正文。
+ */
+internal fun subagentLastAction(activity: SubagentActivity): String {
+    for (block in activity.blocks.asReversed()) {
+        if (block is ContentBlock.ToolResult) continue
+        if (block is ContentBlock.ToolUse) {
+            val summary = toolSummary(block.description, block.input)
+            val label = listOf(block.name, summary).filter { it.isNotBlank() }.joinToString(" ")
+            if (label.isNotBlank()) return truncateInlinePreview(compactPreviewText(label), 150)
+            continue
+        }
+        val text = when (block) {
+            is ContentBlock.Text -> block.text
+            is ContentBlock.Thinking -> block.thinking
+            else -> ""
+        }
+        if (text.isNotBlank()) return truncateInlinePreview(compactPreviewText(text), 150)
+    }
+    // 子 Agent 一句话都还没说就被派去后台：这时才用回执文案。
+    if (activity.receipt != null) return "已交给后台执行"
+    val resultText = activity.result?.text.orEmpty()
+    if (resultText.isNotBlank()) return truncateInlinePreview(compactPreviewText(resultText), 150)
+    return if (activity.status == SubagentStatus.Running) "等待子 Agent 输出…" else ""
+}
+
+private fun truncateInlinePreview(value: String, max: Int): String =
+    if (value.length <= max) value else value.take(max - 1).trimEnd() + "…"
 
 @Composable
 private fun AgentBubbleRail(
@@ -669,6 +901,7 @@ private fun AgentBubbleRail(
     activities: List<SubagentActivity>,
     selectedIndex: Int,
     expanded: Boolean,
+    sessionRunning: Boolean,
     onAgentClick: (Int) -> Unit,
     onStackClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -686,6 +919,7 @@ private fun AgentBubbleRail(
                 onClickLabel = if (expanded) "收起 Agent 卡片" else "查看 Agent 卡片",
             ) { onStackClick() },
     ) {
+        // 「Agent:」只在展开面板里给气泡选择器当段落标签；收起态的摘要行不再出现卡名。
         Text(
             "Agent:",
             fontSize = 11.sp,
@@ -717,6 +951,7 @@ private fun AgentBubbleRail(
                             activity = activity,
                             selected = expanded && index == selectedIndex,
                             expanded = expanded && index == selectedIndex,
+                            sessionRunning = sessionRunning,
                             onClick = { onAgentClick(index) },
                         )
                     }
@@ -736,6 +971,7 @@ private fun AgentBubbleRail(
                         activities = activities,
                         selectedAgentId = activities.getOrNull(selectedIndex)?.id,
                         expanded = expanded,
+                        sessionRunning = sessionRunning,
                         onClick = onStackClick,
                     )
                 }.single().measure(looseConstraints)
@@ -753,14 +989,11 @@ private fun AgentBubble(
     activity: SubagentActivity,
     selected: Boolean,
     expanded: Boolean,
+    sessionRunning: Boolean,
     onClick: () -> Unit,
 ) {
     val title = agentBubbleTitle(activity)
-    val state = when {
-        activity.running -> "正在运行"
-        activity.failed -> "执行失败"
-        else -> "已完成"
-    }
+    val state = subagentStatusLabel(activity.status, sessionRunning)
     Box(
         modifier = Modifier
             .clip(CircleShape)
@@ -806,27 +1039,18 @@ private fun AgentBubbleBody(
             .padding(horizontal = if (activity.running) 6.dp else 5.dp),
     ) {
         GeneratedAgentLogo(activity, size = 24.dp, animate = animateLogo)
-        if (activity.running) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    agentBubbleTitle(activity),
-                    fontSize = 10.sp,
-                    lineHeight = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 104.dp),
-                )
-                Text(
-                    "正在运行",
-                    fontSize = 9.sp,
-                    lineHeight = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = accent,
-                    maxLines = 1,
-                )
-            }
+        // 气泡只带身份（颜色 + 任务名），状态词交给摘要行与页面头，不再一屏重复。
+        Column {
+            Text(
+                agentBubbleTitle(activity),
+                fontSize = 10.sp,
+                lineHeight = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 104.dp),
+            )
         }
     }
 }
@@ -837,6 +1061,7 @@ private fun StackedAgentCluster(
     activities: List<SubagentActivity>,
     selectedAgentId: String?,
     expanded: Boolean,
+    sessionRunning: Boolean,
     onClick: () -> Unit,
 ) {
     val visible = remember(activities) {
@@ -857,7 +1082,9 @@ private fun StackedAgentCluster(
             .clickable(onClickLabel = if (expanded) "收起 Agent 卡片" else "查看 Agent 卡片") { onClick() }
             .semantics(mergeDescendants = true) {
                 role = Role.Button
-                stateDescription = "${activities.size} 个子 Agent，$runningCount 个正在运行，${if (expanded) "详情已展开" else "详情已收起"}"
+                stateDescription = "${activities.size} 个子 Agent，" +
+                    subagentStatusLabel(SubagentActivity.overallStatus(activities), sessionRunning) +
+                    "，$runningCount 个正在运行，${if (expanded) "详情已展开" else "详情已收起"}"
             }
             .padding(vertical = 3.dp),
     ) {
@@ -948,7 +1175,8 @@ private fun GeneratedAgentLogo(
     animate: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val variant = remember(activity.id) { agentLogoVariant(activity.id) }
+    // 外观来自聚合时算好的卡内去重结果，不在绘制路径上调 @Composable（remember 的键也不允许）。
+    val variant = activity.logoVariant
     val palette = agentGemPalette(activity, variant)
     val tint = agentIdentityColor(activity)
     // 统一走 reduceMotion，和 StatusDot / WandMotion 呼吸灯保持同一套开关。
@@ -1100,8 +1328,8 @@ private fun agentGemPalette(
 @Composable
 private fun agentIdentityColor(activity: SubagentActivity): Color {
     if (activity.failed) return WandColors.danger
-    if (!activity.running) return WandColors.textMuted
-    val base = when (agentLogoVariant(activity.id).paletteIndex) {
+    // 身份色是 Agent 的属性、不是状态的属性：完成 / 后台 / 未完成也要能区分是谁（对齐 Web）。
+    val base = when (activity.logoVariant.paletteIndex) {
         0 -> Color(0xFF246CCB)
         1 -> Color(0xFF087C5C)
         2 -> Color(0xFF0B7688)
@@ -1109,6 +1337,39 @@ private fun agentIdentityColor(activity: SubagentActivity): Color {
         else -> Color(0xFF0C776C)
     }
     return if (isWandDarkTheme()) lerp(base, Color.White, 0.30f) else base
+}
+
+/** 状态色：与收起行的图标、展开头的状态点共用。 */
+@Composable
+private fun subagentStatusColor(status: SubagentStatus): Color = when (status) {
+    SubagentStatus.Failed -> WandColors.danger
+    SubagentStatus.Running -> WandColors.info
+    SubagentStatus.Background -> WandColors.info
+    SubagentStatus.Interrupted -> WandColors.warning
+    SubagentStatus.Pending -> WandColors.textMuted
+    SubagentStatus.Completed -> WandColors.success
+}
+
+@Composable
+private fun SubagentStatusIcon(
+    status: SubagentStatus,
+    size: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val icon = when (status) {
+        SubagentStatus.Failed -> WandIcons.statusFail
+        SubagentStatus.Running -> WandIcons.refresh
+        SubagentStatus.Background -> WandIcons.keepAlive
+        SubagentStatus.Interrupted -> WandIcons.error
+        SubagentStatus.Pending -> WandIcons.statusPending
+        SubagentStatus.Completed -> WandIcons.statusDone
+    }
+    Icon(
+        icon,
+        contentDescription = null,
+        tint = subagentStatusColor(status),
+        modifier = modifier.size(size),
+    )
 }
 
 @Composable
@@ -1208,6 +1469,99 @@ private fun UserTurnView(turn: ConversationTurn, compact: Boolean) {
     }
 }
 
+/** 子 Agent 状态，与 Web `agent-runs.ts` 的 `AgentRunStatus` 同一套口径与优先级。 */
+internal enum class SubagentStatus {
+    Failed,
+    Running,
+    Background,
+    Interrupted,
+    Pending,
+    Completed,
+}
+
+/** 异步派发（pi / qoder）的「回执」：只证明任务交给了后台，不证明子 Agent 跑完并给出了结论。 */
+internal data class AsyncDispatchReceipt(val runId: String, val outputPath: String)
+
+/**
+ * 派发回执判据，与 Web `agent-runs.ts` 同构的三层，顺序不可调换。形状来自 271 条真实
+ * `Pi/subagent` toolResult 的全量聚类，形状表见 `docs/subagent-display.md` §6。
+ *
+ * 第一层 否决：状态查询与转录报告正文里同样含 `Run fan-out:` 和 `Output:`
+ * （真实样本 130 + 12 条），只按「含什么关键字」判必然误判，所以先按首行前缀排除。
+ */
+private val asyncReceiptDenyHead = Regex(
+    """^(Status target:|Transcript target:|Steering queued|Revived async subagent|Background task completed)""",
+)
+
+/** 第二层 认形状。pi 的两种异步派发回执首行都是 fan-out 预算行。 */
+private val asyncReceiptPiHead = Regex("""^Run fan-out:\s*\d+/\d+ used\b""")
+private val asyncReceiptPiSingle = Regex("""^Async:\s*(\S.*)$""")
+private val asyncReceiptPiWorkflow = Regex("""^Async workflow\b(.*)$""")
+
+/** qoder 的启动 ack 没有 fan-out 行，id 在 `agentId:` 且不是 uuid（`aExplore-060c…`）。 */
+private val asyncReceiptQoderHead = Regex("""^Async agent launched successfully\.""")
+private val asyncReceiptQoderAgentId = Regex("""^agentId:\s*([^\s(]+)""", RegexOption.MULTILINE)
+
+/** 取行内最后一个方括号段：类型名自己带 `[general]` 时不能只取第一个。 */
+private val asyncReceiptBracketId = Regex("""\[([0-9a-fA-F-]{8,64})]""")
+
+/**
+ * `Output:` / `output_file:` **只用于字段提取，绝不作为判据条件**：真实 pi 派发回执根本没有
+ * `Output:` 行（只有 `details.asyncDir` 目录），当必要条件会让真实语料里的 pi 回执一条不命中。
+ */
+private val asyncReceiptOutputField = Regex("""^Output:\s*(\S+)""", RegexOption.MULTILINE)
+private val asyncReceiptQoderOutputField = Regex("""^output_file:\s*(\S+)""", RegexOption.MULTILINE)
+
+/**
+ * 第三层 兜底。provider 文案会变，白名单必然漏新形状；漏的时候宁可判中性「后台运行中」
+ * 也不能标绿「最终结论」——后者是用户认定过的 bug，前者只是不够精确。正文一律照常渲染。
+ */
+private val asyncReceiptBackgroundPhrases = listOf(
+    "detached and running in the background",
+    "is working in the background",
+    "will be notified automatically when it completes",
+)
+
+private fun lastAsyncReceiptRunId(line: String): String {
+    var found = ""
+    for (match in asyncReceiptBracketId.findAll(line)) found = match.groupValues[1]
+    return found
+}
+
+internal fun parseAsyncDispatchReceipt(text: String?): AsyncDispatchReceipt? {
+    val value = text?.trim().orEmpty()
+    if (value.isEmpty()) return null
+    if (asyncReceiptDenyHead.containsMatchIn(value)) return null
+
+    val lines = value.split("\n")
+    if (asyncReceiptPiHead.containsMatchIn(lines[0])) {
+        // 派发行通常在预算行之后，但中间可能插一整段 Preflight 计划表：真实语料里
+        // 57 条紧跟第二行、9 条在第 6 行、最远一条在第 14 行（10 lanes 的表）。
+        // 所以扫预算行之后的前 24 行，而不是硬写「第二行」——只认行首，正文里提到不算。
+        for (i in 1 until minOf(lines.size, 25)) {
+            val line = lines[i].trim()
+            val tail = asyncReceiptPiSingle.find(line)?.groupValues?.getOrNull(1)
+                ?: asyncReceiptPiWorkflow.find(line)?.groupValues?.getOrNull(1)
+                ?: continue
+            return AsyncDispatchReceipt(
+                runId = lastAsyncReceiptRunId(tail),
+                outputPath = asyncReceiptOutputField.find(value)?.groupValues?.getOrNull(1).orEmpty(),
+            )
+        }
+    }
+    if (asyncReceiptQoderHead.containsMatchIn(lines[0])) {
+        return AsyncDispatchReceipt(
+            runId = asyncReceiptQoderAgentId.find(value)?.groupValues?.getOrNull(1).orEmpty(),
+            outputPath = asyncReceiptQoderOutputField.find(value)?.groupValues?.getOrNull(1).orEmpty(),
+        )
+    }
+    if (asyncReceiptBackgroundPhrases.any { value.contains(it, ignoreCase = true) }) {
+        // 认不出形状，但正文明确说它已进后台：字段留空，由渲染侧回落到正文。
+        return AsyncDispatchReceipt(runId = "", outputPath = "")
+    }
+    return null
+}
+
 internal data class SubagentActivity(
     val id: String,
     val meta: SubagentMeta,
@@ -1215,12 +1569,60 @@ internal data class SubagentActivity(
     val running: Boolean,
     val failed: Boolean,
     val interrupted: Boolean,
-)
+    /** 无结果且不在最新一轮：多半是分页窗口截断了父级 tool_result，不能报「已中断」。 */
+    val pending: Boolean = false,
+    val result: ContentBlock.ToolResult? = null,
+    val receipt: AsyncDispatchReceipt? = null,
+    /** 卡内去重后的外观，避免同批次并行 Agent 撞成同一个颜色。 */
+    val logoVariant: AgentLogoVariant = agentLogoVariant(id),
+    /** 会话当时在不在跑：回执要说「后台运行中」还是「后台已结束」，面板里也要能单独判定。 */
+    val sessionRunning: Boolean = false,
+) {
+    val background: Boolean get() = receipt != null
+
+    val status: SubagentStatus
+        get() = when {
+            failed -> SubagentStatus.Failed
+            running -> SubagentStatus.Running
+            receipt != null -> SubagentStatus.Background
+            interrupted -> SubagentStatus.Interrupted
+            pending -> SubagentStatus.Pending
+            else -> SubagentStatus.Completed
+        }
+
+    companion object {
+        /** 整卡状态：failed > running > background > interrupted > pending > completed。 */
+        fun overallStatus(activities: List<SubagentActivity>): SubagentStatus {
+            val statuses = activities.map { it.status }
+            return listOf(
+                SubagentStatus.Failed,
+                SubagentStatus.Running,
+                SubagentStatus.Background,
+                SubagentStatus.Interrupted,
+                SubagentStatus.Pending,
+            ).firstOrNull { statuses.contains(it) } ?: SubagentStatus.Completed
+        }
+    }
+}
+
+internal fun subagentStatusLabel(status: SubagentStatus, sessionRunning: Boolean): String = when (status) {
+    SubagentStatus.Failed -> "执行失败"
+    SubagentStatus.Running -> "正在运行"
+    // 「后台已结束」不是第七种状态：回执证明不了后台跑完没有，所以不给绿色「已完成」。
+    SubagentStatus.Background -> if (sessionRunning) "后台运行中" else "后台已结束"
+    SubagentStatus.Interrupted -> "已中断"
+    SubagentStatus.Pending -> "未完成"
+    SubagentStatus.Completed -> "已完成"
+}
+
+/** 完成态由图标 + contentDescription 表达，不再重复状态词（对齐 Web `agentRunStatusNeedsText`）。 */
+internal fun subagentStatusNeedsText(status: SubagentStatus): Boolean = status != SubagentStatus.Completed
 
 /**
  * 整个会话里的 subagent 聚合为稳定卡片模型，保证移出消息正文后仍可回看。
  * 父 Task 的最终 tool_result 以 toolUseId == taskId 标记完成；内层工具结果
- * 不会误结束整个 agent。只有最后一条用户消息之后的未完成任务会显示运行态。
+ * 不会误结束整个 agent。只有最后一条**真人**用户消息之后的未完成任务才参与
+ * 运行/中断判定，更早的无结果任务落 `pending`（与 Web `agentRunInLatestWindow` 同一语义）。
  */
 internal fun collectSubagentActivities(
     messages: List<ConversationTurn>,
@@ -1228,7 +1630,9 @@ internal fun collectSubagentActivities(
 ): List<SubagentActivity> {
     val lastHumanTurn = messages.indexOfLast { turn ->
         turn.role == "user" && turn.content.any { block ->
-            block is ContentBlock.Text && block.subagent == null
+            // 空 text 不算真人轮；子 Agent 轨迹（含回传的结果消息）也不算，
+            // 否则窗口会被 Agent 自己的输出越推越后，历史 run 永远显示「运行中」。
+            block is ContentBlock.Text && block.subagent == null && block.text.isNotBlank()
         }
     }
     data class MutableActivity(
@@ -1236,6 +1640,8 @@ internal fun collectSubagentActivities(
         val blocks: MutableList<ContentBlock> = mutableListOf(),
         var completed: Boolean = false,
         var failed: Boolean = false,
+        var result: ContentBlock.ToolResult? = null,
+        var receipt: AsyncDispatchReceipt? = null,
         var lastSeenTurn: Int = -1,
     )
 
@@ -1251,13 +1657,15 @@ internal fun collectSubagentActivities(
             if (block is ContentBlock.ToolResult && block.toolUseId == id) {
                 activity.completed = true
                 activity.failed = block.isError
+                activity.result = block
+                // 失败的结果不是「已交给后台」，判据不参与，保持「失败原因」展示。
+                activity.receipt =
+                    if (block.isError) null else parseAsyncDispatchReceipt(block.text)
             }
         }
     }
 
-    return byId.map { (id, activity) ->
-        // 只有最后一条用户消息之后的任务才参与运行/中断判定；更早的无结果任务
-        // 多半是分页窗口截断了父级 tool_result，保持「已完成」不误报。
+    val collected = byId.map { (id, activity) ->
         val inLatestWindow = activity.lastSeenTurn > lastHumanTurn
         SubagentActivity(
             id = id,
@@ -1266,8 +1674,14 @@ internal fun collectSubagentActivities(
             running = sessionRunning && inLatestWindow && !activity.completed,
             failed = activity.failed,
             interrupted = !sessionRunning && inLatestWindow && !activity.completed,
+            pending = !activity.completed && !inLatestWindow,
+            result = activity.result,
+            receipt = activity.receipt,
+            sessionRunning = sessionRunning,
         )
     }
+    val variants = dedupeAgentLogoVariants(collected.map { it.id })
+    return collected.mapIndexed { index, activity -> activity.copy(logoVariant = variants[index]) }
 }
 
 private fun ContentBlock.subagentMeta(): SubagentMeta? = when (this) {
@@ -1456,28 +1870,41 @@ private fun RenderDisplayItem(
 
 @Composable
 private fun SubagentActivityPage(activity: SubagentActivity) {
-    val rawTitle = activity.meta.agentType?.takeIf { it.isNotBlank() } ?: "子 Agent"
-    val title = if (rawTitle.startsWith("猫猫")) rawTitle else "猫猫 $rawTitle"
-    val description = activity.meta.taskDescription?.takeIf { it.isNotBlank() }
+    val description = activity.meta.taskDescription?.trim().takeUnless { it.isNullOrEmpty() }
+    val agentType = activity.meta.agentType?.trim().takeUnless { it.isNullOrEmpty() }
+    // 标题必须是任务本身；只有拿不到描述时才退回类型（保留既有的「猫猫」品牌前缀）。
+    val title = description ?: agentBubbleTitle(activity)
+    val typeChip = if (description != null && !isDefaultSubagentType(agentType)) agentType.orEmpty() else ""
+    val status = activity.status
+    val statusLabel = subagentStatusLabel(status, activity.sessionRunning)
+    val statusColor = subagentStatusColor(status)
     val scrollState = rememberScrollState()
-    val itemCount = remember(activity.blocks) { pairToolBlocks(activity.blocks).size }
-    val refreshToken = remember(activity.blocks) { subagentTailRefreshToken(activity.blocks) }
-    val statusColor = when {
-        activity.failed -> WandColors.danger
-        activity.running -> agentIdentityColor(activity)
-        else -> WandColors.textMuted
+    val refreshToken = remember(activity.blocks, activity.result) {
+        subagentTailRefreshToken(activity.blocks)
     }
+    val stepCount = remember(activity.blocks) { subagentStepCount(activity.blocks) }
+    val motionEnabled = !reduceMotionEnabled()
+    // 运行中默认摊开过程（那时过程就是正文）；有结论时默认只看结论。
+    var processExpanded by remember(activity.id) {
+        mutableStateOf(status == SubagentStatus.Running)
+    }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (processExpanded) 90f else 0f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.morph()),
+        label = "subagentProcessChevron",
+    )
 
-    // 内容高度变化意味着流式文本或新的工具结果已经到达。只在这种刷新发生时
-    // 重回尾部；两次刷新之间，用户仍可自由向上滚动查看窗口内历史。
-    LaunchedEffect(scrollState) {
+    // 摊开过程时内容高度变化意味着新的流式文本或工具结果到达，只在这种刷新发生时
+    // 重回尾部；收起成「结论 + 一行过程」时正文在顶部，不再抢滚动位置。
+    // 键仍是 refreshToken（契约锚点）：processExpanded 在效果体内实时读，行为不变。
+    LaunchedEffect(scrollState, processExpanded) {
         snapshotFlow { scrollState.maxValue }.collect { maxValue ->
-            scrollState.scrollTo(maxValue)
+            if (processExpanded) scrollState.scrollTo(maxValue)
         }
     }
     LaunchedEffect(refreshToken) {
         withFrameNanos { }
-        scrollState.scrollTo(scrollState.maxValue)
+        if (processExpanded) scrollState.scrollTo(scrollState.maxValue)
     }
 
     Column(
@@ -1504,61 +1931,255 @@ private fun SubagentActivityPage(activity: SubagentActivity) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    description ?: if (activity.running) "正在处理子任务" else "子任务输出",
-                    fontSize = 11.sp,
-                    color = WandColors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(
-                when {
-                    activity.running -> "正在运行"
-                    activity.failed -> "执行失败"
-                    else -> "${itemCount.coerceAtLeast(1)} 条内容"
-                },
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = statusColor,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(statusColor.copy(alpha = 0.18f), statusColor.copy(alpha = 0.05f)),
-                        ),
+                // 类型只在能区分时出现一次；状态词交给右边的点 + contentDescription。
+                if (typeChip.isNotBlank()) {
+                    Text(
+                        typeChip,
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    .border(0.6.dp, statusColor.copy(alpha = 0.26f), CircleShape)
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .clip(CircleShape)
+                    .background(statusColor)
+                    .semantics { contentDescription = statusLabel },
             )
         }
         HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
-        Box(
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .background(WandColors.bgPrimary.copy(alpha = 0.45f))
-                .verticalScroll(scrollState),
+                .verticalScroll(scrollState)
+                .padding(10.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
-            ) {
-                SegmentBlocks(
-                    blocks = activity.blocks,
-                    isLastTurn = true,
-                    isResponding = activity.running,
-                    askSelections = emptyMap(),
-                    onAskToggle = { _, _, _, _ -> },
-                    onAskSubmit = { _, _ -> },
-                    showSubagentTags = false,
-                    collapseActivities = false,
+            // 结论在前、过程在后（原来是过程铺完才给结论，结论被挤到几十屏之下）。
+            when {
+                activity.receipt != null -> SubagentReceiptSection(
+                    receipt = activity.receipt,
+                    body = activity.result?.text.orEmpty(),
                 )
+                activity.result != null -> SubagentConclusionSection(
+                    failed = activity.failed,
+                    text = activity.result.text,
+                )
+                else -> Text(
+                    when (status) {
+                        SubagentStatus.Running -> "等待子 Agent 输出…"
+                        SubagentStatus.Interrupted -> "会话已停止，未收到最终结果。"
+                        SubagentStatus.Pending -> "更早轮次的任务，结果未随分页窗口返回。"
+                        else -> "未收到子 Agent 输出。"
+                    },
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = WandColors.textMuted,
+                )
+            }
+            if (stepCount > 0) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(WandShapes.sm)
+                            .background(WandColors.surface.copy(alpha = 0.7f))
+                            .clickable { processExpanded = !processExpanded }
+                            .semantics { stateDescription = if (processExpanded) "过程已展开" else "过程已收起" }
+                            .padding(horizontal = 9.dp, vertical = 7.dp),
+                    ) {
+                        Icon(
+                            WandIcons.chevronRight,
+                            contentDescription = null,
+                            tint = WandColors.textSecondary,
+                            modifier = Modifier.size(14.dp).rotate(chevronRotation),
+                        )
+                        Text(
+                            "过程",
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = WandColors.textPrimary,
+                        )
+                        Text(
+                            "$stepCount 步",
+                            fontSize = 10.sp,
+                            lineHeight = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = WandColors.textMuted,
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = processExpanded,
+                        enter = if (motionEnabled) {
+                            fadeIn(WandMotion.tweenFast()) +
+                                expandVertically(animationSpec = WandMotion.settleSpringSpec())
+                        } else {
+                            fadeIn(snap()) + expandVertically(snap())
+                        },
+                        exit = if (motionEnabled) {
+                            fadeOut(WandMotion.tweenExit()) +
+                                shrinkVertically(animationSpec = WandMotion.settleSpringSpec())
+                        } else {
+                            fadeOut(snap()) + shrinkVertically(snap())
+                        },
+                    ) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                            SegmentBlocks(
+                                blocks = activity.blocks,
+                                isLastTurn = true,
+                                isResponding = activity.running,
+                                askSelections = emptyMap(),
+                                onAskToggle = { _, _, _, _ -> },
+                                onAskSubmit = { _, _ -> },
+                                showSubagentTags = false,
+                                collapseActivities = false,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+/** 结论体用原文渲染 markdown：压平会让标题/列表/代码块全塌成一段。 */
+@Composable
+private fun SubagentConclusionSection(failed: Boolean, text: String) {
+    val accent = if (failed) WandColors.danger else WandColors.success
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(accent.copy(alpha = 0.08f))
+            .border(0.6.dp, accent.copy(alpha = 0.22f), WandShapes.md)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SubagentStatusIcon(if (failed) SubagentStatus.Failed else SubagentStatus.Completed, size = 13.dp)
+            Text(
+                if (failed) "失败原因" else "最终结论",
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = accent,
+            )
+        }
+        if (text.isBlank()) {
+            Text(
+                "子 Agent 没有返回正文。",
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                color = WandColors.textMuted,
+            )
+        } else {
+            SelectionContainer {
+                MarkdownText(text)
+            }
+        }
+    }
+}
+
+/**
+ * 异步派发的回执不是结论：中性说明 + 后台任务 id + 输出文件路径，
+ * 不标绿（否则用户会当成跑完）。两个字段都提不到时回落到正文，不出空卡（与 Web 同一路）。
+ */
+@Composable
+private fun SubagentReceiptSection(
+    receipt: AsyncDispatchReceipt,
+    body: String,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .background(WandColors.surface.copy(alpha = 0.8f))
+            .border(0.6.dp, WandColors.border, WandShapes.md)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+    ) {
+        // 状态词只属于摘要行：展开回执时「后台运行中」在摘要行和这里各说一次，
+        // 等于同一屏说两遍（与 Web 同一条理由，两端同改）。头部留图标 + 说明文字。
+        Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SubagentStatusIcon(SubagentStatus.Background, size = 13.dp)
+            Text(
+                "这只是派发回执，不是最终结论；子 Agent 仍在后台执行，结果会另行送达。",
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                color = WandColors.textSecondary,
+            )
+        }
+        if (receipt.runId.isNotBlank()) {
+            SubagentReceiptRow("后台任务", receipt.runId)
+        }
+        if (receipt.outputPath.isNotBlank()) {
+            SubagentReceiptRow("输出文件", receipt.outputPath)
+        }
+        if (receipt.runId.isBlank() && receipt.outputPath.isBlank() && body.isNotBlank()) {
+            // 兜底层只证明「在后台」，什么字段都没提到：正文照常渲染，别留一张空卡。
+            SelectionContainer {
+                MarkdownText(body)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubagentReceiptRow(label: String, value: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            label,
+            fontSize = 10.sp,
+            lineHeight = 13.sp,
+            color = WandColors.textMuted,
+            maxLines = 1,
+        )
+        Text(
+            value,
+            fontSize = 10.sp,
+            lineHeight = 13.sp,
+            fontFamily = FontFamily.Monospace,
+            color = WandColors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** 「过程 · N 步」的 N 是渲染出来的步骤数：结果块、空正文/空思考、派遣块不占位。 */
+internal fun subagentStepCount(blocks: List<ContentBlock>): Int =
+    pairToolBlocks(blocks).count { item ->
+        when (item) {
+            is DisplayItem.Tool -> !isHiddenDispatchTool(item.use)
+            is DisplayItem.Plain -> when (val block = item.block) {
+                is ContentBlock.Text -> block.text.isNotBlank()
+                is ContentBlock.Thinking -> block.thinking.isNotBlank()
+                is ContentBlock.ToolResult -> false
+                else -> true
+            }
+        }
+    }
 
 @Composable
 private fun UserBubble(turn: ConversationTurn, compact: Boolean) {

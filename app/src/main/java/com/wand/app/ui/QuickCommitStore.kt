@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
  *     submodule 是正交 scope flag（不进动作字符串）
  *   - 成功后收面板 + toast；工作区干净但仍领先远端时，可从入口重新打开并补推
  *   - 请求可在面板关闭后继续执行，避免网络等待时把用户困在弹层内
+ *   - 草稿跨开合保留（关闭不清，只有提交成功才消费），见 [QuickCommitDrafts]
  */
 class QuickCommitStore(
     val sessionId: String,
@@ -33,14 +34,22 @@ class QuickCommitStore(
     var panelOpen by mutableStateOf(false)
         private set
 
-    // 表单（直接由 UI 双向编辑）
-    var messageDraft by mutableStateOf("")
-    var tagDraft by mutableStateOf("")
+    // 表单。草稿单独成块（见 [QuickCommitDrafts]），因为它要跨面板开合活下来。
+    private var drafts by mutableStateOf(QuickCommitDrafts())
+
+    var messageDraft: String
+        get() = drafts.messageDraft
+        set(value) {
+            drafts = drafts.onMessageTyped(value)
+        }
+    /** 敲过的 tag 会记住「用户改过」，之后 AI 推荐不再覆写（见 [QuickCommitDrafts.onTagTyped]）。 */
+    var tagDraft: String
+        get() = drafts.tagDraft
+        set(value) {
+            drafts = drafts.onTagTyped(value)
+        }
     /** 仅本次提交生效；归档由服务端按本次关联任务与项目范围执行。 */
     var archiveRelatedTasks by mutableStateOf(false)
-
-    /** 用户手动改过 tag 后，AI 推荐不再覆盖它（对齐网页 tagEdited）。 */
-    var tagEdited by mutableStateOf(false)
 
     var generating by mutableStateOf(false)
         private set
@@ -95,10 +104,9 @@ class QuickCommitStore(
     // MARK: - 面板开合
 
     fun openPanel() {
-        messageDraft = ""
-        tagDraft = ""
+        // §2.22 S12：打开只复位「本次请求」的状态，不清草稿。
+        // 之前每次打开都清空 messageDraft/tagDraft，任何关闭路径 + 重开都会丢掉已输入内容。
         archiveRelatedTasks = false
-        tagEdited = false
         generating = false
         submitting = false
         autoGenerating = false
@@ -124,11 +132,9 @@ class QuickCommitStore(
         scope.launch {
             try {
                 val r = api.generateCommitMessage(sessionId)
-                val aiMessage = r.message?.trim().orEmpty()
-                val aiTag = r.suggestedTag?.trim().orEmpty()
-                // 只在空白时填 message，绝不覆盖用户已输入的内容。
-                if (messageDraft.isBlank() && aiMessage.isNotEmpty()) messageDraft = aiMessage
-                if (aiTag.isNotEmpty() && !tagEdited) tagDraft = aiTag
+                // 只在空白时填 message / 只在用户没改过 tag 时填 tag，规则集中在
+                // [QuickCommitDrafts.onAiGenerated]，不走 set 通道（否则会被当成用户编辑）。
+                drafts = drafts.onAiGenerated(r.message.orEmpty(), r.suggestedTag.orEmpty())
             } catch (e: Exception) {
                 error = e.message ?: "AI 生成失败"
             }
@@ -193,6 +199,8 @@ class QuickCommitStore(
                 if (outcome.pushError == null) {
                     result = null
                     panelOpen = false
+                    // commit 已落地 → 草稿被消费，下一次打开是空的（§2.22 验收 6）。
+                    drafts = drafts.onCommitSuccess()
                     onToast(toastMessage)
                     finishEntrySuccess()
                 } else {
@@ -200,10 +208,13 @@ class QuickCommitStore(
                     // 用户已手动关闭时不重新弹出，失败信息会以 toast 呈现。
                     result = outcome
                     pushError = outcome.pushError
+                    // commit 同样已经落地，草稿没有保留价值了。
+                    drafts = drafts.onCommitSuccess()
                     failEntry(toastMessage)
                 }
                 loadStatus(force = true)
             } catch (e: Exception) {
+                // 失败不清草稿：用户要能在原地改文案直接重试。
                 val message = e.message ?: "快捷提交失败"
                 error = message
                 failEntry(message)
@@ -319,6 +330,35 @@ enum class QuickCommitEntryPhase {
     Idle,
     Loading,
     Done,
+}
+
+/**
+ * 快捷提交表单草稿（§2.22 S12）。抽成纯类型是为了把「什么时候清」这条规则
+ * 变成可单测的状态转换：关闭面板（任何路径）原样恢复，只有提交成功才清空。
+ */
+internal data class QuickCommitDrafts(
+    val messageDraft: String = "",
+    val tagDraft: String = "",
+    /** 用户手动改过 tag 后，AI 推荐不再覆盖它（对齐网页 tagEdited）。 */
+    val tagEdited: Boolean = false,
+) {
+    fun onMessageTyped(value: String): QuickCommitDrafts = copy(messageDraft = value)
+
+    /** 表单里敲过的 tag 一律算「用户改过」，包括删空。 */
+    fun onTagTyped(value: String): QuickCommitDrafts = copy(tagDraft = value, tagEdited = true)
+
+    /** AI 只补空白位：已输入的 message 和不该被覆写的 tag 都不动。 */
+    fun onAiGenerated(message: String, suggestedTag: String): QuickCommitDrafts {
+        val aiMessage = message.trim()
+        val aiTag = suggestedTag.trim()
+        return copy(
+            messageDraft = if (messageDraft.isBlank() && aiMessage.isNotEmpty()) aiMessage else messageDraft,
+            tagDraft = if (tagEdited || aiTag.isEmpty()) tagDraft else aiTag,
+        )
+    }
+
+    /** 提交成功：草稿成为仓库事实，表单回到初始态。 */
+    fun onCommitSuccess(): QuickCommitDrafts = QuickCommitDrafts()
 }
 
 /** 一次快捷提交的结果（new 侧），old 侧字段来自提交前的 git 状态快照。 */

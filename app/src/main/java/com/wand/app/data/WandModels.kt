@@ -352,8 +352,14 @@ data class TurnUsage(
 data class TurnAuthor(
     val id: String? = null,
     val name: String,
+    /** 成员头像标识（服务端把上传的 data URL 滤掉了，只剩按 id 取的像素猫 key）。 */
+    val avatar: String? = null,
     val leader: Boolean = false,
     val provider: String? = null,
+    /** 该回合实际使用的候选模型；老服务端不带 → null，署名只显 provider。 */
+    val model: String? = null,
+    /** 该回合实际使用的思考深度；缺字段 → null。 */
+    val thinkingEffort: String? = null,
     val sessionId: String? = null,
 ) {
     companion object {
@@ -364,8 +370,11 @@ data class TurnAuthor(
             return TurnAuthor(
                 id = o.str("id"),
                 name = name,
+                avatar = o.str("avatar")?.takeIf { it.isNotBlank() },
                 leader = o.bool("leader") == true,
                 provider = o.str("provider"),
+                model = o.str("model"),
+                thinkingEffort = o.str("thinkingEffort"),
                 sessionId = o.str("sessionId"),
             )
         }

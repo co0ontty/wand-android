@@ -40,6 +40,7 @@ fun WandTeamRunPanel(
     detail: AiTeamRunDetail,
     busy: Boolean,
     onAction: (TeamRunAction) -> Unit,
+    /** 参数是团队运行 id（`run.id`），不是 chatSessionId。 */
     onOpenGroupChat: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -154,10 +155,12 @@ fun WandTeamRunPanel(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            run.chatSessionId?.let { sessionId ->
+            if (run.chatSessionId != null) {
                 WandButton(
                     label = "打开群聊",
-                    onClick = { onOpenGroupChat(sessionId) },
+                    // 传运行 id：群聊页要的是 run（run/steps/chatTurns 同一个端点），
+                    // 传会话 id 会退回普通聊天页，那套层次就没了。
+                    onClick = { onOpenGroupChat(run.id) },
                     variant = WandButtonVariant.Secondary,
                     compact = true,
                 )

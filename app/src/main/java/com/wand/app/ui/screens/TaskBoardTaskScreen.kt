@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.repeatOnLifecycle
 import com.wand.app.data.AiTeam
@@ -35,7 +36,8 @@ import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.boardTaskStatusLabel
 import com.wand.app.ui.components.ToolbarIconButton
-import com.wand.app.ui.components.WandDetailBackButton
+import com.wand.app.ui.components.WandBreadcrumb
+import com.wand.app.ui.components.WandCrumb
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
@@ -57,7 +59,14 @@ fun TaskBoardTaskScreen(
     taskId: String,
     showBack: Boolean = true,
     onBack: () -> Unit,
+    /**
+     * 面包屑首段的落点，与 Web 同口径：回「任务看板列表」。
+     * 与 [onBack] 分开，是因为删除 / 消失那两条路仍按「退回上一层」走，不该一起改语义。
+     */
+    onBackToBoard: () -> Unit = onBack,
     onOpenSession: (TaskSessionRoute) -> Unit,
+    /** 看板卡片「打开群聊」：参数是团队运行 id + 该卡短号，落到 IM 群聊页。 */
+    onOpenTeamChat: (runId: String, taskIdentifier: String) -> Unit = { _, _ -> },
     onTaskGone: () -> Unit = onBack,
     onTaskChanged: () -> Unit = {},
 ) {
@@ -212,17 +221,30 @@ fun TaskBoardTaskScreen(
     val current = task
     Column(modifier = Modifier.fillMaxSize()) {
         WandDetailTopBar(
-            title = current?.let { boardTaskDetailTitle(it) } ?: "任务详情",
-            subtitle = current?.let {
-                listOfNotNull(
-                    it.identifier.takeIf { id -> id.isNotBlank() },
-                    boardTaskStatusLabel(it.status),
-                ).joinToString(" · ")
-            },
-            leading = if (showBack) {
-                { WandDetailBackButton(onClick = onBack, icon = WandIcons.back) }
-            } else {
-                null
+            // 单层标题：面包屑「任务 › TASK-108」。任务正文本身由下面的「任务标题（可选）」字段编辑，
+            // 顶栏不再重复一遍长标题。
+            title = "",
+            // 返回入口只留一个：面包屑首段。原来的箭头与它同功能、同一条栏，属重复。
+            leading = null,
+            titleContent = {
+                Column(modifier = Modifier.weight(1f)) {
+                    WandBreadcrumb(
+                        crumbs = listOf(
+                            // 没有可回的去处（宽屏右栏就是顶层）时不给假入口，onClick 传 null。
+                            WandCrumb("任务", onClick = if (showBack) onBackToBoard else null),
+                            WandCrumb(
+                                current?.identifier?.takeIf { id -> id.isNotBlank() } ?: "任务详情",
+                            ),
+                        ),
+                    )
+                    Text(
+                        current?.let { boardTaskStatusLabel(it.status) } ?: "加载中",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             },
             actions = {
                 ToolbarIconButton(
@@ -305,6 +327,7 @@ fun TaskBoardTaskScreen(
                         )
                     },
                     onMoveSession = { movingSession = it },
+                    onOpenTeamChat = onOpenTeamChat,
                     modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
                 )
             }

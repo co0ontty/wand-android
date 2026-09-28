@@ -63,6 +63,9 @@ import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.thinkingEffortOptions
 
+/** 团队态整行反馈位预留的一行高度：提示出现/消失都不改变输入区位置。 */
+private val ComposerTeamFeedbackLineHeight = 22.dp
+
 /** 单独任务的新建窗口：保留任务创建链路，不进入任务看板的新建/指派表单。 */
 @Composable
 internal fun NewTaskComposerDialog(
@@ -114,6 +117,8 @@ internal fun NewTaskComposerDialog(
     val selectedModelLabel = modelOptions.firstOrNull { it.id == model }?.label ?: model
     val effortOptions = thinkingEffortOptions(target.raw, model, defaultModel, models?.modelsFor(target.raw).orEmpty())
     val effortLabel = effortOptions.firstOrNull { it.id == thinkingEffort }?.label ?: "自动"
+    // 控制行 chip 与对应面板的可开性共用这一份判定，不再各写一遍 !teamSelected。
+    val controlChips = newTaskComposerControlChips(teamSelected, startFirstSession, target.isShell)
     var providerOpen by remember { mutableStateOf(false) }
     var modelOpen by remember { mutableStateOf(false) }
     var effortOpen by remember { mutableStateOf(false) }
@@ -313,8 +318,7 @@ internal fun NewTaskComposerDialog(
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 )
                 Text(
-                    (if (startFirstSession) "创建后启动会话" else "仅创建任务分组") +
-                        (if (worktree) " · 独立工作树" else " · 共用工作区"),
+                    newTaskComposerStatusLine(teamSelected, startFirstSession, worktree),
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
                     modifier = Modifier.align(Alignment.Start).padding(top = 12.dp),
@@ -325,31 +329,49 @@ internal fun NewTaskComposerDialog(
                 Text(error, color = WandColors.danger, style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp))
             }
+            // 团队必填/R2 说明：整行、输入区之外，且团队态常驻预留一行高度，
+            // 提示出现/消失不推动输入行与提交按钮（宽度、位置与 CLI 态一致）。
+            // 只放团队自己的提示：`error` 由上面的错误位渲染，这里重复会同一句出现两遍。
+            if (teamSelected) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(ComposerTeamFeedbackLineHeight)
+                        .padding(horizontal = 20.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        newTaskComposerFeedbackLine(teamError),
+                        color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             NativeComposerSurface(
                 backdrop = null,
                 expanded = true,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
                 panelVisible = actionsOpen,
                 panelContent = {
-                    if (!teamSelected) {
-                        WandInlinePanelAction(
-                            icon = WandIcons.todo,
-                            label = if (startFirstSession) "仅建分组" else "启动会话",
-                            enabled = !busy && !fieldsLocked,
-                            onClick = {
-                                actionsOpen = false
-                                onStartFirstSessionChange(!startFirstSession)
-                            },
-                        )
-                        WandInlinePanelAction(
-                            icon = WandIcons.commit,
-                            label = if (worktree) "共用目录" else "独立工作树",
-                            enabled = !busy && !fieldsLocked,
-                            onClick = {
-                                actionsOpen = false
-                                onWorktreeChange(!worktree)
-                            },
-                        )
+                    newTaskComposerPanelActions(teamSelected).forEach { action ->
+                        when (action) {
+                            NewTaskComposerPanelAction.StartSessionToggle -> WandInlinePanelAction(
+                                icon = WandIcons.todo,
+                                label = if (startFirstSession) "仅建分组" else "启动会话",
+                                enabled = !busy && !fieldsLocked,
+                                onClick = {
+                                    actionsOpen = false
+                                    onStartFirstSessionChange(!startFirstSession)
+                                },
+                            )
+                            NewTaskComposerPanelAction.WorktreeToggle -> WandInlinePanelAction(
+                                icon = WandIcons.commit,
+                                label = if (worktree) "共用目录" else "独立工作树",
+                                enabled = !busy && !fieldsLocked,
+                                onClick = {
+                                    actionsOpen = false
+                                    onWorktreeChange(!worktree)
+                                },
+                            )
+                        }
                     }
                 },
                 inputContent = {
@@ -378,12 +400,7 @@ internal fun NewTaskComposerDialog(
                             }
                         },
                     )
-                    // 必填/R2 说明原位给出（提交按钮只禁用，不弹提示）。
-                    if (teamError != null) {
-                        Text(teamError, color = WandColors.textMuted,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(end = 8.dp))
-                    }
+                    // 必填/R2 说明在 composer 之外的整行反馈位，不占输入行宽度。
                     SubmitMorphButton(
                         visual = when {
                             busy -> SendActionVisual.Sending
@@ -408,29 +425,28 @@ internal fun NewTaskComposerDialog(
                         icon = WandIcons.add, text = "更多", tint = WandColors.textSecondary,
                         contentDescription = "更多任务选项", showText = false,
                     ) { if (!busy && !fieldsLocked) actionsOpen = !actionsOpen }
-                    if (startFirstSession) {
-                        ControlChip(
-                            icon = WandIcons.terminal, text = kind.label,
-                            tint = WandColors.textSecondary,
-                            contentDescription = "会话类型：${kind.label}", showText = !compact,
-                        ) { if (!busy && !fieldsLocked) { actionsOpen = false; kindOpen = true } }
-                        if (!target.isShell) {
-                            ControlChip(
+                    controlChips.forEach { chip ->
+                        when (chip) {
+                            NewTaskComposerControlChip.SessionKind -> ControlChip(
+                                icon = WandIcons.terminal, text = kind.label,
+                                tint = WandColors.textSecondary,
+                                contentDescription = "会话类型：${kind.label}", showText = !compact,
+                            ) { if (!busy && !fieldsLocked) { actionsOpen = false; kindOpen = true } }
+                            NewTaskComposerControlChip.Model -> ControlChip(
                                 icon = WandIcons.tune, text = selectedModelLabel,
                                 tint = WandColors.brand, contentDescription = "模型：$selectedModelLabel",
                                 showText = true, modifier = Modifier.weight(1f),
                             ) { if (!busy && !fieldsLocked) { actionsOpen = false; modelOpen = true } }
-                            ControlChip(
+                            NewTaskComposerControlChip.ThinkingEffort -> ControlChip(
                                 icon = WandIcons.thinking, text = effortLabel,
                                 tint = WandColors.brand, contentDescription = "思考深度：$effortLabel",
                                 showText = true,
                             ) { if (!busy && !fieldsLocked) { actionsOpen = false; effortOpen = true } }
-                        } else {
-                            Spacer(Modifier.weight(1f))
                         }
-                    } else {
-                        Spacer(Modifier.weight(1f))
                     }
+                    // 模型 chip 自己占 weight(1f)；没有它时由 Spacer 撑开，两者互斥，
+                    // 保证控制行的伸缩与收敛前逐像素一致。
+                    if (NewTaskComposerControlChip.Model !in controlChips) Spacer(Modifier.weight(1f))
                 },
             )
         }
@@ -442,7 +458,9 @@ internal fun NewTaskComposerDialog(
                 onDismiss = { parentOpen = false },
             )
         }
-        if (modelOpen) {
+        // 会话类型 / 模型 / 思考深度是 CLI 专属参数，团队分支不读：面板可开性与 chip
+        // 同源（controlChips），不留「能点但被忽略」的开关。切回 CLI 目标后 chip 与已选值原样恢复。
+        if (modelOpen && NewTaskComposerControlChip.Model in controlChips) {
             ComposerChoiceSheet(
                 title = "模型", options = modelOptions.map { it.id to it.label },
                 selected = model, searchable = true,
@@ -450,7 +468,7 @@ internal fun NewTaskComposerDialog(
                 onDismiss = { modelOpen = false },
             )
         }
-        if (effortOpen) {
+        if (effortOpen && NewTaskComposerControlChip.ThinkingEffort in controlChips) {
             ComposerChoiceSheet(
                 title = "思考深度", options = effortOptions.map { it.id to it.menuLabel },
                 selected = thinkingEffort,
@@ -458,7 +476,7 @@ internal fun NewTaskComposerDialog(
                 onDismiss = { effortOpen = false },
             )
         }
-        if (kindOpen) {
+        if (kindOpen && NewTaskComposerControlChip.SessionKind in controlChips) {
             ComposerChoiceSheet(
                 title = "会话类型", options = WorkspaceSessionKind.entries.map { it.raw to it.label },
                 selected = kind.raw,

@@ -34,10 +34,26 @@ sealed class Screen {
         val taskId: String? = null,
     ) : Screen()
     data object Settings : Screen()
-    /** AI 团队页：只读团队定义列表（团队编辑留 Web，§11-Q6）。 */
+    /** AI 团队页：团队定义列表 + 新建入口（编辑器见 [AiTeamEditor]）。 */
     data object AiTeams : Screen()
-    /** 团队详情：成员组织图（只读）+「直接开工」表单（§6.2 A2/A3）。 */
+    /** 团队详情：成员组织图 + 「直接开工」表单（§6.2 A2/A3）。 */
     data class AiTeamDetail(val teamId: String) : Screen()
+    /**
+     * 团队编辑器（新建 / 编辑共用一屏）：`teamId` 为空时是新建，[templateId] 指定起步模板。
+     * 两个参数至少有一个非空，否则恢复时当作无效导航丢弃。
+     */
+    data class AiTeamEditor(
+        val teamId: String? = null,
+        val templateId: String? = null,
+    ) : Screen()
+    /**
+     * 团队群聊页（IM 形态）：参数只带 runId 与看板短号（纯显示用），
+     * 会话 id 由运行详情给出，不在导航里持久化凭据。
+     */
+    data class AiTeamChat(
+        val runId: String,
+        val taskIdentifier: String? = null,
+    ) : Screen()
     /**
      * 任务详情宿主页：导航参数只携带稳定的 workspaceId/taskId 和编码短显示名，
      * 不携带 cwd、layout 或凭据。Saver 用结构化 save record，避免任务名中的
@@ -53,7 +69,7 @@ sealed class Screen {
 
 /** Chat / PTY 首帧很重，手机栈用交叉淡入淡出，避免和滑动转场抢同一帧。 */
 internal fun usesHeavyDetailTransition(screen: Screen): Boolean =
-    screen is Screen.Chat || screen is Screen.PtyTerminal
+    screen is Screen.Chat || screen is Screen.PtyTerminal || screen is Screen.AiTeamChat
 
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
 sealed class QuickAction {
@@ -206,6 +222,8 @@ class NavState {
         private const val SETTINGS_KEY = "settings"
         private const val AI_TEAMS_KEY = "ai-teams"
         private const val AI_TEAM_DETAIL_KEY = "ai-team-detail"
+        private const val AI_TEAM_EDITOR_KEY = "ai-team-editor"
+        private const val AI_TEAM_CHAT_KEY = "ai-team-chat"
         private const val WORKSPACES_KEY = "workspaces"
         private const val WORKSPACE_TASK_KEY = "workspace-task"
         private const val FIELD_SEP = "\u0001"
@@ -242,6 +260,10 @@ class NavState {
             Screen.Settings -> SETTINGS_KEY
             Screen.AiTeams -> AI_TEAMS_KEY
             is Screen.AiTeamDetail -> AI_TEAM_DETAIL_KEY + FIELD_SEP + teamId
+            is Screen.AiTeamEditor ->
+                AI_TEAM_EDITOR_KEY + FIELD_SEP + teamId.orEmpty() + FIELD_SEP + templateId.orEmpty()
+            is Screen.AiTeamChat ->
+                AI_TEAM_CHAT_KEY + FIELD_SEP + runId + FIELD_SEP + taskIdentifier.orEmpty()
             // 结构化分隔：用 \u0001 作为不可打印分隔符，避免任务名中的 `:`
             // 或换行破坏恢复（与 Web 不同，这里 ID 不含控制字符）。
             is Screen.WorkspaceTask ->
@@ -288,6 +310,27 @@ class NavState {
                     .split(FIELD_SEP, limit = 2)
                     .firstOrNull()?.takeIf(String::isNotBlank)
                     ?.let { Screen.AiTeamDetail(it) }
+            startsWith(AI_TEAM_EDITOR_KEY + FIELD_SEP) -> {
+                val parts = removePrefix(AI_TEAM_EDITOR_KEY + FIELD_SEP)
+                    .split(FIELD_SEP, limit = 2)
+                val teamId = parts.getOrNull(0)?.takeIf(String::isNotBlank)
+                val templateId = parts.getOrNull(1)?.takeIf(String::isNotBlank)
+                // 两个都空 = 既没有要编辑的团队、也没有起步模板：不恢复成半吊子空页。
+                if (teamId != null || templateId != null) {
+                    Screen.AiTeamEditor(teamId = teamId, templateId = templateId)
+                } else {
+                    null
+                }
+            }
+            startsWith(AI_TEAM_CHAT_KEY + FIELD_SEP) -> {
+                val parts = removePrefix(AI_TEAM_CHAT_KEY + FIELD_SEP).split(FIELD_SEP, limit = 2)
+                parts.getOrNull(0)?.takeIf(String::isNotBlank)?.let {
+                    Screen.AiTeamChat(
+                        runId = it,
+                        taskIdentifier = parts.getOrNull(1)?.takeIf(String::isNotBlank),
+                    )
+                }
+            }
             // 旧版项目根页升级后统一恢复到任务根页。
             this == WORKSPACES_KEY -> Screen.SessionList
             startsWith(WORKSPACE_TASK_KEY + FIELD_SEP) -> {

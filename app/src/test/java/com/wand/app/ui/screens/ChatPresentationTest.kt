@@ -208,6 +208,15 @@ class ChatPresentationTest {
         assertEquals("", formatChatClock(""))
     }
 
+    @Test
+    fun collapsedComposerKeepsOnlyMinHeightSoScaledFontIsNotClipped() {
+        // §2.15 R1：折叠态不得再有固定高度上限（原来是 34dp 上下限夹住，1.45 字体占位被裁）；
+        // 展开态保留原有的内容滚动上限，两态切换不引入新数值。
+        assertEquals(androidx.compose.ui.unit.Dp.Infinity, composerInputMaxHeight(expanded = false))
+        assertEquals(androidx.compose.ui.unit.Dp(132f), composerInputMaxHeight(expanded = true))
+        assertEquals(androidx.compose.ui.unit.Dp(132f), ComposerExpandedInputMaxHeight)
+    }
+
     private fun textTurn(role: String, text: String) = ConversationTurn(
         role = role,
         content = listOf(ContentBlock.Text(text, null)),

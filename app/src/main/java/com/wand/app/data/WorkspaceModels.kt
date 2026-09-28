@@ -342,6 +342,8 @@ data class WorkspaceSessionSummary(
     val ptyBusy: Boolean? = null,
     val providerCliActive: Boolean? = null,
     val inFlight: Boolean? = null,
+    /** 团队群聊会话（AI 团队 relay）；普通会话为 null。 */
+    val teamChat: WorkspaceSessionTeamChat? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -360,6 +362,7 @@ data class WorkspaceSessionSummary(
                 ptyBusy = o.bool("ptyBusy"),
                 providerCliActive = o.bool("providerCliActive"),
                 inFlight = o.obj("structuredState")?.bool("inFlight") ?: o.bool("inFlight"),
+                teamChat = WorkspaceSessionTeamChat.parse(o.obj("teamChat")),
             )
         }
 
@@ -418,6 +421,28 @@ data class WorkspaceTaskCreation(
                 worktree = WorkspaceTaskWorktree.parse(o.obj("worktree")),
                 status = parseWorkspaceTaskStatus(o.str("status")),
                 cwd = o.str("cwd") ?: "",
+            )
+        }
+    }
+}
+
+/**
+ * 群聊会话标记：服务端在会话摘要上挂 `teamChat`（src/server-workspace-routes.ts
+ * `workspaceSessionSummary`，索引来自 storage.listAiTeamRunChatMarkers）。
+ * 老服务端不下发这个字段，解析为 null，列表按普通会话渲染。
+ */
+data class WorkspaceSessionTeamChat(
+    val runId: String,
+    val teamName: String,
+    val memberCount: Int,
+) {
+    companion object {
+        fun parse(o: JSONObject?): WorkspaceSessionTeamChat? {
+            val runId = o?.str("runId")?.takeIf { it.isNotEmpty() } ?: return null
+            return WorkspaceSessionTeamChat(
+                runId = runId,
+                teamName = o.str("teamName") ?: "",
+                memberCount = o.int("memberCount") ?: 0,
             )
         }
     }

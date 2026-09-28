@@ -181,6 +181,36 @@ class TaskBoardModelsTest {
         assertEquals("Pi", boardTaskProviderLabel("pi"))
     }
 
+    /** 目录桩：Claude 配了默认模型 opus，Codex 没配（默认名由 CLI 自己报在目录项里）。 */
+    private fun modelsCatalog() = ModelsResponse.parse(
+        JSONObject(
+            """
+            {
+              "models": [{"id":"default","label":"跟随 Claude Code 默认"},{"id":"opus","label":"opus（最新 Opus）"}],
+              "codexModels": [{"id":"default","label":"GPT-6-Astra · gpt-6-astra（Codex 默认）"}],
+              "opencodeModels": [{"id":"default","label":"跟随 OpenCode 默认"}],
+              "defaultModels": {"claude": "opus"}
+            }
+            """.trimIndent(),
+        ),
+    )
+
+    @Test
+    fun defaultModelSentinelResolvesToConcreteName() {
+        val catalog = modelsCatalog()
+        assertEquals("服务端配了默认模型就用它的名字", "opus", boardAgentModelName(catalog, "claude", "default"))
+        assertEquals("空值也是同一个哨兵", "opus", boardAgentModelName(catalog, "claude", ""))
+        assertEquals(
+            "没配默认模型时取 CLI 报出来的默认项名字",
+            "GPT-6-Astra · gpt-6-astra",
+            boardAgentModelName(catalog, "codex", "default"),
+        )
+        assertEquals("只有「跟随默认」这种文案时宁可不显示", "", boardAgentModelName(catalog, "opencode", "default"))
+        assertEquals("显式选的模型原样显示 id", "sonnet", boardAgentModelName(catalog, "claude", "sonnet"))
+        assertEquals("目录没到时解析不出名字", "", boardAgentModelName(null, "claude", "default"))
+        assertEquals("认不出的 provider 不猜名字", "", boardAgentModelName(catalog, "session", "default"))
+    }
+
     @Test
     fun agentModeRoundTripsAndClampsByProvider() {
         val managed = BoardTaskAgent("claude", "default", "off", "managed")

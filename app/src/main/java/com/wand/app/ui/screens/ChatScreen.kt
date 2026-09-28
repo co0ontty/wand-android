@@ -117,6 +117,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -141,6 +142,8 @@ import com.wand.app.speech.SpeechNativeLibrary
 import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
+import com.wand.app.ui.ChatComposer
+import com.wand.app.ui.SendPhase
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.SessionDraftStore
@@ -277,7 +280,21 @@ fun ChatScreen(
     showBack: Boolean = true,
     onBack: () -> Unit,
 ) {
-    val store = remember(sessionId) { ChatStore(sessionId, api) }
+    val store = remember(sessionId, api) { ChatStore(sessionId, api) }
+    val composerScope = rememberCoroutineScope()
+    val composer = remember(sessionId, api, drafts, store) {
+        ChatComposer(
+            sessionId = sessionId,
+            drafts = drafts,
+            parentScope = composerScope,
+            ready = { !store.loading && store.snapshot != null },
+            send = store::submitInput,
+            notice = { store.toast = it },
+        )
+    }
+    DisposableEffect(composer) {
+        onDispose { composer.shutdown() }
+    }
     val quickCommit = remember(sessionId) {
         QuickCommitStore(sessionId, api) { msg -> store.toast = msg }
     }
@@ -348,7 +365,8 @@ fun ChatScreen(
     val voiceInput = rememberVoiceInputHandle(
         isHapticEnabled = isHapticEnabled,
         onToast = { store.toast = it },
-        onCommit = { text -> drafts[sessionId] = appendVoiceText(drafts[sessionId], text) },
+        onCommit = composer::appendVoice,
+        sessionKey = composer,
     )
     val voice = voiceInput.voice
     val onMicDown = voiceInput.onMicDown
@@ -391,20 +409,14 @@ fun ChatScreen(
         else -> 44.dp
     }
 
-    // 附件上传：savedPath 回填输入框（多选 ≤5 个 / 单个 ≤10MB）。
-    // 对齐 iOS：相册图片 / 任意文件两条入口共用同一段上传逻辑。
-    var uploadingAttachments by remember { mutableStateOf(false) }
-    var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
+    // Picker/upload adapters capture this composer; a late result never targets a new session.
     val attachmentPickers = rememberAttachmentPickerActions { uris ->
-        scrollScope.launchAttachmentUpload(
-            context = context,
-            api = api,
-            sessionId = sessionId,
-            uris = uris,
-            onUploadingChange = { uploadingAttachments = it },
-            onUploaded = { uploaded -> pendingAttachments = (pendingAttachments + uploaded).takeLast(5) },
-            onToast = { store.toast = it },
-        )
+        if (uris.isNotEmpty()) composer.upload { remainingSlots ->
+            if (uris.size > remainingSlots) {
+                store.toast = "最多添加 5 个附件，本次仅上传前 $remainingSlots 个"
+            }
+            uploadComposerAttachments(context, api, sessionId, uris, remainingSlots)
+        }
     }
 
     // 历史不再整段隐藏，分页入口始终可达。
@@ -569,9 +581,9 @@ fun ChatScreen(
     // 液态玻璃：内容区是 backdrop 捕获源，顶栏/输入栏/FAB 悬浮其上采样模糊+折射。
     val glassBackdrop = rememberGlassBackdrop()
     val activeBackdrop = if (chromeSettled) glassBackdrop else null
-    var composerExpanded by remember { mutableStateOf(false) }
+    var composerExpanded by remember(sessionId) { mutableStateOf(false) }
     // ＋ 展开的动作面板：就地展开，返回键/发送/换会话时收起（规则 2）。
-    var attachOpen by remember { mutableStateOf(false) }
+    var attachOpen by remember(sessionId) { mutableStateOf(false) }
     BackHandler(enabled = attachOpen) { attachOpen = false }
     CompositionLocalProvider(
         LocalServerBaseUrl provides api.baseUrl,
@@ -670,30 +682,24 @@ fun ChatScreen(
         bottomBar = { BottomBar(
             backdrop = activeBackdrop,
             store = store,
-            drafts = drafts,
-            sessionId = sessionId,
+            composer = composer,
             voice = voice,
             onMicDown = onMicDown,
-            uploading = uploadingAttachments,
-            pendingAttachments = pendingAttachments,
+            uploading = composer.uploading,
+            pendingAttachments = composer.attachments,
             baseUrl = api.baseUrl,
-            onRemoveAttachment = { file ->
-                pendingAttachments = pendingAttachments.filterNot { it.savedPath == file.savedPath }
-            },
+            onRemoveAttachment = composer::removeAttachment,
             onPickPhoto = attachmentPickers.pickPhoto,
             onPickFile = attachmentPickers.pickFile,
             onExpandedChange = { composerExpanded = it },
             attachOpen = attachOpen,
             onAttachOpenChange = { attachOpen = it },
         ) {
-            // 发送回调（带触感反馈）；新输入出现后，上一条回复会自动转为历史折叠态。
-            attachOpen = false
-            if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            val text = buildAttachmentPrompt(pendingAttachments, drafts[sessionId])
-            drafts[sessionId] = ""
-            pendingAttachments = emptyList()
-            scrollMode = ChatScrollMode.StickToBottom
-            store.send(text)
+            if (composer.submit()) {
+                attachOpen = false
+                if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                scrollMode = ChatScrollMode.StickToBottom
+            }
         } },
     ) { padding ->
         // 捕获层：环境渐变背景全幅铺开，消息流只在顶栏与输入栏之间滚动，
@@ -1793,8 +1799,7 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
 private fun BottomBar(
     backdrop: GlassBackdrop?,
     store: ChatStore,
-    drafts: SessionDraftStore,
-    sessionId: String,
+    composer: ChatComposer,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
     uploading: Boolean,
@@ -1810,8 +1815,8 @@ private fun BottomBar(
     onSend: () -> Unit,
 ) {
     // 草稿订阅收敛在这里：打字只重组底部栏，不再波及消息列表。
-    val draft = drafts[sessionId]
-    val onDraftChange: (String) -> Unit = { drafts[sessionId] = it }
+    val draft = composer.draft
+    val onDraftChange: (String) -> Unit = composer::editDraft
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1879,6 +1884,8 @@ private fun BottomBar(
         InputBar(
             backdrop = backdrop,
             store = store,
+            canSubmit = composer.canSubmit,
+            sendPhase = composer.sendPhase,
             draft = draft,
             onDraftChange = onDraftChange,
             voice = voice,
@@ -1898,10 +1905,21 @@ private fun BottomBar(
     }
 }
 
+/**
+ * 输入框高度上限（§2.15 R1）：折叠态不设上限，只由 `heightIn(min = 34.dp)` 兜底，
+ * 系统字体放大时占位与正文按行高长开而不是被裁切；展开态保留原有内容滚动上限。
+ */
+internal fun composerInputMaxHeight(expanded: Boolean): Dp =
+    if (expanded) ComposerExpandedInputMaxHeight else Dp.Infinity
+
+internal val ComposerExpandedInputMaxHeight = 132.dp
+
 @Composable
 private fun InputBar(
     backdrop: GlassBackdrop?,
     store: ChatStore,
+    canSubmit: Boolean,
+    sendPhase: SendPhase,
     draft: String,
     onDraftChange: (String) -> Unit,
     voice: VoiceInputController,
@@ -1978,7 +1996,7 @@ private fun InputBar(
                         ),
                         keyboardActions = KeyboardActions(
                             onSend = {
-                                if (canSend) {
+                                if (canSubmit) {
                                     onSend()
                                     refocusAfterSend = true
                                 }
@@ -2006,7 +2024,9 @@ private fun InputBar(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 34.dp, max = if (expanded) 132.dp else 34.dp)
+                            // R1（§2.15）：折叠态只留最小高、不设上限，系统字体放大后占位与正文按行高长开，
+                            // 不再被固定 34dp 上下裁切；展开态保留原有 132dp 内容滚动上限。
+                            .heightIn(min = 34.dp, max = composerInputMaxHeight(expanded))
                             .focusRequester(focusRequester)
                             .onFocusChanged { isFocused = it.isFocused },
                 )
@@ -2044,7 +2064,9 @@ private fun InputBar(
     val trailing: @Composable () -> Unit = {
         TrailingSendStop(
             store = store,
+            sendPhase = sendPhase,
             canSend = canSend,
+            canSubmit = canSubmit,
             onStop = { showStopConfirm = true },
             voiceAction = {
                 VoiceMicButton(
@@ -2131,16 +2153,20 @@ private fun InputBar(
 @Composable
 private fun TrailingSendStop(
     store: ChatStore,
+    sendPhase: SendPhase,
     canSend: Boolean,
+    canSubmit: Boolean,
     onStop: () -> Unit,
     voiceAction: @Composable () -> Unit,
     onSend: () -> Unit,
 ) {
     val visual = sendActionVisual(
-        phase = store.sendPhase,
+        phase = sendPhase,
         turnRunning = store.isResponding,
         hasDraft = canSend,
-    )
+    ).let { visual ->
+        if (visual == SendActionVisual.Send && !canSubmit) SendActionVisual.Blocked else visual
+    }
     // 运行中且没有草稿：这一枚按钮的语义就是「停止」，与「发送」共用同一个位置、互相变形。
     if (visual == SendActionVisual.Stop) {
         voiceAction()

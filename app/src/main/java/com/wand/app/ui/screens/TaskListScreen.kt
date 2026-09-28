@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -91,6 +92,11 @@ data class TaskSessionRoute(
     val taskId: String? = null,
     val workspaceName: String? = null,
     val taskName: String? = null,
+    /**
+     * 该会话是团队群聊会话时带上运行 id：点行应进 IM 群聊页而不是普通聊天页。
+     * 老服务端摘要里没有 `teamChat`，这里是 null，按普通会话打开。
+     */
+    val teamChatRunId: String? = null,
 )
 
 /**
@@ -199,6 +205,17 @@ fun TaskListScreen(
     val visibleGroups = if (attentionOnly) attentionOnlyGroups(searchedGroups) else searchedGroups
     val searching = searchQuery.isNotBlank()
     val overview = homeOverview(allGroups)
+    // 状态行的三处数字（在跑 / 等你 / 计数）必须取**最终**可见的那一批：
+    // 列表渲染的是 `visibleGroups`（搜索 ∩ 只看等你），这里就不能只用搜索结果，
+    // 否则会出现「列表 0 条 + 状态行 11 / 27 条匹配 + 1 个在跑」。分母仍是全量数。
+    val activityStats = homeActivityStats(
+        globalOverview = overview,
+        finalOverview = homeOverview(visibleGroups),
+        searching = searching,
+        attentionOnly = attentionOnly,
+    )
+    // 列表为空时的文案与状态行同源：按「仅搜索 / 仅等你 / 两者并用」三种组合各给一份建议。
+    val sessionEmptyCopy = homeSessionEmptyCopy(searching, attentionOnly)
     val showingBoard = homeListMode == HomeListMode.Tasks
     // 首页的时间是「几分钟前」这种相对说法，30 秒推一次就够，不必每秒重排整页。
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -620,19 +637,23 @@ fun TaskListScreen(
                 teamRunError = null
             },
             onTargetChange = { option ->
+                val resetsCliParams = newTaskTargetChangeResetsCliParams(newTaskTarget, option)
                 newTaskDraftRevision += 1
                 newTaskTarget = option
                 newTaskTeamId = null
                 teamRunRetry = null
                 teamRunError = null
-                newTaskModel = "default"
-                val available = com.wand.app.ui.thinkingEffortOptions(
-                    option.raw, "default", newTaskModels?.defaultModelFor(option.raw),
-                    newTaskModels?.modelsFor(option.raw).orEmpty(),
-                )
-                newTaskThinkingEffort = state.defaultThinkingEffort.takeIf { effort ->
-                    available.any { it.id == effort }
-                } ?: "off"
+                // 只有真的换了工具才重置模型/思考深度；团队 ⇄ 同一目标往返保留手选值。
+                if (resetsCliParams) {
+                    newTaskModel = "default"
+                    val available = com.wand.app.ui.thinkingEffortOptions(
+                        option.raw, "default", newTaskModels?.defaultModelFor(option.raw),
+                        newTaskModels?.modelsFor(option.raw).orEmpty(),
+                    )
+                    newTaskThinkingEffort = state.defaultThinkingEffort.takeIf { effort ->
+                        available.any { it.id == effort }
+                    } ?: "off"
+                }
                 if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
             },
             kind = newTaskKind,
@@ -1030,7 +1051,10 @@ fun TaskListScreen(
             // HomeActivity uses transparent edge-to-edge system bars. Consume the top inset
             // here so the dashboard chrome never sits underneath the clock/camera cutout.
             .statusBarsPadding()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            // 搜索展开时底部启动条让位，键盘避让必须由整页承担：inset 只从底部让出，
+            // 顶栏（含搜索框）位置与尺寸不变，列表与展开卡的动作行回到键盘上方。
+            .imePadding(),
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AmbientBackground(Modifier.fillMaxSize())
@@ -1091,10 +1115,11 @@ fun TaskListScreen(
                         onHomeListModeChange(mode)
                     },
                 )
-                if (!showingBoard && (selecting || !attentionOnly)) {
+                // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
+                // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
+                if (homeActivityStripVisible(showingBoard, activityStats)) {
                     HomeActivityStrip(
-                        overview = overview,
-                        attentionOnly = attentionOnly,
+                        stats = activityStats,
                         enabled = interactionEnabled,
                         onToggleAttention = {
                             attentionOnly = !attentionOnly
@@ -1145,6 +1170,14 @@ fun TaskListScreen(
                         message = state.loadError ?: "无法加载任务列表",
                         onRetry = { scope.launch { state.load() } },
                     )
+                    // 筛选开着时即使一条数据都没有，也必须先给「已选等你」的关闭路径，
+                    // 不能被下面的初始空态抢先显示「开始第一个任务」。
+                    !hasAnyContent && attentionOnly -> EmptyState(
+                        modifier = Modifier.fillMaxSize(),
+                        icon = WandIcons.check,
+                        title = sessionEmptyCopy.title,
+                        subtitle = sessionEmptyCopy.subtitle,
+                    )
                     !hasAnyContent -> EmptyState(
                         modifier = Modifier.fillMaxSize(),
                         icon = WandIcons.sparkle,
@@ -1155,15 +1188,12 @@ fun TaskListScreen(
                             "在底部写一句想做的事，或者用 ＋ 打开完整的新建面板。"
                         },
                     )
+                    // 有数据、但最终交集为空：文案按三种筛选组合取，建议指向真正挡着列表的那一层。
                     !hasVisibleContent -> EmptyState(
                         modifier = Modifier.fillMaxSize(),
                         icon = WandIcons.check,
-                        title = if (searching) "没有匹配的会话" else "没有需要处理的会话",
-                        subtitle = if (searching) {
-                            "换个词试试，或者关掉搜索看全部。"
-                        } else {
-                            "所有 Agent 都在自己跑，不用你插手。"
-                        },
+                        title = sessionEmptyCopy.title,
+                        subtitle = sessionEmptyCopy.subtitle,
                     )
                     else -> Column(modifier = Modifier.fillMaxSize()) {
                         if (selecting) {
@@ -1334,7 +1364,10 @@ fun TaskListScreen(
             }
         }
         // 多选是管理态，底部启动条先让位，避免和批量操作抢注意力。
-        if (!showingBoard && showComposer && !selecting) {
+        // 搜索展开期间也不渲染：启动条自己带输入栏，会和顶部搜索框同时出现两条输入栏，
+        // 而且它会落在键盘区。显隐只由 searchOpen 决定 —— 键盘单独收起时仍然隐藏，
+        // 只有关闭搜索才恢复（§2.19）。
+        if (!showingBoard && showComposer && !selecting && !searchOpen) {
             HomeComposerBar(
                 value = composerDraft,
                 onValueChange = { composerDraft = it },
@@ -1433,6 +1466,7 @@ internal fun taskSessionRoute(
     taskId = task?.id,
     workspaceName = task?.let { group.workspaceName },
     taskName = task?.name,
+    teamChatRunId = groupChatRunId(session),
 )
 
 private fun TaskDirectoryGroup.asWorkspace(): Workspace = Workspace(

@@ -439,6 +439,7 @@ private fun SettingsOverview(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 WandBrandMark(size = if (compact) 40 else 48)
+                // 标题列优先获得空间；次要的版本胶囊是固定信息，空间不足时先收缩自己（§2.15 R2）。
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         connection.serverDisplayName.ifBlank { "这台设备" },
@@ -449,7 +450,8 @@ private fun SettingsOverview(
                         },
                         color = WandColors.textPrimary,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        // 中段省略：端口是分辨当前服务器的关键信息，尾部省略会先把它吃掉。
+                        overflow = TextOverflow.MiddleEllipsis,
                     )
                     Text(
                         if (compact) {
@@ -459,6 +461,9 @@ private fun SettingsOverview(
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = WandColors.textSecondary,
+                        // 大字体挤压下也不许竖排堆叠成多行。
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Text(
@@ -466,7 +471,10 @@ private fun SettingsOverview(
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     color = WandColors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
                     modifier = Modifier
+                        .widthIn(max = 112.dp)
                         .clip(RoundedCornerShape(9.dp))
                         .background(WandColors.surfaceSoft.copy(alpha = 0.70f))
                         .padding(horizontal = 8.dp, vertical = 6.dp),
