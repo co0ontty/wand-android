@@ -1,6 +1,7 @@
 package com.wand.app
 
 import android.content.Context
+import android.content.ClipboardManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -54,6 +55,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.AbstractComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -62,6 +64,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.foundation.text.KeyboardActions
@@ -166,7 +170,11 @@ class ConnectComposeView(context: Context) : AbstractComposeView(context) {
         WandTheme {
             ConnectScreen(
                 inputValue = uiInputValue,
-                onInputValueChange = { uiInputValue = it },
+                onInputValueChange = {
+                    uiInputValue = it
+                    statusMessage = null
+                },
+                onPasteUnavailable = { showStatus("剪贴板中没有可粘贴的连接码或地址", false) },
                 autoConnecting = uiAutoConnecting,
                 autoStatus = uiAutoStatus,
                 connecting = uiConnecting,
@@ -186,6 +194,7 @@ class ConnectComposeView(context: Context) : AbstractComposeView(context) {
 private fun ConnectScreen(
     inputValue: String,
     onInputValueChange: (String) -> Unit,
+    onPasteUnavailable: () -> Unit,
     autoConnecting: Boolean,
     autoStatus: String,
     connecting: Boolean,
@@ -198,6 +207,8 @@ private fun ConnectScreen(
     listener: ConnectUiListener?,
 ) {
     val focusRequester = androidx.compose.runtime.remember { FocusRequester() }
+    val context = LocalContext.current
+    val clipboard = remember(context) { context.getSystemService(ClipboardManager::class.java) }
     var fieldValue by androidx.compose.runtime.remember { mutableStateOf(TextFieldValue(inputValue)) }
     androidx.compose.runtime.LaunchedEffect(inputValue) {
         if (inputValue != fieldValue.text) fieldValue = TextFieldValue(inputValue)
@@ -211,6 +222,9 @@ private fun ConnectScreen(
     var pendingRemoval by androidx.compose.runtime.remember { mutableStateOf<ServerProfile?>(null) }
     var confirmClear by androidx.compose.runtime.remember { mutableStateOf(false) }
     val reduceMotion = reduceMotionEnabled()
+    val hasConnectionCode = remember(inputValue) {
+        inputValue.isNotBlank() && com.wand.app.data.WandAuth.decodeConnectCode(inputValue) != null
+    }
     val entrance = remember { Animatable(if (reduceMotion) 1f else 0.7f) }
     LaunchedEffect(reduceMotion) {
         if (reduceMotion) entrance.snapTo(1f)
@@ -290,26 +304,6 @@ private fun ConnectScreen(
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(WandSpacing.xl),
                 ) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        WandBrandMark(size = 64)
-                    }
-                    Text(
-                        "Wand",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = WandColors.textPrimary,
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(top = WandSpacing.sm),
-                    )
-                    Text(
-                        "远程 CLI 控制台",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = WandColors.textSecondary,
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(top = WandSpacing.xxs, bottom = WandSpacing.xl),
-                    )
-
                     AnimatedContent(
                         targetState = autoConnecting,
                         transitionSpec = {
@@ -325,92 +319,123 @@ private fun ConnectScreen(
                         label = "connectionMode",
                     ) { showingAutoConnect ->
                         if (showingAutoConnect) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(WandSpacing.md),
-                            ) {
-                                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                                    if (reduceMotion) {
-                                        Icon(
-                                            WandIcons.refresh,
-                                            contentDescription = null,
-                                            tint = WandColors.brand,
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    } else {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(28.dp),
-                                            color = WandColors.brand,
-                                            strokeWidth = 2.5.dp,
-                                        )
-                                    }
-                                }
-                                Column(Modifier.weight(1f)) {
+                            Column {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    WandBrandMark(size = 64)
                                     Text(
-                                        "正在恢复连接",
-                                        style = MaterialTheme.typography.titleMedium,
+                                        "Wand",
+                                        style = MaterialTheme.typography.headlineMedium,
                                         color = WandColors.textPrimary,
+                                        modifier = Modifier.padding(top = WandSpacing.sm),
                                     )
-                                    AnimatedContent(
-                                        targetState = autoStatus,
-                                        transitionSpec = {
-                                            val fade = if (reduceMotion) {
-                                                EnterTransition.None togetherWith ExitTransition.None
-                                            } else {
-                                                fadeIn(WandMotion.tweenFast()) togetherWith
-                                                    fadeOut(WandMotion.tweenExit())
-                                            }
-                                            fade.using(SizeTransform(clip = false) { _, _ ->
-                                                WandMotion.respectMotion(!reduceMotion, WandMotion.tweenNormal())
-                                            })
-                                        },
-                                        label = "connectionStatus",
-                                    ) { status ->
+                                    Text(
+                                        "远程 CLI 控制台",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = WandColors.textSecondary,
+                                        modifier = Modifier.padding(
+                                            top = WandSpacing.xxs,
+                                            bottom = WandSpacing.xl,
+                                        ),
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(WandSpacing.md),
+                                ) {
+                                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                                        if (reduceMotion) {
+                                            Icon(
+                                                WandIcons.refresh,
+                                                contentDescription = null,
+                                                tint = WandColors.brand,
+                                                modifier = Modifier.size(24.dp),
+                                            )
+                                        } else {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(28.dp),
+                                                color = WandColors.brand,
+                                                strokeWidth = 2.5.dp,
+                                            )
+                                        }
+                                    }
+                                    Column(Modifier.weight(1f)) {
                                         Text(
-                                            status,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = WandColors.textSecondary,
-                                            modifier = Modifier
-                                                .padding(top = WandSpacing.xxs)
-                                                .semantics { liveRegion = LiveRegionMode.Polite },
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
+                                            "正在恢复连接",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = WandColors.textPrimary,
                                         )
+                                        AnimatedContent(
+                                            targetState = autoStatus,
+                                            transitionSpec = {
+                                                val fade = if (reduceMotion) {
+                                                    EnterTransition.None togetherWith ExitTransition.None
+                                                } else {
+                                                    fadeIn(WandMotion.tweenFast()) togetherWith
+                                                        fadeOut(WandMotion.tweenExit())
+                                                }
+                                                fade.using(SizeTransform(clip = false) { _, _ ->
+                                                    WandMotion.respectMotion(!reduceMotion, WandMotion.tweenNormal())
+                                                })
+                                            },
+                                            label = "connectionStatus",
+                                        ) { status ->
+                                            Text(
+                                                status,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = WandColors.textSecondary,
+                                                modifier = Modifier
+                                                    .padding(top = WandSpacing.xxs)
+                                                    .semantics { liveRegion = LiveRegionMode.Polite },
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
                                     }
                                 }
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = WandSpacing.lg),
-                                horizontalArrangement = Arrangement.spacedBy(WandSpacing.xs, Alignment.End),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                WandButton(
-                                    label = "取消",
-                                    onClick = { listener?.onCancelAutoConnect() },
-                                    variant = WandButtonVariant.Text,
-                                )
-                                WandButton(
-                                    label = "管理服务器",
-                                    onClick = { listener?.onSwitchServer() },
-                                    variant = WandButtonVariant.Secondary,
-                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = WandSpacing.lg),
+                                    horizontalArrangement = Arrangement.spacedBy(WandSpacing.xs, Alignment.End),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    WandButton(
+                                        label = "取消",
+                                        onClick = { listener?.onCancelAutoConnect() },
+                                        variant = WandButtonVariant.Text,
+                                    )
+                                    WandButton(
+                                        label = "管理服务器",
+                                        onClick = { listener?.onSwitchServer() },
+                                        variant = WandButtonVariant.Secondary,
+                                    )
+                                }
                             }
                         } else {
                             Column {
-                                Text(
-                                    "连接到服务器",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = WandColors.textPrimary,
-                                )
-                                Text(
-                                    "粘贴连接码，或输入服务器地址。",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = WandColors.textSecondary,
-                                    modifier = Modifier.padding(top = WandSpacing.xxs, bottom = WandSpacing.md),
-                                )
+                                Row(
+                                    modifier = Modifier.padding(bottom = WandSpacing.xl),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(WandSpacing.md),
+                                ) {
+                                    WandBrandMark(size = 48)
+                                    Column {
+                                        Text(
+                                            "连接到 Wand",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = WandColors.textPrimary,
+                                        )
+                                        Text(
+                                            "从网页设置复制 App 连接码",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = WandColors.textSecondary,
+                                        )
+                                    }
+                                }
                                 WandTextField(
                                     value = fieldValue,
                                     onValueChange = {
@@ -418,15 +443,59 @@ private fun ConnectScreen(
                                         onInputValueChange(it.text)
                                     },
                                     label = "连接码或服务器地址",
-                                    placeholder = "连接码或 https://服务器地址",
+                                    placeholder = "粘贴连接码，或输入服务器地址",
                                     singleLine = true,
                                     enabled = !connecting,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = { listener?.onConnect() }),
+                                    keyboardOptions = KeyboardOptions(
+                                        capitalization = KeyboardCapitalization.None,
+                                        autoCorrectEnabled = false,
+                                        keyboardType = KeyboardType.Uri,
+                                        imeAction = ImeAction.Go,
+                                    ),
+                                    keyboardActions = KeyboardActions(onGo = { listener?.onConnect() }),
+                                    trailingIcon = {
+                                        WandButton(
+                                            label = "粘贴",
+                                            onClick = {
+                                                val clip = clipboard?.primaryClip
+                                                val pasted = if (clip != null && clip.itemCount > 0) {
+                                                    clip.getItemAt(0).coerceToText(context).toString().trim()
+                                                } else {
+                                                    ""
+                                                }
+                                                if (pasted.isEmpty()) {
+                                                    onPasteUnavailable()
+                                                } else {
+                                                    fieldValue = TextFieldValue(
+                                                        pasted,
+                                                        selection = TextRange(pasted.length),
+                                                    )
+                                                    onInputValueChange(pasted)
+                                                }
+                                            },
+                                            variant = WandButtonVariant.Text,
+                                            enabled = !connecting,
+                                            compact = true,
+                                        )
+                                    },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .focusRequester(focusRequester),
                                 )
+                                AnimatedVisibility(
+                                    visible = hasConnectionCode && statusMessage == null,
+                                    enter = if (reduceMotion) EnterTransition.None else
+                                        fadeIn(WandMotion.tweenFast()) + expandVertically(WandMotion.tweenEnter()),
+                                    exit = if (reduceMotion) ExitTransition.None else
+                                        fadeOut(WandMotion.tweenExit()) + shrinkVertically(WandMotion.tweenExit()),
+                                ) {
+                                    Text(
+                                        "已识别连接码",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = WandColors.success,
+                                        modifier = Modifier.padding(top = WandSpacing.xs),
+                                    )
+                                }
                                 ConnectionFeedback(statusMessage, statusIsError, reduceMotion)
                                 WandButton(
                                     label = if (connecting && connectingServerId == null) "连接中…" else "连接并保存",
