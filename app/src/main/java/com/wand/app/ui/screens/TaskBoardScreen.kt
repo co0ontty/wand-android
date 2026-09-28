@@ -40,7 +40,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -288,7 +288,7 @@ fun TaskBoardScreen(
         floatingActionButton = {
             // 划开状态时不摆悬浮按钮：它正好压在右下的滑动动作按钮上，会吃掉那一下点击。
             if (!boardSwipeOpen) {
-                FloatingActionButton(
+                SmallFloatingActionButton(
                     onClick = {
                         openCreateDialog("todo")
                     },
@@ -296,7 +296,7 @@ fun TaskBoardScreen(
                     contentColor = Color.White,
                     shape = CircleShape,
                 ) {
-                    Icon(WandIcons.add, contentDescription = "新建任务")
+                    Icon(WandIcons.add, contentDescription = "新建任务", modifier = Modifier.size(20.dp))
                 }
             }
         },
@@ -552,7 +552,6 @@ private fun TaskBoardList(
                     label = workspaces.firstOrNull { it.id == filterWorkspaceId }?.name ?: "所有项目",
                     options = listOf("" to "所有项目") + workspaces.map { it.id to it.name },
                     onSelect = onFilterWorkspace,
-                    leadingIcon = WandIcons.folder,
                     chip = true,
                 )
                 WandChoiceStrip(
@@ -679,7 +678,7 @@ private fun TaskBoardHero(
     WandCard(
         containerColor = WandColors.successSoft,
         shape = WandShapes.lg,
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -688,7 +687,7 @@ private fun TaskBoardHero(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                projectName,
+                "任务概览 · $projectName",
                 color = WandColors.textSecondary,
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
@@ -706,8 +705,8 @@ private fun TaskBoardHero(
                 stats.remaining.toString(),
                 color = WandColors.success,
                 fontWeight = FontWeight.Bold,
-                fontSize = 40.sp,
-                lineHeight = 42.sp,
+                fontSize = 34.sp,
+                lineHeight = 36.sp,
             )
             Text(
                 "未完成",
@@ -716,30 +715,32 @@ private fun TaskBoardHero(
                 modifier = Modifier.padding(bottom = 6.dp),
             )
         }
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 12.dp),
+                .padding(top = 10.dp)
+                .height(1.dp)
+                .background(WandColors.success.copy(alpha = 0.16f)),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BoardMetricTile(
+            BoardMetric(
                 label = "待办",
                 value = stats.todo,
-                total = stats.total,
                 color = boardStatusColor("todo"),
                 modifier = Modifier.weight(1f),
             )
-            BoardMetricTile(
+            BoardMetric(
                 label = "进行中",
                 value = stats.doing,
-                total = stats.total,
                 color = boardStatusColor("doing"),
                 modifier = Modifier.weight(1f),
             )
-            BoardMetricTile(
+            BoardMetric(
                 label = "已完成",
                 value = stats.done,
-                total = stats.total,
                 color = boardStatusColor("done"),
                 modifier = Modifier.weight(1f),
             )
@@ -809,43 +810,21 @@ private fun BoardSearchCapsule(
 }
 
 @Composable
-private fun BoardMetricTile(
+private fun BoardMetric(
     label: String,
     value: Int,
-    total: Int,
     color: Color,
     modifier: Modifier = Modifier,
 ) {
-    val ratio = if (total > 0) value.toFloat() / total.toFloat() else 0f
-    Column(
-        modifier = modifier
-            .clip(WandShapes.sm)
-            .background(WandColors.surface.copy(alpha = 0.82f))
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-    ) {
-        Text(label, color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall)
+    Column(modifier = modifier) {
+        Text(label, color = WandColors.textSecondary, style = MaterialTheme.typography.labelSmall)
         Text(
             value.toString(),
             color = color,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 2.dp),
         )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(WandShapes.full)
-                .background(color.copy(alpha = 0.16f)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(ratio)
-                    .fillMaxHeight()
-                    .clip(WandShapes.full)
-                    .background(color),
-            )
-        }
     }
 }
 
@@ -865,7 +844,7 @@ private fun BoardArchiveHeader(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
-            WandIcons.folder,
+            WandIcons.archive,
             contentDescription = if (expanded) "收起归档任务" else "展开归档任务",
             tint = WandColors.textMuted,
             modifier = Modifier.size(14.dp),
@@ -1063,7 +1042,7 @@ private fun BoardTaskCard(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 model.workspaceName?.let { name ->
-                    BoardMetaChip(label = name, icon = WandIcons.folder)
+                    BoardMetaChip(label = name)
                 }
                 model.milestoneName?.let { name ->
                     BoardMetaChip(label = name, icon = WandIcons.milestone)
@@ -1296,8 +1275,8 @@ private fun BoardMetaChip(
         modifier = Modifier
             .height(BoardCardChipHeight)
             .clip(BoardCardChipShape)
-            .background(containerColor ?: Color.Transparent)
-            .border(0.5.dp, borderColor ?: WandColors.border, BoardCardChipShape)
+            .background(containerColor ?: WandColors.surfaceSoft.copy(alpha = 0.48f))
+            .then(if (borderColor != null) Modifier.border(0.5.dp, borderColor, BoardCardChipShape) else Modifier)
             .padding(horizontal = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),

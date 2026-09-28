@@ -87,6 +87,7 @@ import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandSegmentedTrack
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
+import com.wand.app.ui.components.WandProviderMarkVariant
 import com.wand.app.ui.components.WandStatusPresentation
 import com.wand.app.ui.components.WandStatusTone
 import com.wand.app.ui.components.wandStatusPresentation
@@ -713,22 +714,15 @@ internal fun HomeWorkspaceCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(30.dp)
-                    .clip(WandShapes.sm)
-                    .background(WandColors.brandSoft),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    WandIcons.folder,
-                    contentDescription = null,
-                    tint = WandColors.brand,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
+                    .width(3.dp)
+                    .height(28.dp)
+                    .clip(WandShapes.full)
+                    .background(if (group.isGlobal) WandColors.textMuted else WandColors.brand),
+            )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 10.dp, end = 6.dp),
+                    .padding(start = 12.dp, end = 6.dp),
             ) {
                 Text(
                     group.workspaceName.ifEmpty { "任务目录" },
@@ -1243,14 +1237,12 @@ internal fun HomeSessionRow(
             // 群聊会话是个「多人房间」而不是某个 CLI，用团队图标替掉 provider 标（对齐 Web）。
             val teamChat = session.teamChat
             Box(
-                // 只给淡底、不加描边：Pi / Claude 这些 logo 自带外框，
-                // 再套一层圆角描边会变成「双框」，远看像个禁止符号。
                 modifier = Modifier
-                    .size(30.dp)
-                    .clip(WandShapes.sm)
-                    .background(
-                        if (teamChat == null) WandColors.surface.copy(alpha = 0.72f)
-                        else WandColors.brandSoft.copy(alpha = 0.55f),
+                    .size(28.dp)
+                    .then(
+                        if (teamChat != null) Modifier.clip(WandShapes.sm)
+                            .background(WandColors.brandSoft.copy(alpha = 0.55f))
+                        else Modifier,
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1264,7 +1256,7 @@ internal fun HomeSessionRow(
                 } else {
                     WandProviderMark(
                         provider = session.provider,
-                        modifier = Modifier.size(20.dp),
+                        variant = WandProviderMarkVariant.Tinted,
                     )
                 }
             }
