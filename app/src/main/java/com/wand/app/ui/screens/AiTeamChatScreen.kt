@@ -6,6 +6,8 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
@@ -20,6 +22,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -60,7 +63,6 @@ import com.wand.app.data.AiTeamLiveStep
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamStep
 import com.wand.app.data.ConversationTurn
-import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TeamRunAction
 import com.wand.app.data.TurnAuthor
 import com.wand.app.data.WandApi
@@ -69,14 +71,12 @@ import com.wand.app.data.aiTeamRunStatusLabel
 import com.wand.app.ui.SendActionVisual
 import com.wand.app.ui.SendPhase
 import com.wand.app.ui.sendActionVisual
-import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandBreadcrumb
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandCrumb
 import com.wand.app.ui.components.WandDetailTopBar
-import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -87,7 +87,7 @@ import kotlinx.coroutines.launch
 
 /**
  * 团队群聊页（对齐 Web `src/web-ui/react/ai-teams/team-chat-view.tsx` 的分层）：
- * 顶部钉住主任务公告，负责人发言是公告卡，成员发言是带状态芯片的步骤块，
+ * 一行群公告承接任务入口，成员与完整输出按需展开；消息流和输入框保持主位。
  * 系统提示居中弱化且完整折行，用户消息右侧气泡 + 乐观未确认。
  *
  * 数据只走 `GET /api/ai-team-runs/:id`（run / steps / chatTurns），
@@ -113,7 +113,6 @@ private val TeamLiveCardHeight = 200.dp
  * 署名与步骤标题在署名行里的宽度上限：超了就省略号，把整行的空间让给状态芯片，
  * 让「工作中」在任何字号下都是完整一块（对应 Web 头部 `flex-wrap` 的让位行为）。
  */
-private val TeamChatSignatureMaxWidth = 230.dp
 private val TeamChatStepChipMaxWidth = 190.dp
 
 /**
@@ -139,8 +138,7 @@ fun AiTeamChatScreen(
     var loadError by remember(runId) { mutableStateOf<String?>(null) }
     var busy by remember(runId) { mutableStateOf(false) }
     var draft by remember(runId) { mutableStateOf("") }
-    // 署名里的模型名要把 `default` 哨兵换成一个具体的默认模型（同 Web 目录口径）；拉失败只影响这一段。
-    var models by remember(runId) { mutableStateOf<ModelsResponse?>(null) }
+    var detailsOpen by remember(runId) { mutableStateOf(false) }
     var sending by remember(runId) { mutableStateOf(false) }
     var sendError by remember(runId) { mutableStateOf<String?>(null) }
     var localTurns by remember(runId) { mutableStateOf<List<LocalChatTurn>>(emptyList()) }
@@ -200,11 +198,6 @@ fun AiTeamChatScreen(
                 },
             )
         }
-    }
-
-    // 模型目录只拉一次：署名里的模型名不随轮询变化，失败就退化成不写模型段。
-    LaunchedEffect(api, runId) {
-        models = runCatching { api.models() }.getOrDefault(models)
     }
 
     val listState = rememberLazyListState()
@@ -338,39 +331,19 @@ fun AiTeamChatScreen(
                                 onClick = if (showBack) onBack else null,
                             ),
                             WandCrumb(
-                                taskIdentifier
-                                    ?: run?.team?.name?.takeIf { it.isNotBlank() }
-                                    ?: "群聊",
+                                run?.team?.name?.takeIf { it.isNotBlank() } ?: "AI 团队",
                             ),
                         ),
                     )
                     Text(
                         listOfNotNull(
                             aiTeamRunStatusLabel(status),
-                            run?.let { "步数 ${it.stepsUsed}/${it.stepLimit}" },
+                            run?.let { "${it.team?.members?.size ?: 0} 位成员" },
                         ).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         color = WandColors.textMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            },
-            actions = {
-                if (run != null && aiTeamRunActive(status)) {
-                    ToolbarIconButton(
-                        icon = WandIcons.stop,
-                        contentDescription = "停止团队",
-                        onClick = { act(TeamRunAction.Stop) },
-                        enabled = !busy,
-                        tint = WandColors.danger,
-                    )
-                }
-                chatSessionId?.let { sessionId ->
-                    ToolbarIconButton(
-                        icon = WandIcons.read,
-                        contentDescription = "查看完整会话记录",
-                        onClick = { onOpenFullSession(sessionId) },
                     )
                 }
             },
@@ -384,6 +357,14 @@ fun AiTeamChatScreen(
             }
             else -> {
                 Column(modifier = Modifier.fillMaxSize()) {
+                    TeamChatContextBar(
+                        detail = current,
+                        expanded = detailsOpen,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        onToggle = { detailsOpen = !detailsOpen },
+                        onOpenMemberSession = onOpenMemberSession,
+                        onOpenFullSession = onOpenFullSession,
+                    )
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -394,12 +375,6 @@ fun AiTeamChatScreen(
                         contentPadding = PaddingValues(14.dp, 12.dp, 14.dp, TeamChatListBottomPadding),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        item(key = "team-goal") {
-                            TeamMainTaskCard(current)
-                        }
-                        item(key = "team-office") {
-                            TeamOfficeStrip(current, onOpenMemberSession)
-                        }
                         val needsYou = current.run.status == "awaiting_approval" ||
                             current.run.status == "waiting_user"
                         if (needsYou) {
@@ -422,7 +397,6 @@ fun AiTeamChatScreen(
                                 TeamTurnRow(
                                     turn = turn,
                                     steps = current.steps,
-                                    models = models,
                                     onOpenMemberSession = onOpenMemberSession,
                                 )
                             }
@@ -441,7 +415,6 @@ fun AiTeamChatScreen(
                                         row = row,
                                         steps = current.steps,
                                         memberStates = current.memberStates,
-                                        models = models,
                                         onOpenMemberSession = onOpenMemberSession,
                                         onRetire = ::retireLiveRow,
                                     )
@@ -472,7 +445,79 @@ fun AiTeamChatScreen(
     }
 }
 
-/** 顶部钉住的「主任务」：群公告位，永远在群聊第一屏，长目标原位展开。 */
+/** 群公告保持一行；成员、任务和完整记录从原位展开，消息始终是页面主体。 */
+@Composable
+private fun TeamChatContextBar(
+    detail: AiTeamRunDetail,
+    expanded: Boolean,
+    modifier: Modifier = Modifier,
+    onToggle: () -> Unit,
+    onOpenMemberSession: (String) -> Unit,
+    onOpenFullSession: (String) -> Unit,
+) {
+    val motion = !reduceMotionEnabled()
+    Column(
+        modifier = modifier
+            .widthIn(max = TeamChatReadableMaxWidth)
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(WandShapes.sm)
+                .background(WandColors.surfaceSoft)
+                .clickable(onClickLabel = if (expanded) "收起群详情" else "查看群详情", onClick = onToggle)
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("群公告", style = MaterialTheme.typography.labelSmall, color = WandColors.brand)
+            Text(
+                detail.run.objective.lineSequence().firstOrNull()?.ifBlank { "查看本次任务" } ?: "查看本次任务",
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                if (expanded) "收起" else "详情",
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = if (motion) fadeIn(WandMotion.tweenEnter()) +
+                expandVertically(WandMotion.tweenEnter()) else EnterTransition.None,
+            exit = if (motion) fadeOut(WandMotion.tweenExit()) +
+                shrinkVertically(WandMotion.tweenExit()) else ExitTransition.None,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 300.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                TeamMainTaskCard(detail)
+                TeamOfficeStrip(detail, onOpenMemberSession)
+                detail.run.chatSessionId?.let { sessionId ->
+                    WandButton(
+                        label = "查看完整会话记录",
+                        onClick = { onOpenFullSession(sessionId) },
+                        variant = WandButtonVariant.Text,
+                        compact = true,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 群详情中的完整任务目标，长内容可原位展开。 */
 @Composable
 private fun TeamMainTaskCard(detail: AiTeamRunDetail) {
     val run = detail.run
@@ -632,35 +677,32 @@ private fun TeamRunActionBar(
 private fun TeamTurnRow(
     turn: ConversationTurn,
     steps: List<AiTeamStep>,
-    models: ModelsResponse?,
     onOpenMemberSession: (String) -> Unit,
 ) {
     when (chatTurnKind(turn)) {
         TeamChatTurnKind.Notice -> TeamNoticeRow(turn)
         TeamChatTurnKind.User -> TeamUserBubble(chatTurnText(turn), unconfirmed = false)
-        TeamChatTurnKind.Leader -> TeamLeaderCard(turn, models, onOpenMemberSession)
-        TeamChatTurnKind.Step -> TeamStepRow(turn, steps, models, onOpenMemberSession)
+        TeamChatTurnKind.Leader -> TeamLeaderCard(turn, onOpenMemberSession)
+        TeamChatTurnKind.Step -> TeamStepRow(turn, steps, onOpenMemberSession)
     }
 }
 
 /**
- * 署名行：头像 + 名字（可点进该成员会话）+ 「CLI · 模型 · 思考深度」+ 可选芯片 + 时刻。
+ * 署名行：头像 + 名字（可点进该成员会话）+ 可选状态 + 时刻。
  *
  * 用 `FlowRow` 而不是 `Row`：字号放大（font_scale 1.3）时这一行的内容会超出列宽，
  * `Row` 会把不收缩的状态芯片挤成十几像素的小方块。FlowRow 让它整块换到下一行，
- * 列内不裁切；先让位的是签名与步骤标题（各自有宽度上限 + 省略号），状态芯片保持原宽可读。
+ * 列内不裁切；步骤标题先让位，状态芯片保持原宽可读。
  */
 @Composable
 private fun TeamAuthorLine(
     author: TurnAuthor?,
     fallbackName: String,
     badge: String?,
-    models: ModelsResponse?,
     trailing: (@Composable (() -> Unit))? = null,
     clock: String,
     onOpenMemberSession: (String) -> Unit,
 ) {
-    val signature = agentSignatureLabel(author?.provider, author?.model, author?.thinkingEffort, models)
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -693,16 +735,6 @@ private fun TeamAuthorLine(
             )
         }
         if (badge != null) TeamChatBadge(badge)
-        if (signature.isNotBlank()) {
-            Text(
-                signature,
-                fontSize = 11.sp,
-                color = WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = TeamChatSignatureMaxWidth),
-            )
-        }
         trailing?.invoke()
         if (clock.isNotBlank()) {
             Text(
@@ -717,20 +749,18 @@ private fun TeamAuthorLine(
     }
 }
 
-/** 负责人发言：公告卡 + 派工清单条目，和成员气泡在形态上分开。 */
+/** 负责人仍有角色标记，正文沿用普通群消息的层级。 */
 @Composable
-private fun TeamLeaderCard(turn: ConversationTurn, models: ModelsResponse?, onOpenMemberSession: (String) -> Unit) {
+private fun TeamLeaderCard(turn: ConversationTurn, onOpenMemberSession: (String) -> Unit) {
     val message = splitLeaderMessage(chatTurnText(turn))
-    WandCard(
-        containerColor = WandColors.brandSoft.copy(alpha = 0.30f),
-        contentPadding = PaddingValues(12.dp),
-        modifier = Modifier.fillMaxWidth(),
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         TeamAuthorLine(
             author = turn.author,
             fallbackName = "负责人",
             badge = "负责人",
-            models = models,
             clock = conversationTurnClock(turn),
             onOpenMemberSession = onOpenMemberSession,
         )
@@ -783,7 +813,6 @@ private fun TeamLeaderCard(turn: ConversationTurn, models: ModelsResponse?, onOp
 private fun TeamStepRow(
     turn: ConversationTurn,
     steps: List<AiTeamStep>,
-    models: ModelsResponse?,
     onOpenMemberSession: (String) -> Unit,
 ) {
     val text = chatTurnText(turn)
@@ -797,7 +826,6 @@ private fun TeamStepRow(
             author = turn.author,
             fallbackName = "成员",
             badge = null,
-            models = models,
             clock = conversationTurnClock(turn),
             onOpenMemberSession = onOpenMemberSession,
             trailing = {
@@ -840,7 +868,6 @@ private fun TeamLiveStepRow(
     row: LiveChatRow,
     steps: List<AiTeamStep>,
     memberStates: Map<String, String>,
-    models: ModelsResponse?,
     onOpenMemberSession: (String) -> Unit,
     onRetire: (String) -> Unit,
 ) {
@@ -851,6 +878,7 @@ private fun TeamLiveStepRow(
     val exit = fadeOut(WandMotion.tweenExit()) +
         if (motion) slideOutHorizontally(WandMotion.tweenExit()) { -it / 4 } else ExitTransition.None
     var cardShown by remember(step.stepId) { mutableStateOf(false) }
+    var outputExpanded by remember(step.stepId) { mutableStateOf(false) }
     LaunchedEffect(step.stepId) { cardShown = true }
     // Compose 的 AnimatedVisibility 不派发「动画结束」，退场行按退场时长自己计时摘除；
     // 计时挂在行上，所以下一次轮询不会把它腰斩（同 Web 的 animationend → onRetire）。
@@ -876,7 +904,6 @@ private fun TeamLiveStepRow(
                 ),
                 fallbackName = "成员",
                 badge = null,
-                models = models,
                 clock = formatChatClock(step.updatedAt),
                 onOpenMemberSession = onOpenMemberSession,
                 trailing = {
@@ -890,7 +917,33 @@ private fun TeamLiveStepRow(
                     }
                 },
             )
-            AnimatedVisibility(visible = cardShown, enter = enter, exit = exit) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(WandShapes.sm)
+                    .background(WandColors.surfaceSoft)
+                    .clickable(
+                        onClickLabel = if (outputExpanded) "收起实时输出" else "展开实时输出",
+                    ) { outputExpanded = !outputExpanded }
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    step.text.trim().lineSequence().lastOrNull { it.isNotBlank() } ?: LIVE_EMPTY_TEXT,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    if (outputExpanded) "收起" else "输出",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.brand,
+                )
+            }
+            AnimatedVisibility(visible = cardShown && outputExpanded, enter = enter, exit = exit) {
                 TeamLiveStepCard(step, onOpenMemberSession)
             }
         }
