@@ -129,7 +129,7 @@ fun TaskListScreen(
     onTaskClosed: (taskId: String) -> Unit = {},
     onSessionClosed: (sessionId: String) -> Unit = {},
     onOpenSettings: () -> Unit,
-    /** 首页顶栏「更多」→「AI 团队」：纯穿透回调，与 onOpenTaskBoard 同样的穿过方式。 */
+    /** 首页顶栏「更多」→「AI 团队」：纯穿透回调。 */
     onOpenAiTeams: () -> Unit = {},
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
@@ -1088,10 +1088,6 @@ fun TaskListScreen(
                     },
                     onOpenSettings = onOpenSettings,
                     onSwitchServer = onSwitchServer,
-                    onOpenTaskBoard = {
-                        onHomeListModeChange(HomeListMode.Tasks)
-                        attentionOnly = false
-                    },
                     onOpenAiTeams = onOpenAiTeams,
                     onCollapseSidebar = onCollapseSidebar,
                     onStartSelection = if (!showingBoard && hasAnyContent) {

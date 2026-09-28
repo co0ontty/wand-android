@@ -40,10 +40,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +53,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -94,6 +98,7 @@ import com.wand.app.ui.components.wandStatusPresentation
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.WandSizes
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.wandSelectedRow
 import com.wand.app.ui.withLiveTitle
@@ -122,15 +127,22 @@ internal fun HomeTopBar(
     onSearchToggle: () -> Unit,
     onRefresh: () -> Unit,
     onStartSelection: (() -> Unit)?,
-    onOpenTaskBoard: () -> Unit,
     onOpenAiTeams: () -> Unit,
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var restoreMenuFocus by remember { mutableStateOf(false) }
+    val menuFocusRequester = remember { FocusRequester() }
     val motionEnabled = !reduceMotionEnabled()
     val focusManager = LocalFocusManager.current
+    LaunchedEffect(menuOpen, restoreMenuFocus) {
+        if (!menuOpen && restoreMenuFocus) {
+            menuFocusRequester.requestFocus()
+            restoreMenuFocus = false
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -227,7 +239,7 @@ internal fun HomeTopBar(
             iconSize = 19.dp,
             rotationDegrees = 0f,
         )
-        // 入口的存在性只由布局决定，不随搜索态变化：搜索期间 5 个入口仍然可达（§2.7 B1）。
+        // 入口的存在性只由布局决定，不随搜索态变化。
         if (onCollapseSidebar != null) {
             WandIconButton(
                 icon = WandIcons.panelCollapse,
@@ -238,39 +250,72 @@ internal fun HomeTopBar(
             )
         }
         Box {
-            WandIconButton(
-                icon = WandIcons.more,
-                contentDescription = "更多选项",
+            WandMorphIconButton(
+                expanded = menuOpen,
+                collapsedIcon = WandIcons.more,
+                expandedIcon = WandIcons.close,
+                contentDescription = if (menuOpen) "关闭更多选项" else "更多选项",
                 // ⋮ 常驻后会在搜索展开时点到：先清焦点收键盘，菜单才不会被 IME 顶起；
                 // 搜索词保留，菜单关闭后也不自动重新聚焦。
                 onClick = {
-                    focusManager.clearFocus()
-                    menuOpen = true
+                    if (menuOpen) {
+                        menuOpen = false
+                        restoreMenuFocus = true
+                    } else {
+                        focusManager.clearFocus()
+                        menuOpen = true
+                    }
                 },
                 enabled = interactionEnabled,
-                variant = WandIconButtonVariant.Toolbar,
+                modifier = Modifier.focusRequester(menuFocusRequester),
+                touchSize = WandSizes.minTouchTarget,
+                iconSize = 20.dp,
+                rotationDegrees = 0f,
             )
             DropdownMenu(
                 expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
+                onDismissRequest = {
+                    menuOpen = false
+                    restoreMenuFocus = true
+                },
                 containerColor = WandColors.bgElevated,
             ) {
+                Text(
+                    "当前列表",
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.textMuted,
+                )
                 if (onStartSelection != null) {
                     DropdownMenuItem(
-                        text = { Text("选择多项") },
+                        text = { Text("批量选择会话与任务") },
                         leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                        onClick = { menuOpen = false; onStartSelection() },
+                        onClick = {
+                            menuOpen = false
+                            restoreMenuFocus = true
+                            onStartSelection()
+                        },
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("刷新") },
+                    text = { Text("刷新当前列表") },
                     leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
-                    onClick = { menuOpen = false; onRefresh() },
+                    onClick = {
+                        menuOpen = false
+                        restoreMenuFocus = true
+                        onRefresh()
+                    },
                 )
-                DropdownMenuItem(
-                    text = { Text("任务管理") },
-                    leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                    onClick = { menuOpen = false; onOpenTaskBoard() },
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    thickness = 0.5.dp,
+                    color = WandColors.border,
+                )
+                Text(
+                    if (searchOpen) "其他页面与连接" else "其他页面",
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.textMuted,
                 )
                 DropdownMenuItem(
                     text = { Text("AI 团队") },
@@ -282,11 +327,14 @@ internal fun HomeTopBar(
                     leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
                     onClick = { menuOpen = false; onOpenSettings() },
                 )
-                DropdownMenuItem(
-                    text = { Text("切换服务器") },
-                    leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
-                    onClick = { menuOpen = false; onSwitchServer() },
-                )
+                // 搜索框覆盖了服务器胶囊，此时菜单补上唯一的服务器切换入口。
+                if (searchOpen) {
+                    DropdownMenuItem(
+                        text = { Text("切换服务器") },
+                        leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
+                        onClick = { menuOpen = false; onSwitchServer() },
+                    )
+                }
             }
         }
     }
