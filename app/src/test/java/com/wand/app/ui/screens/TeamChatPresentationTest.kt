@@ -1,6 +1,10 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.AiTeamLiveStep
+import com.wand.app.data.AiTeam
+import com.wand.app.data.AiTeamMember
+import com.wand.app.data.AiTeamRun
+import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamStep
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.ContentBlock
@@ -8,6 +12,7 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TurnAuthor
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTeamChat
+import com.wand.app.data.WandApiException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -21,6 +26,38 @@ import kotlin.math.roundToInt
  * 端上一致性靠这些断言守住：同一条服务端回合，两端必须解析成同一角色 / 同一段正文。
  */
 class TeamChatPresentationTest {
+
+    @Test
+    fun officeShowsActualWorkAndAttentionAndCanOpenMemberSession() {
+        val members = listOf(
+            AiTeamMember("lead", "负责人", "派工", emptyList(), true),
+            AiTeamMember("dev", "开发者", "实现", emptyList(), false),
+            AiTeamMember("qa", "审查者", "检查", emptyList(), false),
+        )
+        val team = AiTeam("team", "开发组", "", members)
+        val run = AiTeamRun("r2", "team", team, "task", "目标", "running", "", 2, 20, "chat")
+        val detail = AiTeamRunDetail(run, listOf(
+            AiTeamStep("s1", 1, "leader", "lead", "拟定计划", "done", "lead-session"),
+            AiTeamStep("s2", 2, "work", "dev", "实现接口", "running", "dev-session"),
+            AiTeamStep("s3", 3, "work", "qa", "审查接口", "queued"),
+        ), memberStates = mapOf("dev-session" to "needs_permission"))
+        val office = teamOfficeMembers(detail)
+        assertEquals(listOf(TeamOfficeState.Done, TeamOfficeState.Attention, TeamOfficeState.Queued),
+            office.map { it.state })
+        assertEquals("待授权", office[1].label)
+        assertEquals("实现接口", office[1].task)
+        assertEquals("dev-session", office[1].sessionId)
+        assertEquals("r3", newestRunOnSameChat(run, listOf(run.copy(id = "r3"), run)))
+        assertNull(newestRunOnSameChat(run, listOf(run, run.copy(id = "r1"))))
+    }
+
+    @Test
+    fun chatSendOnlyRestoresDraftForDefiniteRejection() {
+        assertTrue(chatSendDefinitelyRejected(WandApiException(400, "拒收")))
+        for (status in listOf(null, 408, 409, 500)) {
+            assertFalse(chatSendDefinitelyRejected(WandApiException(status, "未知")))
+        }
+    }
 
     private fun turn(
         role: String,

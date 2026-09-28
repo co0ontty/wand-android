@@ -1,11 +1,15 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.AiTeamLiveStep
+import com.wand.app.data.AiTeamMember
+import com.wand.app.data.AiTeamRunDetail
+import com.wand.app.data.AiTeamRun
 import com.wand.app.data.AiTeamStep
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WandApiException
 import com.wand.app.data.aiTeamRunActive
 import com.wand.app.data.boardAgentModelName
 import com.wand.app.data.boardTaskProviderLabel
@@ -185,6 +189,55 @@ fun isConfirmedBy(turn: ConversationTurn, sentAtMillis: Long): Boolean {
 fun settleLocalTurns(local: List<LocalChatTurn>, turns: List<ConversationTurn>?): List<LocalChatTurn> =
     if (turns == null) local.map { it.copy(unconfirmed = true) }
     else local.filter { row -> turns.none { isConfirmedBy(it, row.sentAtMillis) } }
+
+/** 只有输入被接收前的明确 4xx 拒收可自动回到草稿；其余情况留未确认行。 */
+fun chatSendDefinitelyRejected(error: Throwable): Boolean {
+    val status = (error as? WandApiException)?.status ?: return false
+    return status in 400..499 && status != 408 && status != 409
+}
+
+enum class TeamOfficeState { Working, Attention, Queued, Done, Failed, Idle }
+
+data class TeamOfficeMember(
+    val member: AiTeamMember,
+    val state: TeamOfficeState,
+    val label: String,
+    val task: String,
+    val sessionId: String?,
+)
+
+/** 从运行步骤投影团队工位；只展示服务端真实状态，不把空闲成员伪装成工作中。 */
+fun teamOfficeMembers(detail: AiTeamRunDetail): List<TeamOfficeMember> =
+    detail.run.team?.members.orEmpty().map { member ->
+        val own = detail.steps.filter { it.memberId == member.id }
+        val step = own.firstOrNull { it.status == "running" } ?: own.maxByOrNull { it.seq }
+        val activity = step?.sessionId?.let { detail.memberStates[it] }
+        val state = when (step?.status) {
+            "running" -> if (activity == "needs_input" || activity == "needs_permission") {
+                TeamOfficeState.Attention
+            } else TeamOfficeState.Working
+            "queued" -> TeamOfficeState.Queued
+            "done" -> TeamOfficeState.Done
+            "failed" -> TeamOfficeState.Failed
+            else -> TeamOfficeState.Idle
+        }
+        val label = when (state) {
+            TeamOfficeState.Attention -> if (activity == "needs_permission") "待授权" else "待回答"
+            TeamOfficeState.Working -> "工作中"
+            TeamOfficeState.Queued -> "排队中"
+            TeamOfficeState.Done -> "已完成"
+            TeamOfficeState.Failed -> "失败"
+            TeamOfficeState.Idle -> "待派工"
+        }
+        TeamOfficeMember(member, state, label, step?.title?.takeIf { it.isNotBlank() }
+            ?: member.duty.takeIf { it.isNotBlank() } ?: "等待负责人派工", step?.sessionId)
+    }
+
+/** relay 会话延续后跟随同一 chat 的最新运行；没有更新或旧服务端没标记时留在当前轮。 */
+fun newestRunOnSameChat(current: AiTeamRun, runs: List<AiTeamRun>): String? {
+    val chatId = current.chatSessionId ?: return null
+    return runs.firstOrNull { it.chatSessionId == chatId }?.id?.takeIf { it != current.id }
+}
 
 /**
  * 会话行 → 群聊运行 id：服务端摘要没带 `teamChat`（老服务端）或缺 runId 时返回 null，

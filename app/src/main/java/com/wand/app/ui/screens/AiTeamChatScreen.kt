@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.rememberScrollState
@@ -134,6 +134,7 @@ fun AiTeamChatScreen(
     onOpenFullSession: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    var currentRunId by remember(runId) { mutableStateOf(runId) }
     var detail by remember(runId) { mutableStateOf<AiTeamRunDetail?>(null) }
     var loadError by remember(runId) { mutableStateOf<String?>(null) }
     var busy by remember(runId) { mutableStateOf(false) }
@@ -154,12 +155,12 @@ fun AiTeamChatScreen(
 
     // 详情轮询随页面可见性走：后台不烧请求，回前台立刻补一次。
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, currentRunId) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
                     resumed = true
-                    scope.launch { detail = runCatching { api.aiTeamRunDetail(runId) }.getOrNull() ?: detail }
+                    scope.launch { detail = runCatching { api.aiTeamRunDetail(currentRunId) }.getOrNull() ?: detail }
                 }
                 androidx.lifecycle.Lifecycle.Event.ON_PAUSE,
                 androidx.lifecycle.Lifecycle.Event.ON_STOP,
@@ -171,11 +172,21 @@ fun AiTeamChatScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(api, runId) {
+    LaunchedEffect(api, currentRunId, resumed) {
+        if (!resumed) return@LaunchedEffect
         while (true) {
-            val result = runCatching { api.aiTeamRunDetail(runId) }
+            val result = runCatching { api.aiTeamRunDetail(currentRunId) }
             // 拉失败不清空已有内容：群聊宁可停在旧消息上，也不整屏闪回加载态。
             detail = result.getOrNull() ?: detail
+            val fetched = result.getOrNull()
+            if (fetched != null && !aiTeamRunActive(fetched.run.status) && fetched.run.taskId.isNotBlank()) {
+                val runs = runCatching { api.teamRunsForTask(fetched.run.taskId) }.getOrNull()
+                val newer = runs?.let { newestRunOnSameChat(fetched.run, it) }
+                if (newer != null) {
+                    currentRunId = newer
+                    continue
+                }
+            }
             loadError = if (detail == null) {
                 result.exceptionOrNull()?.message ?: "无法加载群聊"
             } else {
@@ -239,14 +250,14 @@ fun AiTeamChatScreen(
      * 单次拉取失败保留上一份文本，不清空也不显示加载态。
      */
     val hasRunningStep = detail?.steps?.any { it.status == "running" } == true
-    LaunchedEffect(api, runId, resumed, hasRunningStep) {
+    LaunchedEffect(api, currentRunId, resumed, hasRunningStep) {
         if (!resumed || !hasRunningStep) {
             liveRows = mergeLiveRows(liveRows, emptyList())
             return@LaunchedEffect
         }
         while (true) {
-            val update = runCatching { api.aiTeamRunLive(runId) }.getOrNull()
-            if (update != null && update.runId == runId) liveRows = mergeLiveRows(liveRows, update.steps)
+            val update = runCatching { api.aiTeamRunLive(currentRunId) }.getOrNull()
+            if (update != null && update.runId == currentRunId) liveRows = mergeLiveRows(liveRows, update.steps)
             delay(TEAM_LIVE_POLL_MS)
         }
     }
@@ -262,7 +273,7 @@ fun AiTeamChatScreen(
         if (busy) return
         busy = true
         scope.launch {
-            val result = runCatching { api.actOnTeamRun(runId, action) }
+            val result = runCatching { api.actOnTeamRun(currentRunId, action) }
             // 结果原位呈现：成功就换上新 detail 并清掉红字，失败写在同一行，不弹 Toast。
             result.getOrNull()?.let {
                 detail = it
@@ -289,13 +300,22 @@ fun AiTeamChatScreen(
         scope.launch {
             val accepted = runCatching { api.sendInput(sessionId, text) }
             if (accepted.isFailure) {
-                localTurns = localTurns.filterNot { it.sentAtMillis == sentAt }
-                sendError = accepted.exceptionOrNull()?.message ?: "发送失败"
+                val cause = accepted.exceptionOrNull()
+                if (cause != null && chatSendDefinitelyRejected(cause)) {
+                    localTurns = localTurns.filterNot { it.sentAtMillis == sentAt }
+                    draft = if (draft.isBlank()) text else "$text\n$draft"
+                    sendError = cause.message ?: "发送失败，内容已放回输入框"
+                } else {
+                    localTurns = localTurns.map {
+                        if (it.sentAtMillis == sentAt) it.copy(unconfirmed = true) else it
+                    }
+                    sendError = "送达状态未知，请先查看群聊记录，避免重复发送"
+                }
                 sending = false
                 return@launch
             }
             // 服务端回包不通知客户端，这里自己补一次重拉；失败就把临时行留在原位标未确认。
-            val turns = runCatching { api.aiTeamRunDetail(runId) }.getOrNull()?.chatTurns
+            val turns = runCatching { api.aiTeamRunDetail(currentRunId) }.getOrNull()?.chatTurns
             localTurns = settleLocalTurns(localTurns, turns)
             sending = false
         }
@@ -377,9 +397,11 @@ fun AiTeamChatScreen(
                         item(key = "team-goal") {
                             TeamMainTaskCard(current)
                         }
+                        item(key = "team-office") {
+                            TeamOfficeStrip(current, onOpenMemberSession)
+                        }
                         val needsYou = current.run.status == "awaiting_approval" ||
-                            current.run.status == "waiting_user" ||
-                            aiTeamRunActive(current.run.status)
+                            current.run.status == "waiting_user"
                         if (needsYou) {
                             item(key = "team-actions") {
                                 TeamRunActionBar(
@@ -483,6 +505,73 @@ private fun TeamMainTaskCard(detail: AiTeamRunDetail) {
     }
 }
 
+/** 成员工位与实时步骤来自同一份运行详情，点已开工的成员直达其会话。 */
+@Composable
+private fun TeamOfficeStrip(detail: AiTeamRunDetail, onOpenSession: (String) -> Unit) {
+    val members = teamOfficeMembers(detail)
+    val working = members.count { it.state == TeamOfficeState.Working }
+    val attention = members.count { it.state == TeamOfficeState.Attention }
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "团队工位",
+                style = MaterialTheme.typography.titleSmall,
+                color = WandColors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                listOfNotNull(
+                    "$working 人工作中",
+                    "$attention 人待处理".takeIf { attention > 0 },
+                    "${members.size} 人在组",
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textMuted,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(members.size, key = { members[it].member.id }) { index ->
+                val entry = members[index]
+                val tint = when (entry.state) {
+                    TeamOfficeState.Working -> WandColors.info
+                    TeamOfficeState.Attention -> WandColors.warning
+                    TeamOfficeState.Done -> WandColors.success
+                    TeamOfficeState.Failed -> WandColors.danger
+                    else -> WandColors.textMuted
+                }
+                val open = entry.sessionId
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier
+                        .widthIn(min = 190.dp, max = 220.dp)
+                        .clip(WandShapes.sm)
+                        .background(WandColors.surfaceSoft)
+                        .then(if (open != null) Modifier.clickable(onClickLabel = "查看${entry.member.name}的会话") {
+                            onOpenSession(open)
+                        } else Modifier)
+                        .padding(8.dp),
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(26.dp).clip(CircleShape).background(tint.copy(alpha = 0.16f)),
+                    ) {
+                        Text(entry.member.name.take(1), color = tint, fontSize = 12.sp)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(entry.member.name, style = MaterialTheme.typography.labelMedium,
+                            color = WandColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(entry.task, style = MaterialTheme.typography.labelSmall,
+                            color = WandColors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(entry.label, style = MaterialTheme.typography.labelSmall, color = tint)
+                }
+            }
+        }
+    }
+}
+
 /** 运行状态与动作：沿用 actOnTeamRun 通道，结果写在原位，不弹 Toast。 */
 @Composable
 private fun TeamRunActionBar(
@@ -533,16 +622,6 @@ private fun TeamRunActionBar(
                     modifier = Modifier.weight(1f),
                 )
             }
-        }
-        if (aiTeamRunActive(run.status)) {
-            Spacer(modifier = Modifier.weight(1f))
-            WandButton(
-                label = "停止",
-                onClick = { onAction(TeamRunAction.Stop) },
-                enabled = !busy,
-                variant = WandButtonVariant.Danger,
-                compact = true,
-            )
         }
     }
 }

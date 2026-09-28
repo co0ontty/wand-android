@@ -163,6 +163,7 @@ data class AiTeamStep(
     val memberId: String,
     val title: String,
     val status: String,
+    val sessionId: String? = null,
 ) {
     val isLeader: Boolean
         get() = kind == "leader"
@@ -177,6 +178,7 @@ data class AiTeamStep(
                 memberId = item.str("memberId") ?: "",
                 title = item.str("title") ?: "",
                 status = item.str("status") ?: "queued",
+                sessionId = item.str("sessionId")?.takeIf { it.isNotBlank() },
             )
         }
 
