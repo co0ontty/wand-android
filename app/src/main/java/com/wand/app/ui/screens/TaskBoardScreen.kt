@@ -39,7 +39,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -64,6 +63,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -74,7 +75,6 @@ import androidx.compose.ui.unit.sp
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BOARD_TASK_EFFORTS
-import com.wand.app.data.BOARD_TASK_KINDS
 import com.wand.app.data.BOARD_TASK_PRIORITIES
 import com.wand.app.data.BOARD_TASK_PROVIDERS
 import com.wand.app.data.BOARD_TASK_DETAIL_STATUSES
@@ -97,7 +97,6 @@ import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
 import com.wand.app.data.normalizeBoardTaskAgentMode
 import com.wand.app.data.patchBoardTaskBody
-import com.wand.app.data.supportedBoardTaskModes
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.WandAgentFields
@@ -161,7 +160,6 @@ fun TaskBoardScreen(
     }
     var filterWorkspaceId by remember { mutableStateOf(linkedWorkspaceId.orEmpty()) }
     var statusFilter by remember { mutableStateOf("") }
-    var boardSwipeOpen by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     // 从哪一列点开的「新建」决定初始状态：待办 = 只创建，进行中 = 创建并指派。
     var createStatus by remember { mutableStateOf("todo") }
@@ -284,21 +282,6 @@ fun TaskBoardScreen(
                 )
             }
         },
-        floatingActionButton = {
-            // 划开状态时不摆悬浮按钮：它正好压在右下的滑动动作按钮上，会吃掉那一下点击。
-            if (!boardSwipeOpen) {
-                SmallFloatingActionButton(
-                    onClick = {
-                        openCreateDialog("todo")
-                    },
-                    containerColor = WandColors.success,
-                    contentColor = Color.White,
-                    shape = CircleShape,
-                ) {
-                    Icon(WandIcons.add, contentDescription = "新建任务", modifier = Modifier.size(20.dp))
-                }
-            }
-        },
     ) { padding ->
         Box(
             modifier = Modifier
@@ -320,7 +303,6 @@ fun TaskBoardScreen(
                     showSearch = showSearchField,
                     filterWorkspaceId = filterWorkspaceId,
                     statusFilter = statusFilter,
-                    onSwipeOpenChange = { boardSwipeOpen = it },
                     onQueryChange = onQueryChange,
                     onFilterWorkspace = { filterWorkspaceId = it },
                     onStatusFilter = { statusFilter = it },
@@ -358,7 +340,7 @@ fun TaskBoardScreen(
                     shape = WandShapes.sm,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(start = 16.dp, end = 16.dp, bottom = 88.dp),
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                 ) { Text(message, color = WandColors.danger, modifier = Modifier.padding(12.dp)) }
             }
         }
@@ -474,7 +456,6 @@ private fun TaskBoardList(
     onSwipeAction: (BoardTask, BoardTaskSwipeAction) -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onCreateForStatus: (String) -> Unit,
-    onSwipeOpenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val grouped = groupedBoardTasks(tasks)
@@ -483,13 +464,11 @@ private fun TaskBoardList(
     var doneCollapsed by remember { mutableStateOf(true) }
     // 同一时刻只允许一张卡划开：新划开的卡接管，旧卡在自身 LaunchedEffect 里收起。
     // 这份状态必须留在列表内部：手势每帧都会改它，上提到屏幕层会让整屏逐帧重组，卡片就直接拖不动了。
-    // 只把「有没有张开」这个布尔量报上去，用来给右下角悬浮按钮让位。
     var swipedTaskId by remember { mutableStateOf<String?>(null) }
     // 就地展开的任务：点卡片在当前页展开详情，其他卡片顺势下移，不跳详情页（规则 7）。
     var expandedTaskId by remember { mutableStateOf<String?>(null) }
     fun setSwipedTaskId(id: String?) {
         swipedTaskId = id
-        onSwipeOpenChange(id != null)
     }
     // 划出的动作不直接改任务，先经过二次确认，避免误触直接改状态。
     var pendingSwipe by remember { mutableStateOf<Pair<BoardTask, BoardTaskSwipeAction>?>(null) }
@@ -498,7 +477,7 @@ private fun TaskBoardList(
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) setSwipedTaskId(null)
     }
-    // 筛选条件变了就把划开状态收掉：被筛走的卡片会让悬浮按钮一直不复位。
+    // 筛选条件变了就收起已划开的卡，避免隐藏卡片仍占用交互状态。
     LaunchedEffect(statusFilter, filterWorkspaceId, query) {
         setSwipedTaskId(null)
         expandedTaskId = null
@@ -533,7 +512,7 @@ private fun TaskBoardList(
     LazyColumn(
         modifier = modifier,
         state = listState,
-        contentPadding = PaddingValues(6.dp, 8.dp, 6.dp, 96.dp),
+        contentPadding = PaddingValues(6.dp, 8.dp, 6.dp, 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item(key = "hero") {
@@ -569,6 +548,17 @@ private fun TaskBoardList(
                 )
             }
         }
+        if (tasks.isNotEmpty()) {
+            item(key = "create-task") {
+                WandButton(
+                    label = "新建任务",
+                    onClick = { onCreateForStatus("todo") },
+                    icon = WandIcons.add,
+                    variant = WandButtonVariant.Secondary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
         if (tasks.isEmpty()) {
             item(key = "empty") {
                 EmptyState(
@@ -577,7 +567,7 @@ private fun TaskBoardList(
                     subtitle = if (query.isNotBlank() || statusFilter.isNotBlank()) {
                         "换个筛选条件，或新建一条任务。"
                     } else {
-                        "点右下角 +，用绿色勾选把事情做完。"
+                        "先建一条任务，用绿色勾选把事情做完。"
                     },
                     actionText = "新建任务",
                     onAction = { onCreateForStatus("todo") },
@@ -1709,6 +1699,8 @@ private fun CreateBoardTaskDialog(
     var parentTaskId by remember { mutableStateOf("") }
     var agent by remember { mutableStateOf(lastAgent) }
     var dispatchTeamId by remember { mutableStateOf("") }
+    var showAgentFields by remember { mutableStateOf(false) }
+    var showAdvanced by remember { mutableStateOf(false) }
     val parentOptions = boardParentTaskOptions(tasks, workspaceId.ifBlank { null })
     // 「进行中」列的新建代表已经决定要跑，所以创建后立刻派 Agent / 交给团队；其他列只落库。
     val dispatches = boardCreateDispatches(status)
@@ -1742,7 +1734,6 @@ private fun CreateBoardTaskDialog(
         ),
         dismiss = WandDialogAction(label = "取消", onClick = onDismiss, enabled = !busy),
     ) {
-        Text("与会话树共用同一个任务分组。", color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall)
         error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall) }
         WandTextField(
             value = title,
@@ -1750,6 +1741,7 @@ private fun CreateBoardTaskDialog(
             label = "任务标题（可选）",
             placeholder = "不填写则按描述自动生成",
             singleLine = true,
+            enabled = !busy,
             textStyle = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1764,18 +1756,21 @@ private fun CreateBoardTaskDialog(
                 else -> "只创建任务，不指派 Agent"
             },
             minLines = 3,
+            enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
         WandChoice(
+            label = "状态 · ${boardTaskStatusLabel(status)}",
+            options = BOARD_TASK_STATUSES.map { it to boardTaskStatusLabel(it) },
+            onSelect = { status = it },
+            enabled = !busy,
+        )
+        WandChoice(
             label = "工作区 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "未归属工作区"}",
             options = listOf("" to "未归属工作区（使用临时目录）") + workspaces.map { it.id to it.name },
             onSelect = { workspaceId = it; parentTaskId = "" },
-        )
-        WandChoice(
-            label = "归属父任务 · ${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联父任务"}",
-            options = parentOptions,
-            onSelect = { parentTaskId = it },
+            enabled = !busy,
         )
         if (boardCreateTeamChoiceVisible(teams, dispatches)) {
             WandChoice(
@@ -1785,26 +1780,37 @@ private fun CreateBoardTaskDialog(
                 enabled = !busy,
             )
         }
-        if (teamTarget == null) {
-            if (dispatches) {
-                WandAgentFields(
-                    models = models,
-                    agent = agent,
-                    providerLabel = "第一次指派",
-                    onChange = { agent = it },
-                )
+        if (dispatches && teamTarget == null) {
+            WandButton(
+                label = "指派参数",
+                onClick = { showAgentFields = !showAgentFields },
+                enabled = !busy,
+                variant = WandButtonVariant.Text,
+                modifier = Modifier.fillMaxWidth().semantics {
+                    stateDescription = if (showAgentFields) "已展开" else "已收起"
+                },
+            )
+            Text(
+                "${boardTaskProviderLabel(agent.provider)} · " +
+                    "${boardTaskKindLabel(agent.kind)} · ${boardTaskModeLabel(agent.mode)}",
+                color = WandColors.textMuted,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            )
+            WandInlinePanel(visible = showAgentFields) {
+                Column {
+                    WandAgentFields(
+                        models = models,
+                        agent = agent,
+                        providerLabel = "CLI 工具",
+                        onChange = { agent = it },
+                        enabled = !busy,
+                    )
+                }
             }
-            WandChoice(
-                label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
-                options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
-                onSelect = { agent = agent.copy(kind = it) },
-            )
-            WandChoice(
-                label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
-                options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },
-                onSelect = { agent = agent.copy(mode = it) },
-            )
-        } else {
+        } else if (dispatches && teamTarget != null) {
             // 团队分支的参数由团队定义决定，这里只留一条原位说明（对齐 Web 文案口径）。
             Text(
                 "有描述时会立刻交给团队，由负责人拆解分派",
@@ -1812,16 +1818,40 @@ private fun CreateBoardTaskDialog(
                 style = MaterialTheme.typography.labelSmall,
             )
         }
-        WandChoice(
-            label = "状态 · ${boardTaskStatusLabel(status)}",
-            options = BOARD_TASK_STATUSES.map { it to boardTaskStatusLabel(it) },
-            onSelect = { status = it },
+        WandButton(
+            label = "更多设置",
+            onClick = { showAdvanced = !showAdvanced },
+            enabled = !busy,
+            variant = WandButtonVariant.Text,
+            modifier = Modifier.fillMaxWidth().semantics {
+                stateDescription = if (showAdvanced) "已展开" else "已收起"
+            },
         )
-        WandChoice(
-            label = "优先级 · ${boardTaskPriorityLabel(priority)}",
-            options = BOARD_TASK_PRIORITIES.map { it to boardTaskPriorityLabel(it) },
-            onSelect = { priority = it },
+        Text(
+            "优先级：${boardTaskPriorityLabel(priority)} · " +
+                "父任务：${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联"}",
+            color = WandColors.textMuted,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
         )
+        WandInlinePanel(visible = showAdvanced) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                WandChoice(
+                    label = "归属父任务 · ${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联父任务"}",
+                    options = parentOptions,
+                    onSelect = { parentTaskId = it },
+                    enabled = !busy,
+                )
+                WandChoice(
+                    label = "优先级 · ${boardTaskPriorityLabel(priority)}",
+                    options = BOARD_TASK_PRIORITIES.map { it to boardTaskPriorityLabel(it) },
+                    onSelect = { priority = it },
+                    enabled = !busy,
+                )
+            }
+        }
     }
 }
 
