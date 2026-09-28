@@ -19,6 +19,8 @@ import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
 import com.wand.app.wlog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -446,7 +448,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         try {
             if (structured) {
                 // HTTP confirms receipt; model output continues through the event stream.
-                apply(api.sendInput(sessionId, trimmed, respondImmediately = !queueing))
+                val accepted = api.sendInput(sessionId, trimmed, respondImmediately = !queueing)
+                currentCoroutineContext().ensureActive()
+                apply(accepted)
                 socket.requestResync()
             } else {
                 sendPtyChatInput(trimmed)
@@ -496,7 +500,14 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         val chunks = ptyComposerSubmitChunks(text, "chat")
         for ((index, chunk) in chunks.withIndex()) {
             if (index > 0) delay(PTY_CHAT_SUBMIT_CHUNK_INTERVAL_MS)
-            api.sendPtyInputChunk(sessionId, chunk.input, chunk.view, chunk.shortcutKey)
+            try {
+                api.sendPtyInputChunk(sessionId, chunk.input, chunk.view, chunk.shortcutKey)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (index > 0) throw UnconfirmedComposerInputException(e)
+                throw e
+            }
         }
     }
 

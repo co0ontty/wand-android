@@ -22,6 +22,9 @@ internal data class ComposerSubmission(
     val prompt: String get() = attachmentPrompt(attachments, text).trim()
 }
 
+/** Some input chunks reached the terminal, so a later rejection is not an unsent draft. */
+internal class UnconfirmedComposerInputException(cause: Exception) : Exception(cause.message, cause)
+
 /**
  * One session's unsent content, uploads, single-flight submit and inline feedback.
  * ChatStore still owns conversation/queue/protocol state; this module waits only for
@@ -74,6 +77,7 @@ class ChatComposer(
                 val uploaded = operation(remainingSlots)
                 coroutineContext.ensureActive()
                 if (!active) return@launch
+                require(uploaded.size <= remainingSlots) { "上传附件数量超过剩余名额" }
                 drafts.setAttachments(sessionId, (attachments + uploaded).distinctBy { it.savedPath })
                 notice("已上传 ${uploaded.size} 个附件")
             } catch (e: CancellationException) {
@@ -102,6 +106,7 @@ class ChatComposer(
                 finish(SendPhase.Sent, SEND_SENT_DWELL_MS)
             } catch (e: CancellationException) {
                 // Leaving the screen cannot establish whether the server received the input.
+                if (active) finish(SendPhase.Failed, SEND_FAILED_DWELL_MS)
                 throw e
             } catch (e: Exception) {
                 if (!active) return@launch

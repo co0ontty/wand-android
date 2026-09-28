@@ -48,6 +48,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 internal data class VoiceInputHandle(
     val voice: VoiceInputController,
@@ -196,21 +197,23 @@ internal fun readAttachment(context: Context, uri: Uri): Pair<String, ByteArray>
             cursor.getString(index)?.takeIf { it.isNotEmpty() }?.let { name = it }
         }
     }
-    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(8_192)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            if (output.size() + count > MAX_ATTACHMENT_BYTES) {
-                throw WandApiException(413, "$name 超过 10MB 附件上限")
-            }
-            output.write(buffer, 0, count)
-        }
-        output.toByteArray()
-    }
+    val bytes = context.contentResolver.openInputStream(uri)?.use { readBoundedAttachment(it, name) }
         ?: throw WandApiException(null, "无法读取 $name")
     return name to bytes
+}
+
+internal fun readBoundedAttachment(input: InputStream, name: String): ByteArray {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(8_192)
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        if (output.size() + count > MAX_ATTACHMENT_BYTES) {
+            throw WandApiException(413, "$name 超过 10MB 附件上限")
+        }
+        output.write(buffer, 0, count)
+    }
+    return output.toByteArray()
 }
 
 /** 识别文本追加进草稿（不覆盖已有内容，对齐 Web commitVoiceTranscript / iOS appendTranscriptToDraft）。 */

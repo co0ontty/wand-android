@@ -295,7 +295,7 @@ fun ChatScreen(
     DisposableEffect(composer) {
         onDispose { composer.shutdown() }
     }
-    val quickCommit = remember(sessionId) {
+    val quickCommit = remember(sessionId, api) {
         QuickCommitStore(sessionId, api) { msg -> store.toast = msg }
     }
     DisposableEffect(store) {
@@ -572,7 +572,7 @@ fun ChatScreen(
         }
     }
     val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(store.toast) {
+    LaunchedEffect(store, store.toast) {
         val message = store.toast ?: return@LaunchedEffect
         snackbarHostState.showWandNotice(message)
         if (store.toast == message) store.toast = null

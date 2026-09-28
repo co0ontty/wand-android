@@ -14,10 +14,6 @@ Kotlin 2.2 / compileSdk 36 兼容的版本）。构建会改写它的触摸判�
 - APK 构建产物**不要提交到仓库**。
 - 本地 debug 分发包默认放在 `dist/apk/`，服务端通过 `config.json` 里的 `android.apkDir` 指向它。
 
-## 参考文档
-
-- [同步 iOS 移动端体验改动（2026-06-18）](docs/ios-mobile-updates-reference-2026-06-18.md)：历史设计参考（其中的 PTY WebView/embed 已由原生终端替代）。
-
 ## 本地分发流程
 
 1. 在 `android/` 中完成客户端打包：

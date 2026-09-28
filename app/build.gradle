@@ -260,5 +260,5 @@ tasks.named('preBuild').configure { dependsOn('verifyWandDesignSystem', verifySh
 tasks.withType(Test).configureEach {
     // 可选官方产物集成验证；常规单测使用小型 fixture，不要求完整 AAR。
     def archive = providers.gradleProperty('SHERPA_AAR').orNull
-    if (archive != null) systemProperty 'wand.sherpaAar', file(archive).absolutePath
+    if (archive != null) systemProperty 'wand.sherpaAar', rootProject.file(archive).absolutePath
 }

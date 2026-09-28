@@ -74,17 +74,9 @@ repair_build_permissions() {
 }
 
 latest_tag_version() {
-  local tag_source="."
   local tag
-  # 作为 wand 主仓库的 submodule 运行时，版本由主仓库 release tag 驱动；
-  # 独立克隆 wand-android 时再使用客户端仓库自己的 tag。
-  if [[ "$(git -C .. ls-files --stage -- android 2>/dev/null | awk 'NR == 1 { print $1 }')" == "160000" ]]; then
-    tag_source=".."
-  fi
-  tag="$(git -C "$tag_source" tag --sort=-v:refname --list 'v[0-9]*' | head -1 | sed 's/^v//' || true)"
-  if [[ -z "$tag" ]]; then
-    tag="$(git tag --sort=-v:refname --list 'v[0-9]*' | head -1 | sed 's/^v//' || true)"
-  fi
+  # 以 Android 仓库最高语义 tag 为版本基数，不能用最近可达的旧 tag。
+  tag="$(git tag --sort=-v:refname --list 'v[0-9]*' | head -1 | sed 's/^v//' || true)"
   echo "${tag:-0.0.0}"
 }
 
