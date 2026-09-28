@@ -581,6 +581,14 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
     override suspend fun teamRunsForTask(taskId: String): List<AiTeamRun> =
         AiTeamRun.parseList(requestArray("GET", "/api/wand-tasks/${encode(taskId)}/team-runs"))
 
+    override suspend fun listAiTeamRuns(teamId: String?, limit: Int): List<AiTeamRun> {
+        val path = buildString {
+            append("/api/ai-team-runs?limit=").append(limit.coerceIn(1, 200))
+            teamId?.takeIf { it.isNotBlank() }?.let { append("&teamId=").append(encode(it)) }
+        }
+        return AiTeamRun.parseList(requestArray("GET", path))
+    }
+
     override suspend fun aiTeamRunDetail(runId: String): AiTeamRunDetail =
         aiTeamRunDetailOrThrow(requestObject("GET", "/api/ai-team-runs/${encode(runId)}"))
 

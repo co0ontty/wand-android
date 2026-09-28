@@ -33,6 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.AiTeam
+import com.wand.app.data.AiTeamRun
+import com.wand.app.data.aiTeamRunActive
+import com.wand.app.data.aiTeamRunStatusLabel
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.ui.components.WandButton
@@ -57,12 +60,15 @@ fun AiTeamsScreen(
     api: TaskBoardPort,
     onBack: () -> Unit,
     onOpenTeam: (String) -> Unit,
+    onOpenGroupChat: (String) -> Unit = {},
     /** 新建：参数是起步模板 id（与 Web 的模板列表同源）。 */
     onCreateTeam: (String) -> Unit = {},
     /** 卡片上的「编辑」快捷入口：直接进编辑器改成员，不用先进详情。 */
     onEditTeam: (String) -> Unit = {},
 ) {
     var teams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
+    var recentRuns by remember { mutableStateOf<List<AiTeamRun>>(emptyList()) }
+    var runsError by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshNonce by remember { mutableStateOf(0) }
@@ -78,6 +84,9 @@ fun AiTeamsScreen(
         } finally {
             loading = false
         }
+        runCatching { api.listAiTeamRuns(limit = 200) }
+            .onSuccess { recentRuns = it; runsError = null }
+            .onFailure { runsError = it.message ?: "无法加载最近协作" }
     }
 
     Scaffold(
@@ -85,7 +94,7 @@ fun AiTeamsScreen(
         topBar = {
             WandDetailTopBar(
                 title = "AI 团队",
-                subtitle = "团队可以在这里新建、改成员，也可以在任务上直接交给团队",
+                subtitle = "查看协作动态、进入群聊，或创建新团队",
                 leading = { WandDetailBackButton(onClick = onBack) },
                 actions = {
                     WandIconButton(
@@ -141,6 +150,44 @@ fun AiTeamsScreen(
                         contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 30.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        item(key = "ai-team-activity") {
+                            val latestChat = recentRuns.firstOrNull { it.chatSessionId != null }
+                            WandCard(contentPadding = PaddingValues(14.dp)) {
+                                Text(
+                                    "团队协作",
+                                    color = WandColors.textPrimary,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    if (latestChat == null) "从团队开工后，群聊与成员工位会出现在这里。"
+                                    else "最近群聊 · ${aiTeamRunStatusLabel(latestChat.status)} · " +
+                                        (teams.firstOrNull { it.id == latestChat.teamId }?.name ?: "AI 团队"),
+                                    color = WandColors.textSecondary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 5.dp),
+                                )
+                                if (latestChat != null) {
+                                    WandButton(
+                                        label = "进入最近群聊",
+                                        onClick = { onOpenGroupChat(latestChat.id) },
+                                        variant = WandButtonVariant.Secondary,
+                                        compact = true,
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+                                if (runsError != null) {
+                                    Text(
+                                        runsError ?: "",
+                                        color = WandColors.danger,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(top = 6.dp),
+                                    )
+                                }
+                            }
+                        }
                         if (teams.isEmpty() && error == null) {
                             item {
                                 Text(
@@ -154,7 +201,9 @@ fun AiTeamsScreen(
                         items(teams, key = { it.id }) { team ->
                             AiTeamCard(
                                 team = team,
+                                latestRun = recentRuns.firstOrNull { it.teamId == team.id },
                                 onClick = { onOpenTeam(team.id) },
+                                onOpenGroupChat = onOpenGroupChat,
                                 onEdit = { onEditTeam(team.id) },
                                 modifier = Modifier.animateItem(),
                             )
@@ -240,7 +289,9 @@ private fun AiTeamsLoadError(
 @Composable
 private fun AiTeamCard(
     team: AiTeam,
+    latestRun: AiTeamRun?,
     onClick: () -> Unit,
+    onOpenGroupChat: (String) -> Unit,
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -299,6 +350,27 @@ private fun AiTeamCard(
                 modifier = Modifier.padding(top = 6.dp),
             )
         }
+        if (latestRun != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (aiTeamRunActive(latestRun.status)) "● ${aiTeamRunStatusLabel(latestRun.status)}"
+                    else aiTeamRunStatusLabel(latestRun.status),
+                    color = if (aiTeamRunActive(latestRun.status)) WandColors.brand else WandColors.textMuted,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text(
+                    latestRun.taskTitle.ifBlank { latestRun.objective.ifBlank { "最近协作" } },
+                    color = WandColors.textSecondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(start = 8.dp),
+                )
+            }
+        }
         Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             aiTeamOrderedMembers(team).forEach { member ->
                 val provider = aiTeamPreferredAgent(member)?.provider
@@ -333,8 +405,16 @@ private fun AiTeamCard(
         // 快捷入口：不必先进详情才能改成员。按钮只在卡片内部占位，不影响整卡可点。
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
+            if (latestRun?.chatSessionId != null) {
+                WandButton(
+                    label = "进入群聊",
+                    onClick = { onOpenGroupChat(latestRun.id) },
+                    variant = WandButtonVariant.Text,
+                    compact = true,
+                )
+            }
             WandButton(
                 label = "编辑",
                 onClick = onEdit,

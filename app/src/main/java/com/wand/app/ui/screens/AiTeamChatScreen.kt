@@ -507,7 +507,7 @@ private fun TeamMainTaskCard(detail: AiTeamRunDetail) {
 
 /** 成员工位与实时步骤来自同一份运行详情，点已开工的成员直达其会话。 */
 @Composable
-private fun TeamOfficeStrip(detail: AiTeamRunDetail, onOpenSession: (String) -> Unit) {
+fun TeamOfficeStrip(detail: AiTeamRunDetail, onOpenSession: (String) -> Unit) {
     val members = teamOfficeMembers(detail)
     val working = members.count { it.state == TeamOfficeState.Working }
     val attention = members.count { it.state == TeamOfficeState.Attention }

@@ -10,6 +10,24 @@ import org.junit.Test
 class AiTeamModelsTest {
 
     @Test
+    fun teamRunListKeepsChatEntryAndTaskSummary() {
+        val runs = AiTeamRun.parseList(
+            JSONArray().put(
+                JSONObject()
+                    .put("id", "run_latest")
+                    .put("teamId", "team_1")
+                    .put("chatSessionId", "chat_1")
+                    .put("taskTitle", "整理登录流程")
+                    .put("taskIdentifier", "WAND-42"),
+            ).put(JSONObject().put("teamId", "team_1")),
+        )
+        assertEquals(1, runs.size)
+        assertEquals("chat_1", runs.single().chatSessionId)
+        assertEquals("整理登录流程", runs.single().taskTitle)
+        assertEquals("WAND-42", runs.single().taskIdentifier)
+    }
+
+    @Test
     fun runDetailParseToleratesMissingAndMalformedFields() {
         val response = JSONObject()
             .put(

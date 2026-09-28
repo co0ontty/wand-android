@@ -483,6 +483,10 @@ interface TaskBoardPort : TaskChangeSource {
     suspend fun teamRunsForTask(taskId: String): List<AiTeamRun> =
         throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
 
+    /** 团队页最近协作；不传 teamId 时跨团队取最近记录。 */
+    suspend fun listAiTeamRuns(teamId: String? = null, limit: Int = 50): List<AiTeamRun> =
+        throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
     suspend fun aiTeamRunDetail(runId: String): AiTeamRunDetail =
         throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
 

@@ -33,6 +33,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamMember
+import com.wand.app.data.AiTeamRun
+import com.wand.app.data.AiTeamRunDetail
+import com.wand.app.data.aiTeamRunStatusLabel
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TaskBoardPort
@@ -66,11 +69,15 @@ fun AiTeamDetailScreen(
     onOpenTask: (String) -> Unit,
     /** 「直接开工」成功后进 IM 群聊页（参数是运行 id，不是任务 id）。 */
     onOpenGroupChat: (String) -> Unit = onOpenTask,
+    onOpenMemberSession: (String) -> Unit = {},
     /** 顶栏「编辑」：进团队编辑器改名字、成员与执行候选。 */
     onEditTeam: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var team by remember { mutableStateOf<AiTeam?>(null) }
+    var runs by remember(teamId) { mutableStateOf<List<AiTeamRun>>(emptyList()) }
+    var latestOffice by remember(teamId) { mutableStateOf<AiTeamRunDetail?>(null) }
+    var runsError by remember { mutableStateOf<String?>(null) }
     // 执行候选的模型名要把 `default` 哨兵换成一个具体的默认模型（同 Web 目录口径）。
     var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var projects by remember { mutableStateOf<List<Workspace>>(emptyList()) }
@@ -95,6 +102,15 @@ fun AiTeamDetailScreen(
         } finally {
             loading = false
         }
+        runCatching { api.listAiTeamRuns(teamId = teamId, limit = 20) }
+            .onSuccess { loaded ->
+                runs = loaded
+                runsError = null
+                latestOffice = loaded.firstOrNull()?.let { run ->
+                    runCatching { api.aiTeamRunDetail(run.id) }.getOrNull()
+                }
+            }
+            .onFailure { runsError = it.message ?: "无法加载协作动态" }
         // 项目列表失败不挡组织图展示：候选为空时开工区自己原位说明。
         projects = runCatching { workspaceApi.listWorkspaces() }.getOrDefault(projects)
         // 模型目录失败只影响候选行的模型名，不挡团队详情。
@@ -163,7 +179,7 @@ fun AiTeamDetailScreen(
                             ),
                         )
                         Text(
-                            "团队详情 · 可编辑成员与执行配置",
+                            "成员工位 · 最近协作 · 直接开工",
                             style = MaterialTheme.typography.labelSmall,
                             color = WandColors.textMuted,
                             maxLines = 1,
@@ -235,9 +251,18 @@ fun AiTeamDetailScreen(
                                 )
                             }
                         }
+                        item(key = "ai-team-runs") {
+                            AiTeamActivityCard(
+                                runs = runs,
+                                latestOffice = latestOffice,
+                                error = runsError,
+                                onOpenGroupChat = onOpenGroupChat,
+                                onOpenMemberSession = onOpenMemberSession,
+                                onOpenTask = onOpenTask,
+                            )
+                        }
                         item(key = "ai-team-members") {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                // 组织图：负责人在最前、成员在后（aiTeamOrderedMembers）。
                                 aiTeamOrderedMembers(currentTeam).forEach { member ->
                                     AiTeamMemberCard(member, models)
                                 }
@@ -266,6 +291,78 @@ fun AiTeamDetailScreen(
                                 onSubmit = { submit() },
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiTeamActivityCard(
+    runs: List<AiTeamRun>,
+    latestOffice: AiTeamRunDetail?,
+    error: String?,
+    onOpenGroupChat: (String) -> Unit,
+    onOpenMemberSession: (String) -> Unit,
+    onOpenTask: (String) -> Unit,
+) {
+    WandCard(contentPadding = PaddingValues(14.dp)) {
+        Text(
+            "协作动态",
+            color = WandColors.textPrimary,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        when {
+            error != null -> Text(
+                error,
+                color = WandColors.danger,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            runs.isEmpty() -> Text(
+                "还没有协作记录。填写下方开工说明，成员会在群聊中分工。",
+                color = WandColors.textMuted,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            else -> {
+                latestOffice?.let { detail ->
+                    TeamOfficeStrip(detail, onOpenMemberSession)
+                }
+                runs.take(5).forEach { run ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                run.taskTitle.ifBlank { run.objective.ifBlank { "团队协作" } },
+                                color = WandColors.textPrimary,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                listOfNotNull(
+                                    run.taskIdentifier.takeIf { it.isNotBlank() },
+                                    aiTeamRunStatusLabel(run.status),
+                                ).joinToString(" · "),
+                                color = WandColors.textMuted,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        WandButton(
+                            label = if (run.chatSessionId != null) "进入群聊" else "查看任务",
+                            onClick = {
+                                if (run.chatSessionId != null) onOpenGroupChat(run.id)
+                                else if (run.taskId.isNotBlank()) onOpenTask(run.taskId)
+                            },
+                            enabled = run.chatSessionId != null || run.taskId.isNotBlank(),
+                            variant = WandButtonVariant.Text,
+                            compact = true,
+                        )
                     }
                 }
             }

@@ -581,6 +581,7 @@ private fun SessionDetailScreen(
             // 于是团队详情/群聊的首段面包屑恒有真实落点（与任务详情同栏有列表的情形不同）。
             onBack = { nav.pop() },
             onOpenTeam = { teamId -> nav.push(Screen.AiTeamDetail(teamId)) },
+            onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
             onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
             onEditTeam = { teamId -> nav.push(Screen.AiTeamEditor(teamId = teamId)) },
         )
@@ -591,6 +592,7 @@ private fun SessionDetailScreen(
             onBack = { nav.pop() },
             onOpenTask = { taskId -> nav.push(Screen.TaskBoard(taskId = taskId)) },
             onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
+            onOpenMemberSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
             onEditTeam = { nav.push(Screen.AiTeamEditor(teamId = screen.teamId)) },
         )
         is Screen.AiTeamEditor -> AiTeamEditorScreen(

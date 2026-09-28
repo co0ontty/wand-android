@@ -133,6 +133,8 @@ data class AiTeamRun(
     val stepsUsed: Int,
     val stepLimit: Int,
     val chatSessionId: String?,
+    val taskTitle: String = "",
+    val taskIdentifier: String = "",
 ) {
     companion object {
         fun parse(item: JSONObject): AiTeamRun? {
@@ -148,6 +150,8 @@ data class AiTeamRun(
                 stepsUsed = item.int("stepsUsed") ?: 0,
                 stepLimit = item.int("stepLimit") ?: 0,
                 chatSessionId = item.str("chatSessionId")?.takeIf { it.isNotBlank() },
+                taskTitle = item.str("taskTitle") ?: "",
+                taskIdentifier = item.str("taskIdentifier") ?: "",
             )
         }
 
