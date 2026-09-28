@@ -36,7 +36,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -55,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1432,8 +1432,8 @@ private fun SessionStatusPill(presentation: WandStatusPresentation) {
 
 /**
  * 底部固定的启动条：产品的「开口」应该永远在手边。
- * 输入后回车等于把这段意图带进新建任务对话框（目录 / provider 仍走原有流程确认），
- * 左侧「＋」保留一键直达原对话框的老路径。
+ * 可输入多行意图，点发送后带进新建任务对话框（目录 / provider 仍走原有流程确认）。
+ * 键盘回车留给换行和中文输入法；左侧「＋」直达完整表单。
  */
 @Composable
 internal fun HomeComposerBar(
@@ -1443,8 +1443,8 @@ internal fun HomeComposerBar(
     onSubmit: (String) -> Unit,
     onOpenFullDialog: () -> Unit,
 ) {
-    val focusManager = LocalFocusManager.current
     val trimmed = value.trim()
+    var inputFocused by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().imePadding()) {
         // 上与列表的分界线：列表被滑动条压住时，边界要看起来是「故意切的」而不是被截断。
         Box(
@@ -1472,29 +1472,27 @@ internal fun HomeComposerBar(
         Row(
             modifier = Modifier
                 .weight(1f)
-                .heightIn(min = 40.dp)
-                .clip(WandShapes.full)
+                .heightIn(min = 48.dp)
+                .clip(WandShapes.lg)
                 .background(WandColors.surface.copy(alpha = 0.92f))
-                .border(0.8.dp, WandColors.border.copy(alpha = 0.7f), WandShapes.full)
-                .padding(horizontal = 14.dp),
+                .border(
+                    0.8.dp,
+                    if (inputFocused) WandColors.focusRing else WandColors.border.copy(alpha = 0.7f),
+                    WandShapes.lg,
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 enabled = enabled,
-                singleLine = true,
+                minLines = 1,
+                maxLines = 4,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = WandColors.textPrimary),
                 cursorBrush = SolidColor(WandColors.brand),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        if (trimmed.isEmpty()) return@KeyboardActions
-                        focusManager.clearFocus()
-                        onSubmit(trimmed)
-                    },
-                ),
-                modifier = Modifier.weight(1f),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                modifier = Modifier.fillMaxWidth().onFocusChanged { inputFocused = it.isFocused },
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty()) {
@@ -1516,7 +1514,7 @@ internal fun HomeComposerBar(
             contentDescription = "用这个提示词新建任务",
             onClick = {
                 if (trimmed.isEmpty()) return@WandIconButton
-                onSubmit(trimmed)
+                onSubmit(value)
             },
             enabled = enabled && trimmed.isNotEmpty(),
             variant = WandIconButtonVariant.Accent,
