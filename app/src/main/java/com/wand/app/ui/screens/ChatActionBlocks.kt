@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -53,7 +52,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.LaunchedEffect
 import com.wand.app.data.ContentBlock
@@ -64,6 +62,7 @@ import com.wand.app.data.int
 import com.wand.app.data.str
 import com.wand.app.ui.AskUserSelectionState
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
@@ -130,87 +129,110 @@ data class AskUserQuestionData(
  */
 @Composable
 fun AskUserQuestionCard(
-    toolUseId: String,
     questions: List<AskUserQuestionData>,
     result: ContentBlock.ToolResult?,
     selection: AskUserSelectionState,
     onToggle: (Int, Int, Boolean) -> Unit,
     onSubmit: (String) -> Unit,
     expandAll: Boolean = false,
+    foldKey: String = "",
 ) {
     val isAnswered = result != null
     // 已答时按行拆答案：每道题一行，行内 ", " 分隔多选 label（对齐 Web 的解析）。
     val answerLines = remember(result?.text) {
         result?.text?.trim()?.takeIf { it.isNotEmpty() }?.split("\n") ?: emptyList()
     }
-    var expanded by remember(toolUseId, result?.text, expandAll) {
-        mutableStateOf(expandAll || !isAnswered)
-    }
-    // 回答送达后自动折叠（对齐 Web 已答默认折叠）；最新回复要求始终保留完整内容。
-    LaunchedEffect(isAnswered, expandAll) {
-        if (isAnswered && !expandAll) expanded = false
+    // 展开态 = 用户显式收放 ?: 派生默认值（未答默认展开，已回答默认收起）。
+    var foldOverride by rememberFoldOverrideCode(foldKey)
+    val expandDefault = expandAll || !isAnswered
+    val expanded = foldExpanded(foldOverride, expandDefault)
+    // 回答送达后回到派生默认：只清 override，不直接写 expanded = false
+    // （直接写会把用户手动展开的状态一起抢走）。
+    LaunchedEffect(isAnswered) {
+        if (isAnswered) foldOverride = FOLD_OVERRIDE_NONE
     }
     val allAnswered = questions.indices.all { !selection.selected[it].isNullOrEmpty() }
+    val hasBody = questions.isNotEmpty()
+    val compact = LocalActivityFoldCompact.current
+    val statusColor = if (isAnswered) WandColors.success else WandColors.brand
 
     // 状态色通过 wandCardSurface 的 rimTint 表达（已答绿 / 待答品牌），
     // 不再叠手写 background + border —— 那会与卡片自带的描边/底色撞成双重描边。
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .wandCardSurface(WandShapes.md, rimTint = if (isAnswered) WandColors.success else WandColors.brand)
-            .animateContentSize(WandMotion.tweenNormal()),
+            .wandCardSurface(WandShapes.md, rimTint = statusColor),
     ) {
-        // 头部
+        // 头部（四列骨架：图标槽 / 标题列 / 状态胶囊 / 箭头槽）
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(ChatCardMetrics.iconToText),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickableWithoutRipple { expanded = !expanded }
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .then(if (hasBody) Modifier.clickableWithoutRipple {
+                    foldOverride = foldToggleCode(foldOverride, expandDefault)
+                } else Modifier)
+                .then(cardHeaderModifier(compact)),
         ) {
-            Icon(
-                if (isAnswered) WandIcons.check else WandIcons.question,
-                contentDescription = null,
-                tint = if (isAnswered) WandColors.success else WandColors.brand,
-                modifier = Modifier.size(18.dp),
+            WandStatusIconSlot(
+                indicatorColor = statusColor,
+                containerColor = statusColor.copy(alpha = 0.11f),
+                running = false,
+                icon = if (isAnswered) WandIcons.check else WandIcons.question,
+                boxSize = if (compact) ChatCardMetrics.iconBoxCompact else ChatCardMetrics.iconBoxRegular,
+                iconSize = if (compact) ChatCardMetrics.iconSizeCompact else ChatCardMetrics.iconSizeRegular,
+                cornerRadius = if (compact) ChatCardMetrics.iconCornerCompact else ChatCardMetrics.iconCornerRegular,
             )
-            Text(
-                "提问",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(ChatCardMetrics.titleColumnSpacing),
+                modifier = Modifier.weight(1f),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        "提问",
+                        fontSize = if (compact) ChatCardMetrics.titleCompact else ChatCardMetrics.titleRegular,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WandColors.textPrimary,
+                    )
+                    val headerLabel = questions.firstOrNull { !it.header.isNullOrEmpty() }?.header
+                    if (!headerLabel.isNullOrEmpty()) {
+                        Text(
+                            headerLabel,
+                            fontSize = if (compact) ChatCardMetrics.summarySizeCompact else ChatCardMetrics.summarySizeRegular,
+                            color = WandColors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (isAnswered && answerLines.isNotEmpty()) {
+                    Text(
+                        answerLines.joinToString(", "),
+                        fontSize = if (compact) ChatCardMetrics.summarySizeCompact else ChatCardMetrics.summarySizeRegular,
+                        color = WandColors.success,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            CardStatusPill(
+                text = if (isAnswered) "已回答" else "待回答",
+                color = statusColor,
+                compact = compact,
             )
-            val headerLabel = questions.firstOrNull { !it.header.isNullOrEmpty() }?.header
-            if (!headerLabel.isNullOrEmpty()) {
-                Text(
-                    headerLabel,
-                    fontSize = 12.sp,
-                    color = WandColors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            if (hasBody) {
+                CardChevronSlot(
+                    expanded = expanded,
+                    tint = WandColors.textSecondary,
+                    compact = compact,
+                    containerColor = WandColors.bgPrimary,
                 )
             }
-            if (isAnswered && answerLines.isNotEmpty()) {
-                Text(
-                    answerLines.joinToString(", "),
-                    fontSize = 12.sp,
-                    color = WandColors.success,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                Spacer(modifier = Modifier.weight(1f))
-            }
-            ExpandChevron(
-                expanded = expanded,
-                tint = WandColors.textMuted,
-                size = 18.dp,
-            )
         }
-        if (expanded) {
+        FoldableCardBody(visible = expanded && hasBody) {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
@@ -388,7 +410,8 @@ fun DiffCard(
     input: JSONObject,
     result: ContentBlock.ToolResult?,
     running: Boolean = false,
-    initiallyExpanded: Boolean = false,
+    expandDefault: Boolean = false,
+    foldKey: String = "",
 ) {
     val path = input.str("file_path") ?: input.str("path") ?: ""
     val fileName = path.substringAfterLast('/').ifEmpty { "未命名文件" }
@@ -400,13 +423,16 @@ fun DiffCard(
     val movePath = input.str("move_path") ?: ""
     val diffUnavailableReason = input.str("diff_unavailable_reason")
     val hasDiffBody = oldText.isNotEmpty() || newText.isNotEmpty() || unifiedDiff.isNotEmpty() || movePath.isNotEmpty()
+    // 没有任何可展开内容时：不画箭头、点不动，不再出现「展开只有一行说明」的空展开。
+    val hasBody = hasDiffBody || result != null || diffUnavailableReason != null
 
+    // 状态词表统一（与 ToolCard 同一套）：运行中 / 完成类 / 失败 / 已拒绝 / 未返回。
     val statusText = when {
-        running -> "执行中"
-        result == null -> "无结果"
+        running -> "运行中"
+        result == null -> "未返回"
         result.isError ->
             if (result.text.contains("haven't granted") || result.text.contains("permission")) {
-                "等待授权"
+                "已拒绝"
             } else {
                 "失败"
             }
@@ -422,64 +448,69 @@ fun DiffCard(
         else -> WandColors.success
     }
 
-    // 命令/文件详情默认不展示；运行状态只体现在摘要行，用户点开后保持展开。
-    var expanded by remember(toolName, path, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
+    // 展开态 = 用户显式收放 ?: 派生默认值；fold key 只描述「这张卡是谁」（不含命令/路径）。
+    var foldOverride by rememberFoldOverrideCode(foldKey)
+    val expanded = foldExpanded(foldOverride, expandDefault)
+    val compact = LocalActivityFoldCompact.current
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .wandCardSurface(WandShapes.md)
-            .animateContentSize(WandMotion.tweenNormal()),
+            .wandCardSurface(WandShapes.md),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(ChatCardMetrics.iconToText),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickableWithoutRipple { expanded = !expanded }
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 12.dp, vertical = 9.dp),
+                .then(if (hasBody) Modifier.clickableWithoutRipple {
+                    foldOverride = foldToggleCode(foldOverride, expandDefault)
+                } else Modifier)
+                .then(cardHeaderModifier(compact)),
         ) {
-            Icon(
-                WandIcons.edit,
-                contentDescription = null,
-                tint = statusColor,
-                modifier = Modifier.size(18.dp),
+            WandStatusIconSlot(
+                indicatorColor = statusColor,
+                containerColor = statusColor.copy(alpha = 0.11f),
+                running = running,
+                icon = WandIcons.edit,
+                boxSize = if (compact) ChatCardMetrics.iconBoxCompact else ChatCardMetrics.iconBoxRegular,
+                iconSize = if (compact) ChatCardMetrics.iconSizeCompact else ChatCardMetrics.iconSizeRegular,
+                cornerRadius = if (compact) ChatCardMetrics.iconCornerCompact else ChatCardMetrics.iconCornerRegular,
             )
-            Text(
-                fileName,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = WandColors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                path,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Column(
+                verticalArrangement = Arrangement.spacedBy(ChatCardMetrics.titleColumnSpacing),
                 modifier = Modifier.weight(1f),
-            )
-            Text(
-                statusText,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = statusColor,
-                modifier = Modifier
-                    .clip(WandShapes.full)
-                    .background(statusColor.copy(alpha = 0.12f))
-                    .padding(horizontal = 7.dp, vertical = 3.dp),
-            )
-            ExpandChevron(
-                expanded = expanded,
-                tint = WandColors.textMuted,
-                size = 18.dp,
-            )
+            ) {
+                Text(
+                    fileName,
+                    fontSize = if (compact) ChatCardMetrics.titleCompact else ChatCardMetrics.titleRegular,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (path.isNotEmpty()) {
+                    Text(
+                        path,
+                        fontSize = if (compact) ChatCardMetrics.summarySizeCompact else ChatCardMetrics.summarySizeRegular,
+                        fontFamily = FontFamily.Monospace,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            CardStatusPill(text = statusText, color = statusColor, compact = compact)
+            if (hasBody) {
+                CardChevronSlot(
+                    expanded = expanded,
+                    tint = WandColors.textSecondary,
+                    compact = compact,
+                    containerColor = WandColors.bgPrimary,
+                )
+            }
         }
-        if (expanded) {
+        FoldableCardBody(visible = expanded && hasBody) {
             Column(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
@@ -642,7 +673,8 @@ fun TerminalCard(
     input: JSONObject,
     result: ContentBlock.ToolResult?,
     running: Boolean = false,
-    initiallyExpanded: Boolean = false,
+    expandDefault: Boolean = false,
+    foldKey: String = "",
 ) {
     val command = input.str("command") ?: input.str("cmd") ?: ""
     val workdir = input.str("workdir") ?: ""
@@ -669,74 +701,57 @@ fun TerminalCard(
     var truncated by remember(result?.toolUseId, result?.truncated) { mutableStateOf(result?.truncated == true) }
     var loadingFullOutput by remember(result?.toolUseId) { mutableStateOf(false) }
     var outputLoadError by remember(result?.toolUseId) { mutableStateOf<String?>(null) }
-    var expanded by remember(command, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
+    // 展开态 = 用户显式收放 ?: 派生默认值；fold key 只描述「这张卡是谁」（不含命令文本）。
+    var foldOverride by rememberFoldOverrideCode(foldKey)
+    val expanded = foldExpanded(foldOverride, expandDefault)
+    val compact = LocalActivityFoldCompact.current
+    val hasBody = command.isNotEmpty() || workdir.isNotEmpty() || result != null
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(WandShapes.md)
-            .background(TermBg)
-            .animateContentSize(WandMotion.tweenNormal()),
+            .background(TermBg),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(ChatCardMetrics.iconToText),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickableWithoutRipple { expanded = !expanded }
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 12.dp, vertical = 9.dp),
+                .then(if (hasBody) Modifier.clickableWithoutRipple {
+                    foldOverride = foldToggleCode(foldOverride, expandDefault)
+                } else Modifier)
+                .then(cardHeaderModifier(compact)),
         ) {
-            if (running) {
-                val spin = rememberInfiniteTransition(label = "termSpin")
-                val angle by spin.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 360f,
-                    animationSpec = infiniteRepeatable(tween(900)),
-                    label = "termSpinAngle",
-                )
-                Icon(
-                    WandIcons.refresh,
-                    contentDescription = "运行中",
-                    tint = TermText,
-                    modifier = Modifier
-                        .size(14.dp)
-                        .graphicsLayer { rotationZ = angle },
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(statusColor),
-                )
-            }
+            // 运行态不再自己写固定毫秒的自转动画：状态槽内部承载「转圈 ⇄ 终端图标」的连贯变形。
+            WandStatusIconSlot(
+                indicatorColor = statusColor,
+                containerColor = TermText.copy(alpha = 0.10f),
+                running = running,
+                icon = WandIcons.terminal,
+                boxSize = if (compact) ChatCardMetrics.iconBoxCompact else ChatCardMetrics.iconBoxRegular,
+                iconSize = if (compact) ChatCardMetrics.iconSizeCompact else ChatCardMetrics.iconSizeRegular,
+                cornerRadius = if (compact) ChatCardMetrics.iconCornerCompact else ChatCardMetrics.iconCornerRegular,
+            )
             Text(
                 "$ " + if (command.length > 80) command.take(77) + "…" else command.ifBlank { "命令" },
-                fontSize = 12.sp,
+                fontSize = if (compact) ChatCardMetrics.titleCompact else ChatCardMetrics.titleRegular,
                 fontFamily = FontFamily.Monospace,
                 color = TermText,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Text(
-                statusText,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = statusColor,
-                maxLines = 1,
-                modifier = Modifier
-                    .clip(WandShapes.full)
-                    .background(statusColor.copy(alpha = 0.14f))
-                    .padding(horizontal = 7.dp, vertical = 3.dp),
-            )
-            ExpandChevron(
-                expanded = expanded,
-                tint = TermText.copy(alpha = 0.6f),
-                size = 18.dp,
-            )
+            CardStatusPill(text = statusText, color = statusColor, compact = compact)
+            if (hasBody) {
+                CardChevronSlot(
+                    expanded = expanded,
+                    tint = TermText.copy(alpha = 0.6f),
+                    compact = compact,
+                    containerColor = TermText.copy(alpha = 0.10f),
+                )
+            }
         }
-        if (expanded) {
+        FoldableCardBody(visible = expanded && hasBody) {
             Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),

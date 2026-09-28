@@ -34,6 +34,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -231,6 +233,10 @@ fun WandInPlaceSwap(
     contentKey: Any?,
     modifier: Modifier = Modifier,
     durationMillis: Int = WandMotion.fast,
+    /** 进场缩放起点。文字类内容传 1f，就是纯交叉淡入（不会闪一下）。 */
+    enterScale: Float = 0.72f,
+    /** 退场缩放终点。文字类内容传 1f。 */
+    exitScale: Float = 1.12f,
     content: @Composable (Any?) -> Unit,
 ) {
     val motionEnabled = !reduceMotionEnabled()
@@ -240,7 +246,7 @@ fun WandInPlaceSwap(
         transitionSpec = {
             val enter = if (motionEnabled) {
                 fadeIn(WandMotion.tweenFast()) + scaleIn(
-                    initialScale = 0.72f,
+                    initialScale = enterScale,
                     animationSpec = WandMotion.tweenFast(),
                 )
             } else {
@@ -248,7 +254,7 @@ fun WandInPlaceSwap(
             }
             val exit = if (motionEnabled) {
                 fadeOut(tween(durationMillis = WandMotion.quickExit)) + scaleOut(
-                    targetScale = 1.12f,
+                    targetScale = exitScale,
                     animationSpec = WandMotion.tweenExit(),
                 )
             } else {
@@ -260,6 +266,92 @@ fun WandInPlaceSwap(
         label = "inPlaceSwap",
     ) { key ->
         content(key)
+    }
+}
+
+// MARK: - 工具 / 命令卡的状态槽
+
+/**
+ * 工具 / 命令卡左侧的状态槽：固定尺寸，运行态与结果态在**同一个实例**里交叉变形。
+ *
+ * 规范要求成对形态必须连贯变形（不能 `if (running) Spinner else Icon`）。
+ * 变形遵守 [WandMotion.morph]；`reduceMotionEnabled()` 下位移/缩放/旋转退化为瞬时，
+ * 且运行态不再旋转（改为静态刷新图标 + 状态色）。
+ *
+ * 角度方向必须是「running → progress 0」，否则会出现「空闲显示转圈、运行中显示图标」的反向 bug。
+ */
+@Composable
+fun WandStatusIconSlot(
+    indicatorColor: Color,
+    containerColor: Color,
+    running: Boolean,
+    icon: ImageVector,
+    boxSize: Dp,
+    iconSize: Dp,
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 9.dp,
+    iconAlpha: Float = 1f,
+) {
+    val motionEnabled = !reduceMotionEnabled()
+    val progress by animateFloatAsState(
+        targetValue = if (running) 0f else 1f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.morph()),
+        label = "statusIconProgress",
+    )
+    val container by animateColorAsState(
+        targetValue = containerColor,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "statusIconContainer",
+    )
+    val p = progress.coerceIn(0f, 1f)
+    // 与 WandMorphingIcon 同一套交叉曲线：快速交叉，中间态几乎没有两个图标同时全亮的重影。
+    val indicatorAlpha = (1f - p * 2.2f).coerceIn(0f, 1f)
+    val iconEaseAlpha = ((p - 0.45f) * 2.2f).coerceIn(0f, 1f)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .size(boxSize)
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(container),
+    ) {
+        if (motionEnabled) {
+            CircularProgressIndicator(
+                color = indicatorColor,
+                strokeWidth = 2.dp,
+                modifier = Modifier
+                    .size(iconSize)
+                    .graphicsLayer {
+                        alpha = indicatorAlpha
+                        rotationZ = -90f * p
+                        scaleX = 1f - 0.22f * p
+                        scaleY = 1f - 0.22f * p
+                    },
+            )
+        } else {
+            // 关闭动画的设备上不旋转：静态刷新图标 + 状态色（旋转属于动效）。
+            Icon(
+                WandIcons.refresh,
+                contentDescription = null,
+                tint = indicatorColor,
+                modifier = Modifier
+                    .size(iconSize)
+                    .graphicsLayer { alpha = indicatorAlpha },
+            )
+        }
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = indicatorColor,
+            modifier = Modifier
+                .size(iconSize)
+                .graphicsLayer {
+                    alpha = iconEaseAlpha * iconAlpha
+                    rotationZ = 90f * (1f - p)
+                    val s = 0.78f + 0.22f * p
+                    scaleX = s
+                    scaleY = s
+                },
+        )
     }
 }
 

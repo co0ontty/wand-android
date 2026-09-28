@@ -806,20 +806,24 @@ fun ChatScreen(
                             }
                         }
                         // key 基于绝对 turn 位置/稳定工具 id：prepend 分页不会重建所有卡片。
+                        // 同一个 item key 同时充当卡片的 fold scope（设计规格 v2 §8.2）：
+                        // 列表键与卡片折叠态用同一个结构身份，只在一处计算。
+                        val itemFoldScope: (MessageDisplayItem) -> String = { item ->
+                            messageItemKey(
+                                item = item,
+                                loadedOffset = store.loadedOffset,
+                                anchorExplorationAtEnd = lastUserTurnIndex >= 0 &&
+                                    messageItemTurnIndex(item) < lastUserTurnIndex,
+                            )
+                        }
                         itemsIndexed(
                             displayItems,
-                            key = { _, item ->
-                                messageItemKey(
-                                    item = item,
-                                    loadedOffset = store.loadedOffset,
-                                    anchorExplorationAtEnd = lastUserTurnIndex >= 0 &&
-                                        messageItemTurnIndex(item) < lastUserTurnIndex,
-                                )
-                            },
+                            key = { _, item -> itemFoldScope(item) },
                             // 列表混排 user 气泡 / assistant turn / 探索聚合卡三种形态，
                             // 提供 contentType 提高槽位复用命中率。
                             contentType = { _, item -> item::class },
                         ) { _, item ->
+                            val foldScope = itemFoldScope(item)
                             Box(
                                 modifier = if (shouldAnimateChatListItems(listSettled)) {
                                     Modifier.animateItem()
@@ -852,6 +856,7 @@ fun ChatScreen(
                                                 scrollMode = ChatScrollMode.StickToBottom
                                                 store.submitAskUser(toolUseId, answerText)
                                             },
+                                            foldScope = foldScope,
                                         )
                                     }
                                     is MessageDisplayItem.Exploration -> ExplorationGroupCard(
@@ -860,6 +865,7 @@ fun ChatScreen(
                                             item.lastTurnIndex == store.messages.lastIndex &&
                                             item.tools.any { it.result == null },
                                         expandAll = item.lastTurnIndex == store.messages.lastIndex,
+                                        foldScope = foldScope,
                                     )
                                 }
                             }
