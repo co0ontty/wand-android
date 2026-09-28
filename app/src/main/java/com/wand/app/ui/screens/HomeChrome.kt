@@ -39,7 +39,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -125,8 +124,6 @@ internal fun HomeTopBar(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onSearchToggle: () -> Unit,
-    onRefresh: () -> Unit,
-    onStartSelection: (() -> Unit)?,
     onOpenAiTeams: () -> Unit,
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
@@ -281,39 +278,8 @@ internal fun HomeTopBar(
                 containerColor = WandColors.bgElevated,
             ) {
                 Text(
-                    "当前列表",
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                )
-                if (onStartSelection != null) {
-                    DropdownMenuItem(
-                        text = { Text("批量选择会话与任务") },
-                        leadingIcon = { Icon(WandIcons.todo, contentDescription = null) },
-                        onClick = {
-                            menuOpen = false
-                            restoreMenuFocus = true
-                            onStartSelection()
-                        },
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text("刷新当前列表") },
-                    leadingIcon = { Icon(WandIcons.refresh, contentDescription = null) },
-                    onClick = {
-                        menuOpen = false
-                        restoreMenuFocus = true
-                        onRefresh()
-                    },
-                )
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    thickness = 0.5.dp,
-                    color = WandColors.border,
-                )
-                Text(
                     if (searchOpen) "其他页面与连接" else "其他页面",
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
                 )
@@ -900,7 +866,8 @@ internal fun HomeWorkspaceCard(
                         selectedSessionIds = selectedSessionIds,
                         onToggleManaged = { onToggleManagedTask(task.id) },
                         onToggleManagedSession = onToggleManagedSession,
-                        onEnterSelection = { onEnterSelection(task.id, null) },
+                        onEnterTaskSelection = { onEnterSelection(task.id, null) },
+                        onEnterSessionSelection = { onEnterSelection(null, it) },
                         onToggle = { onToggleTask(task.id) },
                         onOpen = { onOpenTask(task) },
                         onOpenSession = { onOpenSession(it, task) },
@@ -1026,7 +993,8 @@ private fun HomeTaskBlock(
     selectedSessionIds: Set<String> = emptySet(),
     onToggleManaged: () -> Unit = {},
     onToggleManagedSession: (String) -> Unit = {},
-    onEnterSelection: () -> Unit = {},
+    onEnterTaskSelection: () -> Unit = {},
+    onEnterSessionSelection: (String) -> Unit = {},
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     onOpenSession: (WorkspaceSessionSummary) -> Unit,
@@ -1074,7 +1042,8 @@ private fun HomeTaskBlock(
                 )
                 .combinedClickable(
                     onClick = { if (selecting) onToggleManaged() else onOpen() },
-                    onLongClick = { if (!selecting) onEnterSelection() else onToggleManaged() },
+                    onLongClickLabel = if (selecting) "切换选择任务" else "进入多选任务",
+                    onLongClick = { if (!selecting) onEnterTaskSelection() else onToggleManaged() },
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1213,7 +1182,7 @@ private fun HomeTaskBlock(
                             selecting = selecting,
                             managedSelected = session.id in selectedSessionIds,
                             onToggleManaged = { onToggleManagedSession(session.id) },
-                            onEnterSelection = onEnterSelection,
+                            onEnterSelection = { onEnterSessionSelection(session.id) },
                             onClick = { onOpenSession(session) },
                             onDelete = { onDeleteSession(session) },
                             onMove = { onMoveSession(session) },
@@ -1273,6 +1242,7 @@ internal fun HomeSessionRow(
                 .weight(1f)
                 .combinedClickable(
                     onClick = { if (selecting) onToggleManaged() else onClick() },
+                    onLongClickLabel = if (selecting) "切换选择会话" else "进入多选会话",
                     onLongClick = { if (!selecting) onEnterSelection() else onToggleManaged() },
                 )
                 .padding(start = 4.dp, top = 7.dp, bottom = 7.dp, end = 4.dp),

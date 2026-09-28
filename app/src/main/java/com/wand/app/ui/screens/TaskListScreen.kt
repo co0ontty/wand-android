@@ -78,6 +78,7 @@ import com.wand.app.ui.components.rememberWandDragReorderState
 import com.wand.app.ui.components.wandLongPressDrag
 import com.wand.app.ui.components.itemLiftModifier
 import com.wand.app.ui.components.WandTextField
+import com.wand.app.ui.components.WandPullToRefresh
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -260,7 +261,7 @@ fun TaskListScreen(
     val resolvedManagedAction = resolveManagedAction(managedSelection, visibleGroups)
     val hasVisibleContent = visibleGroups.isNotEmpty()
     val hasAnyContent = allGroups.isNotEmpty()
-    var boardRefreshNonce by remember { mutableStateOf(0) }
+    var refreshingSessions by remember { mutableStateOf(false) }
 
     fun normalizedPath(value: String): String = value.trim().replace(Regex("/+$"), "").ifEmpty { "/" }
 
@@ -1124,28 +1125,10 @@ fun TaskListScreen(
                         selectedTaskIds = emptySet()
                         selectedSessionIds = emptySet()
                     },
-                    onRefresh = {
-                        if (showingBoard) {
-                            boardRefreshNonce += 1
-                        } else {
-                            scope.launch {
-                                state.load(silent = true)
-                            }
-                        }
-                    },
                     onOpenSettings = onOpenSettings,
                     onSwitchServer = onSwitchServer,
                     onOpenAiTeams = onOpenAiTeams,
                     onCollapseSidebar = onCollapseSidebar,
-                    onStartSelection = if (!showingBoard && hasAnyContent) {
-                        {
-                            selecting = true
-                            selectedTaskIds = emptySet()
-                            selectedSessionIds = emptySet()
-                        }
-                    } else {
-                        null
-                    },
                 )
                 HomeModeTabs(
                     mode = homeListMode,
@@ -1196,14 +1179,29 @@ fun TaskListScreen(
                             onOpenSession = onOpenBoardSession,
                             onOpenTaskDetail = onOpenBoardTaskDetail,
                             embedded = true,
-                            refreshNonce = boardRefreshNonce,
                             // 查询词由顶部搜索接管：同一个输入框在两个列表之间通用。
                             externalQuery = searchQuery,
                             onExternalQueryChange = { searchQuery = it },
                             showSearchField = false,
                         )
                     }
-                } else when {
+                } else WandPullToRefresh(
+                    isRefreshing = refreshingSessions,
+                    onRefresh = {
+                        if (interactionEnabled && !refreshingSessions) {
+                            refreshingSessions = true
+                            scope.launch {
+                                try {
+                                    state.load(silent = true)
+                                } finally {
+                                    refreshingSessions = false
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    when {
                     state.loading && !hasAnyContent -> LoadingState(
                         modifier = Modifier.fillMaxSize(),
                         text = "正在加载任务…",
@@ -1401,6 +1399,7 @@ fun TaskListScreen(
                         )
                     }
                         }
+                    }
                     }
                 }
                 }

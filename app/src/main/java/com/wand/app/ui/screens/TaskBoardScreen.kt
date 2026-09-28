@@ -115,6 +115,7 @@ import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.WandTeamRunPanel
+import com.wand.app.ui.components.WandPullToRefresh
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
@@ -138,7 +139,6 @@ fun TaskBoardScreen(
     onOpenTaskDetail: (taskId: String) -> Unit,
     linkedWorkspaceId: String? = null,
     embedded: Boolean = false,
-    refreshNonce: Int = 0,
     /**
      * 外部查询词：嵌在首页里时，搜索框由顶部搜索栏承担（[showSearchField] = false），
      * 这里只接收结果，避免同一个屏幕出现两个搜索入口。
@@ -152,6 +152,7 @@ fun TaskBoardScreen(
     var workspaces by remember { mutableStateOf<List<Workspace>>(emptyList()) }
     var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var refreshingBoard by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var internalQuery by remember { mutableStateOf("") }
     val query = externalQuery ?: internalQuery
@@ -204,6 +205,14 @@ fun TaskBoardScreen(
         }
     }
 
+    suspend fun refreshBoardData(showProgress: Boolean = false) {
+        refresh(showProgress)
+        workspaces = runCatching { api.listBoardWorkspaces() }.getOrDefault(emptyList())
+        models = runCatching { api.boardModels() }.getOrNull()
+        lastAgent = runCatching { api.boardTaskAgentDefaults() }.getOrDefault(BoardTaskAgent.default())
+        teams = runCatching { api.listAiTeams() }.getOrDefault(emptyList())
+    }
+
     /**
      * 标题留空时标题由服务端后台生成。创建响应里只有描述首行占位，
      * 这里短轮询几次，拿到真标题就刷新列表和详情；一直没变就保留占位。
@@ -234,15 +243,11 @@ fun TaskBoardScreen(
         }
     }
 
-    LaunchedEffect(api, linkedWorkspaceId, refreshNonce) {
+    LaunchedEffect(api, linkedWorkspaceId) {
         if (!linkedWorkspaceId.isNullOrBlank() && filterWorkspaceId.isEmpty()) {
             filterWorkspaceId = linkedWorkspaceId
         }
-        refresh(showProgress = refreshNonce == 0 || tasks.isEmpty())
-        workspaces = runCatching { api.listBoardWorkspaces() }.getOrDefault(emptyList())
-        models = runCatching { api.boardModels() }.getOrNull()
-        lastAgent = runCatching { api.boardTaskAgentDefaults() }.getOrDefault(BoardTaskAgent.default())
-        teams = runCatching { api.listAiTeams() }.getOrDefault(emptyList())
+        refreshBoardData(showProgress = tasks.isEmpty())
     }
 
     LaunchedEffect(api, lifecycleOwner) {
@@ -271,23 +276,27 @@ fun TaskBoardScreen(
                     title = "工作台",
                     subtitle = "任务管理 · ${stats.remaining} 项未完成",
                     leading = { WandDetailBackButton(onClick = onBack) },
-                    actions = {
-                        WandIconButton(
-                            icon = WandIcons.refresh,
-                            contentDescription = "刷新任务",
-                            onClick = { scope.launch { refresh() } },
-                            variant = WandIconButtonVariant.Toolbar,
-                        )
-                    },
                 )
             }
         },
     ) { padding ->
-        Box(
+        WandPullToRefresh(
+            isRefreshing = refreshingBoard,
+            onRefresh = {
+                if (!loading && !refreshingBoard) {
+                    refreshingBoard = true
+                    scope.launch {
+                        try {
+                            refreshBoardData()
+                        } finally {
+                            refreshingBoard = false
+                        }
+                    }
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentAlignment = Alignment.TopCenter,
         ) {
             when {
                 loading && tasks.isEmpty() -> CircularProgressIndicator(
