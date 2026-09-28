@@ -1197,7 +1197,7 @@ fun TaskListScreen(
                     )
                     else -> Column(modifier = Modifier.fillMaxSize()) {
                         if (selecting) {
-                            Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+                            Box(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
                             SidebarManageBar(
                                 count = managedSelection.count,
                                 allSelected = managedSelection.count > 0 &&
@@ -1242,8 +1242,8 @@ fun TaskListScreen(
                             modifier = Modifier.weight(1f),
                             state = homeListState,
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                start = 14.dp,
-                                end = 14.dp,
+                                start = 6.dp,
+                                end = 6.dp,
                                 top = 4.dp,
                                 bottom = 24.dp,
                             ),

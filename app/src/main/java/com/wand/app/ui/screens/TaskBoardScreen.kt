@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyItemScope
@@ -350,7 +349,7 @@ fun TaskBoardScreen(
                     },
                     onOpenSession = ::openSession,
                     onCreateForStatus = { status -> openCreateDialog(status) },
-                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             error?.let { message ->
@@ -534,7 +533,7 @@ private fun TaskBoardList(
     LazyColumn(
         modifier = modifier,
         state = listState,
-        contentPadding = PaddingValues(14.dp, 8.dp, 14.dp, 96.dp),
+        contentPadding = PaddingValues(6.dp, 8.dp, 6.dp, 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item(key = "hero") {

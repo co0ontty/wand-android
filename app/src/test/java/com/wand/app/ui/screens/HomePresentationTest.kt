@@ -90,6 +90,24 @@ class HomePresentationTest {
     }
 
     @Test
+    fun padLandingPrioritizesAttentionThenRunningAndLimitsRows() {
+        val groups = listOf(group(
+            tasks = listOf(task("task-1", sessions = listOf(
+                session("quiet-1", "idle"),
+                session("running", "running").copy(inFlight = true),
+                session("attention", "permission"),
+                session("quiet-2", "idle"),
+                session("quiet-3", "idle"),
+            ))),
+        ))
+
+        val rows = padLandingSessions(groups)
+
+        assertEquals(listOf("attention", "running", "quiet-1", "quiet-2"), rows.map { it.session.id })
+        assertEquals("task-1", rows.first().task?.id)
+    }
+
+    @Test
     fun attentionFilterDropsEmptyContainersAndKeepsOnlyWaitingSessions() {
         val groups = listOf(
             group(

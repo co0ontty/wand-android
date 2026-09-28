@@ -25,6 +25,7 @@ class WideLayoutMetricsTest {
     fun expandedWindowsPreserveDetailWidthAndCapSidebarGrowth() {
         assertEquals(280.dp, wideListPaneWidth(840.dp))
         assertEquals(340.dp, wideListPaneWidth(900.dp))
-        assertEquals(360.dp, wideListPaneWidth(1_200.dp))
+        assertEquals(400.dp, wideListPaneWidth(1_000.dp))
+        assertEquals(400.dp, wideListPaneWidth(1_200.dp))
     }
 }

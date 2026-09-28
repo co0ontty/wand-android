@@ -134,7 +134,7 @@ internal fun HomeTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 2.dp),
+            .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 品牌标是身份，也是「这是一款客户端」而不是「一个后台工具」的第一眼信号。
@@ -306,7 +306,7 @@ internal fun HomeModeTabs(
     WandSegmentedTrack(
         itemCount = modes.size,
         selectedIndex = modes.indexOf(mode).coerceAtLeast(0),
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+        modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
     ) {
         modes.forEach { entry ->
             val selected = entry == mode
@@ -483,7 +483,7 @@ internal fun HomeActivityStrip(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 14.dp, end = 14.dp, top = 2.dp, bottom = 4.dp),
+            .padding(start = 6.dp, end = 6.dp, top = 2.dp, bottom = 4.dp),
         // 首行左右两端固定是筛选触发点与计数；放不下时落下去的只有只读在跑胶囊。
         verticalAlignment = Alignment.Top,
     ) {

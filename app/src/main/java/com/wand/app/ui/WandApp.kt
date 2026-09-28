@@ -88,6 +88,7 @@ import com.wand.app.ui.screens.SettingsScreen
 import com.wand.app.ui.screens.SharedTaskListExpansionStore
 import com.wand.app.ui.screens.TaskListScreen
 import com.wand.app.ui.screens.TaskListState
+import com.wand.app.ui.screens.PadLandingScreen
 import com.wand.app.ui.screens.CollapsedDirectoryRail
 import com.wand.app.ui.screens.DirectoryPeekOverlay
 import com.wand.app.ui.screens.TaskSessionRoute
@@ -195,7 +196,7 @@ private val WideLayoutMinHeight = 480.dp
 private val MediumSidebarMinWidth = 232.dp
 private val MediumSidebarMaxWidth = 280.dp
 private val ExpandedSidebarMinWidth = 280.dp
-private val ExpandedSidebarMaxWidth = 360.dp
+private val ExpandedSidebarMaxWidth = 400.dp
 private val ExpandedDetailMinWidth = 560.dp
 /**
  * 展开折叠屏与平板会在运行时反复跨越这个边界；只依据当前窗口尺寸，
@@ -910,7 +911,9 @@ private fun WideReadyContent(
                 label = "wideDetailNav",
             ) { screen ->
                 if (screen is Screen.SessionList) {
-                    DetailPlaceholder(
+                    PadLandingScreen(
+                        groups = taskState.groups,
+                        onOpenSession = onOpenSession,
                         onNewTask = {
                             taskState.requestNewTask()
                             if (sidebarCollapsed) onToggleSidebarCollapsed()
@@ -1040,46 +1043,6 @@ private fun WideSidebarPanel(
     }
 }
 
-
-@Composable
-private fun DetailPlaceholder(
-    onNewTask: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .ambientBackground(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 360.dp)
-                .padding(horizontal = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            WandBrandMark(size = 44)
-            Text(
-                "选择一个任务",
-                style = MaterialTheme.typography.titleLarge,
-                color = WandColors.textPrimary,
-                modifier = Modifier.padding(top = 10.dp),
-            )
-            Text(
-                "从左侧打开任务，右侧会显示该任务的工作窗口。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textSecondary,
-                textAlign = TextAlign.Center,
-            )
-            WandButton(
-                label = "新建任务",
-                onClick = onNewTask,
-                compact = true,
-                modifier = Modifier.padding(top = 10.dp),
-            )
-        }
-    }
-}
 
 private data class SinglePaneFrame(val screen: Screen, val depth: Int)
 
