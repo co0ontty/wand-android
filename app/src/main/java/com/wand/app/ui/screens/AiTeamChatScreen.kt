@@ -8,10 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,7 +18,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,7 +36,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -50,7 +45,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -59,7 +53,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.wand.app.data.AiTeamLiveStep
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamStep
 import com.wand.app.data.ConversationTurn
@@ -99,9 +92,6 @@ private val TeamChatReadableMaxWidth = 760.dp
 /** 运行中 4s 一轮，结束后 15s 一轮：群聊是「有人在干活」的页面，比看板详情更敏感。 */
 private const val TEAM_CHAT_POLL_ACTIVE_MS = 4_000L
 private const val TEAM_CHAT_POLL_IDLE_MS = 15_000L
-
-/** live 卡片固定高度，两端同值（Web `.team-chat-live-card { height: 200px }` 的 dp 版）。 */
-private val TeamLiveCardHeight = 200.dp
 
 /**
  * 署名与步骤标题在署名行里的宽度上限：超了就省略号，把整行的空间让给状态芯片，
@@ -808,195 +798,6 @@ private fun TeamStepChip(title: String, ok: Boolean, status: String?) {
             .widthIn(max = TeamChatStepChipMaxWidth)
             .clip(WandShapes.xs)
             .background(color.copy(alpha = 0.14f))
-            .padding(horizontal = 6.dp, vertical = 1.dp),
-    )
-}
-
-/**
- * 一行 live 输出（§4.9.1）：成员一开始干活署名行就出现，卡片随后从头像那侧长出；
- * 步骤收工（或页面不可见）时整行倒放收回 —— 收起是展开的倒放。关掉动效时只剩淡入淡出。
- */
-@Composable
-private fun TeamLiveStepRow(
-    row: LiveChatRow,
-    steps: List<AiTeamStep>,
-    memberStates: Map<String, String>,
-    onOpenMemberSession: (String) -> Unit,
-    onRetire: (String) -> Unit,
-) {
-    val step = row.step
-    val motion = !reduceMotionEnabled()
-    val enter = fadeIn(WandMotion.tweenEnter()) +
-        if (motion) slideInHorizontally(WandMotion.tweenEnter()) { -it / 4 } else EnterTransition.None
-    val exit = fadeOut(WandMotion.tweenExit()) +
-        if (motion) slideOutHorizontally(WandMotion.tweenExit()) { -it / 4 } else ExitTransition.None
-    var cardShown by remember(step.stepId) { mutableStateOf(false) }
-    var outputExpanded by remember(step.stepId) { mutableStateOf(false) }
-    LaunchedEffect(step.stepId) { cardShown = true }
-    // Compose 的 AnimatedVisibility 不派发「动画结束」，退场行按退场时长自己计时摘除；
-    // 计时挂在行上，所以下一次轮询不会把它腰斩（同 Web 的 animationend → onRetire）。
-    LaunchedEffect(step.stepId, row.leaving) {
-        if (!row.leaving) return@LaunchedEffect
-        delay(WandMotion.fast.toLong())
-        onRetire(step.stepId)
-    }
-    AnimatedVisibility(visible = !row.leaving, enter = enter, exit = exit) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            val state = memberStates[step.sessionId] ?: step.state
-            TeamAuthorLine(
-                author = TurnAuthor(
-                    id = step.memberId,
-                    name = step.memberName.ifBlank { "成员" },
-                    provider = step.provider,
-                    model = step.model,
-                    thinkingEffort = step.thinkingEffort,
-                    sessionId = step.sessionId,
-                ),
-                fallbackName = "成员",
-                badge = null,
-                clock = formatChatClock(step.updatedAt),
-                onOpenMemberSession = onOpenMemberSession,
-                trailing = {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TeamLiveStepChip(liveStepChip(step, steps), Modifier.weight(1f, fill = false))
-                        val label = liveStateLabel(state)
-                        if (label.isNotBlank()) TeamLiveStateChip(label, state)
-                    }
-                },
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(WandShapes.sm)
-                    .background(WandColors.surfaceSoft)
-                    .clickable(
-                        onClickLabel = if (outputExpanded) "收起实时输出" else "展开实时输出",
-                    ) { outputExpanded = !outputExpanded }
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    step.text.trim().lineSequence().lastOrNull { it.isNotBlank() } ?: LIVE_EMPTY_TEXT,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WandColors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    if (outputExpanded) "收起" else "输出",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.brand,
-                )
-            }
-            AnimatedVisibility(visible = cardShown && outputExpanded, enter = enter, exit = exit) {
-                TeamLiveStepCard(step, onOpenMemberSession)
-            }
-        }
-    }
-}
-
-/**
- * live 气泡卡：固定高 [TeamLiveCardHeight]、宽度撑满列（列本身已被 TeamChatReadableMaxWidth 夹住），
- * 正文在里面 `verticalScroll`。所以输出变多时卡片尺寸与位置都不变，不会顶下面的行。
- * 整卡点开该成员的完整会话；Compose 里滚动由 `verticalScroll` 消费，不会被误判成点击。
- */
-@Composable
-private fun TeamLiveStepCard(
-    step: AiTeamLiveStep,
-    onOpenMemberSession: (String) -> Unit,
-) {
-    val scroll = rememberScrollState()
-    val tailThresholdPx = liveTailThresholdPx(LocalDensity.current.density)
-    var viewportPx by remember(step.stepId) { mutableIntStateOf(0) }
-    var contentPx by remember(step.stepId) { mutableIntStateOf(0) }
-    var pinned by remember(step.stepId) { mutableStateOf(true) }
-    val omitted = liveOmittedText(step.omittedChars)
-    // 贴尾判定只看用户滚到哪：自己滚到底的那次算回来仍然是贴尾，不会把开关弄反。
-    LaunchedEffect(scroll.value, viewportPx, contentPx, tailThresholdPx) {
-        pinned = shouldFollowTail(scroll.value, contentPx, viewportPx, tailThresholdPx)
-    }
-    LaunchedEffect(step.text) {
-        if (pinned) scroll.scrollTo(Int.MAX_VALUE)
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(TeamLiveCardHeight)
-            .clip(WandShapes.md)
-            .border(1.dp, WandColors.border.copy(alpha = 0.55f), WandShapes.md)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.55f))
-            .clickable(onClickLabel = "查看该成员的完整会话") {
-                if (step.sessionId.isNotBlank()) onOpenMemberSession(step.sessionId)
-            }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        if (omitted.isNotBlank()) {
-            Text(omitted, fontSize = 11.sp, color = WandColors.textMuted)
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(scroll)
-                .onSizeChanged { viewportPx = it.height },
-        ) {
-            Text(
-                step.text.ifBlank { LIVE_EMPTY_TEXT },
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textSecondary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onSizeChanged { contentPx = it.height },
-            )
-        }
-    }
-}
-
-@Composable
-private fun TeamLiveStepChip(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        fontSize = 11.sp,
-        color = WandColors.textSecondary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier
-            // 步骤标题先让位：宽度封顶 + 省略号，旁边的状态芯片才不会被挤成小方块。
-            .widthIn(max = TeamChatStepChipMaxWidth)
-            .clip(WandShapes.xs)
-            .background(WandColors.surfaceSoft.copy(alpha = 0.8f))
-            .padding(horizontal = 6.dp, vertical = 1.dp),
-    )
-}
-
-/** 状态芯片：等人类操作的两态要更显眼（warning），和 Web 的 `.team-chat-live-state` 同一套配色逻辑。 */
-@Composable
-private fun TeamLiveStateChip(label: String, state: String) {
-    val tint = when (state) {
-        "needs_input", "needs_permission" -> WandColors.warning
-        "failed" -> WandColors.danger
-        "done" -> WandColors.success
-        else -> WandColors.info
-    }
-    Text(
-        label,
-        fontSize = 11.sp,
-        color = tint,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(WandShapes.xs)
-            .background(tint.copy(alpha = 0.14f))
             .padding(horizontal = 6.dp, vertical = 1.dp),
     )
 }

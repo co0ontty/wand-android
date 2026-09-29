@@ -1,6 +1,5 @@
 package com.wand.app.ui.screens
 
-import com.wand.app.data.AiTeamLiveStep
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamMember
 import com.wand.app.data.AiTeamRun
@@ -286,65 +285,6 @@ class TeamChatPresentationTest {
 
     // MARK: - 正在输出的成员（live 卡片，口径逐条对齐 Web）
 
-    private fun live(
-        stepId: String,
-        seq: Int,
-        text: String = "▸ Read · 读 README",
-        omittedChars: Int = 0,
-        state: String = "working",
-        model: String? = null,
-        thinkingEffort: String? = null,
-    ) = AiTeamLiveStep(
-        stepId = stepId,
-        seq = seq,
-        memberId = "m_impl",
-        memberName = "实现者",
-        provider = "claude",
-        model = model,
-        thinkingEffort = thinkingEffort,
-        sessionId = "sess_$stepId",
-        state = state,
-        text = text,
-        omittedChars = omittedChars,
-        updatedAt = "2026-09-27T10:00:00.000Z",
-    )
-
-    @Test
-    fun liveStateLabelMatchesWeb() {
-        assertEquals("工作中", liveStateLabel("working"))
-        assertEquals("等待回答", liveStateLabel("needs_input"))
-        assertEquals("等待授权", liveStateLabel("needs_permission"))
-        assertEquals("已完成", liveStateLabel("done"))
-        assertEquals("失败", liveStateLabel("failed"))
-        // 未知状态不给芯片：步骤芯片已经说明它在哪一步。
-        assertEquals("", liveStateLabel("queued"))
-        assertEquals("", liveStateLabel(null))
-    }
-
-    @Test
-    fun liveOmittedTextOnlyWhenServerTruncated() {
-        assertEquals("", liveOmittedText(0))
-        assertEquals("", liveOmittedText(-5))
-        assertEquals("已省略前面 431 字", liveOmittedText(431))
-        assertEquals("已开始，等待第一段输出…", LIVE_EMPTY_TEXT)
-    }
-
-    @Test
-    fun shouldFollowTailKeepsUserWhereHeIs() {
-        val threshold = liveTailThresholdPx(1f)
-        // 与 Web 同参数：scrollHeight 400、视口 200 → 贴底的 scrollTop 是 200。
-        assertTrue(shouldFollowTail(200, 400, 200, threshold))
-        assertTrue("距底 24dp 以内仍跟随", shouldFollowTail(176, 400, 200, threshold))
-        assertFalse("超过阈值就不把他拽回尾部", shouldFollowTail(175, 400, 200, threshold))
-        assertFalse(shouldFollowTail(0, 400, 200, threshold))
-        // 内容不到一屏时恒为贴尾。
-        assertTrue(shouldFollowTail(0, 120, 200, threshold))
-        // 同一个几何、density 2.625：阈值随密度放大，判定的物理距离与 Web 那个 24px 是同一个。
-        val dense = liveTailThresholdPx(2.625f)
-        assertTrue(shouldFollowTail(200, 400, 200, dense))
-        assertFalse(shouldFollowTail(200 - dense - 1, 400, 200, dense))
-    }
-
     @Test
     fun tailThresholdIsDpConvertedByDensity() {
         assertEquals("阈值与 Web 的 LIVE_TAIL_PX 同一个数，单位是 dp", 24, LIVE_TAIL_DP)
@@ -352,65 +292,6 @@ class TeamChatPresentationTest {
         assertEquals(48, liveTailThresholdPx(2f))
         // 24 × 2.625 = 63（Pixel 8 那一档密度）；旧实现拿 24 当像素比，实际只有 9dp。
         assertEquals(63, liveTailThresholdPx(2.625f))
-    }
-
-    @Test
-    fun orderLiveStepsSortsBySeqAndDropsDuplicateStepId() {
-        val ordered = orderLiveSteps(listOf(live("s3", 3), live("s1", 1), live("s1dup", 1)))
-        assertEquals(listOf("s1", "s1dup", "s3"), ordered.map { it.stepId })
-        assertEquals(listOf("s1"), orderLiveSteps(listOf(live("s1", 1), live("s1", 9))).map { it.stepId })
-    }
-
-    /**
-     * 两端同规则：merge 之后一律按 seq 排，**与这一行是否在退场无关**。
-     * 旧实现把 active 行排到全部退场行之前，原本在前的行收工时会被搬到尾部，
-     * 列表里就是位置跳一下 + 动画重播一次（同 Web 的 DOM move 重启 CSS 动画）。
-     */
-    @Test
-    fun mergeLiveRowsKeepsRetiringRowInItsOwnSlot() {
-        val first = mergeLiveRows(emptyList(), listOf(live("a", 1), live("b", 2)))
-        assertEquals(listOf("a", "b"), first.map { it.step.stepId })
-        assertTrue(first.none { it.leaving })
-
-        val second = mergeLiveRows(first, listOf(live("b", 2)))
-        assertEquals("退场行不被搬到尾部", listOf("a" to true, "b" to false), second.map { it.step.stepId to it.leaving })
-
-        // 同一步又回来时按在场处理，不留退场标记。
-        val back = mergeLiveRows(second, listOf(live("a", 1), live("b", 2)))
-        assertEquals(listOf("a" to false, "b" to false), back.map { it.step.stepId to it.leaving })
-    }
-
-    /**
-     * 旧实现会在下一次轮询时把退场行直接摘掉，卡片因此在动画播完前腰斩。
-     * 现在摘除只由行自身的 onRetire（退场时长到点）负责，merge 一律留着它，且顺序不交换。
-     */
-    @Test
-    fun mergeLiveRowsKeepsLeavingRowUntilRetireNotNextPush() {
-        val second = mergeLiveRows(
-            mergeLiveRows(emptyList(), listOf(live("a", 1), live("b", 2))),
-            listOf(live("b", 2)),
-        )
-        val third = mergeLiveRows(second, listOf(live("b", 2), live("c", 3)))
-        assertEquals(listOf("a" to true, "b" to false, "c" to false), third.map { it.step.stepId to it.leaving })
-
-        val fourth = mergeLiveRows(third, listOf(live("c", 3)))
-        assertEquals(listOf("a" to true, "b" to true, "c" to false), fourth.map { it.step.stepId to it.leaving })
-
-        // 同一批内再来一次推送：顺序一个都不交换（两端同断言）。
-        val again = mergeLiveRows(fourth, listOf(live("c", 3)))
-        assertEquals(fourth.map { it.step.stepId }, again.map { it.step.stepId })
-        assertEquals(fourth.map { it.leaving }, again.map { it.leaving })
-    }
-
-    @Test
-    fun liveStepChipShowsSeqPlusTitleFromRunSteps() {
-        val step = live("s7", 7)
-        val runSteps = listOf(
-            AiTeamStep(id = "s7", seq = 7, kind = "work", memberId = "m_impl", title = "类型与存储迁移", status = "running"),
-        )
-        assertEquals("#7 类型与存储迁移", liveStepChip(step, runSteps))
-        // 步骤还没进 detail（或 id 对不上）时只给序号，不编标题。
-        assertEquals("#7", liveStepChip(step, emptyList()))
     }
 
     // MARK: - 署名「CLI · 模型 · 思考深度」（口径逐字对齐 Web agentSignatureLabel）
@@ -459,28 +340,6 @@ class TeamChatPresentationTest {
         // 只有模型 / 只有思考深度也各自成段。
         assertEquals("gpt-5 · 高", agentSignatureLabel(null, "gpt-5", "high"))
         assertEquals("Pi · 关闭", agentSignatureLabel("pi", "", "off"))
-    }
-
-    @Test
-    fun liveStepSignatureSkipsNullSegmentsFromOldServer() {
-        // 两个字段都缺（老服务端 /live）→ 只显示 provider。
-        val bare = live("s1", 1)
-        assertEquals("Claude", agentSignatureLabel(bare.provider, bare.model, bare.thinkingEffort))
-        // 只缺一个 → 少一段，不出现空的「 · 」。
-        val onlyEffort = live("s2", 2, thinkingEffort = "deep")
-        assertEquals("Claude · 深入", agentSignatureLabel(onlyEffort.provider, onlyEffort.model, onlyEffort.thinkingEffort))
-        val onlyModel = live("s3", 3, model = "Qwen3.8-Flash")
-        assertEquals("Claude · Qwen3.8-Flash", agentSignatureLabel(onlyModel.provider, onlyModel.model, onlyModel.thinkingEffort))
-        // 分隔符只出现在段与段之间：首尾不带「 · 」。
-        for (label in listOf(
-            agentSignatureLabel(bare.provider, bare.model, bare.thinkingEffort),
-            agentSignatureLabel(onlyEffort.provider, onlyEffort.model, onlyEffort.thinkingEffort),
-            agentSignatureLabel(onlyModel.provider, onlyModel.model, onlyModel.thinkingEffort),
-        )) {
-            assertFalse(label.startsWith(" · "))
-            assertFalse(label.endsWith(" · "))
-            assertFalse(label.contains(" ·  · "))
-        }
     }
 
     // MARK: - 外层列表贴底口径（同 Web isFollowingTail）

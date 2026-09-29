@@ -1,6 +1,5 @@
 package com.wand.app.ui.screens
 
-import com.wand.app.data.AiTeamLiveStep
 import com.wand.app.data.AiTeamMember
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamRun
@@ -265,63 +264,6 @@ const val LIVE_TAIL_DP = 24
 /** dp → 设备像素（四舍五入）。density 由调用点从 `LocalDensity` 取，纯函数不碰运行时。 */
 fun liveTailThresholdPx(density: Float, thresholdDp: Int = LIVE_TAIL_DP): Int =
     (thresholdDp * density).roundToInt()
-
-/** 文本还没来时的占位，卡片不能是个空框。 */
-const val LIVE_EMPTY_TEXT = "已开始，等待第一段输出…"
-
-/** 状态芯片文案；未知状态不给芯片（步骤芯片已经说明它在哪一步）。 */
-fun liveStateLabel(state: String?): String = when (state) {
-    "working" -> "工作中"
-    "needs_input" -> "等待回答"
-    "needs_permission" -> "等待授权"
-    "done" -> "已完成"
-    "failed" -> "失败"
-    else -> ""
-}
-
-/** 顶部省略提示；没截断就不显示。 */
-fun liveOmittedText(omittedChars: Int): String = if (omittedChars > 0) "已省略前面 $omittedChars 字" else ""
-
-/**
- * 距底够近才算贴尾：用户上滚看历史以后不许把他拽回尾部。
- * 与 Web 同参数（scrollTop / scrollHeight / clientHeight），Android 侧从
- * `verticalScroll` 的滚动位置与实测高度（设备像素）取；阈值由调用点按 density 换算好传进来。
- */
-fun shouldFollowTail(scrollTop: Int, scrollHeight: Int, clientHeight: Int, thresholdPx: Int): Boolean =
-    scrollHeight - (scrollTop + clientHeight) <= thresholdPx
-
-/** 按 seq 升序、按 stepId 去重：轮询重叠或乱序都不会让同一行出现两次。 */
-fun orderLiveSteps(steps: List<AiTeamLiveStep>): List<AiTeamLiveStep> =
-    steps.distinctBy { it.stepId }.sortedBy { it.seq }
-
-/** 一行 live 输出；`leaving` 是这一步已经收工、正在原位收回。 */
-data class LiveChatRow(
-    val step: AiTeamLiveStep,
-    val leaving: Boolean,
-)
-
-/**
- * 新一批 live 来了：本次还在输出的进来，上一批里消失的（含**已经在退场的**）标成退场。
- * **排序只看 seq，与这一行是否在退场无关**（同 Web `mergeLiveRows`）：把没播完的退场行搬到
- * 它「该在的新位置」会让行在列表里跳一下、动画重播，所以退场行一律留在原位。
- * 退场行不再被下一次合并摘掉——那样会把没播完的收工动画腰斩，
- * 摘除只由该行自己的退场计时结束（`TeamLiveStepRow` 的 `onRetire`，时长取 `WandMotion.fast`
- * 那一档，等价于 Web 的 `animationend` + 等长兜底定时器）负责。
- * 同一 `stepId` 重新开工时 `kept` 命中，自然回到 `leaving = false`，不会留下幽灵卡。
- */
-fun mergeLiveRows(current: List<LiveChatRow>, steps: List<AiTeamLiveStep>): List<LiveChatRow> {
-    val next = orderLiveSteps(steps)
-    val kept = next.map { it.stepId }.toSet()
-    // 已经在退场的行继续留着：下一次轮询只是「又来了一批文本」，不该顺手撤掉没收完的卡。
-    val leaving = current.filter { it.step.stepId !in kept }.map { it.copy(leaving = true) }
-    return (next.map { LiveChatRow(it, false) } + leaving).sortedBy { it.step.seq }
-}
-
-/** 步骤芯片：`#seq 标题`，标题查的是本次运行的那条步骤。 */
-fun liveStepChip(step: AiTeamLiveStep, steps: List<AiTeamStep>): String {
-    val title = steps.firstOrNull { it.id == step.stepId }?.title.orEmpty()
-    return if (title.isBlank()) "#${step.seq}" else "#${step.seq} $title"
-}
 
 // ---------- 署名「CLI · 模型 · 思考深度」（口径逐条对齐 Web agentSignatureLabel） ----------
 
