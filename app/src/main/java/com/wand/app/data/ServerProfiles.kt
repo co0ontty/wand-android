@@ -32,6 +32,18 @@ data class ServerProfilesState(
  */
 object ServerProfiles {
     private const val SchemaVersion = 2
+    private const val MaxCustomNameCodePoints = 32
+
+    /** Keeps local labels on one line without splitting a supplementary Unicode character. */
+    @JvmStatic
+    fun normalizeCustomNameInput(raw: String): String {
+        val singleLine = raw.replace('\n', ' ').replace('\r', ' ')
+        val end = singleLine.offsetByCodePoints(
+            0,
+            minOf(MaxCustomNameCodePoints, singleLine.codePointCount(0, singleLine.length)),
+        )
+        return singleLine.substring(0, end)
+    }
 
     @JvmStatic
     fun canonicalBaseUrl(raw: String): String {
@@ -119,7 +131,7 @@ object ServerProfiles {
         id: String,
         rawName: String?,
     ): ServerProfilesState {
-        val name = rawName?.trim()?.takeIf { it.isNotEmpty() }
+        val name = rawName?.let(::normalizeCustomNameInput)?.trim()?.takeIf { it.isNotEmpty() }
         if (state.profiles.none { it.id == id }) return state
         return state.copy(
             profiles = state.profiles.map { profile ->

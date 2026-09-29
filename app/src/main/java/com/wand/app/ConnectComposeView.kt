@@ -85,6 +85,7 @@ import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandMorphingIcon
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.data.ServerProfile
+import com.wand.app.data.ServerProfiles
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -110,6 +111,7 @@ interface ConnectUiListener {
 class ConnectComposeView(context: Context, private val playOpening: Boolean) : AbstractComposeView(context) {
     private var uiInputValue by mutableStateOf("")
     private var uiServerAlias by mutableStateOf("")
+    private var uiAddServerExpanded by mutableStateOf(false)
     private var uiAutoConnecting by mutableStateOf(false)
     private var uiAutoStatus by mutableStateOf(context.getString(R.string.auto_connecting))
     private var uiConnecting by mutableStateOf(false)
@@ -126,8 +128,24 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
         listener = value
     }
 
-    fun setInputValue(value: String) {
+    fun setIncomingConnection(value: String) {
         uiInputValue = value
+        uiServerAlias = ""
+        uiAddServerExpanded = true
+    }
+
+    fun setScannedConnection(value: String) {
+        if (uiInputValue.isNotBlank() && uiInputValue.trim() != value.trim()) {
+            uiServerAlias = ""
+        }
+        uiInputValue = value
+        uiAddServerExpanded = true
+    }
+
+    fun clearConnectionDraft() {
+        uiInputValue = ""
+        uiServerAlias = ""
+        uiAddServerExpanded = false
     }
 
     fun getInputValue(): String = uiInputValue
@@ -181,12 +199,15 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
             ConnectScreen(
                 inputValue = uiInputValue,
                 serverAlias = uiServerAlias,
+                addServerExpanded = uiAddServerExpanded,
                 onInputValueChange = {
+                    if (it.isBlank() && uiInputValue.isNotBlank()) uiServerAlias = ""
                     uiInputValue = it
                     statusMessage = null
                     statusServerId = null
                 },
-                onServerAliasChange = { uiServerAlias = it },
+                onServerAliasChange = { uiServerAlias = ServerProfiles.normalizeCustomNameInput(it) },
+                onAddServerExpandedChange = { uiAddServerExpanded = it },
                 onPasteUnavailable = {
                     statusServerId = null
                     showStatus("剪贴板中没有可粘贴的连接码或地址", false)
@@ -215,8 +236,10 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
 private fun ConnectScreen(
     inputValue: String,
     serverAlias: String,
+    addServerExpanded: Boolean,
     onInputValueChange: (String) -> Unit,
     onServerAliasChange: (String) -> Unit,
+    onAddServerExpandedChange: (Boolean) -> Unit,
     onPasteUnavailable: () -> Unit,
     autoConnecting: Boolean,
     autoStatus: String,
@@ -239,7 +262,6 @@ private fun ConnectScreen(
     }
     var pendingRemoval by androidx.compose.runtime.remember { mutableStateOf<ServerProfile?>(null) }
     var confirmClear by androidx.compose.runtime.remember { mutableStateOf(false) }
-    var addServerExpanded by remember { mutableStateOf(false) }
     val reduceMotion = reduceMotionEnabled()
     val hasConnectionCode = remember(inputValue) {
         inputValue.isNotBlank() && com.wand.app.data.WandAuth.decodeConnectCode(inputValue) != null
@@ -378,7 +400,7 @@ private fun ConnectScreen(
                         AddServerTrigger(
                             expanded = addServerExpanded,
                             enabled = !connecting,
-                            onClick = { addServerExpanded = !addServerExpanded },
+                            onClick = { onAddServerExpandedChange(!addServerExpanded) },
                             modifier = Modifier.padding(top = WandSpacing.md),
                         )
                     }
@@ -563,9 +585,7 @@ private fun ConnectScreen(
                                     }
                                     WandTextField(
                                         value = serverAlias,
-                                        onValueChange = {
-                                            onServerAliasChange(it.replace('\n', ' ').replace('\r', ' ').take(32))
-                                        },
+                                        onValueChange = onServerAliasChange,
                                         label = "服务器名称（可选）",
                                         placeholder = "例如：家里的工作台",
                                         singleLine = true,
@@ -876,7 +896,7 @@ private fun SavedServerSection(
                     )
                     WandTextField(
                         value = editedName,
-                        onValueChange = { editedName = it.replace('\n', ' ').replace('\r', ' ').take(32) },
+                        onValueChange = { editedName = ServerProfiles.normalizeCustomNameInput(it) },
                         label = "服务器别名",
                         placeholder = profile.displayName,
                         singleLine = true,

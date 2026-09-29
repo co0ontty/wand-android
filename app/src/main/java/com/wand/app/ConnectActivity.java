@@ -172,7 +172,6 @@ public class ConnectActivity extends AppCompatActivity {
                     refreshServerList();
                     return;
                 }
-                connectView.setInputValue(profile.getBaseUrl());
                 attemptConnect(profile);
             }
             @Override public void onRenameServer(String serverId, String name) {
@@ -215,7 +214,7 @@ public class ConnectActivity extends AppCompatActivity {
                     detachRemovedRuntime();
                     return;
                 }
-                connectView.setInputValue("");
+                connectView.clearConnectionDraft();
                 refreshServerList();
             }
         });
@@ -246,7 +245,6 @@ public class ConnectActivity extends AppCompatActivity {
             activeProfile = serverStore.getActiveServerProfile();
         }
         if (activeProfile != null) {
-            connectView.setInputValue(activeProfile.getBaseUrl());
             if (!skipAutoConnect) {
                 tryAutoConnect(activeProfile);
             } else {
@@ -348,7 +346,7 @@ public class ConnectActivity extends AppCompatActivity {
                 Toast.makeText(this, R.string.scan_qr_invalid, Toast.LENGTH_LONG).show();
                 return;
             }
-            connectView.setInputValue(candidate);
+            connectView.setScannedConnection(candidate);
             attemptConnect();
             return;
         }
@@ -368,7 +366,8 @@ public class ConnectActivity extends AppCompatActivity {
         if ("wand".equals(uri.getScheme()) && "connect".equals(uri.getHost())) {
             String serverUrl = uri.getQueryParameter("url");
             if (!TextUtils.isEmpty(serverUrl)) {
-                connectView.setInputValue(serverUrl);
+                abortAutoConnect();
+                connectView.setIncomingConnection(serverUrl);
                 attemptConnect();
                 return true;
             }

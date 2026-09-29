@@ -160,6 +160,18 @@ class ServerProfilesTest {
             .profiles.single().displayName)
     }
 
+    @Test
+    fun aliasLimitKeepsEmojiWholeAndRemovesLineBreaks() {
+        val input = "a".repeat(31) + "😀" + "尾部\n下一行"
+        val normalized = ServerProfiles.normalizeCustomNameInput(input)
+        val state = ServerProfiles.withSavedProfile(ServerProfilesState(), "work.example", null)
+        val renamed = ServerProfiles.withCustomName(state, state.profiles.single().id, input)
+
+        assertEquals("a".repeat(31) + "😀", normalized)
+        assertEquals(normalized, renamed.profiles.single().customName)
+        assertEquals("甲 乙", ServerProfiles.normalizeCustomNameInput("甲\n乙"))
+    }
+
     private fun connectCode(url: String, token: String, urlSafe: Boolean): String {
         val bytes = "$url#$token".toByteArray(StandardCharsets.UTF_8)
         val encoder = if (urlSafe) Base64.getUrlEncoder() else Base64.getEncoder()
