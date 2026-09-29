@@ -59,6 +59,14 @@ class ChatComposer(
         if (active && text.isNotBlank()) editDraft(appendComposerVoiceText(draft, text))
     }
 
+    /** Bind speech recognition to the draft that was present when recording began. */
+    fun voiceCommitForCurrentDraft(): (String) -> Unit {
+        val startedRevision = drafts.revision(sessionId)
+        return { text ->
+            if (active && drafts.revision(sessionId) == startedRevision) appendVoice(text)
+        }
+    }
+
     fun removeAttachment(file: UploadedFile) {
         if (active) drafts.setAttachments(sessionId, attachments.filterNot { it.savedPath == file.savedPath })
     }

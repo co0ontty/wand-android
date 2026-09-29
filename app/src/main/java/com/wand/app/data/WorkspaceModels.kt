@@ -344,6 +344,8 @@ data class WorkspaceSessionSummary(
     val inFlight: Boolean? = null,
     /** 团队群聊会话（AI 团队 relay）；普通会话为 null。 */
     val teamChat: WorkspaceSessionTeamChat? = null,
+    /** 团队派发的成员会话（ai_team_steps.session_id）；非派发会话为 null。 */
+    val teamStep: WorkspaceSessionTeamStep? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -363,6 +365,7 @@ data class WorkspaceSessionSummary(
                 providerCliActive = o.bool("providerCliActive"),
                 inFlight = o.obj("structuredState")?.bool("inFlight") ?: o.bool("inFlight"),
                 teamChat = WorkspaceSessionTeamChat.parse(o.obj("teamChat")),
+                teamStep = WorkspaceSessionTeamStep.parse(o.obj("teamStep")),
             )
         }
 
@@ -451,6 +454,47 @@ data class WorkspaceSessionTeamChat(
 /** 任务列表里的会话摘要数组（task summary / detail 共用）。 */
 private fun JSONObject.sessionSummaries(): List<WorkspaceSessionSummary> =
     arr("sessions")?.let(WorkspaceSessionSummary::parseList) ?: emptyList()
+
+/**
+ * 团队派发步骤标记：服务端在会话摘要上挂 `teamStep`
+ * （src/server-workspace-routes.ts `workspaceSessionSummary`，
+ * 索引来自 storage.listAiTeamStepSessionMarkers）。
+ * 名字按稳定成员 id 从当前团队定义投影，删掉定义后退回运行快照；
+ * 老服务端不下发这个字段，解析为 null，列表按普通会话渲染。
+ */
+data class WorkspaceSessionTeamStep(
+    val runId: String,
+    val stepId: String,
+    /** leader = 负责人自己的回合，work = 派给成员干活的会话。 */
+    val kind: String,
+    /** 这一步的任务标题，列表拿它当短标题，不等 CLI 生成会话名。 */
+    val title: String,
+    val memberId: String,
+    val memberName: String,
+    val teamName: String,
+    val stepStatus: String,
+    val runStatus: String,
+    /** 运行已进终态：这一步的会话算历史，默认折起来、可以清空。 */
+    val runFinished: Boolean,
+) {
+    companion object {
+        fun parse(o: JSONObject?): WorkspaceSessionTeamStep? {
+            val stepId = o?.str("stepId")?.takeIf { it.isNotEmpty() } ?: return null
+            return WorkspaceSessionTeamStep(
+                runId = o.str("runId") ?: "",
+                stepId = stepId,
+                kind = o.str("kind") ?: "work",
+                title = o.str("title") ?: "",
+                memberId = o.str("memberId") ?: "",
+                memberName = o.str("memberName") ?: "",
+                teamName = o.str("teamName") ?: "",
+                stepStatus = o.str("stepStatus") ?: "",
+                runStatus = o.str("runStatus") ?: "",
+                runFinished = o.bool("runFinished") == true,
+            )
+        }
+    }
+}
 
 /**
  * GET /api/tasks 聚合行：任务 + 运行期派生字段；目录信息在 TaskDirectoryGroup 上。

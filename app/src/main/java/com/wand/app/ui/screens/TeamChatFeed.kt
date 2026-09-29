@@ -50,7 +50,7 @@ data class TeamChatActivity(
 fun teamChatActivities(detail: AiTeamRunDetail): List<TeamChatActivity> {
     // 终态快照可能仍带着尚未清理的 running 步骤或旧会话状态，不能让它复活状态行。
     if (!aiTeamRunActive(detail.run.status)) return emptyList()
-    val members = detail.run.team?.members.orEmpty().associateBy { it.id }
+    val members = detail.presentationTeam?.members.orEmpty().associateBy { it.id }
     return detail.steps.asSequence()
         .filter { it.status == "running" && it.id.isNotBlank() }
         .sortedBy { it.seq }

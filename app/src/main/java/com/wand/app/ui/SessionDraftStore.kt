@@ -63,7 +63,7 @@ class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
         else unconfirmedAttachmentPaths[sessionId] = remaining
     }
 
-    private fun revision(sessionId: String): Long = revisions[sessionId] ?: 0L
+    internal fun revision(sessionId: String): Long = revisions[sessionId] ?: 0L
 
     // An interrupted/uncertain send stays available in this process, but must not become
     // a restored draft after process death and accidentally send the same input twice.

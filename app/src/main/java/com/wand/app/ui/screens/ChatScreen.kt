@@ -131,6 +131,7 @@ import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.TurnUsage
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WorkspaceSessionSummary
@@ -367,6 +368,7 @@ fun ChatScreen(
         onToast = { store.toast = it },
         onCommit = composer::appendVoice,
         sessionKey = composer,
+        onCommitForPress = composer::voiceCommitForCurrentDraft,
     )
     val voice = voiceInput.voice
     val onMicDown = voiceInput.onMicDown
@@ -381,7 +383,7 @@ fun ChatScreen(
         store.messages.indexOfLast { it.role == "user" }
     }
     val subagentActivities = remember(store.messages, store.isResponding) {
-        collectSubagentActivities(store.messages, store.isResponding)
+        subagentDockActivities(collectSubagentActivities(store.messages, store.isResponding))
     }
     val showActivityDock = shouldShowStructuredActivityDock(
         isStructured = store.isStructured,
@@ -395,18 +397,6 @@ fun ChatScreen(
     var activityDockExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
     LaunchedEffect(showActivityDock) {
         if (!showActivityDock) activityDockExpanded = false
-    }
-    val activityDockListPadding = when {
-        !showActivityDock -> 4.dp
-        subagentActivities.isEmpty() -> 28.dp
-        store.isResponding -> 62.dp
-        else -> 36.dp
-    }
-    val activityDockFabPadding = when {
-        !showActivityDock -> 12.dp
-        subagentActivities.isEmpty() -> 38.dp
-        store.isResponding -> 70.dp
-        else -> 44.dp
     }
 
     // Picker/upload adapters capture this composer; a late result never targets a new session.
@@ -694,6 +684,10 @@ fun ChatScreen(
             onExpandedChange = { composerExpanded = it },
             attachOpen = attachOpen,
             onAttachOpenChange = { attachOpen = it },
+            activityDockVisible = showActivityDock,
+            subagentActivities = subagentActivities,
+            lastAssistantUsage = lastAssistantUsage,
+            onActivityDockExpandedChange = { activityDockExpanded = it },
         ) {
             if (composer.submit()) {
                 attachOpen = false
@@ -762,7 +756,7 @@ fun ChatScreen(
                             start = 14.dp,
                             end = 14.dp,
                             top = 12.dp,
-                            bottom = activityDockListPadding,
+                            bottom = 4.dp,
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -928,27 +922,6 @@ fun ChatScreen(
                 visible = !store.connected,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
-            AnimatedVisibility(
-                visible = showActivityDock,
-                enter = fadeIn(WandMotion.tweenFast()) +
-                    slideInVertically(WandMotion.settleSpringSpec()) { height -> height / 3 },
-                exit = fadeOut(WandMotion.tweenFast()) +
-                    slideOutVertically(WandMotion.settleSpringSpec()) { height -> height / 3 },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-            ) {
-                key(sessionId) {
-                    SubagentActivityDock(
-                        backdrop = activeBackdrop,
-                        activities = subagentActivities,
-                        usage = lastAssistantUsage,
-                        taskTitle = store.currentTaskTitle,
-                        sessionRunning = store.isResponding,
-                        onExpandedChange = { activityDockExpanded = it },
-                    )
-                }
-            }
             // 回到底部按钮：品牌色玻璃圆钮，淡入 + 缩放。用户上滚后点它，回到真正的列表底部。
             AnimatedVisibility(
                 visible = !store.loading &&
@@ -962,7 +935,7 @@ fun ChatScreen(
                     scaleOut(targetScale = 0.8f, animationSpec = WandMotion.tweenFast()),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = activityDockFabPadding),
+                    .padding(end = 16.dp, bottom = 12.dp),
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -1799,7 +1772,7 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
     }
 }
 
-// MARK: - 底部栏（权限卡 + 队列 + 输入框）
+// MARK: - 底部栏（待办 + 权限卡 + 队列 + Agent 状态坞 + 输入框）
 
 @Composable
 private fun BottomBar(
@@ -1818,6 +1791,10 @@ private fun BottomBar(
     // 就地展开的附件面板状态：放在 onSend 之前，保证末尾的尾随 lambda 仍然绑定 onSend。
     attachOpen: Boolean = false,
     onAttachOpenChange: (Boolean) -> Unit = {},
+    activityDockVisible: Boolean = false,
+    subagentActivities: List<SubagentActivity> = emptyList(),
+    lastAssistantUsage: TurnUsage? = null,
+    onActivityDockExpandedChange: (Boolean) -> Unit = {},
     onSend: () -> Unit,
 ) {
     // 草稿订阅收敛在这里：打字只重组底部栏，不再波及消息列表。
@@ -1887,6 +1864,26 @@ private fun BottomBar(
                 VoiceTranscriptBubble(backdrop, voice)
             }
         }
+        // Agent 状态坞排在待办/权限/队列之后，作为输入栏上方的最后一项贴着输入框。
+        AnimatedVisibility(
+            visible = activityDockVisible,
+            enter = fadeIn(WandMotion.tweenFast()) +
+                slideInVertically(WandMotion.settleSpringSpec()) { height -> height / 3 },
+            exit = fadeOut(WandMotion.tweenFast()) +
+                slideOutVertically(WandMotion.settleSpringSpec()) { height -> height / 3 },
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+        ) {
+            key(store.sessionId) {
+                SubagentActivityDock(
+                    backdrop = backdrop,
+                    activities = subagentActivities,
+                    usage = lastAssistantUsage,
+                    taskTitle = store.currentTaskTitle,
+                    sessionRunning = store.isResponding,
+                    onExpandedChange = onActivityDockExpandedChange,
+                )
+            }
+        }
         InputBar(
             backdrop = backdrop,
             store = store,
@@ -1941,186 +1938,65 @@ private fun InputBar(
     attachOpen: Boolean,
     onAttachOpenChange: (Boolean) -> Unit,
 ) {
-    // 结构化会话不存在「已结束」终止态（停止只回到 idle，真失败也能再发消息触发
-    // 服务端 --resume 续接），所以发送按钮只看草稿是否非空，不再被 sessionEnded 卡死。
     val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
-    val focusRequester = remember { FocusRequester() }
-    // 发送后保持输入框焦点：避免权限卡/todo bar 插入时 @FocusState 丢焦点、键盘收起，
-    // 用户连续对话时不需要再点一次输入框（对位 iOS ChatView.sendDraft 末尾的 inputFocused = true）。
-    var refocusAfterSend by remember { mutableStateOf(false) }
-    // 停止任务二次确认弹窗开关：点停止按钮先弹确认，避免误触中断正在跑的任务。
     var showStopConfirm by remember { mutableStateOf(false) }
-    // 文本框是否聚焦：驱动「胶囊 ↔ 卡片」两态切换（对齐 Codex App）。
-    var isFocused by remember { mutableStateOf(false) }
-    // 折叠为单行后若正文发生换行或溢出，立即保持展开，避免失焦后遮住草稿。
-    var draftNeedsExpanded by remember { mutableStateOf(false) }
-    LaunchedEffect(refocusAfterSend, store.sessionEnded) {
-        if (refocusAfterSend && !store.sessionEnded) {
-            refocusAfterSend = false
-            runCatching { focusRequester.requestFocus() }
-        }
-    }
-    // 文本聚焦、按住语音或草稿无法在最小态完整显示时展开。
-    val expanded = isFocused || voice.pressed || draftNeedsExpanded || pendingAttachments.isNotEmpty()
-    LaunchedEffect(expanded) {
-        onExpandedChange(expanded)
-    }
-    // 文本框只负责文本编辑；语音手势由输入框外侧的独立按钮承载。
-    val inputContent: @Composable RowScope.() -> Unit = {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 34.dp),
-        ) {
-            if (expanded && pendingAttachments.isNotEmpty()) {
-                PendingAttachmentsPreview(
-                    attachments = pendingAttachments,
-                    baseUrl = baseUrl,
-                    onRemove = onRemoveAttachment,
-                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp),
-                )
-            }
-            Box(contentAlignment = Alignment.CenterStart) {
-                BasicTextField(
-                        value = draft,
-                        onValueChange = onDraftChange,
-                        textStyle = TextStyle(
-                            fontSize = 16.sp,
-                            lineHeight = 21.sp,
-                            color = WandColors.textPrimary,
-                        ),
-                        cursorBrush = SolidColor(WandColors.brand),
-                        minLines = 1,
-                        maxLines = if (expanded) 6 else 1,
-                        onTextLayout = { layout ->
-                            draftNeedsExpanded = draft.isNotEmpty() &&
-                                (layout.lineCount > 1 || layout.hasVisualOverflow)
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            capitalization = KeyboardCapitalization.Sentences,
-                            imeAction = ImeAction.Send,
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onSend = {
-                                if (canSubmit) {
-                                    onSend()
-                                    refocusAfterSend = true
-                                }
-                            },
-                        ),
-                        decorationBox = { innerTextField ->
-                            Box(
-                                contentAlignment = Alignment.CenterStart,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
-                            ) {
-                                if (draft.isEmpty()) {
-                                    Text(
-                                        "输入消息",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        color = WandColors.textMuted,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                innerTextField()
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            // R1（§2.15）：折叠态只留最小高、不设上限，系统字体放大后占位与正文按行高长开，
-                            // 不再被固定 34dp 上下裁切；展开态保留原有 132dp 内容滚动上限。
-                            .heightIn(min = 34.dp, max = composerInputMaxHeight(expanded))
-                            .focusRequester(focusRequester)
-                            .onFocusChanged { isFocused = it.isFocused },
-                )
-            }
-        }
-    }
-
-    val plusMenu: @Composable () -> Unit = {
-        ComposerActionsMenu(
-            backdrop = backdrop,
-            uploading = uploading,
-            attachOpen = attachOpen,
-            onAttachOpenChange = onAttachOpenChange,
-        )
-    }
-    // ＋ 展开出来的动作行：就地在输入区上方展开，不再弹底部选择弹层。
-    val attachPanel: @Composable () -> Unit = {
-        WandInlinePanelAction(
-            icon = WandIcons.image,
-            label = "从相册选择",
-            onClick = {
-                onAttachOpenChange(false)
-                onPickPhoto()
-            },
-        )
-        WandInlinePanelAction(
-            icon = WandIcons.attach,
-            label = "从文件选择",
-            onClick = {
-                onAttachOpenChange(false)
-                onPickFile()
-            },
-        )
-    }
-    val trailing: @Composable () -> Unit = {
-        TrailingSendStop(
-            store = store,
-            sendPhase = sendPhase,
-            canSend = canSend,
-            canSubmit = canSubmit,
-            onStop = { showStopConfirm = true },
-            voiceAction = {
-                VoiceMicButton(
-                    voice = voice,
-                    voiceMode = false,
-                    onToggleMode = { runCatching { focusRequester.requestFocus() } },
-                    onMicDown = onMicDown,
-                )
-            },
-            onSend = {
-                onSend()
-                refocusAfterSend = true
-            },
-        )
-    }
-
-    NativeComposerSurface(
+    SharedMessageComposer(
         backdrop = backdrop,
-        expanded = expanded,
-        collapsedLeading = { plusMenu() },
-        inputContent = { inputContent() },
-        collapsedTrailing = { trailing() },
-        panelVisible = attachOpen,
-        panelContent = { attachPanel() },
+        draft = draft,
+        onDraftChange = onDraftChange,
+        attachments = pendingAttachments,
+        baseUrl = baseUrl,
+        onRemoveAttachment = onRemoveAttachment,
+        uploading = uploading,
+        attachOpen = attachOpen,
+        onAttachOpenChange = onAttachOpenChange,
+        onPickPhoto = onPickPhoto,
+        onPickFile = onPickFile,
+        canSubmit = canSubmit,
+        onSend = onSend,
+        allowRefocus = !store.sessionEnded,
+        voicePressed = voice.pressed,
+        onExpandedChange = onExpandedChange,
+        trailingActions = { requestFocus, sendAndRefocus ->
+            TrailingSendStop(
+                store = store,
+                sendPhase = sendPhase,
+                canSend = canSend,
+                canSubmit = canSubmit,
+                onStop = { showStopConfirm = true },
+                voiceAction = {
+                    VoiceMicButton(
+                        voice = voice,
+                        voiceMode = false,
+                        onToggleMode = requestFocus,
+                        onMicDown = onMicDown,
+                    )
+                },
+                onSend = sendAndRefocus,
+            )
+        },
         expandedControls = { controlsCompact ->
-            // 控制行：+ / 模式 / 模型 / 思考深度各有入口；窄屏保持 44dp 点击区。
             BoxWithConstraints(modifier = Modifier.weight(1f)) {
                 val compactChips = controlsCompact || maxWidth < 300.dp
-                // 中等宽度只折叠模式/深度：模型仍留名称，便于辨认两个独立入口。
                 val compactModel = maxWidth < 260.dp
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    plusMenu()
+                    ComposerActionsMenu(
+                        backdrop = backdrop,
+                        uploading = uploading,
+                        attachOpen = attachOpen,
+                        onAttachOpenChange = onAttachOpenChange,
+                    )
                     if (store.isStructured) {
                         ModeChip(store, compact = compactChips)
-                        ModelChip(
-                            store,
-                            compact = compactModel,
-                            modifier = Modifier.weight(1f),
-                        )
+                        ModelChip(store, compact = compactModel, modifier = Modifier.weight(1f))
                         ThinkingChip(store, compact = compactChips)
                     }
                 }
             }
-            trailing()
         },
     )
     if (showStopConfirm) {

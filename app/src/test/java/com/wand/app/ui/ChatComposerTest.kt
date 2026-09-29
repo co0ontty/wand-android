@@ -120,6 +120,25 @@ class ChatComposerTest {
     }
 
     @Test
+    fun delayedVoiceResultCannotAppendToARevisedDraftOrDisposedSession() = runTest {
+        val drafts = SessionDraftStore(mapOf("chat-a" to "first"))
+        val composer = composer(drafts)
+        val oldRecording = composer.voiceCommitForCurrentDraft()
+        composer.editDraft("new edit")
+        oldRecording("stale voice")
+        assertEquals("new edit", composer.draft)
+
+        val currentRecording = composer.voiceCommitForCurrentDraft()
+        currentRecording("fresh voice")
+        assertEquals("new edit fresh voice", composer.draft)
+
+        val disposedRecording = composer.voiceCommitForCurrentDraft()
+        composer.shutdown()
+        disposedRecording("late voice")
+        assertEquals("new edit fresh voice", drafts["chat-a"])
+    }
+
+    @Test
     fun lateFailureDoesNotReplaceNewEditsOrNewAttachments() = runTest {
         val drafts = SessionDraftStore(mapOf("chat-a" to "first"))
         val response = CompletableDeferred<Unit>()

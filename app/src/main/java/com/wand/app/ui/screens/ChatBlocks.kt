@@ -413,62 +413,27 @@ private fun ChatAuthorBadge(text: String) {
     )
 }
 
-/**
- * 群聊系统提示行（团队 relay 的 notice 回合，例如「实现者 开始「T1 …」」）：
- * 居中弱化的一条小行，不当作助手回复、不带折叠头。
- */
+/** 团队 relay 的系统事件：一行居中文字，长文本视觉省略、无障碍保留全文。 */
 @Composable
 private fun ChatNoticeView(turn: ConversationTurn) {
-    val text = turn.content
-        .filterIsInstance<ContentBlock.Text>()
-        .joinToString("\n") { it.text }
-        .trim()
+    val text = teamNoticeLine(turn)
     if (text.isBlank()) return
     val clock = conversationTurnClock(turn)
-    val author = turn.author?.name?.takeIf { it.isNotBlank() }
-    // 提示行必须完整可读：原来是单行 Row + maxLines=3 + 省略号，长提示（团队派工、
-    // 权限说明）会被裁掉尾巴，时刻也会被挤没。改成竖向堆叠 + 居中折行，不裁剪。
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier
-                .widthIn(max = NoticeMaxWidth)
-                .clip(WandShapes.sm)
-                .background(WandColors.surfaceSoft.copy(alpha = 0.58f))
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-        ) {
-            if (author != null) {
-                Text(
-                    author,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textSecondary,
-                )
-            }
-            Text(
-                text,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                color = WandColors.textSecondary,
-                textAlign = TextAlign.Center,
-            )
-            if (clock.isNotBlank()) {
-                Text(
-                    clock,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = WandColors.textMuted,
-                )
-            }
-        }
-    }
+    val line = if (clock.isBlank()) text else "$text · $clock"
+    Text(
+        line,
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
+        color = WandColors.textSecondary,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .semantics { contentDescription = line },
+    )
 }
-
-private val NoticeMaxWidth = 520.dp
 
 /** 折叠态下名字后的一行正文预览：优先取文本，纯工具调用时给「N 个工具调用」线索。 */
 private fun replyPreview(content: List<ContentBlock>): String = conversationTurnPreview(
@@ -526,8 +491,8 @@ private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
 }
 
 /**
- * 输入栏上方的紧凑状态坞。收起态只有一行摘要（图标 + 标题 + 计数 + 状态词）加一行
- * 「最后一步动作」——卡名与气泡上重复的状态词不携带信息；展开后先看结论，
+ * 输入栏上方的紧凑状态坞，作为底部栏的最后一项紧贴输入框。收起态是「用量/回复状态」一行
+ * 加下面的摘要行（图标 + 标题 + 计数 + 状态词）；展开后先看结论，
  * 气泡选择器移进面板，用量与回复状态只在流式期间以纯文字展示。
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -618,6 +583,7 @@ internal fun SubagentActivityDock(
                         WandShapes.lg,
                         WandGlass.regular.tinted(WandColors.info, 0.12f),
                     )
+                    .border(1.dp, WandColors.info.copy(alpha = 0.26f), WandShapes.lg)
                     .padding(top = 4.dp, bottom = 7.dp),
             ) {
                 if (activities.size > 1) {
@@ -664,15 +630,7 @@ internal fun SubagentActivityDock(
             }
         }
 
-        if (activities.isNotEmpty()) {
-            SubagentSummaryRow(
-                backdrop = backdrop,
-                activities = activities,
-                sessionRunning = sessionRunning,
-                expanded = expanded,
-                onClick = { expanded = !expanded },
-            )
-        }
+        // 用量行排在摘要卡上方：卡是 Column 的最后一项，才能贴着输入框而不是被自己的状态行顶开。
         if (sessionRunning) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -682,6 +640,15 @@ internal fun SubagentActivityDock(
                 UsageStatusCompact(usage, Modifier.weight(1f))
                 ReplyStatusCompact(taskTitle, Modifier.weight(1f))
             }
+        }
+        if (activities.isNotEmpty()) {
+            SubagentSummaryRow(
+                backdrop = backdrop,
+                activities = activities,
+                sessionRunning = sessionRunning,
+                expanded = expanded,
+                onClick = { expanded = !expanded },
+            )
         }
     }
 }
@@ -719,6 +686,9 @@ private fun SubagentSummaryRow(
                 WandShapes.lg,
                 WandGlass.regular.tinted(subagentStatusColor(status), if (expanded) 0.18f else 0.10f),
             )
+            // 玻璃底不带描边（drawRim 默认关），紧贴输入栏时会和输入栏的低对比玻璃糊成一片；
+            // 补一圈状态色描边，让这张卡读起来是独立的一层。
+            .border(1.dp, subagentStatusColor(status).copy(alpha = 0.32f), WandShapes.lg)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1704,6 +1674,20 @@ internal fun collectSubagentActivities(
     val variants = dedupeAgentLogoVariants(collected.map { it.id })
     return collected.mapIndexed { index, activity -> activity.copy(logoVariant = variants[index]) }
 }
+
+/**
+ * 状态坞只承接「还要看一眼」的 run：正在运行、被中断、失败的才常驻底部。
+ * 已完成和分页截断的历史 run 已经有自己的消息流卡片，再常驻就是一堆绿色的「已完成」；
+ * 后台回执在会话停止后也只剩「后台已结束」这个既成事实，同样还给消息流。
+ */
+internal fun subagentDockActivities(activities: List<SubagentActivity>): List<SubagentActivity> =
+    activities.filter { activity ->
+        when (activity.status) {
+            SubagentStatus.Completed, SubagentStatus.Pending -> false
+            SubagentStatus.Background -> activity.sessionRunning
+            else -> true
+        }
+    }
 
 private fun ContentBlock.subagentMeta(): SubagentMeta? = when (this) {
     is ContentBlock.Text -> subagent

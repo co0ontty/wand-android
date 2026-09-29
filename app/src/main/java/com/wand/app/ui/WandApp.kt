@@ -610,6 +610,8 @@ private fun SessionDetailScreen(
         is Screen.AiTeamChat -> AiTeamChatScreen(
             api = api,
             runId = screen.runId,
+            sessionDrafts = sessionDrafts,
+            isHapticEnabled = actions.settings.isHapticEnabled,
             taskIdentifier = screen.taskIdentifier,
             showBack = showBack,
             onBack = { nav.pop() },

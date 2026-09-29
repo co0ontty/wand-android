@@ -14,6 +14,7 @@ import com.wand.app.data.WorkspaceSessionTeamChat
 import com.wand.app.data.WandApiException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.json.JSONObject
@@ -104,6 +105,22 @@ class TeamChatPresentationTest {
     }
 
     @Test
+    fun noticeLineKeepsEventBodyAndDoesNotRepeatAnExistingAuthor() {
+        assertEquals(
+            "负责人 创建了团队群聊「开发四人组」",
+            teamNoticeLine(turn("assistant", "创建了团队群聊「开发四人组」", notice = true,
+                author = author("负责人"))),
+        )
+        assertEquals(
+            "实现者 开始「T1」",
+            teamNoticeLine(turn("assistant", "实现者\n开始「T1」", notice = true,
+                author = author("实现者"))),
+        )
+        assertEquals("", teamNoticeLine(turn("assistant", "  ", notice = true,
+            author = author("负责人"))))
+    }
+
+    @Test
     fun turnTextJoinsOnlyNonBlankTextBlocks() {
         val merged = ConversationTurn(
             role = "assistant",
@@ -165,9 +182,12 @@ class TeamChatPresentationTest {
         assertEquals(2, message.assignments.size)
         assertEquals("实现者", message.assignments[0].member)
         assertEquals("T1 类型与存储迁移", message.assignments[0].title)
-        assertEquals("等第 1 项完成后", message.assignments[0].wait)
+        assertEquals("等第 1 项完成后", message.assignments[0].note)
         assertEquals("审查者", message.assignments[1].member)
-        assertEquals("", message.assignments[1].wait)
+        assertEquals("", message.assignments[1].note)
+        val basis = splitLeaderMessage("1. **@设计师** 规格（依据：第 2 步「草图」的产物）")
+        assertEquals("设计师", basis.assignments.single().member)
+        assertEquals("依据：第 2 步「草图」的产物", basis.assignments.single().note)
     }
 
     @Test
@@ -211,7 +231,19 @@ class TeamChatPresentationTest {
         assertFalse(needsCollapse("短报告\n两行"))
         assertTrue(needsCollapse("一行".repeat(421)))
         assertTrue(needsCollapse((1..7).joinToString("\n") { "第 $it 行" }))
-        assertEquals(6, (1..7).joinToString("\n") { "第 $it 行" }.let { collapsedPreview(it).lines().size })
+        val byLines = collapsedPreview((1..7).joinToString("\n") { "第 $it 行" })
+        assertEquals(
+            "只显示上半部分（前 6 行）",
+            6,
+            byLines.lines().size,
+        )
+        assertTrue(
+            "被截断一定以省略号结尾（与 Web 同字符）",
+            byLines.endsWith("…"),
+        )
+        // 没超阈值时预览就是全文，不高出「点击展开」（展开按钮不当噪音）。
+        assertEquals("短报告", collapsedPreview("短报告"))
+        assertFalse(needsCollapse(collapsedPreview("短报告")))
     }
 
     @Test
@@ -219,6 +251,157 @@ class TeamChatPresentationTest {
         val preview = collapsedPreview("长".repeat(500))
         assertEquals(CHAT_COLLAPSE_AFTER_CHARS + 1, preview.length)
         assertTrue(preview.endsWith("…"))
+    }
+
+    // MARK: - 消息形态分流（对齐 Web teamChatMessageShape）
+
+    @Test
+    fun messageShapeSplitsBubbleAndDocumentLikeWeb() {
+        assertEquals(
+            TeamChatMessageShape.Notice,
+            teamChatMessageShape(TeamChatTurnKind.Notice, "团队已停止"),
+        )
+        assertEquals(
+            "自己的长消息仍是气泡（预览 + 点击展开）",
+            TeamChatMessageShape.Bubble,
+            teamChatMessageShape(TeamChatTurnKind.User, "啊".repeat(500)),
+        )
+        assertEquals(TeamChatMessageShape.Bubble, teamChatMessageShape(TeamChatTurnKind.Step, "T1 改完了"))
+        assertEquals(
+            "超行数阈值走文档卡",
+            TeamChatMessageShape.Document,
+            teamChatMessageShape(TeamChatTurnKind.Step, (1..9).joinToString("\n") { "第 $it 行" }),
+        )
+        assertEquals(
+            "超字符阈值走文档卡",
+            TeamChatMessageShape.Document,
+            teamChatMessageShape(TeamChatTurnKind.Step, "啊".repeat(421)),
+        )
+        assertEquals(
+            "含派工清单就是文档性质",
+            TeamChatMessageShape.Document,
+            teamChatMessageShape(TeamChatTurnKind.Leader, "先做后端", 2),
+        )
+        assertEquals(
+            "负责人发短消息也还是气泡",
+            TeamChatMessageShape.Bubble,
+            teamChatMessageShape(TeamChatTurnKind.Leader, "要不要改目录？", 0),
+        )
+    }
+
+    // MARK: - 头像（对齐 Web chatAvatarSpec / memberCoatIndex，设计 §5）
+
+    @Test
+    fun memberCoatIndexMatchesWebHashSamples() {
+        // 固定样本（设计 §5.2）：用来抓跨端口径漂移。m_impl 正是旧 memberAvatarVariant 会算成 2 的那个反例。
+        assertEquals(6, memberCoatIndex("m_impl", "实现者", ""))
+        assertEquals(1, memberCoatIndex("m_reviewer", "审查者", ""))
+        assertEquals(5, memberCoatIndex("m_designer", "设计者", ""))
+        assertEquals(5, memberCoatIndex("m_leader", "负责人", ""))
+        assertEquals(3, memberCoatIndex(null, "实现者", null))
+        assertEquals(0, memberCoatIndex(null, "runner", null))
+        // 显式毛色：cat:<n> 取模 8，与 Web Number(n) % 8 同值。
+        assertEquals(5, memberCoatIndex(null, "任意", "cat:5"))
+        assertEquals(3, memberCoatIndex(null, "任意", "cat:11"))
+        // 非法 avatar 按身份派生，不崩；定位不到身份的才回落。
+        assertEquals(
+            memberCoatIndex("m_impl", "实现者", null),
+            memberCoatIndex("m_impl", "实现者", "说不清的取值"),
+        )
+        assertTrue(memberCoatIndex(null, "", null) in 0 until CAT_COATS.size)
+    }
+
+    @Test
+    fun chatAvatarSpecFollowsWebRuleOrder() {
+        assertEquals(
+            "没选毛色的成员用派生毛色（与团队页同一张脸）",
+            ChatAvatarSpec.Cat(6),
+            chatAvatarSpec(TurnAuthor(id = "m_impl", name = "实现者")),
+        )
+        assertEquals(
+            ChatAvatarSpec.Cat(3),
+            chatAvatarSpec(TurnAuthor(id = "m_impl", name = "实现者", avatar = "cat:3")),
+        )
+        assertEquals(
+            ChatAvatarSpec.Upload("data:image/png;base64,AAA"),
+            chatAvatarSpec(TurnAuthor(id = "m", name = "成员", avatar = "data:image/png;base64,AAA")),
+        )
+        assertEquals(
+            "没有署名的发言（我）用默认 APP logo",
+            ChatAvatarSpec.Brand,
+            chatAvatarSpec(null),
+        )
+        assertEquals(
+            "非法 avatar 且定位不到身份也不渲染空图",
+            ChatAvatarSpec.Brand,
+            chatAvatarSpec(TurnAuthor(id = "", name = "", avatar = "说不清的取值")),
+        )
+        assertEquals(
+            "非法 avatar 但能定位身份 → 派生毛色",
+            ChatAvatarSpec.Cat(memberCoatIndex("", "实现者", "说不清的取值")),
+            chatAvatarSpec(TurnAuthor(id = "", name = "实现者", avatar = "说不清的取值")),
+        )
+    }
+
+    @Test
+    fun pixelCatGridIsPixelForPixelTheSameAsWeb() {
+        // 逐格照抄 Web catCoatGrid（T 透明 / b 底 / d 深 / l 亮 / w 白 / k 瞳 / p 鼻）。
+        assertEquals(
+            listOf(
+                "TdTTTTTTdT", "dbdTTTTdbd", "dbbbbbbbbd", "bbwkbbwkbb", "bbwwbbwwbb",
+                "bbbbppbbbb", "bdblbblbdb", "TbbbbbbbbT", "TTbdbbdbTT", "TTTbTTbTTT",
+            ),
+            CAT_COAT_GRID_ROWS,
+        )
+        assertEquals(8, CAT_COATS.size)
+        val rows = catCoatGrid(1)
+        assertEquals(10, rows.size)
+        assertTrue(rows.all { it.size == 10 })
+        assertNull(
+            "行 0 列 0 是透明（耳朵之间的缝）",
+            rows[0][0],
+        )
+        assertEquals(CAT_COATS[1].dark, rows[0][1])
+        assertEquals(
+            "银渐层的瞳色就是毛色表里那颗绿",
+            0xFF3F8F55.toInt(),
+            rows[3][3],
+        )
+        // 越界毛色落回 0..7，不崩。
+        assertEquals(catCoatGrid(0), catCoatGrid(8))
+        assertEquals(catCoatGrid(7), catCoatGrid(-1))
+    }
+
+    // MARK: - 全文弹层标签与完整身份（对齐 Web，同一投影供列表与 owner）
+
+    @Test
+    fun docLayerLabelsAndFullFingerprintMatchWeb() {
+        assertEquals(
+            "我",
+            CHAT_SELF_NAME,
+        )
+        assertEquals(
+            "点击展开",
+            CHAT_EXPAND_LABEL,
+        )
+        assertEquals(
+            "（这条消息没有正文）",
+            CHAT_EMPTY_BODY,
+        )
+        assertEquals("我的消息", teamChatDocTypeLabel(TeamChatTurnKind.User))
+        assertEquals("负责人派工", teamChatDocTypeLabel(TeamChatTurnKind.Leader))
+        assertEquals("成员发言", teamChatDocTypeLabel(TeamChatTurnKind.Step))
+        assertEquals(
+            "成员报告 · T1 类型与存储迁移",
+            teamChatDocTypeLabel(TeamChatTurnKind.Step, "T1 类型与存储迁移"),
+        )
+        val first = turn("assistant", "报告正文", createdAt = "2026-09-27T10:00:00.000Z")
+        assertEquals(teamTurnFingerprint(first), teamTurnFingerprint(first.copy(usage = null)))
+        assertNotEquals(teamTurnFingerprint(first), teamTurnFingerprint(first.copy(
+            createdAt = "2026-09-27T10:00:01.000Z")))
+        val projection = projectTeamTurns(null, "run/chat", listOf(first, first))
+        assertEquals(2, projection.rows.size)
+        assertNotEquals(projection.rows[0].presentationId, projection.rows[1].presentationId)
     }
 
     // MARK: - 乐观行收敛（对齐 Web settleLocalTurns）
@@ -233,14 +416,17 @@ class TeamChatPresentationTest {
 
     @Test
     fun confirmedUserTurnDropsLocalRow() {
-        val local = listOf(LocalChatTurn("批准", sentAtMillis = 1_000L))
         val turns = listOf(turn("user", "批准", createdAt = "1970-01-01T00:00:02.000Z"))
+        val local = listOf(LocalChatTurn("批准", sentAtMillis = 1_000L,
+            accepted = true, ackFingerprint = teamTurnFingerprint(turns.single())))
         assertTrue(settleLocalTurns(local, turns).isEmpty())
     }
 
     @Test
     fun olderOrAssistantTurnsDoNotConfirmLocalRow() {
-        val local = listOf(LocalChatTurn("批准", sentAtMillis = 1_000L))
+        val local = listOf(LocalChatTurn("批准", sentAtMillis = 1_000L,
+            accepted = true, ackFingerprint = teamTurnFingerprint(
+                turn("user", "批准", createdAt = "1970-01-01T00:00:02.000Z"))))
         // 服务端回显时刻早于本地发送时刻 = 还没刷到这一条。
         val stale = listOf(turn("user", "批准", createdAt = "1970-01-01T00:00:00.500Z"))
         assertEquals(local, settleLocalTurns(local, stale))
@@ -275,12 +461,11 @@ class TeamChatPresentationTest {
     }
 
     @Test
-    fun memberAvatarVariantIsStableAndInRange() {
-        val first = memberAvatarVariant("m_impl", "实现者", "cat-2")
-        assertEquals(first, memberAvatarVariant("m_impl", "实现者", "cat-2"))
-        assertTrue(first in 0 until MEMBER_AVATAR_VARIANTS)
-        // 不同成员至少不因空 id 全部塌成一处。
-        assertTrue(memberAvatarVariant(null, "审查者", null) in 0 until MEMBER_AVATAR_VARIANTS)
+    fun memberIdentityKeepsTheSameFaceAcrossMessages() {
+        // 同一成员在任意一条消息上都是同一张脸（设计 §5.2 第 3 条）：id 相同 → 毛色相同。
+        assertEquals(memberCoatIndex("m_impl", "实现者", null), memberCoatIndex("m_impl", "实现者", ""))
+        // 不同成员不塌成同一张脸。
+        assertNotEquals(memberCoatIndex("m_impl", "实现者", null), memberCoatIndex("m_reviewer", "审查者", null))
     }
 
     // MARK: - 正在输出的成员（live 卡片，口径逐条对齐 Web）

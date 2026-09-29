@@ -89,9 +89,12 @@ private sealed class MarkdownBlock {
     data object Divider : MarkdownBlock()
 }
 
+/** 默认 null：只在群聊启用，普通聊天/工具卡/公告完全沿用旧解析与链接动作。 */
+typealias InlineMarkdownDecoration = (AnnotatedString, List<IntRange>) -> AnnotatedString
+
 /** 原生 Markdown 渲染：块级结构独立布局，内联标记使用 AnnotatedString。 */
 @Composable
-fun MarkdownText(text: String) {
+fun MarkdownText(text: String, inlineDecoration: InlineMarkdownDecoration? = null) {
     val compact = LocalActivityFoldCompact.current
     val bodySize = if (compact) 12.sp else 15.sp
     val bodyHeight = if (compact) 18.sp else 22.sp
@@ -103,7 +106,7 @@ fun MarkdownText(text: String) {
             when (block) {
                 is MarkdownBlock.Paragraph -> SelectionContainer {
                     Text(
-                        inlineMarkdown(block.text),
+                        inlineMarkdown(block.text, inlineDecoration),
                         fontSize = bodySize,
                         lineHeight = bodyHeight,
                         color = bodyColor,
@@ -112,7 +115,7 @@ fun MarkdownText(text: String) {
                 }
                 is MarkdownBlock.Heading -> SelectionContainer {
                     Text(
-                        inlineMarkdown(block.text),
+                        inlineMarkdown(block.text, inlineDecoration),
                         fontSize = when (block.level) {
                             1 -> 20.sp
                             2 -> 18.sp
@@ -153,7 +156,7 @@ fun MarkdownText(text: String) {
                     }
                     SelectionContainer {
                         Text(
-                            inlineMarkdown(block.text),
+                            inlineMarkdown(block.text, inlineDecoration),
                             fontSize = bodySize,
                             lineHeight = bodyHeight,
                             color = bodyColor,
@@ -178,7 +181,7 @@ fun MarkdownText(text: String) {
                     )
                     SelectionContainer {
                         Text(
-                            inlineMarkdown(block.text),
+                            inlineMarkdown(block.text, inlineDecoration),
                             fontSize = 14.sp,
                             lineHeight = 21.sp,
                             color = WandColors.textSecondary,
@@ -188,7 +191,7 @@ fun MarkdownText(text: String) {
                     }
                 }
                 is MarkdownBlock.Code -> MarkdownCodeBlock(block, subtleInset)
-                is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows)
+                is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows, inlineDecoration)
                 MarkdownBlock.Divider -> HorizontalDivider(
                     thickness = 0.5.dp,
                     color = WandColors.border,
@@ -259,14 +262,14 @@ private fun MarkdownCodeBlock(block: MarkdownBlock.Code, background: Color) {
  * 列间/行间分隔线，整体可横向滚动。
  */
 @Composable
-private fun MarkdownTable(headers: List<String>, rows: List<List<String>>) {
+private fun MarkdownTable(headers: List<String>, rows: List<List<String>>, inlineDecoration: InlineMarkdownDecoration?) {
     Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
         Column(
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
                 .border(0.55.dp, WandColors.border.copy(alpha = 0.58f), RoundedCornerShape(10.dp)),
         ) {
-            MarkdownTableRow(headers, header = true, background = WandColors.brand.copy(alpha = 0.09f))
+            MarkdownTableRow(headers, header = true, background = WandColors.brand.copy(alpha = 0.09f), inlineDecoration = inlineDecoration)
             rows.forEachIndexed { index, row ->
                 HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
                 MarkdownTableRow(
@@ -277,6 +280,7 @@ private fun MarkdownTable(headers: List<String>, rows: List<List<String>>) {
                     } else {
                         WandColors.bgPrimary.copy(alpha = 0.45f)
                     },
+                    inlineDecoration = inlineDecoration,
                 )
             }
         }
@@ -284,7 +288,7 @@ private fun MarkdownTable(headers: List<String>, rows: List<List<String>>) {
 }
 
 @Composable
-private fun MarkdownTableRow(cells: List<String>, header: Boolean, background: Color) {
+private fun MarkdownTableRow(cells: List<String>, header: Boolean, background: Color, inlineDecoration: InlineMarkdownDecoration?) {
     Row(
         modifier = Modifier
             .height(IntrinsicSize.Min)
@@ -293,7 +297,7 @@ private fun MarkdownTableRow(cells: List<String>, header: Boolean, background: C
         cells.forEachIndexed { index, cell ->
             SelectionContainer {
                 Text(
-                    inlineMarkdown(cell),
+                    inlineMarkdown(cell, inlineDecoration),
                     fontSize = if (header) 13.sp else 12.sp,
                     lineHeight = if (header) 18.sp else 17.sp,
                     fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
@@ -456,7 +460,7 @@ private fun isTableSeparator(line: String, columnCount: Int): Boolean {
 
 /** 内联样式：粗体、斜体、删除线、链接与行内代码。未闭合标记按原文显示。 */
 @Composable
-private fun inlineMarkdown(raw: String): AnnotatedString {
+private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecoration?): AnnotatedString {
     val linkColor = WandColors.info
     val codeColor = WandColors.brand.copy(alpha = 0.82f)
     val context = LocalContext.current
@@ -480,121 +484,28 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
     }
     // 字符级解析循环不便宜；重组但文本未变时直接复用上一次的 AnnotatedString。
     // 流式输出期间每个 chunk 只在文本真正变化时重建一次，而不是每次重组都重建。
-    val annotated = remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler) {
-        buildAnnotatedString {
-        var i = 0
-        while (i < raw.length) {
-            when {
-                raw[i] == '\\' && i + 1 < raw.length -> {
-                    append(raw[i + 1])
-                    i += 2
-                }
-                raw.startsWith("**", i) || raw.startsWith("__", i) -> {
-                    val marker = raw.substring(i, i + 2)
-                    val end = raw.indexOf(marker, i + 2)
-                    if (end > i + 2) {
-                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                            append(inlineMarkdownPlain(raw.substring(i + 2, end)))
+    val annotated = remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler, inlineDecoration) {
+        parseInlineMarkdown(raw, codeColor, inlineDecoration) { url ->
+            LinkAnnotation.Url(
+                url = url,
+                styles = TextLinkStyles(style = SpanStyle(
+                    color = linkColor, textDecoration = TextDecoration.Underline,
+                )),
+                linkInteractionListener = { link ->
+                    (link as? LinkAnnotation.Url)?.url?.let { target ->
+                        val serverPath = WandServerFileLink.serverPath(target)
+                        if (serverPath != null && baseUrl.isNotBlank()) {
+                            if (WandImage.isImagePath(serverPath) || WandTextPreview.isPreviewableText(serverPath)) {
+                                serverFilePreview = serverPath
+                            } else {
+                                openServerFile(serverPath)
+                            }
+                        } else {
+                            pendingExternalLink = target
                         }
-                        i = end + 2
-                    } else {
-                        append(marker)
-                        i += 2
                     }
-                }
-                raw.startsWith("~~", i) -> {
-                    val end = raw.indexOf("~~", i + 2)
-                    if (end > i + 2) {
-                        withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
-                            append(raw.substring(i + 2, end))
-                        }
-                        i = end + 2
-                    } else {
-                        append("~~")
-                        i += 2
-                    }
-                }
-                raw[i] == '`' -> {
-                    val end = raw.indexOf('`', i + 1)
-                    if (end > i + 1) {
-                        withStyle(
-                            SpanStyle(
-                                color = codeColor,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        ) {
-                            append(raw.substring(i + 1, end))
-                        }
-                        i = end + 1
-                    } else {
-                        append(raw[i])
-                        i++
-                    }
-                }
-                raw[i] == '[' -> {
-                    val closeText = raw.indexOf(']', i + 1)
-                    val openUrl = if (closeText >= 0) raw.getOrNull(closeText + 1) else null
-                    val closeUrl = if (openUrl == '(') markdownLinkDestinationEnd(raw, closeText + 2) else -1
-                    if (closeText > i + 1 && closeUrl > closeText + 2) {
-                        val url = raw.substring(closeText + 2, closeUrl).trim()
-                        withLink(
-                            LinkAnnotation.Url(
-                                url = url,
-                                styles = TextLinkStyles(
-                                    style = SpanStyle(
-                                        color = linkColor,
-                                        textDecoration = TextDecoration.Underline,
-                                    ),
-                                ),
-                                linkInteractionListener = { link ->
-                                    (link as? LinkAnnotation.Url)?.url?.let { target ->
-                                        val serverPath = WandServerFileLink.serverPath(target)
-                                        if (serverPath != null && baseUrl.isNotBlank()) {
-                                            if (WandImage.isImagePath(serverPath) || WandTextPreview.isPreviewableText(serverPath)) {
-                                                // 图片 / 文本类：应用内预览，不落盘、不跳出去。
-                                                serverFilePreview = serverPath
-                                            } else {
-                                                // 未知二进制类型：保留下载 + 外部打开兜底。
-                                                openServerFile(serverPath)
-                                            }
-                                        } else {
-                                            // 外部链接不直接跳浏览器：先确认，避免误触离开会话。
-                                            pendingExternalLink = target
-                                        }
-                                    }
-                                },
-                            )
-                        ) {
-                            append(raw.substring(i + 1, closeText))
-                        }
-                        i = closeUrl + 1
-                    } else {
-                        append(raw[i])
-                        i++
-                    }
-                }
-                raw[i] == '*' || raw[i] == '_' -> {
-                    val marker = raw[i]
-                    val end = raw.indexOf(marker, i + 1)
-                    if (end > i + 1) {
-                        withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-                            append(raw.substring(i + 1, end))
-                        }
-                        i = end + 1
-                    } else {
-                        append(marker)
-                        i++
-                    }
-                }
-                else -> {
-                    val next = nextInlineMarkerIndex(raw, i + 1)
-                    append(raw.substring(i, next))
-                    i = next
-                }
-            }
-        }
+                },
+            )
         }
     }
 
@@ -642,6 +553,103 @@ private fun inlineMarkdown(raw: String): AnnotatedString {
         }
     }
     return annotated
+}
+
+/** 共享的唯一内联解析器：可选装饰仅在解析结束后叠样式，不改 text/链接注解。 */
+internal fun parseInlineMarkdown(
+    raw: String,
+    codeColor: Color,
+    inlineDecoration: InlineMarkdownDecoration? = null,
+    linkFactory: (String) -> LinkAnnotation.Url = { LinkAnnotation.Url(it) },
+): AnnotatedString {
+    val protected = mutableListOf<IntRange>()
+    val parsed = buildAnnotatedString {
+        var i = 0
+        while (i < raw.length) {
+            when {
+                raw[i] == '\\' && i + 1 < raw.length -> {
+                    val start = length
+                    append(raw[i + 1])
+                    if (raw[i + 1] == '@') protected.add(start until length)
+                    i += 2
+                }
+                raw.startsWith("**", i) || raw.startsWith("__", i) -> {
+                    val marker = raw.substring(i, i + 2)
+                    val end = raw.indexOf(marker, i + 2)
+                    if (end > i + 2) {
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                            append(inlineMarkdownPlain(raw.substring(i + 2, end)))
+                        }
+                        i = end + 2
+                    } else {
+                        append(marker)
+                        i += 2
+                    }
+                }
+                raw.startsWith("~~", i) -> {
+                    val end = raw.indexOf("~~", i + 2)
+                    if (end > i + 2) {
+                        withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                            append(raw.substring(i + 2, end))
+                        }
+                        i = end + 2
+                    } else {
+                        append("~~")
+                        i += 2
+                    }
+                }
+                raw[i] == '`' -> {
+                    val end = raw.indexOf('`', i + 1)
+                    if (end > i + 1) {
+                        val start = length
+                        withStyle(SpanStyle(
+                            color = codeColor, fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                        )) { append(raw.substring(i + 1, end)) }
+                        protected.add(start until length)
+                        i = end + 1
+                    } else {
+                        append(raw[i])
+                        i++
+                    }
+                }
+                raw[i] == '[' -> {
+                    val closeText = raw.indexOf(']', i + 1)
+                    val openUrl = if (closeText >= 0) raw.getOrNull(closeText + 1) else null
+                    val closeUrl = if (openUrl == '(') markdownLinkDestinationEnd(raw, closeText + 2) else -1
+                    if (closeText > i + 1 && closeUrl > closeText + 2) {
+                        val url = raw.substring(closeText + 2, closeUrl).trim()
+                        val start = length
+                        withLink(linkFactory(url)) { append(raw.substring(i + 1, closeText)) }
+                        protected.add(start until length)
+                        i = closeUrl + 1
+                    } else {
+                        append(raw[i])
+                        i++
+                    }
+                }
+                raw[i] == '*' || raw[i] == '_' -> {
+                    val marker = raw[i]
+                    val end = raw.indexOf(marker, i + 1)
+                    if (end > i + 1) {
+                        withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                            append(raw.substring(i + 1, end))
+                        }
+                        i = end + 1
+                    } else {
+                        append(marker)
+                        i++
+                    }
+                }
+                else -> {
+                    val next = nextInlineMarkerIndex(raw, i + 1)
+                    append(raw.substring(i, next))
+                    i = next
+                }
+            }
+        }
+    }
+    return inlineDecoration?.invoke(parsed, protected) ?: parsed
 }
 
 /** Finds the closing parenthesis while preserving angle-wrapped paths and parentheses in file names. */

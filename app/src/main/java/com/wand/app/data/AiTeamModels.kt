@@ -201,7 +201,11 @@ data class AiTeamRunDetail(
     val chatTurns: List<ConversationTurn> = emptyList(),
     /** 运行中步骤所在会话的实时状态（sessionId → working / needs_permission …），缺字段即空表。 */
     val memberStates: Map<String, String> = emptyMap(),
+    /** 展示身份按稳定 id 合并最新团队定义；运行快照仍在 run.team，不用于展示改名。 */
+    val displayTeam: AiTeam? = null,
 ) {
+    val presentationTeam: AiTeam? get() = displayTeam ?: run.team
+
     companion object {
         fun parse(item: JSONObject): AiTeamRunDetail? {
             val run = item.obj("run")?.let { AiTeamRun.parse(it) } ?: return null
@@ -210,6 +214,7 @@ data class AiTeamRunDetail(
                 steps = AiTeamStep.parseList(item.arr("steps")),
                 chatTurns = ConversationTurn.parseList(item.arr("chatTurns")) ?: emptyList(),
                 memberStates = parseStateMap(item.obj("memberStates")),
+                displayTeam = item.obj("displayTeam")?.let { AiTeam.parse(it) },
             )
         }
 

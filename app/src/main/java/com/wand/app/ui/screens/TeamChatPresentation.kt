@@ -1,10 +1,14 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import com.wand.app.data.AiTeamMember
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamRun
 import com.wand.app.data.AiTeamStep
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.TurnAuthor
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.WorkspaceSessionSummary
@@ -12,6 +16,9 @@ import com.wand.app.data.WandApiException
 import com.wand.app.data.aiTeamRunActive
 import com.wand.app.data.boardAgentModelName
 import com.wand.app.data.boardTaskProviderLabel
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 /**
@@ -24,14 +31,27 @@ import kotlin.math.roundToInt
 const val CHAT_COLLAPSE_AFTER_LINES = 6
 const val CHAT_COLLAPSE_AFTER_CHARS = 420
 
-/** 成员头像色板长度（变体下标取模用）。 */
-const val MEMBER_AVATAR_VARIANTS = 6
+/** 仅渲染时换署名/头像；不要让改名污染消息指纹、正文与 ACK 匹配。 */
+fun displayTeamTurn(turn: ConversationTurn, detail: AiTeamRunDetail): ConversationTurn {
+    val author = turn.author ?: return turn
+    val member = detail.presentationTeam?.members?.find { it.id == author.id } ?: return turn
+    if (member.name == author.name && member.avatar == author.avatar) return turn
+    return turn.copy(author = author.copy(name = member.name, avatar = member.avatar))
+}
 
 fun chatTurnText(turn: ConversationTurn): String = turn.content
     .filterIsInstance<ContentBlock.Text>()
     .map { it.text.trim() }
     .filter { it.isNotEmpty() }
     .joinToString("\n")
+
+/** 系统事件用一行读完；已有作者前缀的服务端正文不能再重复署名。 */
+fun teamNoticeLine(turn: ConversationTurn): String {
+    val body = chatTurnText(turn).replace(Regex("\\s+"), " ").trim()
+    if (body.isEmpty()) return ""
+    val author = turn.author?.name?.trim().orEmpty()
+    return if (author.isEmpty() || body.startsWith(author)) body else "$author $body"
+}
 
 /** 群聊里一条发言的角色：决定它排在哪一层、长什么样。 */
 enum class TeamChatTurnKind { Notice, User, Leader, Step }
@@ -63,15 +83,18 @@ fun parseStepReport(text: String): TeamStepReport? {
     )
 }
 
-/** 负责人派工那几行：`1. **@实现者** T1 类型与存储迁移（等第 1 项完成后）`。 */
+/** 负责人派工那几行：`1. **@实现者** T1 类型与存储迁移（依据：第 1 步「设计规格」的产物）`。 */
 private val ASSIGN_LINE = Regex("^\\d+\\.\\s*\\*\\*@(.+?)\\*\\*\\s*(.+)$")
+/** 新数据（S5）：`（依据：第 N 步「标题」的产物）`。 */
+private val ASSIGN_BASIS = Regex("^(.+?)（(依据：.+?)）$")
+/** 旧数据：`（等第 1 项完成后）` —— 保留解析，同一个槽位展示，旧运行仍可读。 */
 private val ASSIGN_WAIT = Regex("^(.+?)（(等第.+?)）$")
 
 data class TeamAssignment(
     val member: String,
     val title: String,
-    /** 「等第 1、2 项完成后」这类等待说明；没有就是空串。 */
-    val wait: String,
+    /** 括注内容（依据 / 旧等待说明）；两者都不在就是空串。字段由 v1 的 `wait` 改名而来。 */
+    val note: String,
 )
 
 data class TeamLeaderMessage(
@@ -91,10 +114,10 @@ fun splitLeaderMessage(text: String): TeamLeaderMessage {
             continue
         }
         val rawTitle = match.groupValues[2]
-        val wait = ASSIGN_WAIT.find(rawTitle)
+        val note = ASSIGN_BASIS.find(rawTitle) ?: ASSIGN_WAIT.find(rawTitle)
         assignments.add(
-            if (wait == null) TeamAssignment(match.groupValues[1], rawTitle, "")
-            else TeamAssignment(match.groupValues[1], wait.groupValues[1], wait.groupValues[2]),
+            if (note == null) TeamAssignment(match.groupValues[1], rawTitle, "")
+            else TeamAssignment(match.groupValues[1], note.groupValues[1], note.groupValues[2]),
         )
     }
     return TeamLeaderMessage(head.joinToString("\n").trim(), assignments)
@@ -140,13 +163,261 @@ fun needsCollapse(text: String): Boolean =
     text.length > CHAT_COLLAPSE_AFTER_CHARS || text.split("\n").size > CHAT_COLLAPSE_AFTER_LINES
 
 /**
- * 收起态实际显示的那一段。Web 用 CSS 行夹取，Compose 没有等价物，
- * 所以这里按同一套阈值（6 行 / 420 字）裁，保证两端「收起时看到多少」一致。
+ * 收起态实际显示的那一段 = 「上半部分」：前 6 行且不超过 420 字，被截断一定以 `…` 结尾。
+ * 与 Web `collapsedPreview` 同算法，所以两端「收起时看到多少」逐字相同；
+ * 正因为行数由这里定，UI 不再叠一层 maxLines 截断（两套截断会互相打架）。
  */
 fun collapsedPreview(text: String): String {
-    val byLines = text.lineSequence().take(CHAT_COLLAPSE_AFTER_LINES).joinToString("\n")
-    if (byLines.length <= CHAT_COLLAPSE_AFTER_CHARS) return byLines
-    return byLines.take(CHAT_COLLAPSE_AFTER_CHARS).trimEnd() + "…"
+    val lines = text.split("\n")
+    var kept = lines.take(CHAT_COLLAPSE_AFTER_LINES).joinToString("\n")
+    var truncated = lines.size > CHAT_COLLAPSE_AFTER_LINES
+    if (kept.length > CHAT_COLLAPSE_AFTER_CHARS) {
+        kept = kept.take(CHAT_COLLAPSE_AFTER_CHARS).trimEnd()
+        truncated = true
+    }
+    return if (truncated) "$kept…" else kept
+}
+
+/** 「我」：用户自己的发言没有成员身份，署名固定用这个词（两端同文案）。 */
+const val CHAT_SELF_NAME = "我"
+
+/** 正文为空的发言也要占住气泡/文档卡，不能变成一个空气泡。 */
+const val CHAT_EMPTY_BODY = "（这条消息没有正文）"
+
+/** 超长正文的展开入口；它是覆盖层入口，不是原位展开，所以只有这一个状态。 */
+const val CHAT_EXPAND_LABEL = "点击展开"
+
+/**
+ * 消息形态分流（设计 §2.2，与 Web `teamChatMessageShape` 同名同规则）：
+ * 系统提示行居中、自己的发言走气泡、超阈值正文或负责人派工清单走全宽文档卡。
+ * 「文档性质」的可判定定义就是后两条。
+ */
+enum class TeamChatMessageShape { Notice, Bubble, Document }
+
+fun teamChatMessageShape(
+    kind: TeamChatTurnKind,
+    text: String,
+    assignmentCount: Int = 0,
+): TeamChatMessageShape = when {
+    kind == TeamChatTurnKind.Notice -> TeamChatMessageShape.Notice
+    kind == TeamChatTurnKind.User -> TeamChatMessageShape.Bubble
+    needsCollapse(text) -> TeamChatMessageShape.Document
+    assignmentCount > 0 -> TeamChatMessageShape.Document
+    else -> TeamChatMessageShape.Bubble
+}
+
+/** 弹层副标题里的类型文案（设计 §6.2 的同一张表；只有 user / leader / step 会开弹层）。 */
+fun teamChatDocTypeLabel(kind: TeamChatTurnKind, reportTitle: String? = null): String = when (kind) {
+    TeamChatTurnKind.Step -> reportTitle?.takeIf { it.isNotBlank() }
+        ?.let { "成员报告 · $it" } ?: "成员发言"
+    TeamChatTurnKind.Leader -> "负责人派工"
+    TeamChatTurnKind.User -> "我的消息"
+    // 系统提示行只有一个居中弱化形态，不开全文弹层；真到这里也给一句话，不崩。
+    TeamChatTurnKind.Notice -> "系统提示"
+}
+
+// ---------- @ 流转（R2：只装饰，无源文改写；与 Web 完整源文边界一致） ----------
+
+private const val MENTION_BOUNDARY_CHARS = "（(、「【《，,。；;：:！!？?"
+private const val MENTION_END_CHARS = "（(、「【《，,。；;：:！!？?）)」】》、.]}"
+private val MENTION_WRAPPERS = listOf("**", "__", "~~", "*", "_")
+
+/** 在完整源文找候选，再把合格区间投到预览；绝不把半个长名误认成短别名。 */
+fun mentionRanges(
+    text: String,
+    names: List<String>,
+    source: String = text,
+    protectedRanges: List<IntRange> = emptyList(),
+    pairedWrappers: Boolean = true,
+): List<IntRange> {
+    val candidates = names.map(String::trim).filter(String::isNotEmpty).distinct().sortedByDescending(String::length)
+    if (text.isEmpty() || candidates.isEmpty()) return emptyList()
+    val preview = source != text && text.endsWith("…") && source.startsWith(text.dropLast(1))
+    val cutoff = if (preview) text.length - 1 else text.length
+    val ranges = mutableListOf<IntRange>()
+    var index = 0
+    while (index < source.length) {
+        val before = source.getOrNull(index - 1)
+        val boundary = before == null || before.isWhitespace() || before in MENTION_BOUNDARY_CHARS
+        val wrapper = if (boundary && pairedWrappers) MENTION_WRAPPERS.firstOrNull {
+            source.startsWith("$it@", index)
+        } else null
+        val at = if (wrapper != null) index + wrapper.length else index
+        if (boundary && source.getOrNull(at) == '@') {
+            val hit = candidates.firstOrNull { source.startsWith(it, at + 1) }
+            if (hit != null) {
+                val end = at + 1 + hit.length
+                val closed = wrapper != null && source.startsWith(wrapper, end)
+                val tokenEnd = if (closed) end + wrapper!!.length else end
+                val endBoundary = source.getOrNull(tokenEnd)?.let {
+                    it.isWhitespace() || it in MENTION_END_CHARS
+                } ?: true
+                if ((wrapper == null || closed) && endBoundary && tokenEnd <= cutoff
+                    && protectedRanges.none { it.first <= end - 1 && it.last >= at }
+                ) {
+                    ranges.add(at until end)
+                    index = tokenEnd
+                    continue
+                }
+            }
+        }
+        index++
+    }
+    return ranges
+}
+
+/** AnnotatedString 的文字与内部空格、原有样式/注解不变，只叠品牌底色。 */
+fun mentionAnnotatedText(text: String, names: List<String>, style: SpanStyle, source: String = text): AnnotatedString =
+    buildAnnotatedString {
+        append(text)
+        mentionRanges(text, names, source).forEach { addStyle(style, it.first, it.last + 1) }
+    }
+
+/** Markdown 输出坐标上装饰；保护代码、转义 @、链接，并保持原 Bold/SemiBold 字重。 */
+fun decorateTeamMarkdown(
+    value: AnnotatedString,
+    names: List<String>,
+    protectedRanges: List<IntRange>,
+    style: SpanStyle,
+): AnnotatedString {
+    val ranges = mentionRanges(value.text, names, protectedRanges = protectedRanges, pairedWrappers = false)
+    if (ranges.isEmpty()) return value
+    return AnnotatedString.Builder(value).apply {
+        for (range in ranges) {
+            val strong = value.spanStyles.any { it.start < range.last + 1 && it.end > range.first &&
+                (it.item.fontWeight?.weight ?: 0) >= androidx.compose.ui.text.font.FontWeight.SemiBold.weight }
+            addStyle(if (strong) style.copy(fontWeight = null) else style, range.first, range.last + 1)
+        }
+    }.toAnnotatedString()
+}
+
+/** 完整可见载荷，而非前缀/hash；未来非 text 块身份未知，静态重绑。 */
+data class TeamTurnFingerprint(
+    val role: String,
+    val notice: Boolean,
+    val createdAt: String?,
+    val completedAt: String?,
+    val author: List<String?>?,
+    val blocks: List<String>,
+)
+
+fun teamTurnFingerprint(turn: ConversationTurn): TeamTurnFingerprint? {
+    if (turn.content.any { it !is ContentBlock.Text }) return null
+    val author = turn.author
+    return TeamTurnFingerprint(
+        role = turn.role, notice = turn.notice, createdAt = turn.createdAt, completedAt = turn.completedAt,
+        author = author?.let { listOf(it.id, it.name, it.leader.toString(), it.sessionId,
+            it.provider, it.model, it.thinkingEffort, it.avatar) },
+        blocks = turn.content.map { (it as ContentBlock.Text).text },
+    )
+}
+
+data class PresentedTeamTurn(val presentationId: String, val turn: ConversationTurn, val fingerprint: TeamTurnFingerprint?)
+data class TeamChatProjection(
+    val scope: String,
+    val rows: List<PresentedTeamTurn>,
+    val nextId: Int,
+    /** 只是可证明的新尾候选；前台/贴尾/首次可见资格由页面一次消费。 */
+    val candidates: List<String>,
+)
+
+private fun uniqueTailOverlap(before: List<PresentedTeamTurn>, after: List<TeamTurnFingerprint?>): Int? {
+    var found: Int? = null
+    for (length in 1..minOf(before.size, after.size)) {
+        if (before.takeLast(length).indices.all { index ->
+                before[before.size - length + index].fingerprint?.let { it == after[index] } == true
+            }
+        ) {
+            if (found != null) return null
+            found = length
+        }
+    }
+    return found
+}
+
+/** R7-I/A：当前/上次窗口的薄账本；不可观测同文替换不冒充真实消息 ID。 */
+fun projectTeamTurns(previous: TeamChatProjection?, scope: String, turns: List<ConversationTurn>): TeamChatProjection {
+    val before = if (previous?.scope == scope) previous.rows else emptyList()
+    val fingerprints = turns.map(::teamTurnFingerprint)
+    var nextId = if (previous?.scope == scope) previous.nextId else 0
+    fun allocate(): String = "turn-${++nextId}"
+    val unchanged = before.size == turns.size && before.indices.all { index ->
+        before[index].fingerprint != null && before[index].fingerprint == fingerprints[index]
+    }
+    if (unchanged) return TeamChatProjection(scope, turns.indices.map { index ->
+        before[index].copy(turn = turns[index])
+    }, nextId, emptyList())
+    val overlap = uniqueTailOverlap(before, fingerprints)
+    val oldCounts = before.mapNotNull { it.fingerprint }.groupingBy { it }.eachCount()
+    val newCounts = fingerprints.filterNotNull().groupingBy { it }.eachCount()
+    val lastAt = before.lastOrNull()?.turn?.createdAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+    val rows = mutableListOf<PresentedTeamTurn>()
+    val candidates = mutableListOf<String>()
+    turns.forEachIndexed { index, turn ->
+        val fingerprint = fingerprints[index]
+        val anchored = if (overlap != null && index < overlap) before[before.size - overlap + index] else null
+        val unique = fingerprint != null && (oldCounts[fingerprint] ?: 0) <= 1 && newCounts[fingerprint] == 1
+        val groupAnchored = anchored != null && fingerprint != null && oldCounts[fingerprint] == newCounts[fingerprint]
+            && fingerprints.indices.all { i -> fingerprints[i] != fingerprint ||
+                (overlap != null && i < overlap && before[before.size - overlap + i].fingerprint == fingerprint) }
+        val retained = if (anchored != null && (unique || groupAnchored)) anchored
+            else if (unique) before.firstOrNull { it.fingerprint == fingerprint } else null
+        val id = retained?.presentationId ?: allocate()
+        rows.add(PresentedTeamTurn(id, turn, fingerprint))
+        val at = turn.createdAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+        if (retained == null && unique && ((before.isEmpty() && previous?.scope == scope)
+                || (overlap != null && index >= overlap)) && at != null
+            && (before.isEmpty() || (lastAt != null && at >= lastAt))
+        ) candidates.add(id)
+    }
+    return TeamChatProjection(scope, rows, nextId, candidates)
+}
+
+/** R3 页面级一次性绘制资格，不随 LazyColumn 行回收/重组而重置。 */
+data class TeamArrivalState(
+    val scope: String,
+    val foreground: Boolean = true,
+    val activeIds: Set<String> = emptySet(),
+)
+
+fun teamArrivalForScope(current: TeamArrivalState, scope: String): TeamArrivalState =
+    if (current.scope == scope) current else current.copy(scope = scope, activeIds = emptySet())
+
+fun teamArrivalResumed(current: TeamArrivalState): TeamArrivalState =
+    if (current.foreground) current else current.copy(foreground = true)
+
+/** ON_PAUSE/ON_STOP 重复触发幂等；恢复时不把旧入场资格带回来。 */
+fun teamArrivalPaused(current: TeamArrivalState): TeamArrivalState =
+    if (!current.foreground && current.activeIds.isEmpty()) current
+    else current.copy(foreground = false, activeIds = emptySet())
+
+/** 动态关动效时消费当前批次，row 的绘制分支随即回到 alpha=1/位移=0。 */
+fun teamArrivalReduced(current: TeamArrivalState): TeamArrivalState =
+    if (current.activeIds.isEmpty()) current else current.copy(activeIds = emptySet())
+
+fun teamArrivalAdmitted(
+    current: TeamArrivalState,
+    scope: String,
+    visibleCandidates: Set<String>,
+    pinned: Boolean,
+    motionEnabled: Boolean,
+): TeamArrivalState {
+    val scoped = teamArrivalForScope(current, scope)
+    return if (!scoped.foreground || !pinned || !motionEnabled || visibleCandidates.isEmpty()) scoped
+    else scoped.copy(activeIds = scoped.activeIds + visibleCandidates)
+}
+
+/** 旧 scope 的退场/回收回调不能撤掉新 scope 中恰好同名的本地句柄。 */
+fun teamArrivalConsumed(current: TeamArrivalState, scope: String, id: String): TeamArrivalState =
+    if (current.scope != scope || id !in current.activeIds) current
+    else current.copy(activeIds = current.activeIds - id)
+
+/** Box 首帧即占最终行高；这两个数只供 graphicsLayer 绘制，不参与布局。 */
+data class TeamArrivalFrame(val alpha: Float, val translationY: Float)
+
+fun teamArrivalFrame(progress: Float, motionEnabled: Boolean, travelPx: Float): TeamArrivalFrame {
+    val amount = if (motionEnabled) progress.coerceIn(0f, 1f) else 1f
+    return TeamArrivalFrame(amount, if (motionEnabled) travelPx * (1f - amount) else 0f)
 }
 
 /**
@@ -166,6 +437,12 @@ data class LocalChatTurn(
     val sentAtMillis: Long,
     /** 重拉失败时为真：内容留着，但标成「未确认」。 */
     val unconfirmed: Boolean = false,
+    /** 未拿到成功 ACK 时，任何同文回合都不能自动结算这条发送。 */
+    val accepted: Boolean = false,
+    /** 发送前已看见的回合不能充当本次 ACK。 */
+    val knownFingerprints: List<TeamTurnFingerprint> = emptyList(),
+    /** 成功 ACK 唯一指认的回合；拿不到时保守保留临时行。 */
+    val ackFingerprint: TeamTurnFingerprint? = null,
 )
 
 fun turnEpochMillis(turn: ConversationTurn): Long? {
@@ -174,11 +451,55 @@ fun turnEpochMillis(turn: ConversationTurn): Long? {
     return runCatching { java.time.Instant.parse(raw).toEpochMilli() }.getOrNull()
 }
 
-/** 服务端回包里没有这条 user turn，就按发送时刻判定重拉是否覆盖了它。 */
-fun isConfirmedBy(turn: ConversationTurn, sentAtMillis: Long): Boolean {
-    if (turn.role != "user") return false
-    val at = turnEpochMillis(turn) ?: return false
-    return at >= sentAtMillis
+/** 间隔半小时或跨日时在消息流中标一次时间，短时间连续对话不反复插入。 */
+fun teamChatShowsTime(previous: ConversationTurn?, current: ConversationTurn): Boolean {
+    val currentAt = turnEpochMillis(current) ?: return false
+    val previousAt = previous?.let(::turnEpochMillis) ?: return true
+    val zone = ZoneId.systemDefault()
+    val sameDay = Instant.ofEpochMilli(previousAt).atZone(zone).toLocalDate() ==
+        Instant.ofEpochMilli(currentAt).atZone(zone).toLocalDate()
+    return !sameDay || currentAt - previousAt >= 30 * 60 * 1_000L
+}
+
+fun teamChatTimeLabel(
+    turn: ConversationTurn,
+    nowMillis: Long = System.currentTimeMillis(),
+    zone: ZoneId = ZoneId.systemDefault(),
+): String {
+    val millis = turnEpochMillis(turn) ?: return ""
+    val local = Instant.ofEpochMilli(millis).atZone(zone)
+    val today = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+    val day = when (local.toLocalDate()) {
+        today -> "今天"
+        today.minusDays(1) -> "昨天"
+        else -> "${local.monthValue}月${local.dayOfMonth}日"
+    }
+    return "$day ${local.format(DateTimeFormatter.ofPattern("HH:mm"))}"
+}
+
+/** 从成功 ACK 的消息窗里找唯一的新 user 回合；正文相同但身份不明时不能猜。 */
+fun acknowledgedTeamChatFingerprint(
+    messages: List<ConversationTurn>?,
+    text: String,
+    knownFingerprints: List<TeamTurnFingerprint>,
+): TeamTurnFingerprint? {
+    if (messages == null) return null
+    val fingerprints = messages.map(::teamTurnFingerprint)
+    val known = knownFingerprints.toSet()
+    val anchor = fingerprints.indexOfLast { it != null && it in known }
+    if (known.isNotEmpty() && anchor < 0) return null
+    val candidates = messages.indices.drop(anchor + 1).mapNotNull { index ->
+        val turn = messages[index]
+        val fingerprint = fingerprints[index]
+        fingerprint?.takeIf { turn.role == "user" && chatTurnText(turn) == text && it !in known }
+    }
+    return candidates.singleOrNull()
+}
+
+fun isConfirmedBy(turn: ConversationTurn, row: LocalChatTurn): Boolean {
+    if (!row.accepted || turn.role != "user" || chatTurnText(turn) != row.text) return false
+    val fingerprint = teamTurnFingerprint(turn) ?: return false
+    return fingerprint == row.ackFingerprint && fingerprint !in row.knownFingerprints
 }
 
 /**
@@ -186,8 +507,17 @@ fun isConfirmedBy(turn: ConversationTurn, sentAtMillis: Long): Boolean {
  * 否则把服务端已经回显的那几条撤掉，剩下的继续等下一次重拉。
  */
 fun settleLocalTurns(local: List<LocalChatTurn>, turns: List<ConversationTurn>?): List<LocalChatTurn> =
-    if (turns == null) local.map { it.copy(unconfirmed = true) }
-    else local.filter { row -> turns.none { isConfirmedBy(it, row.sentAtMillis) } }
+    if (turns == null) local.map { if (it.accepted || it.unconfirmed) it else it.copy(unconfirmed = true) }
+    else {
+        val used = BooleanArray(turns.size)
+        local.filter { row ->
+            val matches = turns.indices.filter { index ->
+                !used[index] && isConfirmedBy(turns[index], row)
+            }
+            if (matches.size == 1) used[matches.single()] = true
+            matches.size != 1
+        }
+    }
 
 /** 只有输入被接收前的明确 4xx 拒收可自动回到草稿；其余情况留未确认行。 */
 fun chatSendDefinitelyRejected(error: Throwable): Boolean {
@@ -207,7 +537,7 @@ data class TeamOfficeMember(
 
 /** 从运行步骤投影团队工位；只展示服务端真实状态，不把空闲成员伪装成工作中。 */
 fun teamOfficeMembers(detail: AiTeamRunDetail): List<TeamOfficeMember> =
-    detail.run.team?.members.orEmpty().map { member ->
+    detail.presentationTeam?.members.orEmpty().map { member ->
         val own = detail.steps.filter { it.memberId == member.id }
         val step = own.firstOrNull { it.status == "running" } ?: own.maxByOrNull { it.seq }
         val activity = step?.sessionId?.let { detail.memberStates[it] }
@@ -245,11 +575,133 @@ fun newestRunOnSameChat(current: AiTeamRun, runs: List<AiTeamRun>): String? {
 fun groupChatRunId(session: WorkspaceSessionSummary): String? =
     session.teamChat?.runId?.takeIf { it.isNotBlank() }
 
-/** 成员头像变体：按 id / 名字 / 头像 key 散列，同一成员在任何一条消息上颜色一致。 */
-fun memberAvatarVariant(authorId: String?, name: String, avatar: String?): Int {
-    val seed = "${authorId.orEmpty()}#$name#${avatar.orEmpty()}"
-    return (seed.hashCode() and Int.MAX_VALUE) % MEMBER_AVATAR_VARIANTS
+// ---------- 头像：谁的脸（设计 §5，纯函数与 Web chatAvatarSpec / memberCoatIndex 同名同算法） ----------
+
+/**
+ * 像素猫毛色（逐字照拄 Web `cat-coats.ts`）。`light` / `eye` 缺省时用 base / 瞳色默认值，
+ * 与 Web `light ?? base` / `eye ?? #2D2D2D` 一致。
+ */
+data class CatCoat(
+    val name: String,
+    val base: Int,
+    val dark: Int,
+    val light: Int = base,
+    val eye: Int = CAT_COAT_DEFAULT_EYE,
+)
+
+val CAT_COAT_DEFAULT_EYE: Int = 0xFF2D2D2D.toInt()
+val CAT_COAT_WHITE: Int = 0xFFFFFFFF.toInt()
+val CAT_COAT_NOSE: Int = 0xFFF28B9A.toInt()
+
+val CAT_COATS: List<CatCoat> = listOf(
+    CatCoat("橘猫", 0xFFF0923A.toInt(), 0xFFC46A1A.toInt()),
+    CatCoat("银渐层", 0xFF9EAAB8.toInt(), 0xFF6B7B8D.toInt(), light = 0xFFC5CED8.toInt(), eye = 0xFF3F8F55.toInt()),
+    CatCoat("奶牛猫", 0xFFF4F1EA.toInt(), 0xFF2F2F33.toInt()),
+    CatCoat("黑猫", 0xFF3A3A40.toInt(), 0xFF1E1E22.toInt(), light = 0xFF55555C.toInt(), eye = 0xFFE9C63F.toInt()),
+    CatCoat("暹罗", 0xFFE9DCC4.toInt(), 0xFF6B4A36.toInt(), light = 0xFFF4ECDD.toInt(), eye = 0xFF3F7FD8.toInt()),
+    CatCoat("蓝猫", 0xFF7C8BA6.toInt(), 0xFF56627A.toInt(), light = 0xFF98A6BE.toInt(), eye = 0xFFE0A43A.toInt()),
+    CatCoat("三花", 0xFFF2E6D4.toInt(), 0xFFC46A1A.toInt(), light = 0xFF3A3A40.toInt()),
+    CatCoat("樱粉", 0xFFF2B8C6.toInt(), 0xFFC9788D.toInt(), light = 0xFFF8D3DC.toInt()),
+)
+
+/**
+ * 10×10 像素格，**逐格照拄 Web `catCoatGrid` 的色块表**（T 透明、b 底、d 深、l 亮、w 白、
+ * k 瞳、p 鼻）。放在纯 Kotlin 里是为了单测能逐格对齐两端，不用起 Compose。
+ */
+val CAT_COAT_GRID_ROWS: List<String> = listOf(
+    "TdTTTTTTdT",
+    "dbdTTTTdbd",
+    "dbbbbbbbbd",
+    "bbwkbbwkbb",
+    "bbwwbbwwbb",
+    "bbbbppbbbb",
+    "bdblbblbdb",
+    "TbbbbbbbbT",
+    "TTbdbbdbTT",
+    "TTTbTTbTTT",
+)
+
+/** 毛色下标：负数也落回 0..7（`%` 在 Kotlin 里可能为负，这里统一成非负）。 */
+private fun coatIndex(coat: Int): Int = ((coat % CAT_COATS.size) + CAT_COATS.size) % CAT_COATS.size
+
+/** 像素猫网格：`null` 是透明（两端只用同一张表，不各自画）。 */
+fun catCoatGrid(coat: Int): List<List<Int?>> {
+    val entry = CAT_COATS[coatIndex(coat)]
+    return CAT_COAT_GRID_ROWS.map { row ->
+        row.map { cell ->
+            when (cell) {
+                'T' -> null
+                'b' -> entry.base
+                'd' -> entry.dark
+                'l' -> entry.light
+                'w' -> CAT_COAT_WHITE
+                'k' -> entry.eye
+                else -> CAT_COAT_NOSE
+            }
+        }
+    }
 }
+
+/** Web `cat-coats.ts` 的逐位复刻：`h = (h shl 5) - h + c`，Int 溢出语义与 JS `|0` 一致。 */
+private fun coatHash(seed: String): Int {
+    var hash = 0
+    for (c in seed) hash = (hash shl 5) - hash + c.code
+    return hash
+}
+
+/** 与 JS `Math.abs` 一致：`Int.MIN_VALUE` 取绝对值会溢出，先抬到 Long 再取模。 */
+private fun coatHashAbs(hash: Int): Long =
+    if (hash >= 0) hash.toLong()
+    else if (hash == Int.MIN_VALUE) 2147483648L
+    else -hash.toLong()
+
+private val CAT_AVATAR_MARK = Regex("^cat:(\\d+)$")
+
+/**
+ * 头像毛色下标（对齐 Web `memberCoatIndex`）：`cat:<n>` 显式指定，否则按 id（新成员还没 id 时按名字）
+ * 哈希。**不能**用 [memberAvatarVariant] 那套种子/取模代替，同一成员两端会算出不同的毛色。
+ */
+fun memberCoatIndex(authorId: String?, name: String?, avatar: String?): Int {
+    val explicit = CAT_AVATAR_MARK.find(avatar.orEmpty())
+    val explicitIndex = explicit?.groupValues?.get(1)?.toIntOrNull()
+    if (explicitIndex != null) return explicitIndex % CAT_COATS.size
+    val seed = authorId?.takeIf { it.isNotBlank() }
+        ?: name?.takeIf { it.isNotBlank() }
+        ?: "member"
+    return (coatHashAbs(coatHash(seed)) % CAT_COATS.size).toInt()
+}
+
+/** 一条发言的头像来源（设计 §5.2）：上传图 > 显式毛色 > 派生毛色 > 默认 APP logo。 */
+sealed interface ChatAvatarSpec {
+    data class Upload(val src: String) : ChatAvatarSpec
+    data class Cat(val coat: Int) : ChatAvatarSpec
+    data object Brand : ChatAvatarSpec
+}
+
+fun chatAvatarSpec(author: TurnAuthor?): ChatAvatarSpec {
+    val avatar = author?.avatar.orEmpty()
+    if (avatar.startsWith("data:image/")) return ChatAvatarSpec.Upload(avatar)
+    // 能定位到成员身份才给猫脸（显式毛色与派生毛色都由 memberCoatIndex 裁决）；
+    // 「我」和没有署名的发言才回落成默认 APP logo。
+    if (author != null && (!author.id.isNullOrBlank() || author.name.isNotBlank())) {
+        return ChatAvatarSpec.Cat(memberCoatIndex(author.id, author.name, avatar))
+    }
+    return ChatAvatarSpec.Brand
+}
+
+/** 全文快照：列表 key/owner 共用 scoped 本地句柄；关闭期间正文/名单保持原值。 */
+data class TeamChatDoc(
+    val presentationId: String,
+    val scope: String,
+    val text: String,
+    val name: String,
+    val clock: String,
+    val typeLabel: String,
+    val chip: String = "",
+    val avatar: ChatAvatarSpec = ChatAvatarSpec.Brand,
+    /** 明确来源，自己的正式/临时消息传空名单；打开后 roster 更新不改层内内容。 */
+    val mentionNames: List<String> = emptyList(),
+)
 
 // ---------- 正在输出的成员（§4.9 live 卡片，口径逐条对齐 Web team-chat-view.tsx） ----------
 

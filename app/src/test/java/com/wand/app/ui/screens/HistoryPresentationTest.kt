@@ -147,6 +147,42 @@ class HistoryPresentationTest {
     }
 
     @Test
+    fun activityDockDropsFinishedRunsAndKeepsTheOnesNeedingAttention() {
+        fun activity(
+            id: String,
+            running: Boolean = false,
+            failed: Boolean = false,
+            pending: Boolean = false,
+            receipt: AsyncDispatchReceipt? = null,
+            sessionRunning: Boolean = true,
+        ) = SubagentActivity(
+            id = id,
+            meta = SubagentMeta(id, "Explore", null),
+            blocks = emptyList(),
+            running = running,
+            failed = failed,
+            interrupted = false,
+            pending = pending,
+            receipt = receipt,
+            sessionRunning = sessionRunning,
+        )
+        val activities = listOf(
+            activity("done"),
+            activity("stale", pending = true),
+            activity("running", running = true),
+            activity("failed", failed = true),
+            activity("background", receipt = AsyncDispatchReceipt("run-1", "/tmp/out")),
+            activity("backgroundDone",
+                receipt = AsyncDispatchReceipt("run-2", "/tmp/out"), sessionRunning = false),
+        )
+
+        assertEquals(
+            listOf("running", "failed", "background"),
+            subagentDockActivities(activities).map { it.id },
+        )
+    }
+
+    @Test
     fun aNewHumanTurnKeepsPreviousAgentsAvailableButPending() {
         val meta = SubagentMeta("task-old", "Explore", null)
         val messages = listOf(

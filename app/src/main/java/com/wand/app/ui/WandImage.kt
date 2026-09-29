@@ -380,9 +380,9 @@ fun WandFileChip(path: String, modifier: Modifier = Modifier) {
  */
 data class ParsedUserText(val paths: List<String>, val body: String)
 
-// ^\s*[附件已上传，请查看以下文件:\n<paths>]\n+ —— 与网页正则等价。
+// 附件单独发送会被 trim() 去掉结尾换行，也应识别为附件消息。
 private val ATTACHMENT_PREFIX_RE: Regex =
-    Regex("^\\s*\\[附件已上传，请查看以下文件:\\n([\\s\\S]*?)\\]\\n+")
+    Regex("^\\s*\\[附件已上传，请查看以下文件:\\n([\\s\\S]*?)\\](?:\\n+|$)")
 
 /** 剥离附件前缀；无前缀时 paths 为空、body 即原文（行为与无附件时一致）。 */
 fun parseUserAttachmentText(text: String): ParsedUserText {

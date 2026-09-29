@@ -61,12 +61,14 @@ internal fun rememberVoiceInputHandle(
     onToast: (String) -> Unit,
     onCommit: (String) -> Unit,
     sessionKey: Any? = null,
+    onCommitForPress: (() -> (String) -> Unit)? = null,
 ): VoiceInputHandle {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val currentIsHapticEnabled = rememberUpdatedState(isHapticEnabled)
     val currentOnToast = rememberUpdatedState(onToast)
     val currentOnCommit = rememberUpdatedState(onCommit)
+    val currentOnCommitForPress = rememberUpdatedState(onCommitForPress)
     val voice = remember(context, sessionKey) { VoiceInputController(context) }
 
     DisposableEffect(voice) {
@@ -92,7 +94,7 @@ internal fun rememberVoiceInputHandle(
                 }
                 // Capture the destination when recording begins, before navigation can
                 // replace rememberUpdatedState with another session's composer.
-                val commitForPress = currentOnCommit.value
+                val commitForPress = currentOnCommitForPress.value?.invoke() ?: currentOnCommit.value
                 voice.beginPress(commitForPress)
             } else {
                 micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
