@@ -70,6 +70,8 @@ public class ConnectActivity extends AppCompatActivity {
     private boolean managementMode = false;
     private String returnServerId;
     private boolean profilesChanged = false;
+    private boolean openingComplete = true;
+    private ServerProfile pendingLaunchProfile;
 
     private static final class ProbeResult {
         final String error;
@@ -128,17 +130,29 @@ public class ConnectActivity extends AppCompatActivity {
         managementMode = getIntent().getBooleanExtra(EXTRA_MANAGEMENT_MODE, false);
         returnServerId = getIntent().getStringExtra(EXTRA_RETURN_SERVER_ID);
         profilesChanged = getIntent().getBooleanExtra(EXTRA_PROFILES_CHANGED, false);
+        boolean launcherEntry = Intent.ACTION_MAIN.equals(getIntent().getAction())
+                && getIntent().hasCategory(Intent.CATEGORY_LAUNCHER);
+        boolean playOpening = savedInstanceState == null && !managementMode && launcherEntry;
+        openingComplete = !playOpening;
         // ConnectActivity is the server-management boundary. A previous native runtime
         // must not keep reconnecting or emitting notifications while profiles are edited.
         if (!managementMode) {
             SessionWatcher.INSTANCE.stop();
             stopService(new Intent(this, WandForegroundService.class));
         }
-        connectView = new ConnectComposeView(this);
+        connectView = new ConnectComposeView(this, playOpening);
         // serverStore 必须先于 listener 注册完成：listener 回调（onPickServer 等）
         // 虽然当前都是用户触发，但不依赖「注册时序」这种隐含假设更稳。
         serverStore = new ServerStore(this);
         connectView.setListener(new ConnectUiListener() {
+            @Override public void onOpeningComplete() {
+                openingComplete = true;
+                if (pendingLaunchProfile != null && !isFinishing() && !isDestroyed()) {
+                    ServerProfile profile = pendingLaunchProfile;
+                    pendingLaunchProfile = null;
+                    launchHome(profile);
+                }
+            }
             @Override public void onConnect() {
                 attemptConnect();
             }
@@ -149,7 +163,8 @@ public class ConnectActivity extends AppCompatActivity {
                 abortAutoConnect(false);
             }
             @Override public void onSwitchServer() {
-                abortAutoConnect(true);
+                // 服务器列表现在是主要入口；展开后不自动弹出键盘遮住列表。
+                abortAutoConnect(false);
             }
             @Override public void onPickServer(String serverId) {
                         ServerProfile profile = serverStore.getServerProfile(serverId);
@@ -543,7 +558,11 @@ public class ConnectActivity extends AppCompatActivity {
         ServerProfile profile = serverStore.saveServerProfile(result.serverUrl, result.appToken);
         serverStore.setActiveServerId(profile.getId());
         WandHttp.resetClient(profile.getBaseUrl());
-        launchHome(profile);
+        if (openingComplete) {
+            launchHome(profile);
+        } else {
+            pendingLaunchProfile = profile;
+        }
     }
 
     private void cancelCurrentTask() {
@@ -556,6 +575,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        pendingLaunchProfile = null;
         autoConnecting = false;
         autoConnectProfile = null;
         cancelAutoConnectRetry();

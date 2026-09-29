@@ -358,6 +358,10 @@ object WandMotion {
     /** 标准（出现 / 消失 / 折叠展开）。 */
     const val normal = 240
 
+    /** Launcher opening: a complete source → workspace → phone signal journey. */
+    const val openingJourneyDuration = 960
+    const val openingSettle = 120
+
     /** 呼吸动画单程时长。 */
     const val breathDuration = 1_600
 
@@ -384,6 +388,9 @@ object WandMotion {
     fun <T> tweenNormal(): TweenSpec<T> = tween(normal, easing = emphasized)
 
     fun <T> tweenEnter(): TweenSpec<T> = tween(normal, easing = enterEasing)
+
+    fun <T> openingJourney(): TweenSpec<T> =
+        tween(openingJourneyDuration, easing = emphasized)
 
     fun <T> tweenExit(): TweenSpec<T> = tween(fast, easing = exitEasing)
 
