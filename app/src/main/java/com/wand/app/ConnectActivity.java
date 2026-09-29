@@ -160,11 +160,11 @@ public class ConnectActivity extends AppCompatActivity {
                 requestQrScan();
             }
             @Override public void onCancelAutoConnect() {
-                abortAutoConnect(false);
+                abortAutoConnect();
             }
             @Override public void onSwitchServer() {
                 // 服务器列表现在是主要入口；展开后不自动弹出键盘遮住列表。
-                abortAutoConnect(false);
+                abortAutoConnect();
             }
             @Override public void onPickServer(String serverId) {
                         ServerProfile profile = serverStore.getServerProfile(serverId);
@@ -451,10 +451,8 @@ public class ConnectActivity extends AppCompatActivity {
      * 用户在自动连接界面点了"取消"或"管理服务器"。立刻把 autoConnecting
      * 翻成 false (兜住后台请求姗姗来迟的回调), 中断网络任务, 露表单。
      *
-     * @param focusInput true 表示管理服务器流程, 需要顺手聚焦输入框 + 全选
-     *                   文本; false 表示纯取消, 不打扰用户。
      */
-    private void abortAutoConnect(boolean focusInput) {
+    private void abortAutoConnect() {
         if (!autoConnecting && !connectView.isAutoConnectVisible()) {
             return;
         }
@@ -463,9 +461,6 @@ public class ConnectActivity extends AppCompatActivity {
         cancelAutoConnectRetry();
         cancelCurrentTask();
         showForm();
-        if (focusInput) {
-            connectView.focusInput();
-        }
     }
 
     private void showForm() {

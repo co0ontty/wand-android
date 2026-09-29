@@ -45,15 +45,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -115,7 +111,6 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
     private var uiServerProfiles by mutableStateOf(emptyList<ServerProfile>())
     private var uiActiveServerId by mutableStateOf<String?>(null)
     private var uiConnectingServerId by mutableStateOf<String?>(null)
-    private var focusGeneration by mutableIntStateOf(0)
     private var openingVisible by mutableStateOf(playOpening)
     private var listener: ConnectUiListener? = null
 
@@ -170,10 +165,6 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
         uiActiveServerId = activeServerId
     }
 
-    fun focusInput() {
-        focusGeneration += 1
-    }
-
     @Composable
     override fun Content() {
         WandTheme {
@@ -197,7 +188,6 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
                 serverProfiles = uiServerProfiles,
                 activeServerId = uiActiveServerId,
                 connectingServerId = uiConnectingServerId,
-                focusGeneration = focusGeneration,
                 openingVisible = openingVisible,
                 onOpeningComplete = {
                     openingVisible = false
@@ -223,23 +213,15 @@ private fun ConnectScreen(
     serverProfiles: List<ServerProfile>,
     activeServerId: String?,
     connectingServerId: String?,
-    focusGeneration: Int,
     openingVisible: Boolean,
     onOpeningComplete: () -> Unit,
     listener: ConnectUiListener?,
 ) {
-    val focusRequester = androidx.compose.runtime.remember { FocusRequester() }
     val context = LocalContext.current
     val clipboard = remember(context) { context.getSystemService(ClipboardManager::class.java) }
     var fieldValue by androidx.compose.runtime.remember { mutableStateOf(TextFieldValue(inputValue)) }
     androidx.compose.runtime.LaunchedEffect(inputValue) {
         if (inputValue != fieldValue.text) fieldValue = TextFieldValue(inputValue)
-    }
-    androidx.compose.runtime.LaunchedEffect(focusGeneration) {
-        if (focusGeneration > 0) {
-            fieldValue = fieldValue.copy(selection = TextRange(0, fieldValue.text.length))
-            focusRequester.requestFocus()
-        }
     }
     var pendingRemoval by androidx.compose.runtime.remember { mutableStateOf<ServerProfile?>(null) }
     var confirmClear by androidx.compose.runtime.remember { mutableStateOf(false) }
@@ -533,9 +515,8 @@ private fun ConnectScreen(
                                                 compact = true,
                                             )
                                         },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .focusRequester(focusRequester),
+                                    modifier = Modifier
+                                        .fillMaxWidth(),
                                     )
                                     AnimatedVisibility(
                                         visible = hasConnectionCode && statusMessage == null,
