@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -55,6 +56,7 @@ class HomeActivity : AppCompatActivity() {
     private var currentServerId: String? = null
     private var serverProfilesSnapshot: List<ServerProfile> = emptyList()
     private var activeServerSnapshotId: String? = null
+    private lateinit var homeActionsState: MutableState<HomeActions>
     private var runtimeReady = false
     private var hasResumedRuntime = false
     /** 同一 Activity 的认证重试不应重复弹出同一个更新提示。 */
@@ -336,6 +338,7 @@ class HomeActivity : AppCompatActivity() {
                 setHomeListMode = { mode -> serverStore.homeListMode = mode },
             ),
         )
+        homeActionsState = mutableStateOf(actions)
 
         if (serverStore.isKeepAliveEnabled) {
             setKeepAlive(true, serverProfile.id)
@@ -388,7 +391,7 @@ class HomeActivity : AppCompatActivity() {
                 Box(Modifier.fillMaxSize()) {
                     WandApp(
                         api = api,
-                        actions = actions,
+                        actions = homeActionsState.value,
                         initialQuickAction = initialQuickAction,
                         onAuthenticated = {
                             // 认证成功后启动会话通知中枢（全局 WS → 进度/完成/授权通知）。
@@ -494,10 +497,45 @@ class HomeActivity : AppCompatActivity() {
             hasResumedRuntime = true
             return
         }
+        refreshServerProfiles()
+    }
+
+    private fun refreshServerProfiles() {
         val store = ServerStore(this)
         val profiles = store.serverProfiles.toList()
         val activeId = store.activeServerProfile?.id
         if (profiles == serverProfilesSnapshot && activeId == activeServerSnapshotId) return
+
+        if (hasSameServerConnectionIdentity(
+                serverProfilesSnapshot,
+                activeServerSnapshotId,
+                profiles,
+                activeId,
+            )
+        ) {
+            // A local alias edit changes only display text. Keep the authenticated API, Compose
+            // navigation stack, session drafts, and watcher alive while updating every name.
+            val previous = homeActionsState.value
+            val names = profiles.associate { it.id to it.displayName }
+            val currentName = names[currentServerId] ?: previous.connection.serverDisplayName
+            homeActionsState.value = HomeActions(
+                connection = previous.connection.copy(serverDisplayName = currentName),
+                servers = previous.servers.map { connection ->
+                    HomeServerConnection(
+                        serverId = connection.serverId,
+                        displayName = names[connection.serverId] ?: connection.displayName,
+                        serverUrl = connection.serverUrl,
+                        hasToken = connection.hasToken,
+                        api = connection.api,
+                    )
+                },
+                navigation = previous.navigation,
+                settings = previous.settings,
+            )
+            serverProfilesSnapshot = profiles
+            activeServerSnapshotId = activeId
+            return
+        }
 
         val target = currentServerId?.let(store::getServerProfile)
             ?: store.activeServerProfile
@@ -535,6 +573,8 @@ class HomeActivity : AppCompatActivity() {
             stopServerRuntime()
             startActivity(replacement)
             finish()
+        } else if (runtimeReady && this::homeActionsState.isInitialized) {
+            refreshServerProfiles()
         }
     }
 
@@ -598,3 +638,13 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 }
+
+/** An alias changes presentation only; all connection and routing fields remain identical. */
+internal fun hasSameServerConnectionIdentity(
+    previousProfiles: List<ServerProfile>,
+    previousActiveServerId: String?,
+    currentProfiles: List<ServerProfile>,
+    currentActiveServerId: String?,
+): Boolean = previousActiveServerId == currentActiveServerId &&
+    previousProfiles.map { it.copy(customName = null) } ==
+        currentProfiles.map { it.copy(customName = null) }

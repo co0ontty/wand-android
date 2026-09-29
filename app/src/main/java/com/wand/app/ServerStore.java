@@ -95,6 +95,28 @@ public class ServerStore {
         }
     }
 
+    /** Sets an endpoint's local alias; an empty name clears it. Returns null for an unknown ID. */
+    public ServerProfile setServerProfileName(String id, String name) {
+        if (id == null) return null;
+        synchronized (PROFILE_LOCK) {
+            ServerProfilesState current = readProfileStateLocked();
+            ServerProfile updated = null;
+            for (ServerProfile profile : current.getProfiles()) {
+                if (id.equals(profile.getId())) {
+                    updated = profile;
+                    break;
+                }
+            }
+            if (updated == null) return null;
+            ServerProfilesState next = ServerProfiles.withCustomName(current, id, name);
+            if (!next.equals(current)) writeProfileStateLocked(next);
+            for (ServerProfile profile : next.getProfiles()) {
+                if (id.equals(profile.getId())) return profile;
+            }
+            throw new IllegalStateException("Renamed profile disappeared");
+        }
+    }
+
     /** Selects a saved endpoint. Null disconnects without deleting any saved profiles. */
     public void setActiveServerId(String id) {
         synchronized (PROFILE_LOCK) {

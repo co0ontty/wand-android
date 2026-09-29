@@ -122,6 +122,44 @@ class ServerProfilesTest {
         assertNull(ServerProfiles.decodeOrNull("{\"version\":2,\"profiles\":{}}"))
     }
 
+    @Test
+    fun renamingProfileKeepsIdentityCredentialOrderAndActiveSelection() {
+        var state = ServerProfiles.withSavedProfile(ServerProfilesState(), "one.example", "one-token")
+        val first = state.profiles.single()
+        state = ServerProfiles.withActiveServerId(state, first.id)
+        state = ServerProfiles.withSavedProfile(state, "two.example", "two-token")
+        val before = state.profiles
+
+        state = ServerProfiles.withCustomName(state, first.id, "  工作站  ")
+        val renamed = state.profiles.last()
+
+        assertEquals("工作站", renamed.customName)
+        assertEquals("工作站", renamed.displayName)
+        assertEquals(before.map { it.id }, state.profiles.map { it.id })
+        assertEquals(before.map { it.baseUrl }, state.profiles.map { it.baseUrl })
+        assertEquals(before.map { it.token }, state.profiles.map { it.token })
+        assertEquals(first.id, state.activeServerId)
+        assertEquals(before.first(), state.profiles.first())
+
+        val restored = ServerProfiles.decode(ServerProfiles.encode(state))
+        assertEquals(state, restored)
+        val reauthenticated = ServerProfiles.withSavedProfile(restored, first.baseUrl, "new-token")
+        assertEquals("工作站", reauthenticated.profiles.first().displayName)
+        assertEquals("new-token", reauthenticated.profiles.first().token)
+    }
+
+    @Test
+    fun clearingAliasRestoresEndpointNameAndUnknownIdDoesNothing() {
+        val original = ServerProfiles.withSavedProfile(ServerProfilesState(), "https://work.example", null)
+        val id = original.profiles.single().id
+        val renamed = ServerProfiles.withCustomName(original, id, "办公服务器")
+
+        assertEquals(original, ServerProfiles.withCustomName(original, "missing", "其他"))
+        assertEquals(original, ServerProfiles.withCustomName(renamed, id, "  \n "))
+        assertEquals("work.example", ServerProfiles.withCustomName(renamed, id, null)
+            .profiles.single().displayName)
+    }
+
     private fun connectCode(url: String, token: String, urlSafe: Boolean): String {
         val bytes = "$url#$token".toByteArray(StandardCharsets.UTF_8)
         val encoder = if (urlSafe) Base64.getUrlEncoder() else Base64.getEncoder()

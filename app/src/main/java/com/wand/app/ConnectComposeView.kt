@@ -8,6 +8,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,6 +53,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -77,6 +81,8 @@ import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
+import com.wand.app.ui.components.WandInlinePanel
+import com.wand.app.ui.components.WandMorphingIcon
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.data.ServerProfile
 import com.wand.app.ui.theme.AmbientBackground
@@ -95,6 +101,7 @@ interface ConnectUiListener {
     fun onCancelAutoConnect()
     fun onSwitchServer()
     fun onPickServer(serverId: String)
+    fun onRenameServer(serverId: String, name: String)
     fun onRemoveServer(serverId: String)
     fun onClearServers()
 }
@@ -102,6 +109,7 @@ interface ConnectUiListener {
 /** Java 连接流程的 Compose 显示 adapter。业务状态仍由 ConnectActivity 掌管。 */
 class ConnectComposeView(context: Context, private val playOpening: Boolean) : AbstractComposeView(context) {
     private var uiInputValue by mutableStateOf("")
+    private var uiServerAlias by mutableStateOf("")
     private var uiAutoConnecting by mutableStateOf(false)
     private var uiAutoStatus by mutableStateOf(context.getString(R.string.auto_connecting))
     private var uiConnecting by mutableStateOf(false)
@@ -123,6 +131,8 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
     }
 
     fun getInputValue(): String = uiInputValue
+
+    fun getServerAlias(): String = uiServerAlias
 
     fun showAutoConnecting(status: String) {
         uiAutoStatus = status
@@ -170,11 +180,13 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
         WandTheme {
             ConnectScreen(
                 inputValue = uiInputValue,
+                serverAlias = uiServerAlias,
                 onInputValueChange = {
                     uiInputValue = it
                     statusMessage = null
                     statusServerId = null
                 },
+                onServerAliasChange = { uiServerAlias = it },
                 onPasteUnavailable = {
                     statusServerId = null
                     showStatus("剪贴板中没有可粘贴的连接码或地址", false)
@@ -202,7 +214,9 @@ class ConnectComposeView(context: Context, private val playOpening: Boolean) : A
 @Composable
 private fun ConnectScreen(
     inputValue: String,
+    serverAlias: String,
     onInputValueChange: (String) -> Unit,
+    onServerAliasChange: (String) -> Unit,
     onPasteUnavailable: () -> Unit,
     autoConnecting: Boolean,
     autoStatus: String,
@@ -225,6 +239,7 @@ private fun ConnectScreen(
     }
     var pendingRemoval by androidx.compose.runtime.remember { mutableStateOf<ServerProfile?>(null) }
     var confirmClear by androidx.compose.runtime.remember { mutableStateOf(false) }
+    var addServerExpanded by remember { mutableStateOf(false) }
     val reduceMotion = reduceMotionEnabled()
     val hasConnectionCode = remember(inputValue) {
         inputValue.isNotBlank() && com.wand.app.data.WandAuth.decodeConnectCode(inputValue) != null
@@ -284,7 +299,7 @@ private fun ConnectScreen(
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(horizontal = WandSpacing.lg, vertical = WandSpacing.xxl),
+                    .padding(horizontal = WandSpacing.lg, vertical = WandSpacing.lg),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Column(
@@ -298,7 +313,7 @@ private fun ConnectScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(WandSpacing.sm),
                     ) {
-                        WandBrandMark(size = 40)
+                        WandBrandMark(size = 32)
                         Column {
                             Text(
                                 "WAND",
@@ -314,29 +329,29 @@ private fun ConnectScreen(
                     }
                     Text(
                         if (autoConnecting) "正在接通工作台" else if (serverProfiles.isEmpty())
-                            "连接你的工作台" else "选择一台服务器",
+                            "连接你的工作台" else "选择服务器",
                         style = MaterialTheme.typography.headlineSmall,
                         color = WandColors.textPrimary,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = WandSpacing.xxl),
+                            .padding(top = WandSpacing.lg),
                     )
                     Text(
-                        if (autoConnecting) "已保存的工作区正在恢复连接。" else if (serverProfiles.isEmpty())
+                        if (autoConnecting) "已保存的工作台正在恢复连接。" else if (serverProfiles.isEmpty())
                             "添加 Wand 服务器，终端、会话与任务即可在手机上继续。"
-                        else "从已保存的服务器继续，或在下方连接新的工作区。",
+                        else "点按一台服务器，继续上次的工作。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = WandColors.textSecondary,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = WandSpacing.xs),
                     )
-                    WandConnectionScene(
-                        progress = 1f,
-                        height = if (serverProfiles.isEmpty()) 160.dp else 124.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = WandSpacing.md),
+                    ConnectionFeedback(
+                        if (!autoConnecting && serverProfiles.isNotEmpty() &&
+                            !addServerExpanded && statusServerId == null
+                        ) statusMessage else null,
+                        statusIsError,
+                        reduceMotion,
                     )
                     AnimatedVisibility(
                         visible = !autoConnecting && serverProfiles.isNotEmpty(),
@@ -354,14 +369,28 @@ private fun ConnectScreen(
                             statusIsError = statusIsError,
                             enabled = !connecting,
                             onPickServer = { listener?.onPickServer(it) },
+                            onRenameServer = { id, name -> listener?.onRenameServer(id, name) },
                             onRemoveServer = { pendingRemoval = it },
                             onClearServers = { confirmClear = true },
                         )
                     }
+                    if (!autoConnecting && serverProfiles.isNotEmpty()) {
+                        AddServerTrigger(
+                            expanded = addServerExpanded,
+                            enabled = !connecting,
+                            onClick = { addServerExpanded = !addServerExpanded },
+                            modifier = Modifier.padding(top = WandSpacing.md),
+                        )
+                    }
+                    WandInlinePanel(
+                        visible = autoConnecting || serverProfiles.isEmpty() || addServerExpanded,
+                        growFrom = Alignment.Top,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                     WandCard(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = if (autoConnecting || serverProfiles.isEmpty()) 0.dp else WandSpacing.md),
+                            .padding(top = if (autoConnecting || serverProfiles.isEmpty()) WandSpacing.lg else WandSpacing.xs),
                         contentPadding = PaddingValues(WandSpacing.lg),
                     ) {
                         AnimatedContent(
@@ -532,6 +561,25 @@ private fun ConnectScreen(
                                             modifier = Modifier.padding(top = WandSpacing.xs),
                                         )
                                     }
+                                    WandTextField(
+                                        value = serverAlias,
+                                        onValueChange = {
+                                            onServerAliasChange(it.replace('\n', ' ').replace('\r', ' ').take(32))
+                                        },
+                                        label = "服务器名称（可选）",
+                                        placeholder = "例如：家里的工作台",
+                                        singleLine = true,
+                                        enabled = !connecting,
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                        keyboardActions = KeyboardActions(onDone = { listener?.onConnect() }),
+                                        modifier = Modifier.fillMaxWidth().padding(top = WandSpacing.sm),
+                                    )
+                                    Text(
+                                        "这个名称只在这台设备显示，之后可随时修改。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = WandColors.textSecondary,
+                                        modifier = Modifier.padding(top = WandSpacing.xs),
+                                    )
                                     ConnectionFeedback(
                                         if (statusServerId == null) statusMessage else null,
                                         statusIsError,
@@ -559,6 +607,7 @@ private fun ConnectScreen(
                                 }
                             }
                         }
+                    }
                     }
                     Row(
                         modifier = Modifier
@@ -695,6 +744,59 @@ private fun ConnectionFeedback(message: String?, isError: Boolean, reduceMotion:
 }
 
 @Composable
+private fun AddServerTrigger(
+    expanded: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val iconProgress by animateFloatAsState(
+        targetValue = if (expanded) 1f else 0f,
+        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.morph()),
+        label = "addServerIcon",
+    )
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(WandColors.surface.copy(alpha = 0.84f))
+            .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = WandSpacing.md, vertical = WandSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(WandSpacing.sm),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(WandColors.brandSoft),
+            contentAlignment = Alignment.Center,
+        ) {
+            WandMorphingIcon(
+                progress = iconProgress,
+                from = WandIcons.add,
+                to = WandIcons.close,
+                tint = WandColors.brand,
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                "添加服务器",
+                style = MaterialTheme.typography.titleSmall,
+                color = WandColors.textPrimary,
+            )
+            Text(
+                "连接码、地址或扫码",
+                style = MaterialTheme.typography.bodySmall,
+                color = WandColors.textSecondary,
+            )
+        }
+    }
+}
+
+@Composable
 private fun SavedServerSection(
     profiles: List<ServerProfile>,
     activeServerId: String?,
@@ -704,11 +806,15 @@ private fun SavedServerSection(
     statusIsError: Boolean,
     enabled: Boolean,
     onPickServer: (String) -> Unit,
+    onRenameServer: (String, String) -> Unit,
     onRemoveServer: (ServerProfile) -> Unit,
     onClearServers: () -> Unit,
 ) {
+    var editingServerId by remember { mutableStateOf<String?>(null) }
+    var editedName by remember { mutableStateOf("") }
+    val focusManager = LocalFocusManager.current
     WandCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(top = WandSpacing.lg),
         contentPadding = PaddingValues(WandSpacing.md),
     ) {
         Row(
@@ -717,7 +823,7 @@ private fun SavedServerSection(
             horizontalArrangement = Arrangement.spacedBy(WandSpacing.xs),
         ) {
             Text(
-                "已保存的服务器",
+                "你的服务器",
                 style = MaterialTheme.typography.titleMedium,
                 color = WandColors.textPrimary,
                 modifier = Modifier.weight(1f),
@@ -728,12 +834,6 @@ private fun SavedServerSection(
                 color = WandColors.textSecondary,
             )
         }
-        Text(
-            "点按一台服务器即可连接",
-            style = MaterialTheme.typography.bodySmall,
-            color = WandColors.textSecondary,
-            modifier = Modifier.padding(bottom = WandSpacing.sm),
-        )
         profiles.forEachIndexed { index, profile ->
             if (index > 0) {
                 HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
@@ -744,8 +844,84 @@ private fun SavedServerSection(
                 connecting = profile.id == connectingServerId,
                 enabled = enabled,
                 onClick = { onPickServer(profile.id) },
-                onRemove = { onRemoveServer(profile) },
+                onRename = {
+                    editedName = profile.customName.orEmpty()
+                    editingServerId = if (editingServerId == profile.id) null else profile.id
+                },
+                onRemove = {
+                    editingServerId = null
+                    onRemoveServer(profile)
+                },
             )
+            WandInlinePanel(
+                visible = editingServerId == profile.id,
+                growFrom = Alignment.Top,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                val focusRequester = remember(profile.id) { FocusRequester() }
+                LaunchedEffect(editingServerId) {
+                    if (editingServerId == profile.id) focusRequester.requestFocus()
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(WandColors.surfaceSoft.copy(alpha = 0.55f))
+                        .padding(WandSpacing.md),
+                ) {
+                    Text(
+                        "修改显示名称",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = WandColors.textPrimary,
+                    )
+                    WandTextField(
+                        value = editedName,
+                        onValueChange = { editedName = it.replace('\n', ' ').replace('\r', ' ').take(32) },
+                        label = "服务器别名",
+                        placeholder = profile.displayName,
+                        singleLine = true,
+                        enabled = enabled,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            onRenameServer(profile.id, editedName)
+                            editingServerId = null
+                            focusManager.clearFocus()
+                        }),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                    )
+                    Text(
+                        "留空后按保存，将恢复显示服务器地址。仅在这台设备上生效。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WandColors.textSecondary,
+                        modifier = Modifier.padding(top = WandSpacing.xs),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = WandSpacing.xs),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        WandButton(
+                            label = "取消",
+                            onClick = {
+                                editingServerId = null
+                                focusManager.clearFocus()
+                            },
+                            variant = WandButtonVariant.Text,
+                            compact = true,
+                        )
+                        WandButton(
+                            label = "保存名称",
+                            onClick = {
+                                onRenameServer(profile.id, editedName)
+                                editingServerId = null
+                                focusManager.clearFocus()
+                            },
+                            variant = WandButtonVariant.Secondary,
+                            enabled = enabled,
+                            compact = true,
+                        )
+                    }
+                }
+            }
             if (feedbackServerId == profile.id) {
                 ConnectionFeedback(statusMessage, statusIsError, reduceMotionEnabled())
             }
@@ -767,6 +943,7 @@ private fun SavedServerRow(
     connecting: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
+    onRename: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val authenticationLabel = if (profile.hasToken) "已认证" else "直接连接"
@@ -850,6 +1027,14 @@ private fun SavedServerRow(
                 )
             }
         }
+        WandIconButton(
+            icon = WandIcons.rename,
+            contentDescription = "重命名服务器 ${profile.visibleName()}",
+            onClick = onRename,
+            enabled = enabled,
+            variant = WandIconButtonVariant.Quiet,
+            tint = WandColors.textSecondary,
+        )
         Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
             if (connecting) {
                 if (reduceMotionEnabled()) {
@@ -868,7 +1053,7 @@ private fun SavedServerRow(
                 }
             } else {
                 WandIconButton(
-                    icon = WandIcons.close,
+                    icon = WandIcons.delete,
                     contentDescription = "移除服务器 ${profile.visibleName()}",
                     onClick = onRemove,
                     enabled = enabled,

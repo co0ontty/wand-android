@@ -179,7 +179,8 @@ fun SettingsScreen(
             dismiss = WandDialogAction("取消", { showRemoveServerConfirm = false }),
         ) {
             Text(
-                "仅从这台设备移除当前服务器及其连接凭据，不会删除服务器上的会话。",
+                "仅从这台设备移除「${connection.serverDisplayName}」及其连接凭据，" +
+                    "不会删除服务器上的会话。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
             )
@@ -259,6 +260,7 @@ fun SettingsScreen(
                 ) {
                     SettingsCard(modifier = Modifier.fillMaxWidth()) {
                         ServerConnectionRow(
+                            displayName = connection.serverDisplayName,
                             serverUrl = connection.serverUrl,
                             hasConnectionCode = connection.hasToken,
                         )
@@ -816,6 +818,7 @@ private fun SettingsAboutContent(
 
 @Composable
 private fun ServerConnectionRow(
+    displayName: String,
     serverUrl: String,
     hasConnectionCode: Boolean,
 ) {
@@ -834,7 +837,7 @@ private fun ServerConnectionRow(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                "当前服务器",
+                displayName,
                 style = MaterialTheme.typography.titleSmall,
                 color = WandColors.textPrimary,
             )

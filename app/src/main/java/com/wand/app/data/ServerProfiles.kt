@@ -112,6 +112,22 @@ object ServerProfiles {
         return state.copy(profiles = listOf(saved) + state.profiles.filterNot { it.id == id })
     }
 
+    /** Changes only the local label. A blank name restores the endpoint-derived display name. */
+    @JvmStatic
+    fun withCustomName(
+        state: ServerProfilesState,
+        id: String,
+        rawName: String?,
+    ): ServerProfilesState {
+        val name = rawName?.trim()?.takeIf { it.isNotEmpty() }
+        if (state.profiles.none { it.id == id }) return state
+        return state.copy(
+            profiles = state.profiles.map { profile ->
+                if (profile.id == id) profile.copy(customName = name) else profile
+            },
+        )
+    }
+
     @JvmStatic
     fun withActiveServerId(state: ServerProfilesState, id: String?): ServerProfilesState {
         if (id == null) return state.copy(activeServerId = null)

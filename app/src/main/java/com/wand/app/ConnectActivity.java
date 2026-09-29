@@ -175,6 +175,13 @@ public class ConnectActivity extends AppCompatActivity {
                 connectView.setInputValue(profile.getBaseUrl());
                 attemptConnect(profile);
             }
+            @Override public void onRenameServer(String serverId, String name) {
+                // A local label change does not invalidate the active connection. Returning to
+                // Home lets its alias-only resume path update labels without discarding drafts.
+                if (serverStore.setServerProfileName(serverId, name) != null) {
+                    refreshServerList();
+                }
+            }
             @Override public void onRemoveServer(String serverId) {
                         cancelPendingConnectionForProfileMutation();
                 ServerProfile profile = serverStore.getServerProfile(serverId);
@@ -477,6 +484,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     private void attemptConnect() {
         String rawInput = connectView.getInputValue().trim();
+        String requestedAlias = connectView.getServerAlias().trim();
         if (TextUtils.isEmpty(rawInput)) {
             showStatus("请输入连接码或服务器地址", false);
             return;
@@ -488,7 +496,7 @@ public class ConnectActivity extends AppCompatActivity {
         final long requestGeneration = connectionGeneration;
         currentTask = networkExecutor.submit(() -> {
             ConnectionResult result = verifyConnectionInput(rawInput, 8000);
-            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result));
+            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result, requestedAlias));
         });
     }
 
@@ -498,7 +506,7 @@ public class ConnectActivity extends AppCompatActivity {
         final long requestGeneration = connectionGeneration;
         currentTask = networkExecutor.submit(() -> {
             ConnectionResult result = verifyServerProfile(profile, 8000);
-            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result));
+            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result, null));
         });
     }
 
@@ -539,18 +547,30 @@ public class ConnectActivity extends AppCompatActivity {
         return new ConnectionResult(resolvedUrl, null, probe.error, false, probe.retryable);
     }
 
-    private void handleManualConnectResult(long requestGeneration, ConnectionResult result) {
+    private void handleManualConnectResult(
+            long requestGeneration,
+            ConnectionResult result,
+            String requestedAlias
+    ) {
         if (isDestroyed() || requestGeneration != connectionGeneration) return;
         connectView.setConnecting(false);
         if (!result.isSuccess()) {
             showStatus(result.error);
             return;
         }
-        saveActivateAndLaunch(result);
+        saveActivateAndLaunch(result, requestedAlias);
     }
 
     private void saveActivateAndLaunch(ConnectionResult result) {
+        saveActivateAndLaunch(result, null);
+    }
+
+    private void saveActivateAndLaunch(ConnectionResult result, String requestedAlias) {
         ServerProfile profile = serverStore.saveServerProfile(result.serverUrl, result.appToken);
+        if (requestedAlias != null && !requestedAlias.isBlank()) {
+            ServerProfile named = serverStore.setServerProfileName(profile.getId(), requestedAlias);
+            if (named != null) profile = named;
+        }
         serverStore.setActiveServerId(profile.getId());
         WandHttp.resetClient(profile.getBaseUrl());
         if (openingComplete) {
