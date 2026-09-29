@@ -139,12 +139,7 @@ fun TaskBoardScreen(
     onOpenTaskDetail: (taskId: String) -> Unit,
     linkedWorkspaceId: String? = null,
     embedded: Boolean = false,
-    /**
-     * 外部查询词：嵌在首页里时，搜索框由顶部搜索栏承担（[showSearchField] = false），
-     * 这里只接收结果，避免同一个屏幕出现两个搜索入口。
-     */
-    externalQuery: String? = null,
-    onExternalQueryChange: ((String) -> Unit)? = null,
+    /** 首页嵌入态隐藏看板搜索，独立看板保留自己的搜索框。 */
     showSearchField: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
@@ -155,10 +150,8 @@ fun TaskBoardScreen(
     var refreshingBoard by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var internalQuery by remember { mutableStateOf("") }
-    val query = externalQuery ?: internalQuery
-    val onQueryChange: (String) -> Unit = { value ->
-        if (externalQuery != null) onExternalQueryChange?.invoke(value) else internalQuery = value
-    }
+    val query = internalQuery
+    val onQueryChange: (String) -> Unit = { internalQuery = it }
     var filterWorkspaceId by remember { mutableStateOf(linkedWorkspaceId.orEmpty()) }
     var statusFilter by remember { mutableStateOf("") }
     var showCreate by remember { mutableStateOf(false) }

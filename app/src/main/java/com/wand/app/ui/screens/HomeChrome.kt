@@ -1,12 +1,8 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
@@ -35,6 +31,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
@@ -57,7 +54,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -84,7 +80,6 @@ import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
-import com.wand.app.ui.components.WandInlineSearchField
 import com.wand.app.ui.components.WandMorphIconButton
 import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandSegmentedTrack
@@ -120,10 +115,6 @@ import com.wand.app.ui.withLiveTitle
 internal fun HomeTopBar(
     serverDisplayName: String,
     interactionEnabled: Boolean,
-    searchOpen: Boolean,
-    searchQuery: String,
-    onSearchQueryChange: (String) -> Unit,
-    onSearchToggle: () -> Unit,
     onOpenAiTeams: () -> Unit,
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
@@ -132,8 +123,6 @@ internal fun HomeTopBar(
     var menuOpen by remember { mutableStateOf(false) }
     var restoreMenuFocus by remember { mutableStateOf(false) }
     val menuFocusRequester = remember { FocusRequester() }
-    val motionEnabled = !reduceMotionEnabled()
-    val focusManager = LocalFocusManager.current
     LaunchedEffect(menuOpen, restoreMenuFocus) {
         if (!menuOpen && restoreMenuFocus) {
             menuFocusRequester.requestFocus()
@@ -149,94 +138,48 @@ internal fun HomeTopBar(
         // 品牌标是身份，也是「这是一款客户端」而不是「一个后台工具」的第一眼信号。
         WandBrandMark(size = 30)
         Spacer(Modifier.width(10.dp))
-        // 搜索就地展开：服务器胶囊的位置变成输入框，右侧那枚放大镜原地变形成 ✕，
-        // 不跳页、不弹新层，收起时同一段动画倒放回去。
-        AnimatedContent(
-            targetState = searchOpen,
-            modifier = Modifier.weight(1f),
-            transitionSpec = {
-                if (motionEnabled) {
-                    (fadeIn(WandMotion.tweenFast()) + slideInHorizontally(
-                        animationSpec = WandMotion.tweenEnter(),
-                        initialOffsetX = { it / 3 },
-                    )) togetherWith (fadeOut(WandMotion.tweenExit()) + slideOutHorizontally(
-                        animationSpec = WandMotion.tweenExit(),
-                        targetOffsetX = { -it / 4 },
-                    ))
-                } else {
-                    EnterTransition.None togetherWith ExitTransition.None
-                }
-            },
-            label = "homeTopBarSearch",
-        ) { open ->
-            if (open) {
-                WandInlineSearchField(
-                    expanded = true,
-                    query = searchQuery,
-                    onQueryChange = onSearchQueryChange,
-                    onCollapse = null,
-                    placeholder = "搜索工作区 / 任务 / 会话",
+        Row(
+            modifier = Modifier
+                .widthIn(max = 160.dp)
+                .clip(WandShapes.full)
+                .background(WandColors.surfaceSoft.copy(alpha = 0.55f))
+                .border(0.5.dp, WandColors.border.copy(alpha = 0.6f), WandShapes.full)
+                .clickable(
+                    enabled = interactionEnabled,
+                    role = Role.Button,
+                    onClickLabel = "切换服务器",
+                    onClick = onSwitchServer,
                 )
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(WandShapes.full)
-                        .background(WandColors.surfaceSoft.copy(alpha = 0.55f))
-                        .border(0.5.dp, WandColors.border.copy(alpha = 0.6f), WandShapes.full)
-                        .clickable(
-                            enabled = interactionEnabled,
-                            role = Role.Button,
-                            onClickLabel = "切换服务器",
-                            onClick = onSwitchServer,
-                        )
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        WandIcons.server,
-                        contentDescription = null,
-                        tint = WandColors.textMuted,
-                        modifier = Modifier.size(13.dp),
-                    )
-                    Text(
-                        serverDisplayName.ifBlank { "当前服务器" },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = WandColors.textPrimary,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .padding(start = 6.dp),
-                    )
-                    Icon(
-                        WandIcons.expand,
-                        contentDescription = null,
-                        tint = WandColors.textMuted,
-                        modifier = Modifier
-                            .padding(start = 4.dp)
-                            .size(14.dp),
-                    )
-                }
-            }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                WandIcons.server,
+                contentDescription = null,
+                tint = WandColors.textMuted,
+                modifier = Modifier.size(13.dp),
+            )
+            Text(
+                serverDisplayName.ifBlank { "当前服务器" },
+                style = MaterialTheme.typography.labelLarge,
+                color = WandColors.textPrimary,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .padding(start = 6.dp),
+            )
+            Icon(
+                WandIcons.expand,
+                contentDescription = null,
+                tint = WandColors.textMuted,
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .size(14.dp),
+            )
         }
-        // 同一个按钮实例承载两种状态：放大镜原地变形成 ✕（规则 4）。
-        // 拆成两个分支会让图标瞬切，变形就没了。
-        WandMorphIconButton(
-            expanded = searchOpen,
-            collapsedIcon = WandIcons.search,
-            expandedIcon = WandIcons.close,
-            contentDescription = if (searchOpen) "关闭搜索" else "搜索",
-            onClick = onSearchToggle,
-            enabled = interactionEnabled,
-            tint = WandColors.textMuted,
-            expandedTint = WandColors.brand,
-            touchSize = 40.dp,
-            iconSize = 19.dp,
-            rotationDegrees = 0f,
-        )
-        // 入口的存在性只由布局决定，不随搜索态变化。
+        Spacer(Modifier.weight(1f))
         if (onCollapseSidebar != null) {
             WandIconButton(
                 icon = WandIcons.panelCollapse,
@@ -252,14 +195,11 @@ internal fun HomeTopBar(
                 collapsedIcon = WandIcons.more,
                 expandedIcon = WandIcons.close,
                 contentDescription = if (menuOpen) "关闭更多选项" else "更多选项",
-                // ⋮ 常驻后会在搜索展开时点到：先清焦点收键盘，菜单才不会被 IME 顶起；
-                // 搜索词保留，菜单关闭后也不自动重新聚焦。
                 onClick = {
                     if (menuOpen) {
                         menuOpen = false
                         restoreMenuFocus = true
                     } else {
-                        focusManager.clearFocus()
                         menuOpen = true
                     }
                 },
@@ -278,7 +218,7 @@ internal fun HomeTopBar(
                 containerColor = WandColors.bgElevated,
             ) {
                 Text(
-                    if (searchOpen) "其他页面与连接" else "其他页面",
+                    "其他页面",
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
@@ -293,14 +233,6 @@ internal fun HomeTopBar(
                     leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
                     onClick = { menuOpen = false; onOpenSettings() },
                 )
-                // 搜索框覆盖了服务器胶囊，此时菜单补上唯一的服务器切换入口。
-                if (searchOpen) {
-                    DropdownMenuItem(
-                        text = { Text("切换服务器") },
-                        leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
-                        onClick = { menuOpen = false; onSwitchServer() },
-                    )
-                }
             }
         }
     }
@@ -363,25 +295,16 @@ internal fun HomeModeTabs(
 // MARK: - 状态总览
 
 /**
- * 首页状态行要显示的数（§2.8 B2、§2.28 S24）。
- *
- * 口径只有一条：这一行的「在跑 / 等你 / 计数」全部取自已过完整条筛选链的 [overview]
- * （调用处传入的 `visibleGroups` = 搜索 ∩ 只看等你的**最终**结果），[totalCount] 才是全量数 M。
- * 组件不再自己算第二遍，避免出现「列表 0 条、状态行挂着 `11 / 27 条匹配`」的两种批次混排。
+ * 首页状态行的「在跑 / 等你 / 计数」取自当前可见会话，[totalCount] 是全量数。
  */
 internal data class HomeActivityStats(
     val overview: HomeOverview,
     val totalCount: Int,
-    val searching: Boolean,
     val attentionOnly: Boolean,
 ) {
-    /**
-     * 计数文案的单一来源：搜索词在场时「匹配」优先，其次「待处理」，
-     * 两层筛选都不在时只报全量数。三种单位不混用，也不在调用处再拼一遍。
-     */
+    /** 筛选打开时显示可见数与全量数；否则显示全量数。 */
     val countLabel: String
         get() = when {
-            searching -> "${overview.sessions} / $totalCount 条匹配"
             attentionOnly -> "${overview.sessions} / $totalCount 条待处理"
             else -> "$totalCount 个会话"
         }
@@ -427,23 +350,20 @@ internal data class HomeActivityStats(
 internal fun homeActivityStats(
     globalOverview: HomeOverview,
     finalOverview: HomeOverview,
-    searching: Boolean,
     attentionOnly: Boolean,
 ): HomeActivityStats = HomeActivityStats(
     overview = finalOverview,
     totalCount = globalOverview.sessions,
-    searching = searching,
     attentionOnly = attentionOnly,
 )
 
 /**
  * 整行是否渲染的**唯一**门（D13）：调用处直接用它，组件内不得有第二套显隐表达式。
- * 安静且没开任何筛选时不留空壳；但搜索态（含命中 0 条）与筛选选中态必须留在原地，
- * 否则计数会和空态互相矛盾、开关自己无处可点。任务分段不渲染这条会话状态行。
+ * 安静且没开筛选时不留空壳；筛选选中态必须留在原地，保证能点同一胶囊关闭。
  */
 internal fun homeActivityStripVisible(showingBoard: Boolean, stats: HomeActivityStats): Boolean =
     !showingBoard && (
-        stats.searching || stats.attentionOnly ||
+        stats.attentionOnly ||
             stats.overview.running > 0 || stats.overview.needsYou > 0
     )
 
@@ -455,23 +375,12 @@ internal data class HomeSessionEmptyCopy(
 
 /**
  * 有数据、但最终 `visibleGroups` 为空时的空态（§2.28）。
- * 建议必须指向**当前真正挡着列表的那一层**：只看等你时指回「已选等你」这枚胶囊，
- * 而不是叫用户去关一个他根本没开的搜索。不加按钮型 CTA。
+ * 只看等你时，建议指回「已选等你」这枚胶囊。
  */
-internal fun homeSessionEmptyCopy(searching: Boolean, attentionOnly: Boolean): HomeSessionEmptyCopy = when {
-    searching && attentionOnly -> HomeSessionEmptyCopy(
-        title = "没有匹配的待处理会话",
-        subtitle = "换个词试试，或者再点「已选等你」查看搜索结果。",
-    )
-    searching -> HomeSessionEmptyCopy(
-        title = "没有匹配的会话",
-        subtitle = "换个词试试，或者关掉搜索看全部。",
-    )
-    else -> HomeSessionEmptyCopy(
-        title = "没有需要处理的会话",
-        subtitle = "当前没有会话等你处理。再点「已选等你」查看全部会话。",
-    )
-}
+internal fun homeSessionEmptyCopy(): HomeSessionEmptyCopy = HomeSessionEmptyCopy(
+    title = "没有需要处理的会话",
+    subtitle = "当前没有会话等你处理。再点「已选等你」查看全部会话。",
+)
 
 /** 「等你」筛选胶囊的固定触控槽（§2.28）：两态同宽同坐标，零结果也不缩、不消失。 */
 private val AttentionPillSlotWidth = 120.dp
@@ -667,7 +576,6 @@ internal fun HomeWorkspaceCard(
     dragging: Boolean = false,
     standaloneCollapsed: Boolean,
     taskCollapsed: (String) -> Boolean,
-    forceExpandTasks: Boolean = false,
     /** 标题行上的长按拖动手势（由列表侧注入，卡片本身不知道排序实现）。 */
     headerDragModifier: Modifier = Modifier,
     selectedTaskId: String?,
@@ -849,7 +757,7 @@ internal fun HomeWorkspaceCard(
                         task = task,
                         parentNames = listOf(group.workspaceName),
                         nowMillis = nowMillis,
-                        expanded = forceExpandTasks || isTaskSessionsExpanded(
+                        expanded = isTaskSessionsExpanded(
                             userCollapsed = taskCollapsed(task.id),
                             sessionCount = task.totalSessions,
                             isOnlyTask = visibleTasks.size == 1,

@@ -3,7 +3,6 @@ package com.wand.app.ui.screens
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.activityStatus
-import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.withLiveTitle
 import java.time.Duration
@@ -137,42 +136,6 @@ internal fun applyPendingGroupOrder(
     // 稳定排序：不在待保存顺序里的组保持服务端给的相对顺序，接在后面。
     return groups.sortedBy { position[it.id] ?: Int.MAX_VALUE }
 }
-
-/**
- * 首页搜索：命中工作区名 / 任务名 / 会话标题 / provider / 目录。三种命中粒度不同：
- * - 工作区名命中 → 整个工作区原样保留（“我要看这个项目”）；
- * - 任务名命中 → 任务保留、会话全留（“我要看这个任务下的东西”）；
- * - 只命中会话 → 任务保留，但只留命中的会话。
- * 命中不到的工作区、任务、会话一律从列表里消失，否则搜完还是一片没关的东西。
- */
-internal fun homeSearchGroups(groups: List<TaskDirectoryGroup>, query: String): List<TaskDirectoryGroup> {
-    val q = query.trim()
-    if (q.isEmpty()) return groups
-    return groups.mapNotNull { group ->
-        if (group.workspaceName.contains(q, ignoreCase = true)) return@mapNotNull group
-        val tasks = group.tasks.mapNotNull { task ->
-            val taskHit = task.name.contains(q, ignoreCase = true)
-            val sessions = if (taskHit) task.sessions else task.sessions.filter { it.matchesHomeQuery(q) }
-            if (!taskHit && sessions.isEmpty()) return@mapNotNull null
-            task.copy(sessions = sessions, totalSessions = sessions.size)
-        }
-        val standalone = group.standaloneSessions.filter { it.matchesHomeQuery(q) }
-        if (tasks.isEmpty() && standalone.isEmpty()) {
-            null
-        } else {
-            group.copy(tasks = tasks, standaloneSessions = standalone)
-        }
-    }
-}
-
-private fun WorkspaceSessionSummary.matchesHomeQuery(query: String): Boolean =
-    listOfNotNull(title, provider, providerSearchLabel(provider), cwd).any {
-        it.contains(query, ignoreCase = true)
-    }
-
-/** provider 既按原始 id（claude）命中，也按界面上的名字（Claude）命中。 */
-private fun providerSearchLabel(provider: String?): String? =
-    provider?.takeIf { it.isNotBlank() }?.let(::workspaceProviderLabel)
 
 /**
  * 会话卡第二行的形态描述。provider 由卡片左侧的品牌标承担，这里只说形态，

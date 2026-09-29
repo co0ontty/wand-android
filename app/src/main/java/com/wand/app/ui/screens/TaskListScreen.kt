@@ -1,6 +1,5 @@
 package com.wand.app.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -228,26 +227,17 @@ fun TaskListScreen(
     val targetSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val reduceMotion = reduceMotionEnabled()
-    var searchOpen by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
     val allGroups = directoryTreeGroups(state.groups)
     var attentionOnly by remember { mutableStateOf(false) }
-    // 过滤顺序：先按查询词收窄，再按「只看等你」收窄。
-    val searchedGroups = homeSearchGroups(allGroups, searchQuery)
-    val visibleGroups = if (attentionOnly) attentionOnlyGroups(searchedGroups) else searchedGroups
-    val searching = searchQuery.isNotBlank()
+    val visibleGroups = if (attentionOnly) attentionOnlyGroups(allGroups) else allGroups
     val overview = homeOverview(allGroups)
-    // 状态行的三处数字（在跑 / 等你 / 计数）必须取**最终**可见的那一批：
-    // 列表渲染的是 `visibleGroups`（搜索 ∩ 只看等你），这里就不能只用搜索结果，
-    // 否则会出现「列表 0 条 + 状态行 11 / 27 条匹配 + 1 个在跑」。分母仍是全量数。
+    // 状态行的数字与列表使用同一批可见会话，分母仍是全量数。
     val activityStats = homeActivityStats(
         globalOverview = overview,
         finalOverview = homeOverview(visibleGroups),
-        searching = searching,
         attentionOnly = attentionOnly,
     )
-    // 列表为空时的文案与状态行同源：按「仅搜索 / 仅等你 / 两者并用」三种组合各给一份建议。
-    val sessionEmptyCopy = homeSessionEmptyCopy(searching, attentionOnly)
+    val sessionEmptyCopy = homeSessionEmptyCopy()
     val showingBoard = homeListMode == HomeListMode.Tasks
     // 首页的时间是「几分钟前」这种相对说法，30 秒推一次就够，不必每秒重排整页。
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -403,11 +393,6 @@ fun TaskListScreen(
         return normalized.substringBeforeLast('/').ifEmpty { "/" }
     }
 
-    // 展开组件必须有自己的关闭路径：搜索展开时按返回键先收搜索，而不是退出页面。
-    BackHandler(enabled = searchOpen) {
-        searchOpen = false
-        searchQuery = ""
-    }
     LaunchedEffect(state.newTaskRequest) {
         if (state.consumeNewTaskRequest()) beginNewTask()
     }
@@ -1100,8 +1085,6 @@ fun TaskListScreen(
             // here so the dashboard chrome never sits underneath the clock/camera cutout.
             .statusBarsPadding()
             .navigationBarsPadding()
-            // 搜索展开时底部启动条让位，键盘避让必须由整页承担：inset 只从底部让出，
-            // 顶栏（含搜索框）位置与尺寸不变，列表与展开卡的动作行回到键盘上方。
             .imePadding(),
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -1110,21 +1093,6 @@ fun TaskListScreen(
                 HomeTopBar(
                     serverDisplayName = serverDisplayName,
                     interactionEnabled = interactionEnabled,
-                    searchOpen = searchOpen,
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { searchQuery = it },
-                    onSearchToggle = {
-                        // 就地展开 / 收起：收起时顺手清掉查询词，避免留下一个看不见的过滤条件。
-                        if (searchOpen) {
-                            searchOpen = false
-                            searchQuery = ""
-                        } else {
-                            searchOpen = true
-                        }
-                        selecting = false
-                        selectedTaskIds = emptySet()
-                        selectedSessionIds = emptySet()
-                    },
                     onOpenSettings = onOpenSettings,
                     onSwitchServer = onSwitchServer,
                     onOpenAiTeams = onOpenAiTeams,
@@ -1179,9 +1147,6 @@ fun TaskListScreen(
                             onOpenSession = onOpenBoardSession,
                             onOpenTaskDetail = onOpenBoardTaskDetail,
                             embedded = true,
-                            // 查询词由顶部搜索接管：同一个输入框在两个列表之间通用。
-                            externalQuery = searchQuery,
-                            onExternalQueryChange = { searchQuery = it },
                             showSearchField = false,
                         )
                     }
@@ -1222,14 +1187,10 @@ fun TaskListScreen(
                     !hasAnyContent -> EmptyState(
                         modifier = Modifier.fillMaxSize(),
                         icon = WandIcons.sparkle,
-                        title = if (searching) "没有匹配的工作区" else "开始第一个任务",
-                        subtitle = if (searching) {
-                            "换个词试试，或者关掉搜索看全部。"
-                        } else {
-                            "在底部写一句想做的事，或者用 ＋ 打开完整的新建面板。"
-                        },
+                        title = "开始第一个任务",
+                        subtitle = "在底部写一句想做的事，或者用 ＋ 打开完整的新建面板。",
                     )
-                    // 有数据、但最终交集为空：文案按三种筛选组合取，建议指向真正挡着列表的那一层。
+                    // 有数据但筛选结果为空时，保留「已选等你」关闭路径。
                     !hasVisibleContent -> EmptyState(
                         modifier = Modifier.fillMaxSize(),
                         icon = WandIcons.check,
@@ -1290,7 +1251,7 @@ fun TaskListScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                    val canReorder = !selecting && !searching && !attentionOnly && visibleGroups.size > 1
+                    val canReorder = !selecting && !attentionOnly && visibleGroups.size > 1
                     itemsIndexed(visibleGroups, key = { _, group -> group.id }) { _, group ->
                         val dragging = dragState.isDragging(group.id)
                         HomeWorkspaceCard(
@@ -1312,13 +1273,11 @@ fun TaskListScreen(
                                     )
                                 },
                             ),
-                            // 搜索中一律展开：命中的会话如果藏在折叠节点里，看起来就像搜不到。
-                            expanded = !dragging && (searching || isDirectoryExpanded(
+                            expanded = !dragging && isDirectoryExpanded(
                                 userCollapsed = state.isDirectoryCollapsed(group.id),
-                            )),
+                            ),
                             dragging = dragging,
-                            forceExpandTasks = searching,
-                            standaloneCollapsed = !searching && state.isStandaloneCollapsed(group.id),
+                            standaloneCollapsed = state.isStandaloneCollapsed(group.id),
                             taskCollapsed = state::isTaskCollapsed,
                             nowMillis = nowMillis,
                             selectedTaskId = selectedTaskId,
@@ -1406,10 +1365,7 @@ fun TaskListScreen(
             }
         }
         // 多选是管理态，底部启动条先让位，避免和批量操作抢注意力。
-        // 搜索展开期间也不渲染：启动条自己带输入栏，会和顶部搜索框同时出现两条输入栏，
-        // 而且它会落在键盘区。显隐只由 searchOpen 决定 —— 键盘单独收起时仍然隐藏，
-        // 只有关闭搜索才恢复（§2.19）。
-        if (!showingBoard && showComposer && !selecting && !searchOpen) {
+        if (!showingBoard && showComposer && !selecting) {
             HomeComposerBar(
                 value = homeComposerDraft.text,
                 onValueChange = homeComposerDraft::edit,
