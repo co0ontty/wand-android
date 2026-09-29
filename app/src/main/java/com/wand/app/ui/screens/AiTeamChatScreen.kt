@@ -100,12 +100,6 @@ private val TeamChatReadableMaxWidth = 760.dp
 private const val TEAM_CHAT_POLL_ACTIVE_MS = 4_000L
 private const val TEAM_CHAT_POLL_IDLE_MS = 15_000L
 
-/**
- * live 文本单独一档节奏（§4.9.1）：移动端没有可用的系统通知通道，只能轮询 `/live`。
- * 只在页面可见且有步骤在跑时跑，和上面 detail 的 4s/15s 互不影响。
- */
-private const val TEAM_LIVE_POLL_MS = 1_200L
-
 /** live 卡片固定高度，两端同值（Web `.team-chat-live-card { height: 200px }` 的 dp 版）。 */
 private val TeamLiveCardHeight = 200.dp
 
@@ -142,8 +136,6 @@ fun AiTeamChatScreen(
     var sending by remember(runId) { mutableStateOf(false) }
     var sendError by remember(runId) { mutableStateOf<String?>(null) }
     var localTurns by remember(runId) { mutableStateOf<List<LocalChatTurn>>(emptyList()) }
-    /** 正在输出的成员（§4.9.1）：一行一个 running 步骤，退场行留在原位倒放收回。 */
-    var liveRows by remember(runId) { mutableStateOf<List<LiveChatRow>>(emptyList()) }
     var resumed by remember(runId) { mutableStateOf(true) }
 
     val run = detail?.run
@@ -202,14 +194,15 @@ fun AiTeamChatScreen(
 
     val listState = rememberLazyListState()
     val turnCount = (detail?.chatTurns?.size ?: 0) + localTurns.size
+    val tailTurn = detail?.chatTurns?.lastOrNull()
     val density = LocalDensity.current.density
     /**
      * 外层列表是否贴底：与卡片内滚同一套「距底 ≤ [LIVE_TAIL_DP]（按 density 换算成像素）才跟」口径
-     * （对齐 Web `team-chat-view.tsx` 的 `listPinnedRef`），上滚看历史时 live 行插入 / 摘除不把他拽回尾部。
+     * （对齐 Web `team-chat-view.tsx` 的 `listPinnedRef`），上滚看历史时新消息不把他拽回尾部。
      */
     var listPinned by remember(runId) { mutableStateOf(true) }
 
-    // 判定只由「用户自己在滚」更新：live 行插入也会让距底突然变大，那不是用户的意图。
+    // 判定只由「用户自己在滚」更新：新消息插入也会让距底突然变大，那不是用户的意图。
     LaunchedEffect(listState, density) {
         snapshotFlow {
             val info = listState.layoutInfo
@@ -230,33 +223,8 @@ fun AiTeamChatScreen(
         }
     }
 
-    /**
-     * live 行退场计时结束后把它摘掉（`TeamLiveStepRow` 自己报，见那里的 `onRetire`）。
-     * 只摘已经 `leaving` 的那一行，同一步重新开工时不会被误撤。
-     */
-    fun retireLiveRow(stepId: String) {
-        liveRows = liveRows.filterNot { it.leaving && it.step.stepId == stepId }
-    }
-    /**
-     * live 文本（§4.9.1）：只有「页面可见 + 本次运行还有 running 步骤」才轮询，
-     * 两个条件任一不满足就停，并把留在列表里的卡片推成退场（不闪空白、不抢请求）。
-     * 单次拉取失败保留上一份文本，不清空也不显示加载态。
-     */
-    val hasRunningStep = detail?.steps?.any { it.status == "running" } == true
-    LaunchedEffect(api, currentRunId, resumed, hasRunningStep) {
-        if (!resumed || !hasRunningStep) {
-            liveRows = mergeLiveRows(liveRows, emptyList())
-            return@LaunchedEffect
-        }
-        while (true) {
-            val update = runCatching { api.aiTeamRunLive(currentRunId) }.getOrNull()
-            if (update != null && update.runId == currentRunId) liveRows = mergeLiveRows(liveRows, update.steps)
-            delay(TEAM_LIVE_POLL_MS)
-        }
-    }
-
-    // 列表尾是 live 行，贴底要把它一起数进去；本来就贴着底才跟着新行滚到底（同 Web 口径）。
-    LaunchedEffect(turnCount, liveRows.size, listPinned) {
+    // 只有正式消息或本地发送改变列表；工具输出不会触发滚动。
+    LaunchedEffect(currentRunId, turnCount, tailTurn, listPinned) {
         if (!listPinned) return@LaunchedEffect
         val last = listState.layoutInfo.totalItemsCount - 1
         if (last >= 0) listState.scrollToItem(last)
@@ -387,7 +355,7 @@ fun AiTeamChatScreen(
                                 )
                             }
                         }
-                        if (current.chatTurns.isEmpty() && localTurns.isEmpty() && liveRows.isEmpty()) {
+                        if (current.chatTurns.isEmpty() && localTurns.isEmpty()) {
                             item(key = "team-empty") {
                                 TeamChatLine("群聊还没有消息。", WandColors.textMuted)
                             }
@@ -395,30 +363,10 @@ fun AiTeamChatScreen(
                         current.chatTurns.forEachIndexed { index, turn ->
                             item(key = "turn#$index#${turn.createdAt.orEmpty()}") {
                                 TeamTurnRow(
-                                    turn = turn,
+                                    turn = teamChatDisplayTurn(turn),
                                     steps = current.steps,
                                     onOpenMemberSession = onOpenMemberSession,
                                 )
-                            }
-                        }
-                        // 正在输出的成员排在历史回合之后、乐观临时行之前（同 Web）。
-                        liveRows.forEach { row ->
-                            item(key = "live#${row.step.stepId}") {
-                                Box(
-                                    modifier = if (reduceMotionEnabled()) {
-                                        Modifier
-                                    } else {
-                                        Modifier.animateItem()
-                                    },
-                                ) {
-                                    TeamLiveStepRow(
-                                        row = row,
-                                        steps = current.steps,
-                                        memberStates = current.memberStates,
-                                        onOpenMemberSession = onOpenMemberSession,
-                                        onRetire = ::retireLiveRow,
-                                    )
-                                }
                             }
                         }
                         localTurns.forEach { row ->
@@ -487,6 +435,11 @@ private fun TeamChatContextBar(
                 color = WandColors.textMuted,
             )
         }
+        TeamChatActivitySummary(
+            activities = teamChatActivities(detail),
+            onOpenDetails = { if (!expanded) onToggle() },
+            onOpenMemberSession = onOpenMemberSession,
+        )
         AnimatedVisibility(
             visible = expanded,
             enter = if (motion) fadeIn(WandMotion.tweenEnter()) +

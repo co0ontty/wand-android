@@ -1,0 +1,1223 @@
+{
+  "source": "installed Wand service, authenticated read-only API",
+  "serviceVersion": "4.77.0-debug.t09291222",
+  "sanitization": "All names, titles, IDs, timestamps and free text replaced consistently; optional field presence, order, notice flags, role/status/state and exact legacy start skeleton preserved. No credentials stored.",
+  "statistics": {
+    "runCount": 27,
+    "turnCountIncludingSharedRelayDuplicates": 722,
+    "contentBlockTypes": {
+      "text": 722
+    },
+    "legacyStartCountIncludingSharedRelayDuplicates": 246,
+    "legacyStartForm": "{author.name} 开始「{title}」",
+    "memberStates": {
+      "working": 1
+    }
+  },
+  "cases": [
+    {
+      "label": "running_legacy_start",
+      "detail": {
+        "run": {
+          "status": "running",
+          "stepsUsed": 7,
+          "stepLimit": 80,
+          "id": "run_001",
+          "teamId": "team_001",
+          "team": {
+            "id": "team_001",
+            "name": "示例团队",
+            "description": "示例团队介绍",
+            "members": [
+              {
+                "id": "member_001",
+                "name": "示例成员_001",
+                "duty": "示例职责",
+                "isLeader": true,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_002",
+                "name": "示例成员_002",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_003",
+                "name": "示例成员_003",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_004",
+                "name": "示例成员_004",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              }
+            ],
+            "requirePlanApproval": false,
+            "maxSteps": 80
+          },
+          "taskId": "task_001",
+          "objective": "示例团队工作",
+          "statusDetail": "",
+          "chatSessionId": "session_001"
+        },
+        "steps": [
+          {
+            "seq": 1,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_001",
+            "memberId": "member_001",
+            "title": "示例任务_001",
+            "sessionId": "session_002"
+          },
+          {
+            "seq": 2,
+            "kind": "work",
+            "status": "done",
+            "id": "step_002",
+            "memberId": "member_004",
+            "title": "示例任务_002",
+            "sessionId": "session_003"
+          },
+          {
+            "seq": 3,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_003",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_002"
+          },
+          {
+            "seq": 4,
+            "kind": "work",
+            "status": "done",
+            "id": "step_004",
+            "memberId": "member_002",
+            "title": "示例任务_004",
+            "sessionId": "session_004"
+          },
+          {
+            "seq": 5,
+            "kind": "work",
+            "status": "done",
+            "id": "step_005",
+            "memberId": "member_002",
+            "title": "示例任务_005",
+            "sessionId": "session_004"
+          },
+          {
+            "seq": 6,
+            "kind": "work",
+            "status": "done",
+            "id": "step_006",
+            "memberId": "member_003",
+            "title": "示例任务_006",
+            "sessionId": "session_005"
+          },
+          {
+            "seq": 7,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_007",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_002"
+          },
+          {
+            "seq": 8,
+            "kind": "work",
+            "status": "running",
+            "id": "step_008",
+            "memberId": "member_002",
+            "title": "示例任务_007",
+            "sessionId": "session_004"
+          },
+          {
+            "seq": 9,
+            "kind": "work",
+            "status": "queued",
+            "id": "step_009",
+            "memberId": "member_003",
+            "title": "示例任务_008",
+            "sessionId": null
+          }
+        ],
+        "memberStates": {
+          "session_004": "working"
+        },
+        "chatTurns": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_004 开始「示例任务_009」"
+              }
+            ],
+            "author": {
+              "id": "member_004",
+              "name": "示例成员_004",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:18Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_010」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:19Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_005」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_004",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:20Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_004",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:00:21Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_003 开始「示例任务_006」"
+              }
+            ],
+            "author": {
+              "id": "member_003",
+              "name": "示例成员_003",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:13Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_003",
+              "name": "示例成员_003",
+              "provider": "pi",
+              "sessionId": "session_005",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:00:22Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_001",
+              "name": "示例成员_001",
+              "leader": true,
+              "provider": "pi",
+              "sessionId": "session_002",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:00:23Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_007」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_004",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:24Z"
+          }
+        ]
+      },
+      "liveEvidence": {
+        "originalTextLengths": [
+          2000
+        ],
+        "toolMarkerLineCounts": [
+          64
+        ]
+      }
+    },
+    {
+      "label": "done_legacy_start",
+      "detail": {
+        "run": {
+          "status": "done",
+          "stepsUsed": 15,
+          "stepLimit": 80,
+          "id": "run_002",
+          "teamId": "team_001",
+          "team": {
+            "id": "team_001",
+            "name": "示例团队",
+            "description": "示例团队介绍",
+            "members": [
+              {
+                "id": "member_001",
+                "name": "示例成员_001",
+                "duty": "示例职责",
+                "isLeader": true,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_002",
+                "name": "示例成员_002",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_003",
+                "name": "示例成员_003",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "qoder",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "qoder",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_004",
+                "name": "示例成员_004",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              }
+            ],
+            "requirePlanApproval": false,
+            "maxSteps": 80
+          },
+          "taskId": "task_002",
+          "objective": "示例团队工作",
+          "statusDetail": "",
+          "chatSessionId": "session_006"
+        },
+        "steps": [
+          {
+            "seq": 1,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_010",
+            "memberId": "member_001",
+            "title": "示例任务_001",
+            "sessionId": "session_007"
+          },
+          {
+            "seq": 2,
+            "kind": "work",
+            "status": "done",
+            "id": "step_011",
+            "memberId": "member_004",
+            "title": "示例任务_011",
+            "sessionId": "session_008"
+          },
+          {
+            "seq": 3,
+            "kind": "work",
+            "status": "done",
+            "id": "step_012",
+            "memberId": "member_002",
+            "title": "示例任务_012",
+            "sessionId": "session_009"
+          },
+          {
+            "seq": 4,
+            "kind": "work",
+            "status": "done",
+            "id": "step_013",
+            "memberId": "member_003",
+            "title": "示例任务_013",
+            "sessionId": "session_010"
+          },
+          {
+            "seq": 5,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_014",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_007"
+          },
+          {
+            "seq": 6,
+            "kind": "work",
+            "status": "done",
+            "id": "step_015",
+            "memberId": "member_004",
+            "title": "示例任务_014",
+            "sessionId": "session_008"
+          },
+          {
+            "seq": 7,
+            "kind": "work",
+            "status": "done",
+            "id": "step_016",
+            "memberId": "member_002",
+            "title": "示例任务_015",
+            "sessionId": "session_009"
+          },
+          {
+            "seq": 8,
+            "kind": "work",
+            "status": "done",
+            "id": "step_017",
+            "memberId": "member_003",
+            "title": "示例任务_016",
+            "sessionId": "session_010"
+          },
+          {
+            "seq": 9,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_018",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_007"
+          },
+          {
+            "seq": 10,
+            "kind": "work",
+            "status": "done",
+            "id": "step_019",
+            "memberId": "member_002",
+            "title": "示例任务_017",
+            "sessionId": "session_009"
+          },
+          {
+            "seq": 11,
+            "kind": "work",
+            "status": "done",
+            "id": "step_020",
+            "memberId": "member_003",
+            "title": "示例任务_018",
+            "sessionId": "session_010"
+          },
+          {
+            "seq": 12,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_021",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_007"
+          },
+          {
+            "seq": 13,
+            "kind": "work",
+            "status": "done",
+            "id": "step_022",
+            "memberId": "member_002",
+            "title": "示例任务_019",
+            "sessionId": "session_009"
+          },
+          {
+            "seq": 14,
+            "kind": "work",
+            "status": "done",
+            "id": "step_023",
+            "memberId": "member_003",
+            "title": "示例任务_020",
+            "sessionId": "session_010"
+          },
+          {
+            "seq": 15,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_024",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_007"
+          }
+        ],
+        "memberStates": {},
+        "chatTurns": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_004 开始「示例任务_011」"
+              }
+            ],
+            "author": {
+              "id": "member_004",
+              "name": "示例成员_004",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:58Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_012」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:59Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_019」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_009",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:01:00Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_009",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:01:01Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_003 开始「示例任务_020」"
+              }
+            ],
+            "author": {
+              "id": "member_003",
+              "name": "示例成员_003",
+              "provider": "qoder",
+              "sessionId": "session_010",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:01:02Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_003",
+              "name": "示例成员_003",
+              "provider": "qoder",
+              "sessionId": "session_010",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:01:03Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_001",
+              "name": "示例成员_001",
+              "leader": true,
+              "provider": "pi",
+              "sessionId": "session_007",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:01:04Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "协作状态已更新。"
+              }
+            ],
+            "notice": true,
+            "createdAt": "2026-01-01T00:01:05Z"
+          }
+        ]
+      }
+    },
+    {
+      "label": "stopped_legacy_start",
+      "detail": {
+        "run": {
+          "status": "stopped",
+          "stepsUsed": 6,
+          "stepLimit": 80,
+          "id": "run_003",
+          "teamId": "team_001",
+          "team": {
+            "id": "team_001",
+            "name": "示例团队",
+            "description": "示例团队介绍",
+            "members": [
+              {
+                "id": "member_001",
+                "name": "示例成员_001",
+                "duty": "示例职责",
+                "isLeader": true,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_002",
+                "name": "示例成员_002",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_003",
+                "name": "示例成员_003",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              },
+              {
+                "id": "member_004",
+                "name": "示例成员_004",
+                "duty": "示例职责",
+                "isLeader": false,
+                "agents": [
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  },
+                  {
+                    "provider": "pi",
+                    "model": "default",
+                    "thinkingEffort": "max",
+                    "mode": "default",
+                    "kind": "structured"
+                  }
+                ],
+                "agent": {
+                  "provider": "pi",
+                  "model": "default",
+                  "thinkingEffort": "max",
+                  "mode": "default",
+                  "kind": "structured"
+                },
+                "avatar": ""
+              }
+            ],
+            "requirePlanApproval": false,
+            "maxSteps": 80
+          },
+          "taskId": "task_001",
+          "objective": "示例团队工作",
+          "statusDetail": "",
+          "chatSessionId": "session_001"
+        },
+        "steps": [
+          {
+            "seq": 1,
+            "kind": "leader",
+            "status": "failed",
+            "id": "step_025",
+            "memberId": "member_001",
+            "title": "示例任务_001",
+            "sessionId": "session_011"
+          },
+          {
+            "seq": 2,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_026",
+            "memberId": "member_001",
+            "title": "示例任务_021",
+            "sessionId": "session_012"
+          },
+          {
+            "seq": 3,
+            "kind": "work",
+            "status": "skipped",
+            "id": "step_027",
+            "memberId": "member_004",
+            "title": "示例任务_022",
+            "sessionId": "session_013"
+          },
+          {
+            "seq": 4,
+            "kind": "work",
+            "status": "skipped",
+            "id": "step_028",
+            "memberId": "member_002",
+            "title": "示例任务_023",
+            "sessionId": null
+          },
+          {
+            "seq": 5,
+            "kind": "work",
+            "status": "skipped",
+            "id": "step_030",
+            "memberId": "member_003",
+            "title": "示例任务_024",
+            "sessionId": null
+          },
+          {
+            "seq": 6,
+            "kind": "work",
+            "status": "failed",
+            "id": "step_029",
+            "memberId": "member_004",
+            "title": "示例任务_022",
+            "sessionId": "session_014"
+          },
+          {
+            "seq": 7,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_031",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_012"
+          },
+          {
+            "seq": 8,
+            "kind": "leader",
+            "status": "done",
+            "id": "step_032",
+            "memberId": "member_001",
+            "title": "示例任务_021",
+            "sessionId": "session_012"
+          },
+          {
+            "seq": 9,
+            "kind": "work",
+            "status": "skipped",
+            "id": "step_033",
+            "memberId": "member_004",
+            "title": "示例任务_025",
+            "sessionId": "session_015"
+          },
+          {
+            "seq": 10,
+            "kind": "work",
+            "status": "failed",
+            "id": "step_034",
+            "memberId": "member_004",
+            "title": "示例任务_025",
+            "sessionId": "session_016"
+          },
+          {
+            "seq": 11,
+            "kind": "leader",
+            "status": "skipped",
+            "id": "step_035",
+            "memberId": "member_001",
+            "title": "示例任务_003",
+            "sessionId": "session_012"
+          }
+        ],
+        "memberStates": {},
+        "chatTurns": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_004 开始「示例任务_009」"
+              }
+            ],
+            "author": {
+              "id": "member_004",
+              "name": "示例成员_004",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:18Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_010」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:19Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_005」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_004",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:20Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_004",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:00:21Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_003 开始「示例任务_006」"
+              }
+            ],
+            "author": {
+              "id": "member_003",
+              "name": "示例成员_003",
+              "provider": "pi",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:13Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_003",
+              "name": "示例成员_003",
+              "provider": "pi",
+              "sessionId": "session_005",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:00:22Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "这是一条已脱敏的示例消息。"
+              }
+            ],
+            "author": {
+              "id": "member_001",
+              "name": "示例成员_001",
+              "leader": true,
+              "provider": "pi",
+              "sessionId": "session_002",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "createdAt": "2026-01-01T00:00:23Z"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "示例成员_002 开始「示例任务_007」"
+              }
+            ],
+            "author": {
+              "id": "member_002",
+              "name": "示例成员_002",
+              "provider": "pi",
+              "sessionId": "session_004",
+              "avatar": "",
+              "model": "default",
+              "thinkingEffort": "max"
+            },
+            "notice": true,
+            "createdAt": "2026-01-01T00:00:24Z"
+          }
+        ]
+      }
+    }
+  ]
+}
