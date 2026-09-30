@@ -17,6 +17,21 @@ import org.junit.Test
 class WorkspaceTaskCreationTest {
 
     @Test
+    fun employeeConversationAlwaysUsesStructuredEndpointAndIdentity() {
+        val request = createEmployeeWorkspaceTaskWindowRequest(
+            "employee-1", WorkspaceBinding("ws-1", "task-1", "/repo"), "  继续工作  ",
+        )
+        assertEquals("/api/structured-sessions", request.path)
+        assertEquals("employee-1", request.body.getString("employeeId"))
+        assertEquals("ws-1", request.body.getString("workspaceId"))
+        assertEquals("task-1", request.body.getString("workspaceTaskId"))
+        assertEquals("继续工作", request.body.getString("prompt"))
+        assertTrue(request.body.getBoolean("respondImmediately"))
+        assertFalse(request.body.has("provider"))
+        assertFalse(request.body.has("command"))
+    }
+
+    @Test
     fun taskCreationBodyCarriesExplicitWorktreeChoice() {
         val isolated = createWorkspaceTaskRequestBody("Task", "main", true)
         val shared = createWorkspaceTaskRequestBody("Task", null, false)
@@ -162,7 +177,8 @@ class WorkspaceTaskCreationTest {
         assertTrue("grok" in raws)
         assertTrue("qoder" in raws)
         assertTrue("pi" in raws)
+        assertTrue("gemini" in raws)
         assertTrue("shell" in raws)
-        assertEquals(7, raws.size)
+        assertEquals(8, raws.size)
     }
 }

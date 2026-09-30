@@ -31,6 +31,20 @@ internal data class WorkspaceTaskWindowRequest(
     val body: JSONObject,
 )
 
+internal fun createEmployeeWorkspaceTaskWindowRequest(
+    employeeId: String,
+    binding: WorkspaceBinding,
+    prompt: String? = null,
+): WorkspaceTaskWindowRequest {
+    val body = JSONObject().put("employeeId", employeeId).put("cwd", binding.cwd)
+    binding.workspaceId?.trim()?.takeIf { it.isNotEmpty() }?.let { body.put("workspaceId", it) }
+    binding.workspaceTaskId?.trim()?.takeIf { it.isNotEmpty() }?.let { body.put("workspaceTaskId", it) }
+    prompt?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        body.put("prompt", it).put("respondImmediately", true)
+    }
+    return WorkspaceTaskWindowRequest("/api/structured-sessions", body)
+}
+
 internal fun structuredRunnerFor(provider: String): String =
     WandProvider.fromId(provider)?.structuredRunner ?: WandProvider.Claude.structuredRunner
 

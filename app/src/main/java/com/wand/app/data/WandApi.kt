@@ -369,6 +369,7 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
                 "qoder" -> "defaultQoderModel" to "qoder"
                 "grok" -> "defaultGrokModel" to "grok"
                 "pi" -> "defaultPiModel" to "pi"
+                "gemini" -> "defaultGeminiModel" to "gemini"
                 else -> "defaultModel" to "claude"
             }
             body.put(legacyKey, model)
@@ -529,6 +530,21 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         requestObject("POST", "/api/wand-tasks", createBoardTaskBody(title, description, status, priority, workspaceId, agent, parentTaskId)),
     ) ?: throw WandApiException(500, "创建任务响应无效。")
 
+    override suspend fun createBoardSubjectTask(
+        title: String,
+        description: String,
+        status: String,
+        priority: String,
+        workspaceId: String?,
+        agent: BoardTaskAgent?,
+        parentTaskId: String?,
+        executionSubject: ExecutionSubject,
+    ): BoardTask = BoardTask.parse(
+        requestObject("POST", "/api/wand-tasks", createBoardTaskBody(
+            title, description, status, priority, workspaceId, agent, parentTaskId, executionSubject,
+        )),
+    ) ?: throw WandApiException(500, "创建任务响应无效。")
+
     override suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask =
         BoardTask.parse(requestObject("PATCH", "/api/wand-tasks/${encode(id)}", body))
             ?: throw WandApiException(500, "更新任务响应无效。")
@@ -557,7 +573,45 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             ),
         )
 
+    override suspend fun dispatchBoardSubject(
+        id: String,
+        subject: ExecutionSubject,
+        agent: BoardTaskAgent,
+        prompt: String?,
+        workspaceId: String?,
+    ): BoardDispatchResult = BoardDispatchResult.parse(
+        requestObject(
+            "POST", "/api/wand-tasks/${encode(id)}/dispatch",
+            boardDispatchSubjectBody(subject, agent, prompt, workspaceId),
+        ),
+    )
+
     override suspend fun listBoardWorkspaces(): List<Workspace> = listWorkspaces()
+
+    override suspend fun listSiliconEmployees(includeArchived: Boolean): List<SiliconEmployee> =
+        SiliconEmployee.parseList(requestObject("GET", "/api/silicon-employees" +
+            if (includeArchived) "?includeArchived=true" else "").arr("employees"))
+
+    suspend fun siliconEmployee(id: String): SiliconEmployee =
+        SiliconEmployee.parse(requestObject("GET", "/api/silicon-employees/${encode(id)}"))
+            ?: throw WandApiException(500, "员工资料响应无效。")
+
+    suspend fun createSiliconEmployee(draft: SiliconEmployeeDraft): SiliconEmployee =
+        SiliconEmployee.parse(requestObject("POST", "/api/silicon-employees", draft.toJson()))
+            ?: throw WandApiException(500, "创建员工响应无效。")
+
+    suspend fun updateSiliconEmployee(id: String, draft: SiliconEmployeeDraft): SiliconEmployee =
+        SiliconEmployee.parse(requestObject("PUT", "/api/silicon-employees/${encode(id)}", draft.toJson()))
+            ?: throw WandApiException(500, "保存员工响应无效。")
+
+    suspend fun archiveSiliconEmployee(id: String, archived: Boolean) {
+        requestObject("POST", "/api/silicon-employees/${encode(id)}/" +
+            if (archived) "archive" else "unarchive")
+    }
+
+    suspend fun deleteSiliconEmployee(id: String) {
+        requestData("DELETE", "/api/silicon-employees/${encode(id)}")
+    }
 
     override suspend fun boardModels(): ModelsResponse = models()
 
@@ -827,6 +881,15 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         thinkingEffort: String?,
     ): SessionSnapshot {
         val request = createWorkspaceTaskWindowRequest(target, binding, kind, prompt, model, thinkingEffort)
+        return SessionSnapshot.parse(requestObject("POST", request.path, request.body))
+    }
+
+    override suspend fun createEmployeeWorkspaceTaskWindow(
+        employeeId: String,
+        binding: WorkspaceBinding,
+        prompt: String?,
+    ): SessionSnapshot {
+        val request = createEmployeeWorkspaceTaskWindowRequest(employeeId, binding, prompt)
         return SessionSnapshot.parse(requestObject("POST", request.path, request.body))
     }
 

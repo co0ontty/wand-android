@@ -23,6 +23,8 @@ class BrandLogosTest {
         assertEquals(Color.Black, BrandLogos.resolveTint("pi", tint, onDark = false))
         assertEquals(Color.White, BrandLogos.resolveTint("codex", tint, onDark = true))
         assertEquals(Color.Black, BrandLogos.resolveTint("grok", tint, onDark = false))
+        assertEquals(Color.Black, BrandLogos.resolveTint("gemini", tint, onDark = false))
+        assertEquals(Color.White, BrandLogos.resolveTint("gemini", tint, onDark = true))
         assertEquals(tint, BrandLogos.resolveTint("terminal", tint))
     }
 
@@ -31,6 +33,14 @@ class BrandLogosTest {
         assertEquals("BrandPi", BrandLogos.pi.name)
         assertEquals(469.43f, BrandLogos.pi.viewportWidth, 0.001f)
         assertEquals(469.43f, BrandLogos.pi.viewportHeight, 0.001f)
+    }
+
+    @Test
+    fun officialGeminiVectorCanBeConstructed() {
+        // addPathNodes 会在 path 数据非法时抛错，构造成功即验证了 simple-icons 的原始路径。
+        assertEquals("BrandGemini", BrandLogos.gemini.name)
+        assertEquals(24f, BrandLogos.gemini.viewportWidth, 0.001f)
+        assertEquals(24f, BrandLogos.gemini.viewportHeight, 0.001f)
     }
 
     @Test

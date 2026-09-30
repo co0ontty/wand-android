@@ -1,8 +1,10 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
+import com.wand.app.data.ExecutionSubject
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WorkspaceSessionTeamChat
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.WorkspaceTaskSummary
@@ -548,6 +550,51 @@ class TaskListPresentationTest {
     }
 
     private fun group() = groupWithTasks(listOf(task()))
+
+    @Test
+    fun recentConversationsSortBySessionTimeAndKeepTaskContext() {
+        val older = session("structured", "codex").copy(id = "older",
+            startedAt = "2026-09-28T08:00:00.000Z")
+        val newer = session("structured", "codex").copy(id = "newer",
+            startedAt = "2026-09-30T08:00:00.000Z")
+        val standalone = session("pty", "pty").copy(id = "standalone",
+            startedAt = "2026-09-29T08:00:00.000Z")
+        val group = groupWithTasks(listOf(task().copy(sessions = listOf(older, newer))))
+            .copy(standaloneSessions = listOf(standalone, newer))
+        val recent = recentHomeConversations(listOf(group))
+        assertEquals(listOf("newer", "standalone", "older"), recent.map { it.session.id })
+        assertEquals("task-1", recent.first().task?.id)
+        assertEquals(null, recent[1].task)
+        assertEquals(listOf("newer", "standalone"),
+            recentHomeConversations(listOf(group), limit = 2).map { it.session.id })
+    }
+
+    @Test
+    fun contactsChooseLatestMatchingHistoryWithoutConfusingCliAndEmployee() {
+        val employee = session("structured", "codex").copy(id = "employee",
+            employeeId = "e-1", startedAt = "2026-09-30T08:00:00.000Z")
+        val team = session("structured", "codex").copy(id = "team",
+            teamChat = WorkspaceSessionTeamChat("run-1", "设计组", 2, "team-1"),
+            startedAt = "2026-09-29T08:00:00.000Z")
+        val cli = session("pty", "pty").copy(id = "cli", provider = "codex",
+            startedAt = "2026-09-28T08:00:00.000Z")
+        val conversations = recentHomeConversations(listOf(groupWithTasks(listOf(task().copy(
+            sessions = listOf(employee, team, cli))))))
+        assertEquals("employee", contactConversation(conversations,
+            ExecutionSubject.employee("e-1"))?.session?.id)
+        assertEquals("team", contactConversation(conversations,
+            ExecutionSubject.team("team-1"))?.session?.id)
+        assertEquals("cli", contactConversation(conversations,
+            ExecutionSubject.cli("codex"))?.session?.id)
+        assertNull(contactConversation(conversations, ExecutionSubject.employee("missing")))
+
+        val oldTeamMarker = conversations.map { conversation ->
+            if (conversation.session.id == "team") conversation.copy(session = team.copy(
+                teamChat = team.teamChat?.copy(teamId = null))) else conversation
+        }
+        assertEquals("team", contactConversation(oldTeamMarker,
+            ExecutionSubject.team("team-1"), setOf("run-1"))?.session?.id)
+    }
 
     private fun groupWithTasks(tasks: List<WorkspaceTaskSummary>) = TaskDirectoryGroup(
         workspaceId = "workspace-1",

@@ -36,6 +36,8 @@ sealed class Screen {
     data object Settings : Screen()
     /** AI 团队页：团队定义列表 + 新建入口（编辑器见 [AiTeamEditor]）。 */
     data object AiTeams : Screen()
+    data object SiliconEmployees : Screen()
+    data class SiliconEmployeeEditor(val employeeId: String? = null) : Screen()
     /** 团队详情：成员组织图 + 「直接开工」表单（§6.2 A2/A3）。 */
     data class AiTeamDetail(val teamId: String) : Screen()
     /**
@@ -221,6 +223,8 @@ class NavState {
         private const val TASK_BOARD_KEY = "task-board"
         private const val SETTINGS_KEY = "settings"
         private const val AI_TEAMS_KEY = "ai-teams"
+        private const val SILICON_EMPLOYEES_KEY = "silicon-employees"
+        private const val SILICON_EMPLOYEE_EDITOR_KEY = "silicon-employee-editor"
         private const val AI_TEAM_DETAIL_KEY = "ai-team-detail"
         private const val AI_TEAM_EDITOR_KEY = "ai-team-editor"
         private const val AI_TEAM_CHAT_KEY = "ai-team-chat"
@@ -259,6 +263,8 @@ class NavState {
             }
             Screen.Settings -> SETTINGS_KEY
             Screen.AiTeams -> AI_TEAMS_KEY
+            Screen.SiliconEmployees -> SILICON_EMPLOYEES_KEY
+            is Screen.SiliconEmployeeEditor -> SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP + employeeId.orEmpty()
             is Screen.AiTeamDetail -> AI_TEAM_DETAIL_KEY + FIELD_SEP + teamId
             is Screen.AiTeamEditor ->
                 AI_TEAM_EDITOR_KEY + FIELD_SEP + teamId.orEmpty() + FIELD_SEP + templateId.orEmpty()
@@ -305,6 +311,10 @@ class NavState {
             }
             this == SETTINGS_KEY -> Screen.Settings
             this == AI_TEAMS_KEY -> Screen.AiTeams
+            this == SILICON_EMPLOYEES_KEY -> Screen.SiliconEmployees
+            startsWith(SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP) ->
+                Screen.SiliconEmployeeEditor(removePrefix(SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP)
+                    .takeIf(String::isNotBlank))
             startsWith(AI_TEAM_DETAIL_KEY + FIELD_SEP) ->
                 removePrefix(AI_TEAM_DETAIL_KEY + FIELD_SEP)
                     .split(FIELD_SEP, limit = 2)

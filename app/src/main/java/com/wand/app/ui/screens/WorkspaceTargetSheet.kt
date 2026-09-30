@@ -36,7 +36,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
+import com.wand.app.data.SiliconEmployee
 import com.wand.app.ui.components.BrandLogos
+import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
@@ -55,9 +57,12 @@ import com.wand.app.ui.theme.wandSelectedSurface
 fun WorkspaceTargetSheet(
     selected: WorkspaceSessionTarget,
     selectedKind: WorkspaceSessionKind,
+    employees: List<SiliconEmployee> = emptyList(),
+    selectedEmployeeId: String? = null,
     creating: Boolean,
     error: String?,
     onSelect: (WorkspaceSessionTarget) -> Unit,
+    onSelectEmployee: (String) -> Unit = {},
     onSelectKind: (WorkspaceSessionKind) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
@@ -76,7 +81,7 @@ fun WorkspaceTargetSheet(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "在当前任务的工作目录中启动 Agent，或直接打开空白终端。",
+                "选择员工或 CLI，在当前任务的工作目录里开始对话。",
                 style = MaterialTheme.typography.bodySmall,
                 color = WandColors.textSecondary,
                 modifier = Modifier.padding(top = 4.dp),
@@ -88,19 +93,55 @@ fun WorkspaceTargetSheet(
                     .weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (selectedKind == WorkspaceSessionKind.Structured && employees.isNotEmpty()) {
+                    item {
+                        Text("硅基员工", color = WandColors.textSecondary,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
+                    }
+                    items(employees, key = { "employee:${it.id}" }) { employee ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                                .wandSelectedSurface(
+                                    selected = selectedEmployeeId == employee.id,
+                                    shape = RoundedCornerShape(14.dp),
+                                    unselectedFill = WandColors.surfaceSoft.copy(alpha = 0.42f),
+                                )
+                                .clickable(enabled = !creating) { onSelectEmployee(employee.id) }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 28.dp)
+                            Column {
+                                Text(employee.name, color = WandColors.textPrimary,
+                                    style = MaterialTheme.typography.titleSmall)
+                                Text(employee.duty.ifBlank { "按角色设定工作" },
+                                    color = WandColors.textSecondary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+                item {
+                    Text("CLI 工具", color = WandColors.textSecondary,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
+                }
                 items(
                     items = WorkspaceSessionTarget.OPTIONS,
                     key = { it.raw },
                 ) { target ->
                     WorkspaceTargetOption(
                         target = target,
-                        isSelected = target == selected,
+                        isSelected = selectedEmployeeId == null && target == selected,
                         enabled = !creating,
                         onClick = { onSelect(target) },
                     )
                 }
             }
-            if (!selected.isShell) {
+            if (!selected.isShell && selectedEmployeeId == null) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     "会话类型",
@@ -161,7 +202,9 @@ fun WorkspaceTargetSheet(
                     variant = WandButtonVariant.Secondary,
                 )
                 WandButton(
-                    label = if (creating) "正在创建…" else "创建 ${selected.label}",
+                    label = if (creating) "正在创建…" else if (selectedEmployeeId != null)
+                        "与 ${employees.firstOrNull { it.id == selectedEmployeeId }?.name ?: "员工"} 对话"
+                    else "创建 ${selected.label}",
                     onClick = onConfirm,
                     modifier = Modifier.weight(1f),
                 )

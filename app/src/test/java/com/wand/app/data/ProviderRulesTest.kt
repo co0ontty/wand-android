@@ -13,10 +13,12 @@ class ProviderRulesTest {
         assertEquals("OpenCode", providerDisplayName("opencode"))
         assertEquals("Grok", providerDisplayName("grok"))
         assertEquals("Qoder", providerDisplayName("qoder"))
+        assertEquals("Gemini", providerDisplayName("gemini"))
         assertEquals("终端", providerDisplayName(null))
         assertEquals(setOf("full-access"), supportedSessionModeIds("codex"))
         assertEquals(setOf("default", "full-access", "managed"), supportedSessionModeIds("grok"))
         assertEquals(setOf("default", "full-access", "auto-edit", "managed"), supportedSessionModeIds("qoder"))
+        assertEquals(setOf("default", "full-access", "auto-edit", "managed"), supportedSessionModeIds("gemini"))
     }
 
     @Test
@@ -32,6 +34,7 @@ class ProviderRulesTest {
         assertEquals("codex-model", defaults.defaultFor("codex"))
         assertEquals("grok-model", defaults.defaultFor("grok"))
         assertEquals("qoder-model", defaults.defaultFor("qoder"))
+        assertEquals("gemini-model", defaults.copy(gemini = "gemini-model").defaultFor("gemini"))
         assertEquals("托管", sessionModeLabel("managed"))
         assertEquals("标准", sessionModeLabel("unknown"))
         assertEquals(
@@ -47,6 +50,7 @@ class ProviderRulesTest {
         assertTrue(isStructuredSession(null, "structured"))
         assertTrue(isStructuredSession(null, "codex-cli-exec"))
         assertTrue(isStructuredSession(null, "pi-cli-json"))
+        assertTrue(isStructuredSession(null, "gemini-cli-json"))
         assertFalse(isStructuredSession(null, "pty"))
         assertFalse(isStructuredSession(null, null))
     }
@@ -83,11 +87,20 @@ class ProviderRulesTest {
         )
         assertEquals(response.models, response.modelsFor("claude"))
         assertEquals(response.models, response.modelsFor(null))
+
+        val gemini = response.copy(
+            geminiModels = listOf(ModelInfo("gemini-2.5-pro", "Gemini 2.5 Pro", false, emptyList(), null)),
+            defaultGeminiModel = "gemini-2.5-pro",
+        )
+        assertEquals("gemini-2.5-pro", gemini.defaultModelFor("gemini"))
+        assertEquals(listOf("gemini-2.5-pro"), gemini.modelsFor("gemini").map { it.id })
     }
 
     @Test
     fun providerTableIsTheSingleSourceForCliAndRunnerNames() {
         assertEquals("qodercli", WandProvider.cliCommandFor("qoder"))
+        assertEquals("gemini", WandProvider.cliCommandFor("gemini"))
+        assertEquals("gemini-cli-json", structuredRunnerFor("gemini"))
         assertEquals("codex", WandProvider.cliCommandFor("codex"))
         assertEquals("custom", WandProvider.cliCommandFor("custom"))
         assertEquals("codex-cli-exec", structuredRunnerFor("codex"))

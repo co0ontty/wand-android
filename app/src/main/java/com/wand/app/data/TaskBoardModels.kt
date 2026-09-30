@@ -117,6 +117,7 @@ data class BoardTask(
     val dueDate: String?,
     val sortOrder: Int,
     val agent: BoardTaskAgent?,
+    val executionSubject: ExecutionSubject? = null,
     val createdAt: String,
     val updatedAt: String,
     val sessionIds: List<String>,
@@ -142,6 +143,7 @@ data class BoardTask(
                 dueDate = item.str("dueDate")?.takeIf { it.isNotBlank() },
                 sortOrder = item.int("sortOrder") ?: 0,
                 agent = BoardTaskAgent.parse(item.obj("agent")),
+                executionSubject = ExecutionSubject.parse(item.obj("executionSubject")),
                 createdAt = item.str("createdAt") ?: "",
                 updatedAt = item.str("updatedAt") ?: "",
                 sessionIds = item.arr("sessionIds")?.stringItems(ignoreBlank = true) ?: emptyList(),
@@ -205,7 +207,7 @@ fun boardTaskPriorityLabel(priority: String): String = when (priority) {
 val BOARD_TASK_STATUSES = listOf("todo", "doing", "done")
 val BOARD_TASK_DETAIL_STATUSES = listOf("todo", "doing", "done", "archived")
 val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
-val BOARD_TASK_PROVIDERS = listOf("claude", "codex", "opencode", "grok", "qoder", "pi")
+val BOARD_TASK_PROVIDERS = listOf("claude", "codex", "opencode", "grok", "qoder", "pi", "gemini")
 val BOARD_TASK_EFFORTS = listOf("off", "standard", "deep", "max")
 
 /** 任务派发允许的执行模式；顺序即下拉顺序。Codex 只有 full-access 一个有效值。 */
@@ -377,6 +379,7 @@ fun createBoardTaskBody(
     workspaceId: String?,
     agent: BoardTaskAgent? = null,
     parentTaskId: String? = null,
+    executionSubject: ExecutionSubject? = null,
 ): JSONObject {
     val body = JSONObject()
         .put("title", title)
@@ -386,8 +389,11 @@ fun createBoardTaskBody(
         .put("labels", JSONArray())
     if (workspaceId.isNullOrBlank()) body.put("workspaceId", JSONObject.NULL)
     else body.put("workspaceId", workspaceId)
-    if (agent != null) body.put("agent", agent.toJson())
+    if (agent != null && executionSubject?.type != "employee" && executionSubject?.type != "team") {
+        body.put("agent", agent.toJson())
+    }
     if (!parentTaskId.isNullOrBlank()) body.put("parentTaskId", parentTaskId)
+    executionSubject?.let { body.put("executionSubject", it.toJson()) }
     return body
 }
 
@@ -412,6 +418,19 @@ fun patchBoardTaskBody(
     if (agent != null) body.put("agent", agent.toJson())
     if (sortOrder != null) body.put("sortOrder", sortOrder)
     return body
+}
+
+fun boardDispatchSubjectBody(
+    subject: ExecutionSubject,
+    agent: BoardTaskAgent,
+    prompt: String? = null,
+    workspaceId: String? = UNSET_WORKSPACE,
+): JSONObject = JSONObject().put("subject", subject.toJson()).also { body ->
+    if (subject.type == "cli") body.put("agent", agent.toJson())
+    if (!prompt.isNullOrBlank()) body.put("prompt", prompt)
+    if (workspaceId !== UNSET_WORKSPACE) {
+        body.put("workspaceId", workspaceId?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+    }
 }
 
 val UNSET_WORKSPACE: String? = "__wand_unset_workspace__"
@@ -447,6 +466,16 @@ interface TaskBoardPort : TaskChangeSource {
         agent: BoardTaskAgent? = null,
         parentTaskId: String? = null,
     ): BoardTask
+    suspend fun createBoardSubjectTask(
+        title: String,
+        description: String,
+        status: String,
+        priority: String,
+        workspaceId: String?,
+        agent: BoardTaskAgent?,
+        parentTaskId: String?,
+        executionSubject: ExecutionSubject,
+    ): BoardTask = createBoardTask(title, description, status, priority, workspaceId, agent, parentTaskId)
     suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask
     suspend fun deleteBoardTask(id: String)
     suspend fun dispatchBoardTask(
@@ -455,10 +484,19 @@ interface TaskBoardPort : TaskChangeSource {
         prompt: String? = null,
         workspaceId: String? = UNSET_WORKSPACE,
     ): BoardDispatchResult
+    suspend fun dispatchBoardSubject(
+        id: String,
+        subject: ExecutionSubject,
+        agent: BoardTaskAgent,
+        prompt: String? = null,
+        workspaceId: String? = UNSET_WORKSPACE,
+    ): BoardDispatchResult = dispatchBoardTask(id, agent, prompt, workspaceId)
     suspend fun listBoardWorkspaces(): List<Workspace>
     suspend fun boardModels(): ModelsResponse
     suspend fun boardTaskAgentDefaults(): BoardTaskAgent
     suspend fun saveBoardTaskAgentDefaults(agent: BoardTaskAgent): BoardTaskAgent
+
+    suspend fun listSiliconEmployees(includeArchived: Boolean = false): List<SiliconEmployee> = emptyList()
 
     // MARK: - AI 团队（服务端 src/server-ai-team-routes.ts；鉴权同普通登录）
 

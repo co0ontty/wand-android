@@ -167,6 +167,7 @@ class WorkspaceWorkflow(
         taskId: String,
         cwd: String,
         kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+        employeeId: String? = null,
         onCreated: (SessionSnapshot) -> Unit,
     ) {
         if (_targetState.value is WorkspaceTargetState.Creating) return
@@ -175,9 +176,12 @@ class WorkspaceWorkflow(
         createJob?.cancel()
         createJob = scope.launch {
             try {
-                val session = port.createWorkspaceTaskWindow(
+                val binding = WorkspaceBinding(workspaceId, taskId, cwd)
+                val session = if (employeeId != null) port.createEmployeeWorkspaceTaskWindow(
+                    employeeId = employeeId, binding = binding,
+                ) else port.createWorkspaceTaskWindow(
                     target = target,
-                    binding = WorkspaceBinding(workspaceId, taskId, cwd),
+                    binding = binding,
                     kind = kind,
                 )
                 // 切任务丢弃延迟响应。

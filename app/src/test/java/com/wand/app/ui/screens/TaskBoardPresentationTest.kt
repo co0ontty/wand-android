@@ -424,6 +424,10 @@ class TaskBoardPresentationTest {
         assertEquals("创建中…", boardCreateActionLabel(false, dispatches = true, hasDescription = true, busy = true))
         // 选中团队：文案换成「交给团队」，与详情页按钮口径一致。
         assertEquals("创建并交给团队", boardCreateActionLabel(true, dispatches = true, hasDescription = true, busy = false))
+        assertEquals("创建并交给员工", boardCreateActionLabel(false, dispatches = true,
+            hasDescription = true, busy = false, employeeSelected = true))
+        assertEquals("正在交给员工…", boardCreateActionLabel(false, dispatches = true,
+            hasDescription = true, busy = true, employeeSelected = true))
         assertEquals("正在交给团队…", boardCreateActionLabel(true, dispatches = true, hasDescription = true, busy = true))
         // 选了团队但没写描述：服务端起不了 run（目标 = 标题+描述），文案退回「创建任务」。
         assertEquals("创建任务", boardCreateActionLabel(true, dispatches = true, hasDescription = false, busy = false))

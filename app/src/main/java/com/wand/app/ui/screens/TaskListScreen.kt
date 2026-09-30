@@ -46,7 +46,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.repeatOnLifecycle
+import com.wand.app.SessionWatcher
+import kotlinx.coroutines.flow.collect
 import com.wand.app.data.AiTeam
+import com.wand.app.data.AiTeamRun
+import com.wand.app.data.ExecutionSubject
+import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.BoardTask
 import com.wand.app.data.DirectoryListing
 import com.wand.app.data.ModelsResponse
@@ -161,11 +167,13 @@ fun TaskListScreen(
     onOpenSettings: () -> Unit,
     /** 首页顶栏「更多」→「AI 团队」：纯穿透回调。 */
     onOpenAiTeams: () -> Unit = {},
+    onOpenSiliconEmployees: () -> Unit = {},
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
     showComposer: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
+    val contactContext = androidx.compose.ui.platform.LocalContext.current
     var newTaskOpen by remember { mutableStateOf(false) }
     var taskCwdDraft by remember { mutableStateOf("") }
     var newTaskWorkspaceId by remember { mutableStateOf<String?>(null) }
@@ -185,7 +193,12 @@ fun TaskListScreen(
     // 新建任务「交给团队」：与 CLI 目标互斥；workspace task 已建但 team-run 失败时记住两种 id，
     // 重试只补「找卡 → 派团队」这两步，绝不重复建卡。
     var newTaskTeams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
+    var newTaskEmployees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
+    var contactsTeams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
+    var contactsTeamRuns by remember { mutableStateOf<List<AiTeamRun>>(emptyList()) }
+    var contactsEmployees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
     var newTaskTeamId by remember { mutableStateOf<String?>(null) }
+    var newTaskEmployeeId by remember { mutableStateOf<String?>(null) }
     var teamRunRetry by remember { mutableStateOf<NewTaskTeamRetry?>(null) }
     var teamRunError by remember { mutableStateOf<String?>(null) }
     var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
@@ -204,6 +217,7 @@ fun TaskListScreen(
     var directoryError by remember { mutableStateOf<String?>(null) }
     var pendingTarget by remember { mutableStateOf<Pair<TaskDirectoryGroup, WorkspaceTaskSummary>?>(null) }
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
+    var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
     var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
     var targetCreating by remember { mutableStateOf(false) }
     var targetError by remember { mutableStateOf<String?>(null) }
@@ -230,6 +244,8 @@ fun TaskListScreen(
     val allGroups = directoryTreeGroups(state.groups)
     var attentionOnly by remember { mutableStateOf(false) }
     val visibleGroups = if (attentionOnly) attentionOnlyGroups(allGroups) else allGroups
+    val recentConversations = recentHomeConversations(visibleGroups)
+    val contactConversations = recentHomeConversations(allGroups, limit = Int.MAX_VALUE)
     val overview = homeOverview(allGroups)
     // 状态行的数字与列表使用同一批可见会话，分母仍是全量数。
     val activityStats = homeActivityStats(
@@ -300,6 +316,9 @@ fun TaskListScreen(
         workspaceId: String? = null,
         initialPrompt: String = "",
         fromHomeComposer: Boolean = false,
+        initialEmployeeId: String? = null,
+        initialTeamId: String? = null,
+        initialTarget: WorkspaceSessionTarget? = null,
     ) {
         if (!interactionEnabled || newTaskOpen || newTaskSubmitting) return
         state.clearMutationError()
@@ -313,8 +332,11 @@ fun TaskListScreen(
         pendingParentLink = null
         parentLinkError = null
         parentTasks = emptyList()
-        newTaskTarget = WorkspaceSessionTarget.Claude
-        newTaskTeamId = null
+        newTaskTarget = initialTarget ?: WorkspaceSessionTarget.Claude
+        newTaskTeamId = initialTeamId
+        newTaskEmployeeId = initialEmployeeId
+        newTaskTeams = contactsTeams
+        newTaskEmployees = contactsEmployees
         teamRunRetry = null
         teamRunError = null
         newTaskKind = WorkspaceSessionKind.Structured
@@ -336,7 +358,8 @@ fun TaskListScreen(
                 newTaskWorkspaceId = workspaceForPath(taskCwdDraft)
                 newTaskParentId = ""
             }
-            if (defaultsRevision == newTaskDraftRevision) {
+            if (defaultsRevision == newTaskDraftRevision && initialTarget == null &&
+                initialEmployeeId == null && initialTeamId == null) {
                 newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: newTaskTarget
                 newTaskKind = state.defaultSessionKind
                 newTaskThinkingEffort = state.defaultThinkingEffort
@@ -401,6 +424,19 @@ fun TaskListScreen(
     LaunchedEffect(newTaskOpen, newTaskOpeningId) {
         if (newTaskOpen) {
             newTaskTeams = runCatching { boardApi.listAiTeams() }.getOrDefault(emptyList())
+            newTaskEmployees = runCatching { boardApi.listSiliconEmployees() }.getOrDefault(emptyList())
+        }
+    }
+    val contactsLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(boardApi, contactsLifecycleOwner) {
+        contactsLifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            suspend fun refreshContacts() {
+                runCatching { boardApi.listSiliconEmployees() }.onSuccess { contactsEmployees = it }
+                runCatching { boardApi.listAiTeams() }.onSuccess { contactsTeams = it }
+                runCatching { boardApi.listAiTeamRuns(limit = 200) }.onSuccess { contactsTeamRuns = it }
+            }
+            refreshContacts()
+            SessionWatcher.employeeDefinitionChanges.collect { refreshContacts() }
         }
     }
     LaunchedEffect(selectedTaskId, selectedSessionId, visibleGroups) {
@@ -497,6 +533,9 @@ fun TaskListScreen(
             val submittedWorkspaceId = newTaskWorkspaceId
             val submittedTeamId = newTaskTeamId.takeIf { id ->
                 newTaskTeams.any { it.id == id } && isTeamPickAllowed(newTaskWorkspaceId)
+            }
+            val submittedEmployeeId = newTaskEmployeeId.takeIf { id ->
+                submittedKind == WorkspaceSessionKind.Structured && newTaskEmployees.any { it.id == id }
             }
             // 重试态只认团队分支记下的 id 对；CLI 分支的老 retry id 不复用，跨分支不复用。
             val submittedTeamRunRetry =
@@ -613,7 +652,7 @@ fun TaskListScreen(
                         homeComposerDraft.finishHandoff(submittedOpeningId, submittedComposerRevision)
                         val snapshot = if (submittedStartSession) state.createTaskWindow(
                             result.task.id, submittedTarget, submittedKind, taskPrompt,
-                            submittedModel, submittedEffort,
+                            submittedModel, submittedEffort, submittedEmployeeId,
                         ) else null
                         if (snapshot != null) {
                             onOpenSession(
@@ -659,20 +698,33 @@ fun TaskListScreen(
             onReloadParents = { loadParentTasks(newTaskOpeningId) },
             target = newTaskTarget,
             teams = newTaskTeams,
+            employees = newTaskEmployees,
             teamId = newTaskTeamId,
+            employeeId = newTaskEmployeeId,
             teamAllowed = isTeamPickAllowed(newTaskWorkspaceId),
             onTeamChange = { id ->
                 // 互斥：选团队即放弃 CLI 目标（CLI 与团队不能同时作为派发对象）。
                 newTaskDraftRevision += 1
                 newTaskTeamId = id
+                newTaskEmployeeId = null
                 teamRunRetry = null
                 teamRunError = null
+            },
+            onEmployeeChange = { id ->
+                newTaskDraftRevision += 1
+                newTaskEmployeeId = id
+                newTaskTeamId = null
+                teamRunRetry = null
+                teamRunError = null
+                startFirstSession = true
+                newTaskKind = WorkspaceSessionKind.Structured
             },
             onTargetChange = { option ->
                 val resetsCliParams = newTaskTargetChangeResetsCliParams(newTaskTarget, option)
                 newTaskDraftRevision += 1
                 newTaskTarget = option
                 newTaskTeamId = null
+                newTaskEmployeeId = null
                 teamRunRetry = null
                 teamRunError = null
                 // 只有真的换了工具才重置模型/思考深度；团队 ⇄ 同一目标往返保留手选值。
@@ -692,6 +744,10 @@ fun TaskListScreen(
             onKindChange = {
                 newTaskDraftRevision += 1
                 newTaskKind = it
+                if (it != WorkspaceSessionKind.Structured) {
+                    newTaskEmployeeId = null
+                    newTaskTeamId = null
+                }
                 state.rememberCreationChoice(defaultSessionKind = it)
             },
             model = newTaskModel,
@@ -1028,16 +1084,24 @@ fun TaskListScreen(
             WorkspaceTargetSheet(
                 selected = selectedTarget,
                 selectedKind = selectedKind,
+                employees = contactsEmployees,
+                selectedEmployeeId = selectedEmployeeId,
                 creating = targetCreating,
                 error = targetError,
                 onSelect = {
+                    selectedEmployeeId = null
                     targetDraftRevision += 1
                     selectedTarget = it
                     if (!it.isShell) state.rememberCreationChoice(defaultProvider = it.raw)
                 },
+                onSelectEmployee = {
+                    selectedEmployeeId = it
+                    selectedKind = WorkspaceSessionKind.Structured
+                },
                 onSelectKind = {
                     targetDraftRevision += 1
                     selectedKind = it
+                    if (it != WorkspaceSessionKind.Structured) selectedEmployeeId = null
                     state.rememberCreationChoice(defaultSessionKind = it)
                 },
                 onConfirm = {
@@ -1046,10 +1110,12 @@ fun TaskListScreen(
                     targetError = null
                     val submittedTarget = selectedTarget
                     val submittedKind = selectedKind
+                    val submittedEmployeeId = selectedEmployeeId
                     targetDraftRevision += 1
                     scope.launch {
                         try {
-                            val snapshot = state.createTaskWindow(task.id, submittedTarget, submittedKind)
+                            val snapshot = state.createTaskWindow(task.id, submittedTarget,
+                                submittedKind, employeeId = submittedEmployeeId)
                             if (snapshot == null) {
                                 targetError = state.mutationError ?: "创建工作窗口失败"
                                 return@launch
@@ -1096,6 +1162,7 @@ fun TaskListScreen(
                     onOpenSettings = onOpenSettings,
                     onSwitchServer = onSwitchServer,
                     onOpenAiTeams = onOpenAiTeams,
+                    onOpenSiliconEmployees = onOpenSiliconEmployees,
                     onCollapseSidebar = onCollapseSidebar,
                 )
                 HomeModeTabs(
@@ -1109,6 +1176,65 @@ fun TaskListScreen(
                         onHomeListModeChange(mode)
                     },
                 )
+                if (homeListMode == HomeListMode.Sessions) {
+                    HomeContactsStrip(
+                        employees = contactsEmployees,
+                        teams = contactsTeams,
+                        enabled = interactionEnabled,
+                        onEmployee = { employee ->
+                            val existing = contactConversation(contactConversations,
+                                ExecutionSubject.employee(employee.id))
+                            if (existing != null) onOpenSession(taskSessionRoute(existing.session,
+                                existing.group, existing.task))
+                            else beginNewTask(initialEmployeeId = employee.id)
+                        },
+                        onTeam = { team ->
+                            val subject = ExecutionSubject.team(team.id)
+                            val knownRuns = contactsTeamRuns.filter { it.teamId == team.id }
+                            val existing = contactConversation(contactConversations, subject,
+                                knownRuns.map { it.id }.toSet())
+                            if (existing != null) {
+                                onOpenSession(taskSessionRoute(existing.session,
+                                    existing.group, existing.task))
+                            } else {
+                                scope.launch {
+                                    val freshRuns = runCatching {
+                                        boardApi.listAiTeamRuns(team.id, limit = 200)
+                                    }.getOrNull()
+                                    if (freshRuns == null) {
+                                        android.widget.Toast.makeText(
+                                            contactContext,
+                                            "无法加载团队最近对话，请重试。",
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                        return@launch
+                                    }
+                                    contactsTeamRuns = contactsTeamRuns.filterNot { it.teamId == team.id } + freshRuns
+                                    val refreshed = contactConversation(contactConversations, subject,
+                                        freshRuns.map { it.id }.toSet())
+                                    if (refreshed != null) onOpenSession(taskSessionRoute(refreshed.session,
+                                        refreshed.group, refreshed.task))
+                                    else {
+                                        val latestChat = freshRuns.firstOrNull { it.chatSessionId != null }
+                                        if (latestChat != null) onOpenSession(TaskSessionRoute(
+                                            sessionId = latestChat.chatSessionId!!,
+                                            structured = true,
+                                            teamChatRunId = latestChat.id,
+                                        )) else beginNewTask(initialTeamId = team.id)
+                                    }
+                                }
+                            }
+                        },
+                        onCli = { provider ->
+                            val existing = contactConversation(contactConversations,
+                                ExecutionSubject.cli(provider))
+                            if (existing != null) onOpenSession(taskSessionRoute(existing.session,
+                                existing.group, existing.task))
+                            else WorkspaceSessionTarget.fromRaw(provider)?.let { beginNewTask(initialTarget = it) }
+                        },
+                        onManageEmployees = onOpenSiliconEmployees,
+                    )
+                }
                 // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
                 // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
                 if (homeActivityStripVisible(showingBoard, activityStats)) {
@@ -1251,11 +1377,62 @@ fun TaskListScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
+                    if (recentConversations.isNotEmpty()) {
+                        item(key = "recent-conversation-header") {
+                            Text("最近对话", color = WandColors.textPrimary,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.fillMaxWidth().padding(
+                                    start = 10.dp, end = 10.dp, top = 6.dp, bottom = 2.dp))
+                        }
+                        items(recentConversations, key = { "recent:${it.session.id}" }) { recent ->
+                            val session = recent.session
+                            val parentNames = listOfNotNull(recent.group.workspaceName,
+                                recent.task?.name)
+                            WandCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                    horizontal = 6.dp, vertical = 2.dp),
+                            ) {
+                                HomeSessionRow(
+                                    session = session,
+                                    employee = contactsEmployees.firstOrNull { it.id == session.employeeId },
+                                    label = listSessionLabel(session.withLiveTitle(), 0, parentNames),
+                                    nowMillis = nowMillis,
+                                    selected = session.id == selectedSessionId,
+                                    selecting = selecting,
+                                    managedSelected = session.id in selectedSessionIds,
+                                    onToggleManaged = { selectedSessionIds =
+                                        if (session.id in selectedSessionIds) selectedSessionIds - session.id
+                                        else selectedSessionIds + session.id },
+                                    onEnterSelection = {
+                                        selecting = true
+                                        selectedTaskIds = emptySet()
+                                        selectedSessionIds = setOf(session.id)
+                                    },
+                                    onClick = { onOpenSession(taskSessionRoute(session, recent.group,
+                                        recent.task)) },
+                                    onDelete = {
+                                        deleteSessionTarget = session
+                                        state.clearMutationError()
+                                    },
+                                    onMove = { moveSessionTarget = session },
+                                )
+                            }
+                        }
+                        item(key = "workspace-tree-header") {
+                            Text("任务与工作区", color = WandColors.textSecondary,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.fillMaxWidth().padding(
+                                    start = 10.dp, end = 10.dp, top = 12.dp, bottom = 2.dp))
+                        }
+                    }
                     val canReorder = !selecting && !attentionOnly && visibleGroups.size > 1
                     itemsIndexed(visibleGroups, key = { _, group -> group.id }) { _, group ->
                         val dragging = dragState.isDragging(group.id)
                         HomeWorkspaceCard(
                             group = group,
+                            employees = contactsEmployees,
                             modifier = dragState.itemLiftModifier(group.id)
                                 .then(if (reduceMotion || dragging) Modifier else Modifier.animateItem()),
                             headerDragModifier = Modifier.wandLongPressDrag(
@@ -1315,6 +1492,7 @@ fun TaskListScreen(
                             onNewWindow = { task ->
                                 selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
                                     ?: WorkspaceSessionTarget.Claude
+                                selectedEmployeeId = null
                                 selectedKind = state.defaultSessionKind
                                 targetError = null
                                 pendingTarget = group to task
@@ -1325,6 +1503,7 @@ fun TaskListScreen(
                                     if (pendingTarget?.second?.id != task.id || defaultsRevision != targetDraftRevision) return@launch
                                     selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
                                         ?: selectedTarget
+                                    selectedEmployeeId = null
                                     selectedKind = state.defaultSessionKind
                                     targetSheetState.show()
                                 }

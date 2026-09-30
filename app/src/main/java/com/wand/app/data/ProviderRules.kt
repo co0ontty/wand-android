@@ -40,6 +40,7 @@ enum class WandProvider(
     Grok("grok", "Grok", "grok-cli-headless", "grok"),
     Qoder("qoder", "Qoder", "qoder-cli-print", "qodercli"),
     Pi("pi", "Pi", "pi-cli-json", "pi"),
+    Gemini("gemini", "Gemini", "gemini-cli-json", "gemini"),
     ;
 
     companion object {
@@ -63,12 +64,14 @@ fun ProviderDefaultModels.defaultFor(provider: String?): String? = when (WandPro
     WandProvider.Grok -> grok
     WandProvider.Qoder -> qoder
     WandProvider.Pi -> pi
+    WandProvider.Gemini -> gemini
     else -> claude
 }
 
 fun supportedSessionModeIds(provider: String?): Set<String> = when (provider) {
     "codex" -> setOf("full-access")
     "opencode", "grok", "pi" -> setOf("default", "full-access", "managed")
-    "qoder" -> setOf("default", "full-access", "auto-edit", "managed")
+    // gemini 有 default / auto_edit / yolo（托管、全权限同走 yolo），与 qoder 同组。
+    "qoder", "gemini" -> setOf("default", "full-access", "auto-edit", "managed")
     else -> ALL_SESSION_MODE_IDS
 }

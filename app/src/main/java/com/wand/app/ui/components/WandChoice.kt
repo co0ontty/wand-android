@@ -130,6 +130,7 @@ fun WandAgentFields(
     onChange: (BoardTaskAgent) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    allowPty: Boolean = true,
 ) {
     val modelOptions = boardAgentModelOptions(models, agent.provider)
     WandChoice(
@@ -165,13 +166,15 @@ fun WandAgentFields(
         modifier = modifier,
         enabled = enabled,
     )
-    WandChoice(
-        label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
-        options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
-        onSelect = { onChange(agent.copy(kind = it)) },
-        modifier = modifier,
-        enabled = enabled,
-    )
+    if (allowPty) {
+        WandChoice(
+            label = "会话类型 · ${boardTaskKindLabel(agent.kind)}",
+            options = BOARD_TASK_KINDS.map { it to boardTaskKindLabel(it) },
+            onSelect = { onChange(agent.copy(kind = it)) },
+            modifier = modifier,
+            enabled = enabled,
+        )
+    }
     WandChoice(
         label = "运行模式 · ${boardTaskModeLabel(agent.mode)}",
         options = supportedBoardTaskModes(agent.provider).map { it to boardTaskModeLabel(it) },

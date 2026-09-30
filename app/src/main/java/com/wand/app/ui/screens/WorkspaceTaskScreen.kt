@@ -53,6 +53,7 @@ import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
+import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.ui.withLiveTitle
 import com.wand.app.ui.components.BrandLogos
@@ -114,6 +115,8 @@ fun WorkspaceTaskScreen(
     val taskState by workflow.taskState.collectAsState()
     val targetState by workflow.targetState.collectAsState()
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
+    var employees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
+    var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
     var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
     var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
     var deleteSessionError by remember { mutableStateOf<String?>(null) }
@@ -139,6 +142,8 @@ fun WorkspaceTaskScreen(
     fun openSheet() {
         workflow.openTargetSheet()
         scope.launch {
+            employees = runCatching { api.listSiliconEmployees(false) }.getOrDefault(emptyList())
+            selectedEmployeeId = null
             runCatching { api.serverConfig() }.getOrNull()?.let { config ->
                 WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
                 selectedKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
@@ -162,6 +167,7 @@ fun WorkspaceTaskScreen(
             taskId = taskId,
             cwd = cwd,
             kind = selectedKind,
+            employeeId = selectedEmployeeId,
         ) { session ->
             scope.launch { runCatching { sheetState.hide() } }
             onTaskChanged()
@@ -371,9 +377,12 @@ fun WorkspaceTaskScreen(
             WorkspaceTargetSheet(
                 selected = selectedTarget,
                 selectedKind = selectedKind,
+                employees = employees,
+                selectedEmployeeId = selectedEmployeeId,
                 creating = creating,
                 error = sheetError,
                 onSelect = {
+                    selectedEmployeeId = null
                     selectedTarget = it
                     if (!it.isShell) {
                         scope.launch {
@@ -381,8 +390,10 @@ fun WorkspaceTaskScreen(
                         }
                     }
                 },
+                onSelectEmployee = { selectedEmployeeId = it; selectedKind = WorkspaceSessionKind.Structured },
                 onSelectKind = {
                     selectedKind = it
+                    if (it != WorkspaceSessionKind.Structured) selectedEmployeeId = null
                     scope.launch {
                         runCatching { api.updateCreationDefaults(defaultSessionKind = it.raw) }
                     }

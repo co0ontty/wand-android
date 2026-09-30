@@ -302,12 +302,14 @@ internal fun boardCreateActionLabel(
     hasDescription: Boolean,
     busy: Boolean,
     teamRunRetry: Boolean = false,
+    employeeSelected: Boolean = false,
 ): String = when {
+    busy && employeeSelected && dispatches && hasDescription -> "正在交给员工…"
     busy && teamSelected -> "正在交给团队…"
     busy -> "创建中…"
+    employeeSelected && dispatches && hasDescription -> "创建并交给员工"
     boardDispatchesToTeam(teamSelected, dispatches, hasDescription) && teamRunRetry -> "重试交给团队"
     teamSelected && dispatches && hasDescription -> "创建并交给团队"
     !teamSelected && dispatches && hasDescription -> "创建并指派"
     else -> "创建任务"
 }
-

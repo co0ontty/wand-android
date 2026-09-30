@@ -352,11 +352,15 @@ class TaskListState(
         prompt: String? = null,
         model: String? = null,
         thinkingEffort: String? = null,
+        employeeId: String? = null,
     ): SessionSnapshot? = mutate("创建工作窗口失败") {
         val detail = port.workspaceTask(taskId)
-        val session = port.createWorkspaceTaskWindow(
+        val binding = WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd)
+        val session = if (employeeId != null) port.createEmployeeWorkspaceTaskWindow(
+            employeeId, binding, prompt,
+        ) else port.createWorkspaceTaskWindow(
             target,
-            WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd),
+            binding,
             kind,
             prompt,
             model,

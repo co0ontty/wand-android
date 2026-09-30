@@ -2,6 +2,7 @@ package com.wand.app.data
 
 /** 工作空间接口。WandApi 实现该端口；测试用 fake 实现。 */
 interface WorkspacePort : TaskChangeSource {
+    suspend fun listSiliconEmployees(includeArchived: Boolean): List<SiliconEmployee> = emptyList()
     /** GET /api/workspaces —— 列出所有项目（按最近打开排序）。 */
     suspend fun listWorkspaces(): List<Workspace>
 
@@ -178,4 +179,13 @@ interface WorkspacePort : TaskChangeSource {
         model: String? = null,
         thinkingEffort: String? = null,
     ): SessionSnapshot
+
+    /** An employee always starts a structured conversation in the task's cwd. */
+    suspend fun createEmployeeWorkspaceTaskWindow(
+        employeeId: String,
+        binding: WorkspaceBinding,
+        prompt: String? = null,
+    ): SessionSnapshot {
+        throw UnsupportedOperationException("当前服务不支持硅基员工。")
+    }
 }

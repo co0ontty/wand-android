@@ -60,6 +60,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import com.wand.app.data.AiTeam
+import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
@@ -91,9 +92,12 @@ internal fun NewTaskComposerDialog(
     onReloadParents: () -> Unit,
     target: WorkspaceSessionTarget,
     teams: List<AiTeam> = emptyList(),
+    employees: List<SiliconEmployee> = emptyList(),
     teamId: String? = null,
+    employeeId: String? = null,
     teamAllowed: Boolean = false,
     onTeamChange: (String?) -> Unit = {},
+    onEmployeeChange: (String?) -> Unit = {},
     teamRunRetry: Boolean = false,
     onTargetChange: (WorkspaceSessionTarget) -> Unit,
     kind: WorkspaceSessionKind,
@@ -118,6 +122,9 @@ internal fun NewTaskComposerDialog(
     // 团队与 CLI 目标互斥：teamId 命中列表才算「选中团队」，选中后隐藏 CLI 参数行。
     val teamTarget = teams.firstOrNull { it.id == teamId }
     val teamSelected = teamTarget != null
+    val employeeTarget = employees.firstOrNull { it.id == employeeId }
+    val employeeSelected = employeeTarget != null
+    val namedSubjectSelected = teamSelected || employeeSelected
     val teamDisabledReason = newTaskTeamDisabledReason(teamAllowed, teams.isNotEmpty())
     val teamError = newTaskTeamSubmitError(prompt, teamSelected, teamAllowed)
     val defaultModel = models?.defaultModelFor(target.raw).orEmpty()
@@ -125,7 +132,7 @@ internal fun NewTaskComposerDialog(
     val effortOptions = thinkingEffortOptions(target.raw, model, defaultModel, models?.modelsFor(target.raw).orEmpty())
     val effortLabel = effortOptions.firstOrNull { it.id == thinkingEffort }?.label ?: "自动"
     // 会话参数行与选择器可开性共用这份判定。
-    val controlChips = newTaskComposerControlChips(teamSelected, startFirstSession, target.isShell)
+    val controlChips = newTaskComposerControlChips(namedSubjectSelected, startFirstSession, target.isShell)
     var displayedControlChips by remember { mutableStateOf(controlChips) }
     LaunchedEffect(controlChips) {
         if (controlChips.isNotEmpty()) displayedControlChips = controlChips
@@ -172,7 +179,11 @@ internal fun NewTaskComposerDialog(
                 WandTextField(
                     value = prompt, onValueChange = onPromptChange,
                     label = "描述要做的事",
-                    placeholder = if (teamSelected) "告诉团队要做什么" else "输入任务内容",
+                    placeholder = when {
+                        teamSelected -> "告诉团队要做什么"
+                        employeeSelected -> "告诉员工要做什么"
+                        else -> "输入任务内容"
+                    },
                     minLines = 4, maxLines = 8, enabled = !busy && !fieldsLocked,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -194,7 +205,7 @@ internal fun NewTaskComposerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (teamSelected) {
+                        if (namedSubjectSelected) {
                             Icon(WandIcons.agent, contentDescription = null, tint = WandColors.brand,
                                 modifier = Modifier.size(28.dp))
                         } else {
@@ -208,7 +219,7 @@ internal fun NewTaskComposerDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("派发对象", style = MaterialTheme.typography.labelSmall,
                                 color = WandColors.textMuted)
-                            Text(teamTarget?.let { newTaskTeamOptionLabel(it) } ?: target.label,
+                            Text(employeeTarget?.name ?: teamTarget?.let { newTaskTeamOptionLabel(it) } ?: target.label,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = WandColors.textPrimary, fontWeight = FontWeight.SemiBold)
                         }
@@ -235,7 +246,26 @@ internal fun NewTaskComposerDialog(
                                 },
                             )
                         }
-                        val teamOptions = newTaskTeamOptions(teams, teamAllowed)
+                        if (kind == WorkspaceSessionKind.Structured && employees.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("硅基员工", style = MaterialTheme.typography.labelSmall,
+                                    color = WandColors.textMuted) },
+                                enabled = false, onClick = {},
+                            )
+                            employees.forEach { employee ->
+                                DropdownMenuItem(
+                                    text = { Text(employee.name) },
+                                    leadingIcon = { Icon(WandIcons.agent, contentDescription = null,
+                                        modifier = Modifier.size(20.dp)) },
+                                    onClick = {
+                                        providerOpen = false
+                                        onEmployeeChange(employee.id)
+                                    },
+                                )
+                            }
+                        }
+                        val teamOptions = if (kind == WorkspaceSessionKind.Structured)
+                            newTaskTeamOptions(teams, teamAllowed) else emptyList()
                         if (teamOptions.isNotEmpty()) {
                             DropdownMenuItem(
                                 text = { Text("AI 团队", style = MaterialTheme.typography.labelSmall,
@@ -270,7 +300,11 @@ internal fun NewTaskComposerDialog(
                     Text(teamTarget.name + " · " + teamTarget.members.size + " 人 · 由负责人拆解分派",
                         style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
                 }
-                if (!teamSelected) {
+                if (employeeTarget != null) {
+                    Text(employeeTarget.name + " · " + employeeTarget.duty.ifBlank { "按角色设定工作" },
+                        style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+                }
+                if (!namedSubjectSelected) {
                     NewTaskToggleRow(
                         icon = WandIcons.todo, label = "创建后启动会话",
                         checked = startFirstSession,
@@ -366,7 +400,9 @@ internal fun NewTaskComposerDialog(
                         )
                     } else {
                         Text(
-                            newTaskComposerStatusLine(teamSelected, startFirstSession, worktree),
+                            if (employeeSelected) "建卡后立即交给员工开工 · " +
+                                if (worktree) "独立工作树" else "共用工作区"
+                            else newTaskComposerStatusLine(teamSelected, startFirstSession, worktree),
                             style = MaterialTheme.typography.labelSmall,
                             color = WandColors.textSecondary,
                             maxLines = 2, overflow = TextOverflow.Ellipsis,
@@ -374,7 +410,9 @@ internal fun NewTaskComposerDialog(
                     }
                 }
                 WandButton(
-                    label = if (teamSelected) {
+                    label = if (employeeSelected) {
+                        if (busy) "正在交给员工…" else "创建并交给员工"
+                    } else if (teamSelected) {
                         newTaskTeamActionLabel(busy, teamRunRetry, prompt.isNotBlank())
                     } else if (busy) "创建中…" else if (startFirstSession) "创建并启动会话"
                     else "创建任务分组",

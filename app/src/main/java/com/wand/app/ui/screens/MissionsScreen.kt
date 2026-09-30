@@ -80,7 +80,7 @@ import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val MissionProviders = listOf("claude", "codex", "opencode", "grok", "qoder", "pi")
+private val MissionProviders = listOf("claude", "codex", "opencode", "grok", "qoder", "pi", "gemini")
 
 private fun missionStateLabel(state: String): String = when (state) {
     "dispatching", "queued" -> "分派中"

@@ -118,6 +118,7 @@ import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
+import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
@@ -200,6 +201,9 @@ fun ExpandChevron(
 @Composable
 fun TurnView(
     turn: ConversationTurn,
+    employeeId: String? = null,
+    employeeName: String? = null,
+    employeeAvatar: String? = null,
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
     compactUser: Boolean = false,
@@ -262,6 +266,9 @@ fun TurnView(
                 preview = preview,
                 copyText = copyText,
                 author = turn.author,
+                employeeId = employeeId,
+                employeeName = employeeName,
+                employeeAvatar = employeeAvatar,
                 onToggle = {
                     val next = !collapsed
                     setCollapsed(next)
@@ -305,8 +312,12 @@ private fun AssistantReplyHeader(
     preview: String,
     copyText: String,
     author: TurnAuthor?,
+    employeeId: String?,
+    employeeName: String?,
+    employeeAvatar: String?,
     onToggle: () -> Unit,
 ) {
+    val employeeReply = author == null && employeeId != null
     val color by animateColorAsState(
         targetValue = when {
             author?.leader == true -> WandColors.brandSoft.copy(alpha = 0.45f)
@@ -334,22 +345,28 @@ private fun AssistantReplyHeader(
             .heightIn(min = 48.dp)
             .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(26.dp)
-                .clip(CircleShape)
-                .background(WandColors.brand.copy(alpha = 0.14f)),
-        ) {
-            Icon(
-                WandIcons.sparkle,
-                contentDescription = null,
-                tint = WandColors.brand,
-                modifier = Modifier.size(14.dp),
-            )
+        if (employeeReply) {
+            EmployeeAvatar(employeeId, employeeName, employeeAvatar, size = 26.dp)
+        } else {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(WandColors.brand.copy(alpha = 0.14f)),
+            ) {
+                Icon(
+                    WandIcons.sparkle,
+                    contentDescription = null,
+                    tint = WandColors.brand,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
         }
         Text(
-            author?.name?.takeIf { it.isNotBlank() } ?: "Wand",
+            author?.name?.takeIf { it.isNotBlank() }
+                ?: employeeName?.takeIf { employeeReply && it.isNotBlank() }
+                ?: if (employeeReply) "硅基员工" else "Wand",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = WandColors.textPrimary,

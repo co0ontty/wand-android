@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
+import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTaskStatus
@@ -86,6 +87,7 @@ import com.wand.app.ui.components.WandSegmentedTrack
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
+import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandStatusPresentation
 import com.wand.app.ui.components.WandStatusTone
 import com.wand.app.ui.components.wandStatusPresentation
@@ -116,6 +118,7 @@ internal fun HomeTopBar(
     serverDisplayName: String,
     interactionEnabled: Boolean,
     onOpenAiTeams: () -> Unit,
+    onOpenSiliconEmployees: () -> Unit,
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)?,
@@ -222,6 +225,11 @@ internal fun HomeTopBar(
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
+                )
+                DropdownMenuItem(
+                    text = { Text("硅基员工") },
+                    leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
+                    onClick = { menuOpen = false; onOpenSiliconEmployees() },
                 )
                 DropdownMenuItem(
                     text = { Text("AI 团队") },
@@ -571,6 +579,7 @@ private fun HomeStatPill(
 @Composable
 internal fun HomeWorkspaceCard(
     group: TaskDirectoryGroup,
+    employees: List<SiliconEmployee>,
     modifier: Modifier = Modifier,
     expanded: Boolean,
     dragging: Boolean = false,
@@ -755,6 +764,7 @@ internal fun HomeWorkspaceCard(
                     if (index > 0) HomeHairline()
                     HomeTaskBlock(
                         task = task,
+                        employees = employees,
                         parentNames = listOf(group.workspaceName),
                         nowMillis = nowMillis,
                         expanded = isTaskSessionsExpanded(
@@ -819,6 +829,7 @@ internal fun HomeWorkspaceCard(
                             group.standaloneSessions.forEachIndexed { index, session ->
                                 HomeSessionRow(
                                     session = session,
+                                    employee = employees.firstOrNull { it.id == session.employeeId },
                                     label = listSessionLabel(
                                         session.withLiveTitle(),
                                         index,
@@ -891,6 +902,7 @@ private fun HomeHairline() {
 @Composable
 private fun HomeTaskBlock(
     task: WorkspaceTaskSummary,
+    employees: List<SiliconEmployee>,
     parentNames: Collection<String>,
     nowMillis: Long,
     expanded: Boolean,
@@ -1084,6 +1096,7 @@ private fun HomeTaskBlock(
                     task.sessions.forEachIndexed { index, session ->
                         HomeSessionRow(
                             session = session,
+                            employee = employees.firstOrNull { it.id == session.employeeId },
                             label = listSessionLabel(session.withLiveTitle(), index, parentNames + task.name),
                             nowMillis = nowMillis,
                             selected = session.id == selectedSessionId,
@@ -1119,6 +1132,7 @@ private fun HomeTaskBlock(
 @Composable
 internal fun HomeSessionRow(
     session: WorkspaceSessionSummary,
+    employee: SiliconEmployee? = null,
     label: String,
     nowMillis: Long,
     selected: Boolean,
@@ -1159,7 +1173,7 @@ internal fun HomeSessionRow(
             if (selecting) {
                 ManageCheck(checked = managedSelected)
             }
-            // provider 标是列表里最省字的身份信息：一眼分清 Claude / Codex / Grok。
+            // 联系人优先于底层 CLI；历史会话只依赖创建时的身份快照。
             // 群聊会话是个「多人房间」而不是某个 CLI，用团队图标替掉 provider 标（对齐 Web）。
             val teamChat = session.teamChat
             Box(
@@ -1172,7 +1186,11 @@ internal fun HomeSessionRow(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (teamChat != null) {
+                if (session.employeeId != null) {
+                    EmployeeAvatar(session.employeeId,
+                        employee?.name ?: session.employeeName,
+                        employee?.avatar ?: session.employeeAvatar, size = 28.dp)
+                } else if (teamChat != null) {
                     Icon(
                         WandIcons.agent,
                         contentDescription = null,
@@ -1192,7 +1210,7 @@ internal fun HomeSessionRow(
                     .padding(start = 10.dp),
             ) {
                 Text(
-                    label,
+                    (employee?.name ?: session.employeeName)?.takeIf { session.employeeId != null } ?: label,
                     style = MaterialTheme.typography.bodyMedium,
                     color = WandColors.textPrimary,
                     lineHeight = 19.sp,
@@ -1216,6 +1234,15 @@ internal fun HomeSessionRow(
                                 .clip(WandShapes.xs)
                                 .background(WandColors.brandSoft.copy(alpha = 0.5f))
                                 .padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
+                    if (session.employeeId != null) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = WandColors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     SessionStatusPill(presentation = presentation)

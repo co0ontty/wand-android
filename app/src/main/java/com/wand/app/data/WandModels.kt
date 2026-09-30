@@ -495,6 +495,7 @@ private val STRUCTURED_RUNNERS = setOf(
     "grok-cli-headless",
     "qoder-cli-print",
     "pi-cli-json",
+    "gemini-cli-json",
     "structured",
 )
 
@@ -553,6 +554,9 @@ data class SessionSnapshot(
     /** 工作空间任务绑定：会话由任务内「+」创建并绑定到 workspaceId/workspaceTaskId。 */
     val workspaceId: String? = null,
     val workspaceTaskId: String? = null,
+    val employeeId: String? = null,
+    val employeeName: String? = null,
+    val employeeAvatar: String? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -614,6 +618,9 @@ data class SessionSnapshot(
             providerCliExitCode = o.int("providerCliExitCode"),
             workspaceId = o.str("workspaceId")?.takeIf { it.isNotEmpty() },
             workspaceTaskId = o.str("workspaceTaskId")?.takeIf { it.isNotEmpty() },
+            employeeId = o.str("employeeId")?.takeIf { it.isNotEmpty() },
+            employeeName = o.str("employeeName")?.takeIf { it.isNotEmpty() },
+            employeeAvatar = o.str("employeeAvatar")?.takeIf { it.isNotEmpty() },
         )
 
         fun parseList(arr: JSONArray): List<SessionSnapshot> =
@@ -671,12 +678,14 @@ private fun legacyDefaultModelFor(
     qoder: String? = null,
     grok: String? = null,
     pi: String? = null,
+    gemini: String? = null,
 ): String = when (WandProvider.fromId(provider)) {
     WandProvider.Codex -> codex.orEmpty()
     WandProvider.OpenCode -> opencode.orEmpty()
     WandProvider.Grok -> grok.orEmpty()
     WandProvider.Qoder -> qoder.orEmpty()
     WandProvider.Pi -> pi.orEmpty()
+    WandProvider.Gemini -> gemini.orEmpty()
     else -> claude.orEmpty()
 }
 
@@ -694,6 +703,8 @@ data class ModelsResponse(
     val defaultGrokModel: String? = null,
     val piModels: List<ModelInfo> = emptyList(),
     val defaultPiModel: String? = null,
+    val geminiModels: List<ModelInfo> = emptyList(),
+    val defaultGeminiModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -705,6 +716,7 @@ data class ModelsResponse(
                 defaultQoderModel,
                 defaultGrokModel,
                 defaultPiModel,
+                defaultGeminiModel,
             )
 
     /** 当前 provider 的模型目录；调用方不再自己挑字段。 */
@@ -714,6 +726,7 @@ data class ModelsResponse(
         WandProvider.Grok -> grokModels
         WandProvider.Qoder -> qoderModels
         WandProvider.Pi -> piModels
+        WandProvider.Gemini -> geminiModels
         else -> models
     }
 
@@ -732,6 +745,8 @@ data class ModelsResponse(
             defaultGrokModel = o.str("defaultGrokModel"),
             piModels = ModelInfo.parseList(o.arr("piModels")),
             defaultPiModel = o.str("defaultPiModel"),
+            geminiModels = ModelInfo.parseList(o.arr("geminiModels")),
+            defaultGeminiModel = o.str("defaultGeminiModel"),
         )
     }
 }
@@ -743,6 +758,7 @@ data class ProviderDefaultModels(
     val qoder: String? = null,
     val grok: String? = null,
     val pi: String? = null,
+    val gemini: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): ProviderDefaultModels? =
@@ -754,6 +770,7 @@ data class ProviderDefaultModels(
                     qoder = it.str("qoder"),
                     grok = it.str("grok"),
                     pi = it.str("pi"),
+                    gemini = it.str("gemini"),
                 )
             }
     }
@@ -1080,6 +1097,7 @@ data class ServerConfigInfo(
     val defaultQoderModel: String? = null,
     val defaultGrokModel: String? = null,
     val defaultPiModel: String? = null,
+    val defaultGeminiModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -1091,6 +1109,7 @@ data class ServerConfigInfo(
                 defaultQoderModel,
                 defaultGrokModel,
                 defaultPiModel,
+                defaultGeminiModel,
             )
 
     companion object {
@@ -1110,6 +1129,7 @@ data class ServerConfigInfo(
             defaultQoderModel = o.str("defaultQoderModel"),
             defaultGrokModel = o.str("defaultGrokModel"),
             defaultPiModel = o.str("defaultPiModel"),
+            defaultGeminiModel = o.str("defaultGeminiModel"),
         )
     }
 }

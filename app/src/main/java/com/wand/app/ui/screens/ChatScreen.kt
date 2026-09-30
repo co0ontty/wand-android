@@ -124,6 +124,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.collect
 import com.wand.app.SessionWatcher
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.matchesModelSearch
@@ -131,6 +133,7 @@ import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SessionSnapshot
+import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TurnUsage
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
@@ -176,6 +179,7 @@ import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandProviderMark
+import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
 import com.wand.app.ui.theme.GlassBackdrop
@@ -304,6 +308,21 @@ fun ChatScreen(
         onDispose { store.shutdown() }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    var liveEmployee by remember(sessionId) { mutableStateOf<SiliconEmployee?>(null) }
+    val employeeId = store.snapshot?.employeeId
+    LaunchedEffect(api, employeeId, lifecycleOwner) {
+        if (employeeId == null) { liveEmployee = null; return@LaunchedEffect }
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            suspend fun refreshEmployee() {
+                liveEmployee = runCatching { api.siliconEmployee(employeeId) }.getOrNull()
+                    ?.takeUnless { it.archived }
+            }
+            refreshEmployee()
+            SessionWatcher.employeeDefinitionChanges.collect { changedId ->
+                if (changedId == employeeId) refreshEmployee()
+            }
+        }
+    }
     DisposableEffect(store, lifecycleOwner) {
         var paused = false
         val observer = LifecycleEventObserver { _, event ->
@@ -603,7 +622,11 @@ fun ChatScreen(
                     null
                 },
                 titleContent = {
-                    WandProviderMark(store.snapshot?.provider)
+                    if (employeeId != null) {
+                        EmployeeAvatar(employeeId,
+                            liveEmployee?.name ?: store.snapshot?.employeeName,
+                            liveEmployee?.avatar ?: store.snapshot?.employeeAvatar)
+                    } else WandProviderMark(store.snapshot?.provider)
                     Column(
                         horizontalAlignment = Alignment.Start,
                         modifier = Modifier.weight(1f),
@@ -614,20 +637,25 @@ fun ChatScreen(
                             workspaceName = workspaceName,
                             cwd = store.snapshot?.cwd,
                         )
-                        ChatTopicTitle(
-                            text = sessionChromeTitle(
+                        val topicTitle = sessionChromeTitle(
                                 title = store.snapshot?.title,
                                 latestUserInput = latestUserInputText(store.messages),
                                 liveTitle = SessionTitleStore.titleOf(sessionId),
                                 blockedTitles = blockedTitles,
                                 fallback = "对话详情",
-                            ),
+                            )
+                        ChatTopicTitle(
+                            text = if (employeeId != null) {
+                                liveEmployee?.name ?: store.snapshot?.employeeName ?: "硅基员工"
+                            } else topicTitle,
                             generating = store.snapshot?.titleGenerating == true ||
                                 SessionTitleStore.isGenerating(sessionId),
                         )
                         val workingPath = chatWorkingPath(store.snapshot?.cwd)
                         TailMarqueePathText(
-                            path = if (workspaceTitle != null) {
+                            path = if (employeeId != null) {
+                                "$topicTitle · $serverDisplayName"
+                            } else if (workspaceTitle != null) {
                                 "$serverDisplayName · $workspaceTitle"
                             } else if (workingPath == null) {
                                 serverDisplayName
@@ -833,6 +861,9 @@ fun ChatScreen(
                                         val isCurrentReply = item.turn.role != "user" && !collapseReply
                                         TurnView(
                                             item.turn,
+                                            employeeId = employeeId,
+                                            employeeName = liveEmployee?.name ?: store.snapshot?.employeeName,
+                                            employeeAvatar = liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
                                             isLastTurn = item.index == store.messages.lastIndex,
                                             isResponding = store.isResponding,
                                             compactUser = false,
@@ -1806,10 +1837,10 @@ private fun BottomBar(
             .navigationBarsPadding()
             .imePadding()
             .padding(bottom = 4.dp),
-        contentAlignment = Alignment.BottomCenter,
     ) {
     Column(
         modifier = Modifier
+            .align(Alignment.BottomCenter)
             .widthIn(max = ChatReadableMaxWidth)
             .fillMaxWidth(),
     ) {

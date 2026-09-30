@@ -30,6 +30,7 @@ enum class WorkspaceSessionTarget(val raw: String, val label: String, val descri
     Grok("grok", "Grok", "Grok Build CLI"),
     Qoder("qoder", "Qoder", "Qoder CLI"),
     Pi("pi", "Pi", "Pi coding agent"),
+    Gemini("gemini", "Gemini", "Gemini CLI"),
     Shell("shell", "空白终端", "仅启动系统 Shell");
 
     val isShell: Boolean get() = this == Shell
@@ -346,6 +347,9 @@ data class WorkspaceSessionSummary(
     val teamChat: WorkspaceSessionTeamChat? = null,
     /** 团队派发的成员会话（ai_team_steps.session_id）；非派发会话为 null。 */
     val teamStep: WorkspaceSessionTeamStep? = null,
+    val employeeId: String? = null,
+    val employeeName: String? = null,
+    val employeeAvatar: String? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -366,6 +370,9 @@ data class WorkspaceSessionSummary(
                 inFlight = o.obj("structuredState")?.bool("inFlight") ?: o.bool("inFlight"),
                 teamChat = WorkspaceSessionTeamChat.parse(o.obj("teamChat")),
                 teamStep = WorkspaceSessionTeamStep.parse(o.obj("teamStep")),
+                employeeId = o.str("employeeId")?.takeIf { it.isNotEmpty() },
+                employeeName = o.str("employeeName")?.takeIf { it.isNotEmpty() },
+                employeeAvatar = o.str("employeeAvatar")?.takeIf { it.isNotEmpty() },
             )
         }
 
@@ -438,6 +445,7 @@ data class WorkspaceSessionTeamChat(
     val runId: String,
     val teamName: String,
     val memberCount: Int,
+    val teamId: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): WorkspaceSessionTeamChat? {
@@ -446,6 +454,7 @@ data class WorkspaceSessionTeamChat(
                 runId = runId,
                 teamName = o.str("teamName") ?: "",
                 memberCount = o.int("memberCount") ?: 0,
+                teamId = o.str("teamId")?.takeIf { it.isNotBlank() },
             )
         }
     }

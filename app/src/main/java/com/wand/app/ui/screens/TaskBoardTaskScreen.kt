@@ -29,7 +29,9 @@ import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.BoardTaskSession
+import com.wand.app.data.ExecutionSubject
 import com.wand.app.data.ModelsResponse
+import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
@@ -75,6 +77,7 @@ fun TaskBoardTaskScreen(
     var workspaces by remember { mutableStateOf<List<Workspace>>(emptyList()) }
     var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var teams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
+    var employees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
     var teamRun by remember(taskId) { mutableStateOf<AiTeamRunDetail?>(null) }
     var lastAgent by remember { mutableStateOf(BoardTaskAgent.default()) }
     var loading by remember(taskId) { mutableStateOf(true) }
@@ -123,6 +126,7 @@ fun TaskBoardTaskScreen(
         workspaces = runCatching { api.listBoardWorkspaces() }.getOrDefault(emptyList())
         models = runCatching { api.boardModels() }.getOrNull()
         teams = runCatching { api.listAiTeams() }.getOrDefault(emptyList())
+        employees = runCatching { api.listSiliconEmployees() }.getOrDefault(emptyList())
         lastAgent = runCatching { api.boardTaskAgentDefaults() }.getOrDefault(BoardTaskAgent.default())
     }
 
@@ -151,26 +155,19 @@ fun TaskBoardTaskScreen(
         }
     }
 
-    /** teamId 非空 = 交给团队（POST /api/wand-tasks/{id}/team-runs）；返回 true 供表单原位收起。 */
-    suspend fun dispatch(agent: BoardTaskAgent, prompt: String, teamId: String): Boolean {
+    suspend fun dispatch(agent: BoardTaskAgent, prompt: String, subject: ExecutionSubject): Boolean {
         if (busy) return false
         busy = true
         var succeeded = false
         try {
-            if (teamId.isNotBlank()) {
-                onTaskChanged()
-                teamRun = api.startTeamRun(taskId, teamId, prompt)
-                error = null
-                // 任务卡与运行进度由既有的 taskChanges / 6s 刷新通道继续同步，这里不加新轮询。
-                return true
-            }
-            runCatching { api.saveBoardTaskAgentDefaults(agent) }
+            if (subject.type == "cli") runCatching { api.saveBoardTaskAgentDefaults(agent) }
             onTaskChanged()
-            val result = api.dispatchBoardTask(taskId, agent, prompt, task?.workspaceId)
+            val result = api.dispatchBoardSubject(taskId, subject, agent, prompt, task?.workspaceId)
             succeeded = true
             // 成功即清掉上一轮红字；refresh 失败会写入新的 error。
             error = null
             refresh()
+            if (subject.type == "team") return true
             // 派发成功直接进入新 Agent 的会话：创建/指派之后不用再自己找一遍。
             // PTY 会话要落到终端页，不能一律当成结构化聊天。
             boardDispatchSessionId(result.sessionId)?.let { sessionId ->
@@ -187,7 +184,7 @@ fun TaskBoardTaskScreen(
                 )
             }
         } catch (e: Exception) {
-            error = e.message ?: if (teamId.isNotBlank()) "交给团队失败" else "派发 Agent 失败"
+            error = e.message ?: "指派失败"
         } finally {
             busy = false
         }
@@ -289,6 +286,7 @@ fun TaskBoardTaskScreen(
                     models = models,
                     lastAgent = lastAgent,
                     teams = teams,
+                    employees = employees,
                     teamRun = teamRun,
                     busy = busy,
                     actionError = error,
@@ -297,7 +295,7 @@ fun TaskBoardTaskScreen(
                         lastAgent = agent
                         scope.launch { runCatching { api.saveBoardTaskAgentDefaults(agent) } }
                     },
-                    onDispatch = { agent, prompt, teamId -> dispatch(agent, prompt, teamId) },
+                    onDispatch = { agent, prompt, subject -> dispatch(agent, prompt, subject) },
                     onTeamRunAction = ::teamRunAction,
                     onDelete = delete@{
                         if (busy) return@delete

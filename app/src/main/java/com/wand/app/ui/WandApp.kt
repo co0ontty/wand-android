@@ -79,6 +79,8 @@ import com.wand.app.ui.screens.AiTeamChatScreen
 import com.wand.app.ui.screens.AiTeamDetailScreen
 import com.wand.app.ui.screens.AiTeamEditorScreen
 import com.wand.app.ui.screens.AiTeamsScreen
+import com.wand.app.ui.screens.SiliconEmployeesScreen
+import com.wand.app.ui.screens.SiliconEmployeeEditorScreen
 import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.TaskBoardScreen
@@ -585,6 +587,17 @@ private fun SessionDetailScreen(
             onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
             onEditTeam = { teamId -> nav.push(Screen.AiTeamEditor(teamId = teamId)) },
         )
+        is Screen.SiliconEmployees -> SiliconEmployeesScreen(
+            api = api,
+            onBack = { nav.pop() },
+            onEdit = { nav.push(Screen.SiliconEmployeeEditor(it)) },
+            onCreate = { nav.push(Screen.SiliconEmployeeEditor()) },
+        )
+        is Screen.SiliconEmployeeEditor -> SiliconEmployeeEditorScreen(
+            api = api,
+            employeeId = screen.employeeId,
+            onBack = { nav.pop() },
+        )
         is Screen.AiTeamDetail -> AiTeamDetailScreen(
             api = api,
             workspaceApi = api,
@@ -720,6 +733,7 @@ private fun SinglePaneContent(
                 onSessionClosed = nav::closeSession,
                 onOpenSettings = onOpenSettings,
                 onOpenAiTeams = { nav.push(Screen.AiTeams) },
+                onOpenSiliconEmployees = { nav.push(Screen.SiliconEmployees) },
                 onSwitchServer = actions.navigation.switchServer,
             )
         } else {
@@ -876,6 +890,7 @@ private fun WideReadyContent(
                                 onSessionClosed = nav::closeSession,
                                 onOpenSettings = onOpenSettings,
                                 onOpenAiTeams = { nav.push(Screen.AiTeams) },
+                                onOpenSiliconEmployees = { nav.push(Screen.SiliconEmployees) },
                                 onSwitchServer = actions.navigation.switchServer,
                                 onCollapseSidebar = onToggleSidebarCollapsed,
                                 // 宽屏时这里是侧栏：主操作留在主区，侧栏底部不再塞一条输入条。
@@ -1058,6 +1073,8 @@ private fun Screen.transitionKey(): String = when (this) {
     is Screen.TaskBoard -> "task-board:${workspaceId.orEmpty()}:${taskId.orEmpty()}"
     Screen.Settings -> "settings"
     Screen.AiTeams -> "ai-teams"
+    Screen.SiliconEmployees -> "silicon-employees"
+    is Screen.SiliconEmployeeEditor -> "silicon-employee-editor:${employeeId.orEmpty()}"
     is Screen.AiTeamDetail -> "ai-team-detail:$teamId"
     is Screen.AiTeamEditor -> "ai-team-editor:${teamId.orEmpty()}:${templateId.orEmpty()}"
     is Screen.AiTeamChat -> "ai-team-chat:$runId"
@@ -1155,6 +1172,8 @@ private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.TaskBoard,
     Screen.Settings,
     Screen.AiTeams,
+    Screen.SiliconEmployees,
+    is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
     // 群聊页的运行 id 不是任务/会话 id：会话 id 由服务端 run 详情给出，不在导航里。
     is Screen.AiTeamChat,
@@ -1170,6 +1189,8 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.TaskBoard,
     Screen.Settings,
     Screen.AiTeams,
+    Screen.SiliconEmployees,
+    is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
     is Screen.AiTeamChat,
     is Screen.AiTeamEditor,

@@ -3,6 +3,7 @@ package com.wand.app.ui.screens
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTaskStatus
+import com.wand.app.data.ExecutionSubject
 import com.wand.app.data.workspaceProviderLabel
 
 internal const val UNNAMED_TASK_NAME = "未命名任务"
@@ -41,6 +42,43 @@ internal fun directoryTreeGroups(groups: List<TaskDirectoryGroup>): List<TaskDir
             tasks = group.tasks.filter { it.status != WorkspaceTaskStatus.Done },
         )
     }.filter { !it.isGlobal || it.tasks.isNotEmpty() || it.standaloneSessions.isNotEmpty() }
+
+internal data class HomeRecentConversation(
+    val group: TaskDirectoryGroup,
+    val task: com.wand.app.data.WorkspaceTaskSummary?,
+    val session: WorkspaceSessionSummary,
+)
+
+/** The session list keeps its task tree below; this projection gives chat a direct recent entry. */
+internal fun recentHomeConversations(
+    groups: List<TaskDirectoryGroup>,
+    limit: Int = 8,
+): List<HomeRecentConversation> = groups.flatMap { group ->
+    group.tasks.flatMap { task ->
+        task.sessions.map { session -> HomeRecentConversation(group, task, session) }
+    } + group.standaloneSessions.map { session -> HomeRecentConversation(group, null, session) }
+}.distinctBy { it.session.id }
+    .sortedWith(compareByDescending<HomeRecentConversation> { it.session.startedAt.orEmpty() }
+        .thenBy { it.session.id })
+    .take(limit.coerceAtLeast(0))
+
+/** Select an existing conversation by stable contact identity, ignoring team worker sessions for CLI. */
+internal fun contactConversation(
+    conversations: List<HomeRecentConversation>,
+    subject: ExecutionSubject,
+    teamRunIds: Set<String> = emptySet(),
+): HomeRecentConversation? = conversations.firstOrNull { conversation ->
+    val session = conversation.session
+    when (subject.type) {
+        "employee" -> session.employeeId == subject.id
+        "team" -> session.teamChat?.let { chat ->
+            chat.teamId == subject.id || chat.runId in teamRunIds
+        } == true
+        "cli" -> session.employeeId == null && session.teamChat == null &&
+            session.teamStep == null && session.provider == subject.id
+        else -> false
+    }
+}
 
 /** 任务下没有终端时不显示箭头。 */
 internal fun showsTaskSessionDisclosure(sessionCount: Int): Boolean = sessionCount > 0
@@ -200,5 +238,3 @@ internal fun describeManagedConfirmMessage(selection: SidebarManageSelection): S
     else ->
         "所选任务会移入看板归档（终端与 Worktree 保留），同时结束所选终端。"
 }
-
-

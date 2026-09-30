@@ -27,6 +27,8 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
 
     /** 解析后的服务端推送，主线程回调。 */
     var onEvent: ((SessionEvent) -> Unit)? = null
+    /** System notification for a changed employee definition; unrelated to session input. */
+    var onEmployeeDefinitionChanged: ((String) -> Unit)? = null
 
     /** 连接状态变化（true=已连上），主线程回调。 */
     var onConnectionChange: ((Boolean) -> Unit)? = null
@@ -268,7 +270,15 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
 
     private fun handleText(text: String) {
         val incoming = try {
-            WsIncoming.parse(JSONObject(text))
+            val packet = JSONObject(text)
+            if (packet.optString("type") == "notification") {
+                val data = packet.optJSONObject("data")
+                if (data?.optString("kind") == "silicon-employee-definition") {
+                    data.optString("employeeId").takeIf { it.isNotBlank() }
+                        ?.let { onEmployeeDefinitionChanged?.invoke(it) }
+                }
+            }
+            WsIncoming.parse(packet)
         } catch (_: Exception) {
             return
         }

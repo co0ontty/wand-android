@@ -1,6 +1,6 @@
 package com.wand.app.data
 
-private val PROVIDER_CLI = setOf("claude", "codex", "opencode", "grok", "qoder", "pi")
+private val PROVIDER_CLI = setOf("claude", "codex", "opencode", "grok", "qoder", "pi", "gemini")
 
 fun isProviderCliSession(provider: String?): Boolean {
     val id = provider?.trim()?.lowercase().orEmpty()

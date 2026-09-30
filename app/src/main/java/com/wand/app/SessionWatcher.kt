@@ -25,6 +25,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -49,6 +51,8 @@ import org.json.JSONObject
  * 生命周期跟随进程 —— 配合设置页「后台保活」前台服务可在后台长期接收。
  */
 object SessionWatcher {
+    private val employeeChanges = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val employeeDefinitionChanges = employeeChanges.asSharedFlow()
 
     private const val TAG = "watcher"
 
@@ -117,6 +121,7 @@ object SessionWatcher {
 
         val ws = WandSocket(baseUrl, token)
         ws.onEvent = { event -> handle(event) }
+        ws.onEmployeeDefinitionChanged = { employeeId -> employeeChanges.tryEmit(employeeId) }
         ws.onConnectionChange = { up ->
             WandLog.i(TAG, "通知中枢连接状态 up=$up server=$serverId")
             if (up) refreshSessions()
