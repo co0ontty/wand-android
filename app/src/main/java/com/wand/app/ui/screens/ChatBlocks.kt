@@ -58,7 +58,6 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -119,7 +118,6 @@ import com.wand.app.ui.WandImage
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.EmployeeAvatar
-import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.components.toolIcon
@@ -150,20 +148,13 @@ import java.util.Locale
  * 工具调用与其结果在渲染层配对成一张卡片，对齐 Web 端 tool-card 结构。
  */
 
-/** ChatScreen 注入的会话上下文，用于按需加载被服务端截断的完整工具结果。 */
+/** ChatScreen 注入的会话上下文，用于点开具体调用时获取完整工具参数和结果。 */
 internal val LocalChatApi = compositionLocalOf<WandApi?> { null }
 internal val LocalActivityFoldCompact = compositionLocalOf { false }
-
-/**
- * 活动滚动窗口里「最新一条」在 group.items 里的下标；不在窗口里时为 null。
- * 窗口按「只有最新一条展开」呈现：新活动一到，更早的思考 / 工具调用都退化成
- * 一行摘要，窗口始终停在最新那一条的真实内容上（对齐 Web 端 activityTailIndex）。
- */
-internal val LocalActivityWindowTail = compositionLocalOf<Int?> { null }
 internal val LocalChatSessionId = compositionLocalOf { "" }
 
 /**
- * 当前卡片所属容器的**结构性 fold scope**（消息 → 段 → 活动窗口逐层拼，设计规格 v2 §8.2）。
+ * 当前卡片所属容器的结构性 fold scope（消息 → 段 → 活动摘要逐层拼）。
  * 卡片只读它拼自己的 fold key，不再自己拼 scope；scope 里不得出现内容片段。
  */
 internal val LocalCardFoldScope = compositionLocalOf { "" }
@@ -1766,16 +1757,6 @@ internal const val FOLD_OVERRIDE_COLLAPSED = 2
 internal fun resolveCardExpanded(userOverride: Boolean?, derivedDefault: Boolean): Boolean =
     userOverride ?: derivedDefault
 
-/**
- * 卡片展开的派生默认值：在活动窗口里就是「是不是窗口尾部那一条」，
- * 不在窗口里（null）就沿用用户的卡片偏好。
- */
-internal fun cardExpandDefault(inWindowTail: Boolean?, configured: Boolean): Boolean =
-    inWindowTail ?: configured
-
-/** 活动折叠头/探索卡的派生默认值：只有本轮最后一段默认展开。 */
-internal fun activityFoldExpandDefault(newest: Boolean): Boolean = newest
-
 internal fun foldOverrideFromCode(code: Int): Boolean? = when (code) {
     FOLD_OVERRIDE_EXPANDED -> true
     FOLD_OVERRIDE_COLLAPSED -> false
@@ -1852,15 +1833,10 @@ private fun SegmentBlocks(
     /** 本段所属容器的 fold scope（消息级 item key；子代理页传 `sub-<id>`）。 */
     segmentScope: String,
     showSubagentTags: Boolean = true,
-    collapseActivities: Boolean = true,
 ) {
     val items = remember(blocks) { pairToolBlocks(blocks) }
-    val renderItems = remember(items, blocks, isLastTurn, isResponding, collapseActivities) {
-        if (collapseActivities) {
-            collapseActivityItems(items, isLastTurn, isResponding)
-        } else {
-            items.mapIndexed { index, item -> SegmentRenderItem.Item(index, item) }
-        }
+    val renderItems = remember(items, blocks, isLastTurn, isResponding) {
+        collapseActivityItems(items, isLastTurn, isResponding)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1884,17 +1860,13 @@ private fun SegmentBlocks(
                     )
                 }
                 is SegmentRenderItem.Activity -> key(renderItem.group.key) {
+                    val activityScope = "$segmentScope/activity:${renderItem.group.key}"
                     CompositionLocalProvider(
-                        LocalCardFoldScope provides itemScope,
+                        LocalCardFoldScope provides activityScope,
                     ) {
-                        ActivityFoldCard(
+                        ToolActivitySummary(
                             group = renderItem.group,
-                            isLastTurn = isLastTurn,
-                            isResponding = isResponding,
-                            askSelections = askSelections,
-                            onAskToggle = onAskToggle,
-                            onAskSubmit = onAskSubmit,
-                            showSubagentTags = showSubagentTags,
+                            scope = activityScope,
                         )
                     }
                 }
@@ -1917,14 +1889,10 @@ private fun RenderDisplayItem(
 ) {
     val cardDefaults = LocalCardExpandDefaults.current
     val sessionId = LocalChatSessionId.current
-    // 结构化 fold scope：容器（消息 → 段 → 活动窗口）逐层下传，卡片只拼「scope + 位置」。
+    // 结构化 fold scope：容器逐层下传，卡片只拼「scope + 位置」。
     val scope = LocalCardFoldScope.current
-    // 窗口里只有最新一条默认展开，历史条目按配置默认收起；不在窗口里时沿用用户的卡片偏好。
-    // 派生默认值每次组合重算，不存进 remember（否则会捕获旧值，历史卡就永远收不起来）。
-    val windowTailIndex = LocalActivityWindowTail.current
-    val inWindowTail: Boolean? = windowTailIndex?.let { itemIndex == it }
     val expandDefault = { configured: Boolean ->
-        cardExpandDefault(inWindowTail, shouldExpandChatCard(isLastTurn, configured))
+        shouldExpandChatCard(isLastTurn, configured)
     }
     when (item) {
         is DisplayItem.Tool -> {
@@ -2208,7 +2176,6 @@ private fun SubagentActivityPage(activity: SubagentActivity) {
                                 onAskSubmit = { _, _ -> },
                                 segmentScope = "sub-${activity.id}",
                                 showSubagentTags = false,
-                                collapseActivities = false,
                             )
                         }
                     }
@@ -2453,12 +2420,8 @@ internal sealed class DisplayItem {
 
 internal data class ActivityGroup(
     val key: String,
-    val meta: String,
-    val count: Int,
     val items: List<DisplayItem>,
     val running: Boolean,
-    /** 这条回复里最新的一段活动：默认展开，更早的段默认收起成状态条。 */
-    val newest: Boolean = false,
 )
 
 internal sealed class SegmentRenderItem {
@@ -2572,7 +2535,7 @@ private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse, result: Cont
     return true
 }
 
-/** 连续思考/工具收成一条滚动窗口：遇到正文就切段，最新一段默认展开并跟随尾部。 */
+/** 连续工具调用归成一条轻量摘要；正文和思考各自保留原位。 */
 internal fun collapseActivityItems(
     items: List<DisplayItem>,
     isLastTurn: Boolean,
@@ -2584,18 +2547,13 @@ internal fun collapseActivityItems(
     fun flushPending() {
         if (pending.isEmpty()) return
         val groupItems = pending.map { it.second }
-        val summary = summarizeActivityItems(groupItems)
-        if (summary.count > 0) {
-            renderItems += SegmentRenderItem.Activity(
-                ActivityGroup(
-                    key = activityGroupKey(groupItems, pending.first().first),
-                    meta = summary.meta,
-                    count = summary.count,
-                    items = groupItems,
-                    running = false,
-                ),
-            )
-        }
+        renderItems += SegmentRenderItem.Activity(
+            ActivityGroup(
+                key = activityGroupKey(groupItems, pending.first().first),
+                items = groupItems,
+                running = false,
+            ),
+        )
         pending.clear()
     }
 
@@ -2614,9 +2572,7 @@ internal fun collapseActivityItems(
     val lastIndex = renderItems.indexOfLast { it is SegmentRenderItem.Activity }
     if (lastIndex >= 0) {
         val last = renderItems[lastIndex] as SegmentRenderItem.Activity
-        // 本轮最后一段活动：标记为「最新」以默认展开；末尾还在跑时同时标记运行态。
         val next = last.group.copy(
-            newest = isLastTurn,
             running = last.group.running || (live && renderItems.last() is SegmentRenderItem.Activity),
         )
         if (next != last.group) renderItems[lastIndex] = SegmentRenderItem.Activity(next)
@@ -2625,44 +2581,10 @@ internal fun collapseActivityItems(
 }
 
 private fun activityGroupKey(items: List<DisplayItem>, startIndex: Int): String {
-    val first = items.firstOrNull()
-    // 分组指纹只能用「类型」token：它会被当成活动窗口的 fold cardId 的一段，
-    // 而内容指纹（thinking 文本 / payload）在流式追加期间每帧都变 ⇒ key 漂移 ⇒ 用户 override 被清。
-    val firstKind = first?.let(::displayItemKindKey) ?: "empty"
-    return "$startIndex:$firstKind"
-}
-
-/**
- * 条目**内容指纹**：内容变则变。
- *
- * 只允许给 [activityItemsRefreshToken] 这类「内容变了就重贴尾」的用途用；
- * **禁止**用作 fold key / remember key —— 流式期间它每帧都变，会把用户收放状态反复清掉
- * （设计规格 v2 §8.5 反例 12）。
- */
-private fun displayItemContentFingerprint(item: DisplayItem): String = when (item) {
-    is DisplayItem.Tool -> "tool:${item.use.id.ifBlank { item.use.name }}"
-    is DisplayItem.Plain -> when (val block = item.block) {
-        is ContentBlock.Thinking -> "thinking:${block.subagent?.taskId ?: block.thinking.take(24)}"
-        is ContentBlock.ToolResult -> "result:${block.toolUseId.ifBlank { block.text.take(24) }}"
-        is ContentBlock.Text -> "text:${block.text.take(24)}"
-        is ContentBlock.Unknown -> "unknown:${block.type}:${block.payload.take(24)}"
-        is ContentBlock.ToolUse -> "plain-tool:${block.id.ifBlank { block.name }}"
-    }
-}
-
-/**
- * 条目**类型** token：无内容、无 id，流式期间恒定。
- * 供 [activityGroupKey] 这类只表达身份的键使用；**这个**可以进 fold key。
- */
-internal fun displayItemKindKey(item: DisplayItem): String = when (item) {
-    is DisplayItem.Tool -> "tool"
-    is DisplayItem.Plain -> when (item.block) {
-        is ContentBlock.Thinking -> "thinking"
-        is ContentBlock.ToolResult -> "result"
-        is ContentBlock.Text -> "text"
-        is ContentBlock.Unknown -> "unknown"
-        is ContentBlock.ToolUse -> "plain-tool"
-    }
+    val firstTool = items.firstOrNull() as? DisplayItem.Tool
+    // 第一条调用的 id 在流式追加和头部分页后仍不变；无 id 才退回位置。
+    return firstTool?.use?.id?.takeIf { it.isNotBlank() }?.let { "tool:$it" }
+        ?: "tool-position:$startIndex"
 }
 
 private fun shouldSkipDisplayItem(item: DisplayItem): Boolean =
@@ -2700,47 +2622,9 @@ private fun isHiddenActivityItem(item: DisplayItem): Boolean {
 }
 
 private fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
-    is DisplayItem.Plain -> item.block is ContentBlock.Thinking || item.block is ContentBlock.ToolResult
-    is DisplayItem.Tool -> shouldCollapseToolInActivity(item.use.name) && !toolShowsImage(item.use)
+    is DisplayItem.Plain -> false
+    is DisplayItem.Tool -> item.use.activity != null && shouldCollapseToolInActivity(item.use.name)
 }
-
-private fun toolShowsImage(use: ContentBlock.ToolUse): Boolean {
-    val candidate = use.input.str("file_path") ?: use.input.str("path") ?: use.input.str("url") ?: ""
-    return WandImage.isImagePath(candidate)
-}
-
-/** 活动滚动窗口的固定高度：活动再多也不撑爆对话流，内部自己滚。 */
-private val ACTIVITY_WINDOW_HEIGHT = 240.dp
-
-/** 活动窗口内容的顶部内边距。 */
-internal val ACTIVITY_WINDOW_TOP_PAD = 6.dp
-
-/**
- * 「回到最新」chip 的纵向几何（设计规格 v2 §2.3）。
- *
- * 规则：chip 的字号 / 图标尺寸 / 纵向内边距任一改动，必须先在本机（420dpi）用
- * `uiautomator dump` 量 chip 节点 `bounds` 高度（px ÷ 2.625 = dp）重新定 [ACTIVITY_TAIL_CHIP_HEIGHT]，
- * [ACTIVITY_TAIL_CHIP_INSET] 会自动跟随；**禁止**把 inset 写成字面量。
- */
-internal val ACTIVITY_TAIL_CHIP_HEIGHT = 28.dp
-
-/** chip 距窗口底（纵向）。与 Web `.chat-activity-tail` 的 12px 对齐，位置不动。 */
-internal val ACTIVITY_TAIL_CHIP_BOTTOM = 12.dp
-
-/** 承诺给最后一行留的净空。 */
-internal val ACTIVITY_TAIL_CHIP_CLEARANCE = 8.dp
-
-/**
- * chip 占用的尾部 inset：由 chip 高度 + 距底 + 承诺净空派生（= 42dp）。
- * 净空恒等式：`(TOP_PAD + INSET) − (CHIP_BOTTOM + CHIP_HEIGHT) = CLEARANCE`。
- * inset 恒定不随 pinned 变化，所以 chip 出现 / 消失不会让内容跳动。
- */
-internal val ACTIVITY_TAIL_CHIP_INSET =
-    ACTIVITY_TAIL_CHIP_HEIGHT + ACTIVITY_TAIL_CHIP_BOTTOM + ACTIVITY_TAIL_CHIP_CLEARANCE -
-        ACTIVITY_WINDOW_TOP_PAD
-
-/** 离底超过这个距离就算「在读历史」：新的活动不再把用户拽回尾部。 */
-private val ACTIVITY_TAIL_PIN = 24.dp
 
 /**
  * 工具调用卡体系的尺寸基线（设计规格 §2.2 / §3.5）。
@@ -2894,334 +2778,6 @@ internal fun CardChevronSlot(
     }
 }
 
-@Composable
-private fun ActivityFoldCard(
-    group: ActivityGroup,
-    isLastTurn: Boolean,
-    isResponding: Boolean,
-    askSelections: Map<String, AskUserSelectionState>,
-    onAskToggle: (String, Int, Int, Boolean) -> Unit,
-    onAskSubmit: (String, String) -> Unit,
-    showSubagentTags: Boolean,
-    /**
-     * 覆盖窗口自己的 fold cardId。探索卡用：它的身份是「消息级探索卡」，
-     * 不参与普通活动段的 `/act${group.key}` 分段（设计规格 v2 §8.2 逐卡表）。
-     */
-    foldCardIdOverride: String? = null,
-) {
-    // 滚动窗口只开最新的一段：新的活动一出现，这一段就收回状态条。
-    // 展开态 = 用户显式收放（rememberSaveable，按会话 + 结构化 scope）?: 派生默认值（group.newest）。
-    // 派生默认值每次重组从参数重算，不像旧写法那样只在首次组合快照一次（那就是历史卡不自动收起的 bug）。
-    val windowScope = foldCardIdOverride ?: "${LocalCardFoldScope.current}/act${group.key}"
-    val foldKey = cardFoldKey(LocalChatSessionId.current, windowScope)
-    var foldOverride by rememberFoldOverrideCode(foldKey)
-    val expandDefault = activityFoldExpandDefault(group.newest)
-    val expanded = foldExpanded(foldOverride, expandDefault)
-    val scrollState = rememberScrollState()
-    val refreshToken = remember(group.items) { activityItemsRefreshToken(group.items) }
-
-    val density = LocalDensity.current
-    val tailThresholdPx = remember(density) { with(density) { ACTIVITY_TAIL_PIN.roundToPx() } }
-    var pinned by rememberSaveable(foldKey) { mutableStateOf(true) }
-    val scope = rememberCoroutineScope()
-    // 只有用户自己的拖拽改「贴尾」状态：程序滚动到底仍然算贴尾，避免自己把自己判成离尾。
-    LaunchedEffect(scrollState, tailThresholdPx) {
-        snapshotFlow {
-            Triple(scrollState.isScrollInProgress, scrollState.value, scrollState.maxValue)
-        }.collect { (inProgress, value, maxValue) ->
-            if (inProgress) pinned = maxValue - value <= tailThresholdPx
-        }
-    }
-    // 展开、或新活动到达时贴到尾部；用户上滚看历史后就不再打扰他。
-    LaunchedEffect(expanded, refreshToken, pinned) {
-        if (!expanded || !pinned) return@LaunchedEffect
-        withFrameNanos { }
-        scrollState.scrollTo(scrollState.maxValue)
-    }
-    LaunchedEffect(expanded, scrollState, pinned) {
-        if (!expanded) return@LaunchedEffect
-        snapshotFlow { scrollState.maxValue }.collect { maxValue ->
-            if (pinned) scrollState.scrollTo(maxValue)
-        }
-    }
-    val canScrollUp by remember { derivedStateOf { scrollState.value > 2 } }
-    val canScrollDown by remember { derivedStateOf { scrollState.maxValue - scrollState.value > 2 } }
-    val windowBackground = WandColors.surfaceSoft
-    val reduceMotion = reduceMotionEnabled()
-    val motionEnabled = !reduceMotion
-    // 折叠态 / 展开态的边框色不再硬切（展开是个「无位移」的变化，颜色可以过渡）。
-    val borderColor by animateColorAsState(
-        targetValue = if (expanded) WandColors.brand.copy(alpha = 0.28f) else WandColors.border,
-        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
-        label = "activityFoldBorder",
-    )
-
-    // 外层不再挂 animateContentSize：它与 AnimatedVisibility 叠在同一条展开链路上会出现二次位移。
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(WandShapes.md)
-            .background(windowBackground)
-            .border(
-                width = 1.dp,
-                color = borderColor,
-                shape = WandShapes.md,
-            ),
-    ) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickableWithoutRipple(
-                    onClickLabel = if (expanded) "收起活动" else "展开活动",
-                    onClick = {
-                        foldOverride = foldToggleCode(foldOverride, expandDefault)
-                        if (!expanded) pinned = true
-                    },
-                )
-                .semantics(mergeDescendants = true) {
-                    stateDescription = if (expanded) "已展开" else "已收起"
-                }
-                .heightIn(min = ChatCardMetrics.foldHeaderMinHeight)
-                .padding(
-                    horizontal = ChatCardMetrics.foldHeaderPaddingH,
-                    vertical = ChatCardMetrics.foldHeaderPaddingV,
-                ),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (group.meta.isNotBlank()) {
-                    Text(
-                        group.meta,
-                        fontSize = 10.sp,
-                        color = WandColors.textMuted.copy(alpha = 0.85f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .height(18.dp)
-                        .widthIn(min = 18.dp)
-                        .clip(WandShapes.full)
-                        .background(WandColors.brand.copy(alpha = 0.12f))
-                        .padding(horizontal = 5.dp),
-                ) {
-                    Text(
-                        group.count.toString(),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = WandColors.brand,
-                        maxLines = 1,
-                    )
-                }
-                ExpandChevron(
-                    expanded = expanded,
-                    tint = WandColors.textMuted,
-                    size = 14.dp,
-                    contentDescription = null,
-                )
-            }
-        }
-        FoldableCardBody(visible = expanded) {
-            HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.6f))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(ACTIVITY_WINDOW_HEIGHT),
-            ) {
-                NoOverscroll {
-                    CompositionLocalProvider(
-                        LocalActivityFoldCompact provides true,
-                        LocalActivityWindowTail provides group.items.lastIndex,
-                        LocalCardFoldScope provides windowScope,
-                    ) {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(scrollState)
-                                .padding(
-                                    start = 10.dp,
-                                    end = 10.dp,
-                                    top = ACTIVITY_WINDOW_TOP_PAD,
-                                    bottom = ACTIVITY_WINDOW_TOP_PAD + ACTIVITY_TAIL_CHIP_INSET,
-                                ),
-                        ) {
-                            group.items.forEachIndexed { index, item ->
-                                RenderDisplayItem(
-                                    item = item,
-                                    itemIndex = index,
-                                    itemCount = group.items.size,
-                                    isLastTurn = isLastTurn,
-                                    isResponding = isResponding,
-                                    askSelections = askSelections,
-                                    onAskToggle = onAskToggle,
-                                    onAskSubmit = onAskSubmit,
-                                    showSubagentTags = showSubagentTags,
-                                )
-                            }
-                        }
-                    }
-                }
-                // 上下渐隐：被裁掉的条目看起来是「窗口外」，而不是被切了一半。
-                if (canScrollUp) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .fillMaxWidth()
-                            .height(14.dp)
-                            .background(
-                                Brush.verticalGradient(listOf(windowBackground, Color.Transparent)),
-                            ),
-                    )
-                }
-                if (canScrollDown) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .height(18.dp)
-                            .background(
-                                Brush.verticalGradient(listOf(Color.Transparent, windowBackground)),
-                            ),
-                    )
-                }
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = !pinned,
-                    enter = if (motionEnabled) fadeIn(WandMotion.tweenFast()) else EnterTransition.None,
-                    exit = if (motionEnabled) fadeOut(WandMotion.tweenFast()) else ExitTransition.None,
-                    modifier = Modifier.align(Alignment.BottomEnd),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier
-                            .padding(end = 12.dp, bottom = ACTIVITY_TAIL_CHIP_BOTTOM)
-                            // chip 高度锁死：inset 是按它派生的，不锁就等于又回到「靠推算」。
-                            .heightIn(min = ACTIVITY_TAIL_CHIP_HEIGHT)
-                            .clip(WandShapes.full)
-                            .background(windowBackground)
-                            .border(1.dp, WandColors.brand.copy(alpha = 0.24f), WandShapes.full)
-                            .clickableWithoutRipple(onClickLabel = "回到最新活动") {
-                                pinned = true
-                                scope.launch {
-                                    if (reduceMotion) {
-                                        scrollState.scrollTo(scrollState.maxValue)
-                                    } else {
-                                        scrollState.animateScrollTo(scrollState.maxValue)
-                                    }
-                                }
-                            }
-                            .padding(start = 6.dp, end = 9.dp, top = 3.dp, bottom = 3.dp),
-                    ) {
-                        Icon(
-                            WandIcons.expand,
-                            contentDescription = null,
-                            tint = WandColors.textSecondary,
-                            modifier = Modifier.size(11.dp),
-                        )
-                        Text(
-                            "回到最新",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.textSecondary,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-private data class ActivityRunSummary(
-    val meta: String,
-    val count: Int,
-)
-
-private val ACTIVITY_KIND_META = linkedMapOf(
-    "read" to "浏览",
-    "command" to "命令",
-    "search" to "搜索",
-    "edit" to "编辑",
-    "web" to "网页",
-    "other" to "调用",
-    "thinking" to "思考",
-)
-
-private fun summarizeActivityItems(items: List<DisplayItem>): ActivityRunSummary {
-    val counts = ACTIVITY_KIND_META.keys.associateWith { 0 }.toMutableMap()
-    var count = 0
-
-    fun addTool(use: ContentBlock.ToolUse) {
-        val kind = activityKindOf(use.name)
-        counts[kind] = (counts[kind] ?: 0) + 1
-        count += 1
-    }
-
-    items.forEach { item ->
-        when (item) {
-            is DisplayItem.Plain -> {
-                val thinking = (item.block as? ContentBlock.Thinking)?.thinking.orEmpty()
-                if (thinking.isBlank()) return@forEach
-                counts["thinking"] = (counts["thinking"] ?: 0) + 1
-                count += 1
-            }
-            is DisplayItem.Tool -> addTool(item.use)
-        }
-    }
-    val meta = ACTIVITY_KIND_META.mapNotNull { (kind, label) ->
-        counts[kind]?.takeIf { it > 0 }?.let { "$label $it" }
-    }.joinToString(" · ")
-    return ActivityRunSummary(
-        meta = meta,
-        count = count,
-    )
-}
-
-private fun activityItemsRefreshToken(items: List<DisplayItem>): Int {
-    var token = 1
-    fun mix(value: Any?) {
-        token = 31 * token + (value?.hashCode() ?: 0)
-    }
-    items.forEach { item ->
-        mix(displayItemContentFingerprint(item))
-        when (item) {
-            is DisplayItem.Tool -> {
-                mix(item.use.input.toString())
-                mix(item.result?.text)
-            }
-            is DisplayItem.Plain -> when (val block = item.block) {
-                is ContentBlock.Thinking -> mix(block.thinking)
-                is ContentBlock.Text -> mix(block.text)
-                is ContentBlock.ToolResult -> mix(block.text)
-                else -> mix(block)
-            }
-        }
-    }
-    return token
-}
-
-internal fun activityKindOf(name: String): String {
-    val lower = name.lowercase()
-    return when {
-        listOf("read", "inspect", "view", "open", "list", "load").any { it in lower } -> "read"
-        listOf("bash", "exec", "command", "shell", "stdin", "terminal").any { it in lower } -> "command"
-        listOf("grep", "glob", "search", "find", "query", "lookup").any { it in lower } -> "search"
-        listOf("edit", "write", "patch", "replace", "notebook").any { it in lower } -> "edit"
-        listOf("web", "fetch", "http", "url", "browser").any { it in lower } -> "web"
-        else -> "other"
-    }
-}
-
 /**
  * 把 ToolUse 与对应 ToolResult 配成一张卡片，对齐 Web 端 buildToolResultMap：
  * 优先按 tool_use_id 精确配对（并行工具调用时 use 与 result 顺序会交错，
@@ -3308,18 +2864,15 @@ fun BlockView(
             // 落单的 ToolUse（正常路径已在 TurnView 配对，这里兜底）
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (showSubagentTag) SubagentTag(block.subagent)
-                ToolCard(
-                    use = block,
-                    result = null,
-                    running = false,
-                    expandDefault = expandDefault,
-                    foldKey = foldKey,
+                ToolActivitySummary(
+                    group = ActivityGroup("orphan", listOf(DisplayItem.Tool(block, null)), streaming),
+                    scope = foldKey,
                 )
             }
         }
         is ContentBlock.ToolResult -> {
             // 落单的 ToolResult 兜底：渲染成无头工具卡的结果区样式
-            if (block.text.isNotEmpty()) {
+            if (block.text.isNotEmpty() || block.truncated) {
                 OrphanResultBlock(block, expandDefault = expandDefault, foldKey = foldKey)
             }
         }
@@ -3540,7 +3093,7 @@ fun ToolCard(
     val hasInput = toolInputHasEntries(use.input)
     val hasBody = toolCardHasBody(use.input, result)
     val sourceLabel = remember(use.name) { toolSourceLabel(use.name) }
-    // 展开态 = 用户显式收放 ?: 派生默认值（由 RenderDisplayItem 按「窗口尾部 / 用户偏好」算好传入）。
+    // 展开态 = 用户显式收放 ?: RenderDisplayItem 传入的卡片偏好。
     var foldOverride by rememberFoldOverrideCode(foldKey)
     val expanded = foldExpanded(foldOverride, expandDefault)
     val statusColor = when {
@@ -3705,36 +3258,21 @@ private fun readImagePath(input: JSONObject): String? {
 fun ExplorationGroupCard(
     tools: List<ExplorationToolItem>,
     running: Boolean,
-    expandAll: Boolean = false,
     /** 消息级 fold scope（列表 item key）；空串时用首张工具卡的稳定 id 兜底。 */
     foldScope: String = "",
 ) {
     val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
-    val summary = remember(items) { summarizeActivityItems(items) }
-    val group = remember(items, running, summary, expandAll) {
+    val group = remember(items, running) {
         ActivityGroup(
             // 分组键也用「类型 + 稳定 id」，不用内容指纹：它是 key 的一部分，流式期间不许漂移。
             key = "exploration:${items.firstOrNull()?.use?.id?.takeIf { it.isNotBlank() } ?: items.size}",
-            meta = summary.meta,
-            count = summary.count,
             items = items,
             running = running,
-            // 当前轮的那一段默认展开；历史轮次保持紧凑。
-            newest = expandAll,
         )
     }
     val messageScope = foldScope.takeIf { it.isNotBlank() }
         ?: "explore:${items.firstOrNull()?.use?.id.orEmpty()}"
-    ActivityFoldCard(
-        group = group,
-        isLastTurn = expandAll,
-        isResponding = running,
-        askSelections = emptyMap(),
-        onAskToggle = { _, _, _, _ -> },
-        onAskSubmit = { _, _ -> },
-        showSubagentTags = true,
-        foldCardIdOverride = cardFoldId(messageScope, "explore"),
-    )
+    ToolActivitySummary(group = group, scope = cardFoldId(messageScope, "explore"))
 }
 
 private data class ToolInputEntry(val key: String, val value: String)

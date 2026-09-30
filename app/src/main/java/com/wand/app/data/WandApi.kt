@@ -18,6 +18,11 @@ import java.util.concurrent.TimeUnit
 /** REST 错误：status 为 null 表示网络层失败。message 面向用户（中文）。 */
 class WandApiException(val status: Int?, message: String) : Exception(message)
 
+data class ToolContentDetail(
+    val input: JSONObject,
+    val result: ContentBlock.ToolResult?,
+)
+
 /**
  * wand 服务端 REST 客户端 —— 对称 iOS 端 WandAPI.swift。
  * 复用当前 endpoint 的 WandHttp client（自签证书放行 + endpoint 独立 CookieJar），
@@ -43,6 +48,9 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
 
     private fun buildRequest(method: String, path: String, body: JSONObject?): Request {
         val builder = Request.Builder().url("$baseUrl$path")
+        if (!path.contains("/tool-content/")) {
+            builder.header("X-Wand-Tool-Projection", "compact")
+        }
         if (body != null) {
             builder.method(method, body.toString().toRequestBody("application/json".toMediaType()))
         } else if (method == "POST" || method == "PUT") {
@@ -188,20 +196,30 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         ),
     )
 
-    /** 按需取回被消息窗口截断的完整 tool_result 内容。 */
-    suspend fun fetchToolContent(id: String, toolUseId: String): ContentBlock.ToolResult {
+    /** 用户打开具体调用后，按需取回完整参数与结果。 */
+    suspend fun fetchToolDetail(id: String, toolUseId: String): ToolContentDetail {
         val response = requestObject(
             "GET",
             "/api/sessions/${encode(id)}/tool-content/${encode(toolUseId)}",
         )
+        val input = response.obj("input") ?: JSONObject()
+        if (response.bool("resultAvailable") == false) {
+            return ToolContentDetail(input, null)
+        }
         val normalized = JSONObject()
             .put("type", "tool_result")
             .put("tool_use_id", response.str("tool_use_id") ?: toolUseId)
             .put("content", response.opt("content") ?: "")
             .put("is_error", response.bool("is_error") ?: false)
-        return ContentBlock.parse(normalized) as? ContentBlock.ToolResult
+        val result = ContentBlock.parse(normalized) as? ContentBlock.ToolResult
             ?: throw WandApiException(null, "工具结果解析失败")
+        return ToolContentDetail(input, result)
     }
+
+    /** 兼容仅需结果正文的旧调用入口。 */
+    suspend fun fetchToolContent(id: String, toolUseId: String): ContentBlock.ToolResult =
+        fetchToolDetail(id, toolUseId).result
+            ?: throw WandApiException(null, "工具尚未返回结果")
 
     suspend fun sendInput(
         id: String,

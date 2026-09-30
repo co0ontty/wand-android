@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.ContentBlock
+import com.wand.app.data.ToolActivity
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -50,176 +51,89 @@ class ActivityGroupingTest {
         assertTrue(isToolCardRunning("Bash", sessionReportsRunning = true))
     }
 
-    @Test
-    fun activityKindsMatchTheWebFoldBar() {
-        assertEquals("command", activityKindOf("Bash"))
-        assertEquals("read", activityKindOf("Read"))
-        assertEquals("edit", activityKindOf("TodoWrite"))
-        assertEquals("search", activityKindOf("Grep"))
-    }
-
-    /** 折叠条的分段规则，直接测生产路径 collapseActivityItems（不再有只给测试用的包装函数）。 */
-    private fun foldSegments(
-        blocks: List<ContentBlock>,
-        isLastTurn: Boolean = false,
-        isResponding: Boolean = false,
-    ): List<SegmentRenderItem> =
-        collapseActivityItems(pairToolBlocks(blocks), isLastTurn, isResponding)
-
-    private fun foldShape(
-        blocks: List<ContentBlock>,
-        isLastTurn: Boolean = false,
-        isResponding: Boolean = false,
-    ): List<Triple<Boolean, Int, Boolean>> = foldSegments(blocks, isLastTurn, isResponding).map { item ->
-        when (item) {
-            is SegmentRenderItem.Item -> Triple(false, 1, false)
-            is SegmentRenderItem.Activity -> Triple(true, item.group.count, item.group.running)
-        }
-    }
-
-    @Test
-    fun consecutiveActivitiesFoldUntilProseSplitsThem() {
-        val thinking = ContentBlock.Thinking("planning", null)
-        val first = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-        val firstResult = ContentBlock.ToolResult("t1", "ok", false, false, null)
-        val prose = ContentBlock.Text("先看结果", null)
-        val second = ContentBlock.ToolUse("t2", "Read", null, JSONObject().put("file_path", "a.kt"), null)
-        val moreProse = ContentBlock.Text("继续", null)
-
-        val segments = foldShape(
-            listOf(thinking, first, firstResult, prose, second, moreProse),
+    private fun tool(id: String, name: String, kind: String? = null, fileKey: String? = null): ContentBlock.ToolUse =
+        ContentBlock.ToolUse(
+            id = id,
+            name = name,
+            description = null,
+            input = JSONObject(),
+            subagent = null,
+            activity = kind?.let { ToolActivity(it, "", fileKey) },
         )
 
+    @Test
+    fun compactToolsFormSummaryWhileThinkingAndLegacyToolsStayInPlace() {
+        val blocks = listOf(
+            ContentBlock.Thinking("planning", null),
+            tool("old", "Read"),
+            tool("t1", "Edit", "edit_file", "file-a"),
+            tool("t2", "Bash", "run_command"),
+            ContentBlock.Text("done", null),
+        )
+        val segments = collapseActivityItems(pairToolBlocks(blocks), true, true)
         assertEquals(4, segments.size)
-        assertEquals(Triple(true, 2, false), segments[0])
-        assertEquals(false, segments[1].first)
-        assertEquals(Triple(true, 1, false), segments[2])
-        assertEquals(false, segments[3].first)
+        assertTrue(segments[0] is SegmentRenderItem.Item)
+        assertTrue(segments[1] is SegmentRenderItem.Item)
+        val group = (segments[2] as SegmentRenderItem.Activity).group
+        assertEquals(2, group.items.size)
+        assertFalse(group.running)
+        assertTrue(segments[3] is SegmentRenderItem.Item)
     }
 
     @Test
-    fun trailingActivityBarIsRunningWhileTheTurnIsStillOpen() {
-        val thinking = ContentBlock.Thinking("planning", null)
-        val prose = ContentBlock.Text("中间结论", null)
-        val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-
-        val segments = foldShape(
-            listOf(thinking, prose, use),
+    fun onlyTrailingSummaryBreathesWhileReplyRuns() {
+        val segments = collapseActivityItems(
+            pairToolBlocks(listOf(tool("t1", "Edit", "edit_file", "file-a"))),
             isLastTurn = true,
             isResponding = true,
         )
-
-        assertEquals(3, segments.size)
-        assertEquals(Triple(true, 1, false), segments[0])
-        assertEquals(false, segments[1].first)
-        assertEquals(Triple(true, 1, true), segments[2])
+        assertTrue((segments.single() as SegmentRenderItem.Activity).group.running)
     }
 
     @Test
-    fun trailingFinishedToolsStayLiveUntilProseOrTheTurnEnds() {
-        val thinking = ContentBlock.Thinking("planning", null)
-        val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-        val result = ContentBlock.ToolResult("t1", "ok", false, false, null)
+    fun fileCountsDeduplicateAnonymousFileKeyButDetailsKeepEachToolId() {
+        val calls = listOf(
+            tool("e1", "Edit", "edit_file", "same-file"),
+            tool("e2", "Write", "edit_file", "same-file"),
+            tool("e3", "Edit", "edit_file", "next-file"),
+            tool("r1", "Read", "read_file", "same-file"),
+            tool("c1", "Bash", "run_command"),
+            tool("c2", "Bash", "run_command"),
+            tool("x1", "mcp__other", "other"),
+        ).map { DisplayItem.Tool(it, null) }
+        val categories = toolActivityCategories(calls)
+        assertEquals(
+            listOf("修改了 2 个文件", "查看了 1 个文件", "运行了 2 条命令", "其他 1 次调用"),
+            categories.map { it.title },
+        )
+        assertEquals(2, categories.first().entries.size)
+        assertEquals(listOf("e1", "e2"), categories.first().entries[0].calls.map { it.use.id })
+        assertEquals(listOf("e3"), categories.first().entries[1].calls.map { it.use.id })
+        assertEquals(2, categories[2].entries.size)
+    }
 
-        val live = foldShape(
-            listOf(thinking, use, result),
+    @Test
+    fun repeatedTransportToolIdCountsOnceAndEmptyCategoriesAreHidden() {
+        val use = tool("e1", "Edit", "edit_file", "same-file")
+        val categories = toolActivityCategories(
+            listOf(DisplayItem.Tool(use, null), DisplayItem.Tool(use, null)),
+        )
+        assertEquals(1, categories.size)
+        assertEquals(1, categories.single().count)
+        assertEquals(1, categories.single().entries.size)
+        assertEquals(1, categories.single().entries.single().calls.size)
+    }
+
+    @Test
+    fun summaryScopeDoesNotChangeWhenAnotherToolArrives() {
+        fun key(blocks: List<ContentBlock>) = collapseActivityItems(
+            pairToolBlocks(blocks),
             isLastTurn = true,
             isResponding = true,
-        )
-        assertEquals(1, live.size)
-        assertEquals(Triple(true, 2, true), live[0])
-
-        val settled = foldShape(
-            listOf(thinking, use, result),
-            isLastTurn = true,
-            isResponding = false,
-        )
-        assertEquals(Triple(true, 2, false), settled[0])
-    }
-
-    @Test
-    fun activityBarCompletesOnceProseClosesTheTurn() {
-        val thinking = ContentBlock.Thinking("planning", null)
-        val prose = ContentBlock.Text("最终回答", null)
-        val segments = foldShape(
-            listOf(thinking, prose),
-            isLastTurn = true,
-            isResponding = true,
-        )
-
-        assertEquals(2, segments.size)
-        assertEquals(Triple(true, 1, false), segments[0])
-        assertEquals(false, segments[1].first)
-    }
-
-    private fun activityGroups(
-        blocks: List<ContentBlock>,
-        isLastTurn: Boolean = false,
-        isResponding: Boolean = false,
-    ): List<ActivityGroup> = collapseActivityItems(pairToolBlocks(blocks), isLastTurn, isResponding)
-        .filterIsInstance<SegmentRenderItem.Activity>()
-        .map { it.group }
-
-    /** 正文把活动切成两段：只有最后一段是「最新」（默认展开），旧段自动收回状态条。 */
-    @Test
-    fun onlyTheTrailingActivitySegmentIsNewest() {
-        val thinking = ContentBlock.Thinking("planning", null)
-        val first = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-        val prose = ContentBlock.Text("先看结果", null)
-        val second = ContentBlock.ToolUse("t2", "Read", null, JSONObject().put("file_path", "a.kt"), null)
-
-        val groups = activityGroups(listOf(thinking, first, prose, second), isLastTurn = true)
-
-        assertEquals(2, groups.size)
-        assertFalse(groups[0].newest)
-        assertTrue(groups[1].newest)
-    }
-
-    /** 同一段 blocks 只因为「不再是最新一轮」就应该丢掉 newest（历史卡自动折叠）。 */
-    @Test
-    fun newestClearsWhenTheTurnIsNoLongerLast() {
-        val thinking = ContentBlock.Thinking("planning", null)
-        val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-
-        val live = activityGroups(listOf(thinking, use), isLastTurn = true)
-        val settled = activityGroups(listOf(thinking, use), isLastTurn = false)
-
-        assertTrue(live.last().newest)
-        assertFalse(settled.last().newest)
-    }
-
-    /** 窗口尾部条目的派生默认值才是展开；推导必须由 group.items 的最后一个下标决定。 */
-    @Test
-    fun trailingItemIsTheWindowTail() {        val thinking = ContentBlock.Thinking("planning", null)
-        val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-        val result = ContentBlock.ToolResult("t1", "ok", false, false, null)
-
-        val group = activityGroups(listOf(thinking, use, result), isLastTurn = true).single()
-        val tailIndex = group.items.lastIndex
-
-        // 思考 + 配对后的工具卡 = 2 条；工具卡与结果配成同一条。
-        assertEquals(1, tailIndex)
-        assertTrue(cardExpandDefault(inWindowTail = tailIndex == group.items.lastIndex, configured = false))
-        assertFalse(cardExpandDefault(inWindowTail = 0 == group.items.lastIndex, configured = false))
-    }
-
-    /**
-     * v2 勘误 2：分组键（会进活动窗口的 fold cardId）不得包含内容片段。
-     * 思考文本从 `"p"` 长到 200 字，`group.key` 必须完全不变。
-     */
-    @Test
-    fun activityGroupKeyIgnoresStreamingContent() {
-        val use = ContentBlock.ToolUse("t1", "Bash", null, JSONObject().put("command", "ls"), null)
-
-        fun keys(thinkingText: String): List<String> =
-            activityGroups(listOf(ContentBlock.Thinking(thinkingText, null), use)).map { it.key }
-
-        val short = keys("p")
-        val grown = keys("planning")
-        val long = keys("planning".repeat(30))
-        assertEquals(1, short.size)
-        assertEquals(short, grown)
-        assertEquals(grown, long)
-        assertEquals("0:thinking", short.single())
+        ).filterIsInstance<SegmentRenderItem.Activity>().single().group.key
+        val first = tool("t1", "Edit", "edit_file", "file-a")
+        assertEquals("tool:t1", key(listOf(first)))
+        assertEquals(key(listOf(first)), key(listOf(first, tool("t2", "Bash", "run_command"))))
+        assertEquals(key(listOf(first)), key(listOf(ContentBlock.Thinking("planning", null), first)))
     }
 }

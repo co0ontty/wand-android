@@ -237,6 +237,26 @@ sealed class ToolUseSemantic {
     }
 }
 
+@Immutable
+data class ToolActivity(
+    val kind: String,
+    val label: String,
+    val fileKey: String? = null,
+    val hasImage: Boolean = false,
+) {
+    companion object {
+        fun parse(o: JSONObject?): ToolActivity? {
+            if (o == null) return null
+            return ToolActivity(
+                kind = o.str("kind") ?: "other",
+                label = o.str("label") ?: "",
+                fileKey = o.str("fileKey"),
+                hasImage = o.bool("hasImage") ?: false,
+            )
+        }
+    }
+}
+
 /** ConversationTurn.content 里的一个块。types.ts: ContentBlock 四种变体 + 容错。 */
 @Immutable
 sealed class ContentBlock {
@@ -254,6 +274,7 @@ sealed class ContentBlock {
         val input: JSONObject,
         val subagent: SubagentMeta?,
         val semantic: ToolUseSemantic? = null,
+        val activity: ToolActivity? = null,
     ) : ContentBlock()
 
     @Immutable
@@ -284,6 +305,7 @@ sealed class ContentBlock {
                     input = o.obj("input") ?: JSONObject(),
                     subagent = subagent,
                     semantic = ToolUseSemantic.parse(o.obj("semantic")),
+                    activity = ToolActivity.parse(o.obj("activity")),
                 )
                 "tool_result" -> {
                     val rawContent = o.opt("content")

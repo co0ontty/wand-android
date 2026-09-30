@@ -889,7 +889,6 @@ fun ChatScreen(
                                         running = store.isResponding &&
                                             item.lastTurnIndex == store.messages.lastIndex &&
                                             item.tools.any { it.result == null },
-                                        expandAll = item.lastTurnIndex == store.messages.lastIndex,
                                         foldScope = foldScope,
                                     )
                                 }

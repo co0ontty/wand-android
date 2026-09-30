@@ -184,7 +184,10 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     private fun sendSubscribe(sessionId: String) {
         lastSeqBySession.remove(sessionId)
         if (ptyAck) awaitingPtySnapshot = true
-        val payload = JSONObject().put("type", "subscribe").put("sessionId", sessionId)
+        val payload = JSONObject()
+            .put("type", "subscribe")
+            .put("sessionId", sessionId)
+            .put("compactTools", true)
             .put("capabilities", JSONObject().put("ptyAck", ptyAck))
         blockBudget?.takeIf { it > 0 }?.let { payload.put("blockBudget", it) }
         sendJson(payload)

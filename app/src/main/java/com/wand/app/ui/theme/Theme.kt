@@ -368,6 +368,9 @@ object WandMotion {
     /** 呼吸动画 alpha 低点。过低会闪成空心点。 */
     const val breathAlphaMin = 0.55f
 
+    /** 活动摘要的正文呼吸低点；小字在浅色背景上仍需保持可读。 */
+    const val activityTextAlphaMin = 0.90f
+
     /** 呼吸动画 scale 高点。过大看起来像在跳。 */
     const val breathScaleMax = 1.12f
 
