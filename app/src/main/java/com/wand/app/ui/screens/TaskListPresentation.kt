@@ -8,17 +8,10 @@ import com.wand.app.data.workspaceProviderLabel
 
 internal const val UNNAMED_TASK_NAME = "未命名任务"
 
-/** 首页模式：会话树（默认）或任务管理看板。点标题栏即可切换并持久化。 */
+/** 首页模式：会话树（默认）或任务管理看板。通过右上角菜单切换并持久化。 */
 enum class HomeListMode(val storageValue: String) {
     Sessions("sessions"),
     Tasks("board");
-
-    val label: String
-        get() = if (this == Tasks) "任务模式" else "会话模式"
-
-    /** 分段控件上的短标签：控件本身已经表达了「模式」，标题里再重复一遍只是占宽度。 */
-    val segmentLabel: String
-        get() = if (this == Tasks) "任务" else "会话"
 
     companion object {
         fun fromStorage(value: String?): HomeListMode = when (value) {

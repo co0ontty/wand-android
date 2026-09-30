@@ -83,7 +83,6 @@ import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandMorphIconButton
 import com.wand.app.ui.components.WandInPlaceSwap
-import com.wand.app.ui.components.WandSegmentedTrack
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
@@ -104,7 +103,7 @@ import com.wand.app.ui.withLiveTitle
  *
  * 设计取舍（对齐 Cursor for iOS / Claude Code mobile / Codex mobile 的首页共识）：
  * - 顶部是品牌 + 服务器 + 唯一溢出菜单，不再把「会话模式」做成一个像下拉的胶囊；
- * - 模式切换用真正的分段控件；
+ * - 任务面板从右上角菜单进入，首页不占用独立的模式切换行；
  * - 状态优先：先告诉你「几个在跑、几个等你」，再给列表；列表是卡片不是文件树；
  * - 需要动手的会话有明确的状态胶囊，而不是只有一个小圆点；
  * - 主操作固定在底部（输入式启动条），随时可以「开口」。
@@ -116,7 +115,9 @@ import com.wand.app.ui.withLiveTitle
 @Composable
 internal fun HomeTopBar(
     serverDisplayName: String,
+    homeListMode: HomeListMode,
     interactionEnabled: Boolean,
+    onHomeListModeChange: (HomeListMode) -> Unit,
     onOpenAiTeams: () -> Unit,
     onOpenSiliconEmployees: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -221,6 +222,30 @@ internal fun HomeTopBar(
                 containerColor = WandColors.bgElevated,
             ) {
                 Text(
+                    "工作台",
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = WandColors.textMuted,
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(if (homeListMode == HomeListMode.Tasks) "会话列表" else "任务面板")
+                    },
+                    leadingIcon = {
+                        Icon(
+                            if (homeListMode == HomeListMode.Tasks) WandIcons.history else WandIcons.todo,
+                            contentDescription = null,
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onHomeListModeChange(
+                            if (homeListMode == HomeListMode.Tasks) HomeListMode.Sessions
+                            else HomeListMode.Tasks,
+                        )
+                    },
+                )
+                Text(
                     "其他页面",
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
                     style = MaterialTheme.typography.labelSmall,
@@ -240,60 +265,6 @@ internal fun HomeTopBar(
                     text = { Text("设置") },
                     leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
                     onClick = { menuOpen = false; onOpenSettings() },
-                )
-            }
-        }
-    }
-}
-
-// MARK: - 模式分段
-
-/** 真正的分段控件：会话 / 任务。旧的「会话模式 ⌄」看着像下拉，其实是切换，误导性太强。 */
-@Composable
-internal fun HomeModeTabs(
-    mode: HomeListMode,
-    enabled: Boolean,
-    onChange: (HomeListMode) -> Unit,
-) {
-    val motionEnabled = !reduceMotionEnabled()
-    val modes = HomeListMode.entries
-    WandSegmentedTrack(
-        itemCount = modes.size,
-        selectedIndex = modes.indexOf(mode).coerceAtLeast(0),
-        modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
-    ) {
-        modes.forEach { entry ->
-            val selected = entry == mode
-            val textColor by animateColorAsState(
-                targetValue = if (selected) WandColors.brand else WandColors.textSecondary,
-                animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
-                label = "homeTabText",
-            )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 38.dp)
-                    .clip(WandShapes.sm)
-                    .clickable(
-                        enabled = enabled && !selected,
-                        role = Role.Tab,
-                        onClick = { onChange(entry) },
-                    )
-                    .semantics {
-                        contentDescription = if (selected) {
-                            "当前${entry.segmentLabel}"
-                        } else {
-                            "切换到${entry.segmentLabel}"
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    entry.segmentLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = textColor,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 1,
                 )
             }
         }

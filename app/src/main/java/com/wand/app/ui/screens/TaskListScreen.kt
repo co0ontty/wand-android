@@ -1158,23 +1158,20 @@ fun TaskListScreen(
             Column(Modifier.fillMaxSize()) {
                 HomeTopBar(
                     serverDisplayName = serverDisplayName,
+                    homeListMode = homeListMode,
                     interactionEnabled = interactionEnabled,
-                    onOpenSettings = onOpenSettings,
-                    onSwitchServer = onSwitchServer,
-                    onOpenAiTeams = onOpenAiTeams,
-                    onOpenSiliconEmployees = onOpenSiliconEmployees,
-                    onCollapseSidebar = onCollapseSidebar,
-                )
-                HomeModeTabs(
-                    mode = homeListMode,
-                    enabled = interactionEnabled,
-                    onChange = { mode ->
+                    onHomeListModeChange = { mode ->
                         selecting = false
                         selectedTaskIds = emptySet()
                         selectedSessionIds = emptySet()
                         if (mode == HomeListMode.Sessions) attentionOnly = false
                         onHomeListModeChange(mode)
                     },
+                    onOpenSettings = onOpenSettings,
+                    onSwitchServer = onSwitchServer,
+                    onOpenAiTeams = onOpenAiTeams,
+                    onOpenSiliconEmployees = onOpenSiliconEmployees,
+                    onCollapseSidebar = onCollapseSidebar,
                 )
                 if (homeListMode == HomeListMode.Sessions) {
                     HomeContactsStrip(
