@@ -26,6 +26,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -37,8 +38,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.ContentBlock
@@ -46,6 +50,13 @@ import com.wand.app.data.ToolContentDetail
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
+
+private const val ACTIVITY_WAIT_REFRESH_MS = 1_000L
+private val COMMAND_CLOCK_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 internal data class ToolActivityCategory(
     val kind: String,
@@ -101,7 +112,7 @@ internal fun toolActivityCategories(items: List<DisplayItem>): List<ToolActivity
     }
 }
 
-private fun toolActivityKind(use: ContentBlock.ToolUse): String {
+internal fun toolActivityKind(use: ContentBlock.ToolUse): String {
     use.activity?.kind?.takeIf { it in setOf("edit_file", "read_file", "run_command", "other") }
         ?.let { return it }
     val name = use.name.lowercase().substringAfterLast("__")
@@ -116,13 +127,62 @@ private fun toolActivityKind(use: ContentBlock.ToolUse): String {
     }
 }
 
+/** 只有普通命令仍缺结果时才保留执行中状态；不依赖它是不是段的最后一个块。 */
+internal fun activityHasPendingCommand(items: List<DisplayItem>): Boolean = items.any { item ->
+    item is DisplayItem.Tool && toolActivityKind(item.use) == "run_command" && item.result == null
+}
+
+/** 旧历史无 occurredAt 时返回 null，不用客户端渲染时钟伪造执行时间。 */
+internal fun latestCommandOccurredAt(items: List<DisplayItem>, pendingOnly: Boolean = false): Instant? =
+    items.asSequence()
+        .filterIsInstance<DisplayItem.Tool>()
+        .filter { toolActivityKind(it.use) == "run_command" && (!pendingOnly || it.result == null) }
+        .mapNotNull { item ->
+            item.use.activity?.occurredAt?.let { raw -> runCatching { Instant.parse(raw) }.getOrNull() }
+        }
+        .maxOrNull()
+
+internal fun commandEventClock(instant: Instant, zone: ZoneId = ZoneId.systemDefault()): String =
+    COMMAND_CLOCK_FORMAT.format(instant.atZone(zone))
+
+internal fun commandWaitLabel(instant: Instant, nowMillis: Long): String {
+    val seconds = ((nowMillis - instant.toEpochMilli()) / 1_000).coerceAtLeast(0)
+    return when {
+        seconds < 60 -> "已等待 ${seconds} 秒"
+        seconds < 3_600 -> "已等待 ${seconds / 60} 分 ${seconds % 60} 秒"
+        else -> "已等待 ${seconds / 3_600} 小时 ${(seconds % 3_600) / 60} 分"
+    }
+}
+
+internal fun activityNeedsThinkingPlaceholder(group: ActivityGroup): Boolean =
+    group.running &&
+        (group.items.lastOrNull() as? DisplayItem.Plain)?.block is ContentBlock.Thinking
+
 /** 对话末尾的轻量活动摘要。分类展开只渲染占位条目，单条点开才请求完整内容。 */
 @Composable
 internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
     val categories = remember(group.items) { toolActivityCategories(group.items) }
-    if (categories.isEmpty()) return
+    val thinking = remember(group.items) {
+        group.items.mapNotNull { item ->
+            ((item as? DisplayItem.Plain)?.block as? ContentBlock.Thinking)?.thinking
+                ?.takeIf { it.isNotBlank() }
+        }
+    }
+    val thinkingPlaceholder = thinking.isEmpty() && activityNeedsThinkingPlaceholder(group)
+    if (categories.isEmpty() && thinking.isEmpty() && !thinkingPlaceholder) return
     val key = cardFoldKey(LocalChatSessionId.current, scope)
     var menuOpen by rememberSaveable(key) { mutableStateOf(false) }
+    val latestCommandAt = remember(group.items) { latestCommandOccurredAt(group.items) }
+    val pendingCommandAt = remember(group.items) { latestCommandOccurredAt(group.items, pendingOnly = true) }
+    val pendingCommand = group.running && activityHasPendingCommand(group.items)
+    var nowMillis by remember(key) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(pendingCommand, pendingCommandAt) {
+        if (!pendingCommand || pendingCommandAt == null) return@LaunchedEffect
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            delay(ACTIVITY_WAIT_REFRESH_MS)
+        }
+    }
     val motion = !reduceMotionEnabled()
     val pulse = if (group.running && motion) {
         val transition = rememberInfiniteTransition(label = "toolActivityRunning")
@@ -135,6 +195,32 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
         alpha
     } else {
         1f
+    }
+    val emphasis = WandColors.brand
+    val summary = buildAnnotatedString {
+        if (thinking.isNotEmpty()) {
+            append("深度思考")
+            if (group.running && categories.isEmpty()) {
+                withStyle(SpanStyle(color = emphasis.copy(alpha = pulse))) { append("中") }
+            }
+        } else if (thinkingPlaceholder) {
+            withStyle(SpanStyle(color = emphasis.copy(alpha = pulse))) { append("思考中") }
+        }
+        categories.forEach { category ->
+            if (length > 0) append(" · ")
+            append(category.title)
+            if (category.kind == "run_command") {
+                latestCommandAt?.let { at ->
+                    append("  ")
+                    withStyle(SpanStyle(color = emphasis)) { append(commandEventClock(at)) }
+                }
+                if (pendingCommand) {
+                    append(" · ")
+                    withStyle(SpanStyle(color = emphasis.copy(alpha = pulse))) { append("运行中") }
+                    pendingCommandAt?.let { at -> append(" · ${commandWaitLabel(at, nowMillis)}") }
+                }
+            }
+        }
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -164,13 +250,13 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
                 )
             }
             Text(
-                categories.joinToString(" · ") { it.title },
+                summary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
                 color = WandColors.textSecondary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).graphicsLayer { alpha = pulse },
+                modifier = Modifier.weight(1f),
             )
             ExpandChevron(
                 expanded = menuOpen,
@@ -184,6 +270,20 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
             ) {
+                if (thinking.isNotEmpty()) {
+                    CompositionLocalProvider(LocalActivityFoldCompact provides true) {
+                        thinking.forEachIndexed { index, text ->
+                            ThinkingBlock(
+                                text = text,
+                                streaming = group.running && index == thinking.lastIndex &&
+                                    group.items.lastOrNull() is DisplayItem.Plain,
+                                foldKey = "$key/thinking-$index",
+                            )
+                        }
+                    }
+                } else if (thinkingPlaceholder) {
+                    Text("思考内容生成中…", fontSize = 11.sp, color = WandColors.textMuted)
+                }
                 categories.forEach { category ->
                     ToolActivityCategorySection(category, "$key/${category.kind}", group.running)
                 }
@@ -206,6 +306,7 @@ private fun ToolActivityCategorySection(category: ToolActivityCategory, key: Str
             category.entries.forEachIndexed { index, entry ->
                 ToolActivityEntryRow(
                     entry,
+                    category.kind,
                     "${category.itemName} ${index + 1}",
                     "$key/${entry.calls.first().use.id.ifBlank { index.toString() }}",
                     running,
@@ -216,14 +317,14 @@ private fun ToolActivityCategorySection(category: ToolActivityCategory, key: Str
 }
 
 @Composable
-private fun ToolActivityEntryRow(entry: ToolActivityEntry, label: String, key: String, running: Boolean) {
-    val results = entry.calls.map { it.result }
-    val status = when {
-        results.any { it?.isError == true } -> "失败"
-        results.all { it != null } -> "完成"
-        running -> "运行中"
-        else -> "未返回"
-    }
+private fun ToolActivityEntryRow(
+    entry: ToolActivityEntry,
+    kind: String,
+    label: String,
+    key: String,
+    running: Boolean,
+) {
+    val status = toolActivityEntryStatus(kind, entry, running)
     var open by rememberSaveable(key) { mutableStateOf(false) }
 
     Column {
@@ -267,12 +368,22 @@ private fun ToolActivityEntryRow(entry: ToolActivityEntry, label: String, key: S
                         item = item,
                         key = "$key/${item.use.id.ifBlank { index.toString() }}",
                         open = open,
-                        running = running && item.result == null,
+                        running = toolActivityCallRunning(kind, item, running),
                     )
                 }
             }
         }
     }
+}
+
+internal fun toolActivityCallRunning(kind: String, item: DisplayItem.Tool, groupRunning: Boolean): Boolean =
+    groupRunning && kind == "run_command" && item.result == null
+
+internal fun toolActivityEntryStatus(kind: String, entry: ToolActivityEntry, groupRunning: Boolean): String = when {
+    entry.calls.any { it.result?.isError == true } -> "失败"
+    entry.calls.all { it.result != null } -> "完成"
+    entry.calls.any { toolActivityCallRunning(kind, it, groupRunning) } -> "运行中"
+    else -> "未返回"
 }
 
 @Composable

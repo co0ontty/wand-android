@@ -243,6 +243,7 @@ data class ToolActivity(
     val label: String,
     val fileKey: String? = null,
     val hasImage: Boolean = false,
+    val occurredAt: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): ToolActivity? {
@@ -252,6 +253,7 @@ data class ToolActivity(
                 label = o.str("label") ?: "",
                 fileKey = o.str("fileKey"),
                 hasImage = o.bool("hasImage") ?: false,
+                occurredAt = o.str("occurredAt"),
             )
         }
     }

@@ -401,6 +401,13 @@ fun ChatScreen(
     val lastUserTurnIndex = remember(store.messages) {
         store.messages.indexOfLast { it.role == "user" }
     }
+    val toolResultsById = remember(store.messages) { conversationToolResults(store.messages) }
+    val activeCommandIds = remember(store.messages, lastUserTurnIndex, toolResultsById, store.isResponding) {
+        if (!store.isResponding) emptySet() else {
+            latestPendingCommandToolId(store.messages, lastUserTurnIndex, toolResultsById)
+                ?.let(::setOf) ?: emptySet()
+        }
+    }
     val subagentActivities = remember(store.messages, store.isResponding) {
         subagentDockActivities(collectSubagentActivities(store.messages, store.isResponding))
     }
@@ -866,6 +873,8 @@ fun ChatScreen(
                                             employeeAvatar = liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
                                             isLastTurn = item.index == store.messages.lastIndex,
                                             isResponding = store.isResponding,
+                                            activeCommandIds = activeCommandIds,
+                                            toolResultsById = toolResultsById,
                                             compactUser = false,
                                             initiallyCollapsed = collapseReply,
                                             showHeader = true,

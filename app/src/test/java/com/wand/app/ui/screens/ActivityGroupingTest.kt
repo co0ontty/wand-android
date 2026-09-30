@@ -1,7 +1,10 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.ContentBlock
+import com.wand.app.data.ConversationTurn
 import com.wand.app.data.ToolActivity
+import java.time.Instant
+import java.time.ZoneId
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -62,7 +65,7 @@ class ActivityGroupingTest {
         )
 
     @Test
-    fun compactToolsFormSummaryWhileThinkingAndLegacyToolsStayInPlace() {
+    fun thinkingAndCompactToolsShareInlineGroupsWhileLegacyToolsStayInPlace() {
         val blocks = listOf(
             ContentBlock.Thinking("planning", null),
             tool("old", "Read"),
@@ -72,22 +75,182 @@ class ActivityGroupingTest {
         )
         val segments = collapseActivityItems(pairToolBlocks(blocks), true, true)
         assertEquals(4, segments.size)
-        assertTrue(segments[0] is SegmentRenderItem.Item)
+        assertEquals(1, (segments[0] as SegmentRenderItem.Activity).group.items.size)
         assertTrue(segments[1] is SegmentRenderItem.Item)
         val group = (segments[2] as SegmentRenderItem.Activity).group
         assertEquals(2, group.items.size)
-        assertFalse(group.running)
+        assertTrue(group.running)
         assertTrue(segments[3] is SegmentRenderItem.Item)
     }
 
     @Test
-    fun onlyTrailingSummaryBreathesWhileReplyRuns() {
+    fun thinkingAndToolStayOneSegmentAsExecutionMovesForward() {
+        val thinking = ContentBlock.Thinking("planning", null)
+        val command = tool("run", "Bash", "run_command")
+        val first = collapseActivityItems(pairToolBlocks(listOf(thinking)), true, true)
+        val later = collapseActivityItems(pairToolBlocks(listOf(thinking, command)), true, true)
+        val firstGroup = (first.single() as SegmentRenderItem.Activity).group
+        val laterGroup = (later.single() as SegmentRenderItem.Activity).group
+        assertEquals("thinking-position:0", firstGroup.key)
+        assertEquals(firstGroup.key, laterGroup.key)
+        assertEquals(2, laterGroup.items.size)
+        assertTrue(laterGroup.running)
+        val blankFirst = collapseActivityItems(
+            pairToolBlocks(listOf(ContentBlock.Thinking("", null), command)), true, true,
+        )
+        assertEquals(firstGroup.key, (blankFirst.single() as SegmentRenderItem.Activity).group.key)
+    }
+
+    @Test
+    fun blankStreamingThinkingHasVisiblePlaceholderAndStableKeyWhenTextArrives() {
+        fun group(text: String) = (collapseActivityItems(
+            pairToolBlocks(listOf(ContentBlock.Thinking(text, null))),
+            isLastTurn = true,
+            isResponding = true,
+        ).single() as SegmentRenderItem.Activity).group
+        val empty = group("")
+        val populated = group("planning")
+        assertEquals("thinking-position:0", empty.key)
+        assertEquals(empty.key, populated.key)
+        assertTrue(activityNeedsThinkingPlaceholder(empty))
+        assertFalse(activityNeedsThinkingPlaceholder(empty.copy(running = false)))
+    }
+
+    @Test
+    fun completedFileActivityStaysStillWhileReplyRuns() {
         val segments = collapseActivityItems(
             pairToolBlocks(listOf(tool("t1", "Edit", "edit_file", "file-a"))),
             isLastTurn = true,
             isResponding = true,
         )
-        assertTrue((segments.single() as SegmentRenderItem.Activity).group.running)
+        assertFalse((segments.single() as SegmentRenderItem.Activity).group.running)
+    }
+
+    @Test
+    fun onlyPendingCommandOrLatestThinkingSegmentRuns() {
+        val completedEdit = tool("edit", "Edit", "edit_file", "file-a")
+        val pendingCommand = tool("run", "Bash", "run_command")
+        val segments = collapseActivityItems(
+            pairToolBlocks(listOf(
+                ContentBlock.Thinking("earlier", null),
+                completedEdit,
+                ContentBlock.ToolResult("edit", "ok", false, false, null),
+                ContentBlock.Text("interlude", null),
+                pendingCommand,
+                ContentBlock.Text("still working", null),
+                ContentBlock.Thinking("latest", null),
+            )),
+            isLastTurn = true,
+            isResponding = true,
+        ).filterIsInstance<SegmentRenderItem.Activity>()
+        assertEquals(3, segments.size)
+        assertFalse(segments[0].group.running)
+        assertTrue(segments[1].group.running)
+        assertTrue(segments[2].group.running)
+        val historical = collapseActivityItems(
+            pairToolBlocks(listOf(pendingCommand)),
+            isLastTurn = false,
+            isResponding = true,
+        ).single() as SegmentRenderItem.Activity
+        assertFalse(historical.group.running)
+    }
+
+    @Test
+    fun pendingCommandRemainsRunningEvenAfterProseFollows() {
+        val command = tool("run", "Bash", "run_command")
+        val segments = collapseActivityItems(
+            pairToolBlocks(listOf(command, ContentBlock.Text("still working", null))),
+            isLastTurn = true,
+            isResponding = true,
+        )
+        assertTrue(activityHasPendingCommand((segments.first() as SegmentRenderItem.Activity).group.items))
+        assertTrue((segments.first() as SegmentRenderItem.Activity).group.running)
+        val finished = collapseActivityItems(
+            pairToolBlocks(listOf(command, ContentBlock.ToolResult("run", "ok", false, false, null))),
+            isLastTurn = true,
+            isResponding = true,
+        )
+        assertFalse(activityHasPendingCommand((finished.single() as SegmentRenderItem.Activity).group.items))
+    }
+
+    @Test
+    fun pendingCommandDoesNotMarkOtherEntriesAsRunning() {
+        val edit = DisplayItem.Tool(tool("edit", "Edit", "edit_file", "file-a"), null)
+        val command = DisplayItem.Tool(tool("run", "Bash", "run_command"), null)
+        assertEquals("未返回", toolActivityEntryStatus("edit_file", ToolActivityEntry(listOf(edit)), true))
+        assertFalse(toolActivityCallRunning("edit_file", edit, true))
+        assertEquals("运行中", toolActivityEntryStatus("run_command", ToolActivityEntry(listOf(command)), true))
+        assertTrue(toolActivityCallRunning("run_command", command, true))
+        assertEquals("未返回", toolActivityEntryStatus("run_command", ToolActivityEntry(listOf(command)), false))
+    }
+
+    @Test
+    fun latestPendingCommandCanBelongToAnEarlierTurnAndResolvesAcrossTurns() {
+        val command = tool("run", "Bash", "run_command")
+        val turns = listOf(
+            ConversationTurn("user", listOf(ContentBlock.Text("go", null))),
+            ConversationTurn("assistant", listOf(command)),
+            ConversationTurn("assistant", listOf(ContentBlock.Thinking("still working", null))),
+        )
+        val pendingResults = conversationToolResults(turns)
+        assertEquals("run", latestPendingCommandToolId(turns, 0, pendingResults))
+        val oldTurnGroup = collapseActivityItems(
+            pairToolBlocks(turns[1].content, pendingResults),
+            isLastTurn = false,
+            isResponding = true,
+            activeCommandIds = setOf("run"),
+        ).single() as SegmentRenderItem.Activity
+        assertTrue(oldTurnGroup.group.running)
+
+        val resolved = turns + ConversationTurn(
+            "assistant",
+            listOf(ContentBlock.ToolResult("run", "", false, true, null)),
+        )
+        val resolvedResults = conversationToolResults(resolved)
+        assertEquals(null, latestPendingCommandToolId(resolved, 0, resolvedResults))
+        val resolvedItem = pairToolBlocks(turns[1].content, resolvedResults).single() as DisplayItem.Tool
+        assertEquals("run", resolvedItem.result?.toolUseId)
+        val resolvedGroup = collapseActivityItems(
+            listOf(resolvedItem),
+            isLastTurn = false,
+            isResponding = true,
+            activeCommandIds = emptySet(),
+        ).single() as SegmentRenderItem.Activity
+        assertFalse(resolvedGroup.group.running)
+
+        val twoPending = listOf(
+            turns.first(),
+            ConversationTurn("assistant", listOf(tool("first", "Bash", "run_command"))),
+            ConversationTurn("assistant", listOf(tool("second", "Bash", "run_command"))),
+        )
+        assertEquals("second", latestPendingCommandToolId(twoPending, 0, conversationToolResults(twoPending)))
+        val newestResolved = twoPending + ConversationTurn(
+            "assistant", listOf(ContentBlock.ToolResult("second", "", false, true, null)),
+        )
+        assertEquals(
+            "first",
+            latestPendingCommandToolId(newestResolved, 0, conversationToolResults(newestResolved)),
+        )
+    }
+
+    @Test
+    fun latestCommandTimeUsesUtcEventTimeAndNeverInventsMissingHistory() {
+        val parsed = ContentBlock.parse(JSONObject(
+            """{"type":"tool_use","id":"wire","name":"Bash","activity":{"kind":"run_command","label":"运行命令","occurredAt":"2026-09-30T12:03:04Z"}}""",
+        )) as ContentBlock.ToolUse
+        assertEquals("2026-09-30T12:03:04Z", parsed.activity?.occurredAt)
+        val first = tool("c1", "Bash", "run_command").copy(
+            activity = ToolActivity("run_command", "运行命令", occurredAt = "2026-09-30T12:01:02Z"),
+        )
+        val second = tool("c2", "Bash", "run_command").copy(
+            activity = ToolActivity("run_command", "运行命令", occurredAt = "2026-09-30T12:03:04Z"),
+        )
+        val items = listOf(DisplayItem.Tool(first, null), DisplayItem.Tool(second, null))
+        val latest = latestCommandOccurredAt(items)
+        assertEquals(Instant.parse("2026-09-30T12:03:04Z"), latest)
+        assertEquals("20:03:04", commandEventClock(latest!!, ZoneId.of("Asia/Shanghai")))
+        assertEquals("已等待 1 分 5 秒", commandWaitLabel(latest, latest.toEpochMilli() + 65_000))
+        assertEquals(null, latestCommandOccurredAt(listOf(DisplayItem.Tool(tool("old", "Bash", "run_command"), null))))
     }
 
     @Test
@@ -150,6 +313,24 @@ class ActivityGroupingTest {
         val first = tool("t1", "Edit", "edit_file", "file-a")
         assertEquals("tool:t1", key(listOf(first)))
         assertEquals(key(listOf(first)), key(listOf(first, tool("t2", "Bash", "run_command"))))
-        assertEquals(key(listOf(first)), key(listOf(ContentBlock.Thinking("planning", null), first)))
+        assertEquals("thinking-position:0", key(listOf(ContentBlock.Thinking("planning", null), first)))
+    }
+
+    @Test
+    fun thinkingLeadingGroupKeepsItsKeyWhenToolsAppend() {
+        val thinking = ContentBlock.Thinking("planning", null)
+        val command = tool("run", "Bash", "run_command")
+        fun key(blocks: List<ContentBlock>) = collapseActivityItems(
+            pairToolBlocks(blocks),
+            isLastTurn = true,
+            isResponding = true,
+        ).filterIsInstance<SegmentRenderItem.Activity>().last().group.key
+        assertEquals("thinking-position:0", key(listOf(thinking)))
+        assertEquals("thinking-position:0", key(listOf(thinking, command)))
+        assertEquals("thinking-position:1", key(listOf(ContentBlock.Text("earlier", null), thinking, command)))
+        assertEquals("thinking-position:0", key(listOf(ContentBlock.Thinking("", null), thinking, command)))
+        assertEquals("thinking-position:1", key(listOf(ContentBlock.Text("earlier", null), thinking)))
+        assertEquals("tool:run", key(listOf(command)))
+        assertEquals("tool:run", key(listOf(ContentBlock.Text("earlier", null), command)))
     }
 }

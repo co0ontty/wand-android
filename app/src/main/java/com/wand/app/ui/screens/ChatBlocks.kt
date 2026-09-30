@@ -197,6 +197,8 @@ fun TurnView(
     employeeAvatar: String? = null,
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
+    activeCommandIds: Set<String>? = null,
+    toolResultsById: Map<String, ContentBlock.ToolResult> = emptyMap(),
     compactUser: Boolean = false,
     initiallyCollapsed: Boolean = false,
     currentReplyExpandedOverride: Boolean? = null,
@@ -275,6 +277,8 @@ fun TurnView(
                     blocks = parentBlocks,
                     isLastTurn = isLastTurn,
                     isResponding = isResponding,
+                    activeCommandIds = activeCommandIds,
+                    toolResultsById = toolResultsById,
                     askSelections = askSelections,
                     onAskToggle = onAskToggle,
                     onAskSubmit = onAskSubmit,
@@ -1827,6 +1831,8 @@ private fun SegmentBlocks(
     blocks: List<ContentBlock>,
     isLastTurn: Boolean,
     isResponding: Boolean,
+    activeCommandIds: Set<String>? = null,
+    toolResultsById: Map<String, ContentBlock.ToolResult> = emptyMap(),
     askSelections: Map<String, AskUserSelectionState>,
     onAskToggle: (String, Int, Int, Boolean) -> Unit,
     onAskSubmit: (String, String) -> Unit,
@@ -1834,9 +1840,11 @@ private fun SegmentBlocks(
     segmentScope: String,
     showSubagentTags: Boolean = true,
 ) {
-    val items = remember(blocks) { pairToolBlocks(blocks) }
-    val renderItems = remember(items, blocks, isLastTurn, isResponding) {
-        collapseActivityItems(items, isLastTurn, isResponding)
+    val items = remember(blocks, toolResultsById) {
+        pairToolBlocks(blocks, toolResultsById)
+    }
+    val renderItems = remember(items, isLastTurn, isResponding, activeCommandIds) {
+        collapseActivityItems(items, isLastTurn, isResponding, activeCommandIds)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -2429,6 +2437,34 @@ internal sealed class SegmentRenderItem {
     data class Activity(val group: ActivityGroup) : SegmentRenderItem()
 }
 
+/** 结果可能在下一条 assistant turn 到达；按调用 id 汇总供旧活动段刷新状态和详情。 */
+internal fun conversationToolResults(turns: List<ConversationTurn>): Map<String, ContentBlock.ToolResult> =
+    buildMap {
+        turns.forEach { turn ->
+            turn.content.filterIsInstance<ContentBlock.ToolResult>().forEach { result ->
+                if (result.toolUseId.isNotBlank()) put(result.toolUseId, result)
+            }
+        }
+    }
+
+/** 当前用户输入之后最后一条尚无结果的命令；旧 turn 的未完成调用也保持活跃。 */
+internal fun latestPendingCommandToolId(
+    turns: List<ConversationTurn>,
+    lastUserTurnIndex: Int,
+    results: Map<String, ContentBlock.ToolResult>,
+): String? {
+    for (turnIndex in turns.lastIndex downTo lastUserTurnIndex + 1) {
+        val turn = turns[turnIndex]
+        if (turn.role != "assistant") continue
+        for (block in turn.content.asReversed()) {
+            if (block is ContentBlock.ToolUse && block.id.isNotBlank() &&
+                toolActivityKind(block) == "run_command" && block.id !in results
+            ) return block.id
+        }
+    }
+    return null
+}
+
 /** 探索卡里的一个工具（配对后的 use + 可选 result）。 */
 data class ExplorationToolItem(
     val use: ContentBlock.ToolUse,
@@ -2535,11 +2571,12 @@ private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse, result: Cont
     return true
 }
 
-/** 连续工具调用归成一条轻量摘要；正文和思考各自保留原位。 */
+/** 连续思考与普通工具调用共用一条行内活动摘要；正文仍切开活动段。 */
 internal fun collapseActivityItems(
     items: List<DisplayItem>,
     isLastTurn: Boolean,
     isResponding: Boolean,
+    activeCommandIds: Set<String>? = null,
 ): List<SegmentRenderItem> {
     val renderItems = mutableListOf<SegmentRenderItem>()
     val pending = mutableListOf<Pair<Int, DisplayItem>>()
@@ -2558,7 +2595,7 @@ internal fun collapseActivityItems(
     }
 
     items.forEachIndexed { index, item ->
-        if (shouldSkipDisplayItem(item) || isHiddenActivityItem(item)) return@forEachIndexed
+        if (shouldSkipDisplayItem(item)) return@forEachIndexed
         if (isCollapsibleActivityItem(item)) {
             pending += index to item
         } else {
@@ -2568,23 +2605,33 @@ internal fun collapseActivityItems(
     }
     flushPending()
 
-    val live = isLastTurn && isResponding
-    val lastIndex = renderItems.indexOfLast { it is SegmentRenderItem.Activity }
-    if (lastIndex >= 0) {
-        val last = renderItems[lastIndex] as SegmentRenderItem.Activity
-        val next = last.group.copy(
-            running = last.group.running || (live && renderItems.last() is SegmentRenderItem.Activity),
-        )
-        if (next != last.group) renderItems[lastIndex] = SegmentRenderItem.Activity(next)
+    if (isResponding) {
+        renderItems.indices.forEach { index ->
+            val activity = renderItems[index] as? SegmentRenderItem.Activity ?: return@forEach
+            // 旧思考/已完成工具段不再误亮；未返回命令即使后面已有正文仍保持运行态。
+            val latestThinking = isLastTurn && index == renderItems.lastIndex &&
+                (activity.group.items.lastOrNull() as? DisplayItem.Plain)?.block is ContentBlock.Thinking
+            val pendingCommand = if (activeCommandIds == null) {
+                isLastTurn && activityHasPendingCommand(activity.group.items)
+            } else {
+                activity.group.items.any { item ->
+                    item is DisplayItem.Tool && item.use.id in activeCommandIds && item.result == null
+                }
+            }
+            val running = latestThinking || pendingCommand
+            if (running) renderItems[index] = activity.copy(group = activity.group.copy(running = true))
+        }
     }
     return renderItems
 }
 
 private fun activityGroupKey(items: List<DisplayItem>, startIndex: Int): String {
-    val firstTool = items.firstOrNull() as? DisplayItem.Tool
-    // 第一条调用的 id 在流式追加和头部分页后仍不变；无 id 才退回位置。
+    // 思考先到、工具后到是常见流式顺序，位置锚点在同一 turn 内不随追加变化。
+    if (items.firstOrNull() is DisplayItem.Plain) return "thinking-position:$startIndex"
+    val firstTool = items.firstOrNull { it is DisplayItem.Tool } as? DisplayItem.Tool
+    // 纯工具段用首个调用 id，头部分页后仍保持相同身份。
     return firstTool?.use?.id?.takeIf { it.isNotBlank() }?.let { "tool:$it" }
-        ?: "tool-position:$startIndex"
+        ?: "thinking-position:$startIndex"
 }
 
 private fun shouldSkipDisplayItem(item: DisplayItem): Boolean =
@@ -2616,13 +2663,8 @@ internal fun isToolCardRunning(name: String, sessionReportsRunning: Boolean): Bo
 internal fun shouldCollapseToolInActivity(name: String): Boolean =
     name != "AskUserQuestion"
 
-private fun isHiddenActivityItem(item: DisplayItem): Boolean {
-    val thinking = (item as? DisplayItem.Plain)?.block as? ContentBlock.Thinking ?: return false
-    return thinking.thinking.isBlank()
-}
-
 private fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
-    is DisplayItem.Plain -> false
+    is DisplayItem.Plain -> item.block is ContentBlock.Thinking
     is DisplayItem.Tool -> item.use.activity != null && shouldCollapseToolInActivity(item.use.name)
 }
 
@@ -2784,7 +2826,10 @@ internal fun CardChevronSlot(
  * 邻接配对会把别的工具的结果挂错卡片）；id 缺失时退回「紧随其后的第一个结果」
  * 邻接兜底。没配上的 ToolResult 原样透传（走 OrphanResultBlock）。
  */
-internal fun pairToolBlocks(content: List<ContentBlock>): List<DisplayItem> {
+internal fun pairToolBlocks(
+    content: List<ContentBlock>,
+    externalResults: Map<String, ContentBlock.ToolResult> = emptyMap(),
+): List<DisplayItem> {
     val items = mutableListOf<DisplayItem>()
     val consumed = mutableSetOf<Int>()
     content.forEachIndexed { i, block ->
@@ -2821,7 +2866,7 @@ internal fun pairToolBlocks(content: List<ContentBlock>): List<DisplayItem> {
                 consumed.add(resultIndex)
                 content[resultIndex] as ContentBlock.ToolResult
             } else {
-                null
+                externalResults[block.id]
             }
             items.add(DisplayItem.Tool(block, result))
         } else {
@@ -3512,7 +3557,7 @@ private fun OrphanResultBlock(
 
 /** Thinking 块：收起态一行（紫灰，流式时图标呼吸），展开态弱紫底 + 左侧 2dp 竖线 + 斜体。 */
 @Composable
-private fun ThinkingBlock(
+internal fun ThinkingBlock(
     text: String,
     streaming: Boolean = false,
     expandDefault: Boolean = false,
@@ -3523,7 +3568,7 @@ private fun ThinkingBlock(
     var foldOverride by rememberFoldOverrideCode(foldKey)
     val expanded = foldExpanded(foldOverride, expandDefault)
     val iconAlpha: Float
-    if (streaming) {
+    if (streaming && !reduceMotionEnabled()) {
         val breath = rememberInfiniteTransition(label = "thinkBreath")
         val animated by breath.animateFloat(
             initialValue = 1f,
