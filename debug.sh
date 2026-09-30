@@ -13,10 +13,8 @@
 # 依赖（brew 一键装齐）：
 #   brew install openjdk@21
 #   brew install --cask android-commandlinetools
-#   # 仅 EMULATOR 模式需要：
-#   sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
-#     "emulator" "system-images;android-36;google_apis;arm64-v8a"
-#   avdmanager create avd -n wand_debug -k "system-images;android-36;google_apis;arm64-v8a" -d pixel_7
+#   # 仅 EMULATOR 模式需要：sdkmanager 装 emulator + system-images，
+#   # 再用 avdmanager create avd 建好 AVD（名字用 AVD_NAME 传给本脚本）。
 
 set -euo pipefail
 
@@ -83,8 +81,7 @@ latest_tag_version() {
 # 1. 编译
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   repair_build_permissions "app/build"
-  VERSION="${1:-$(latest_tag_version)}"
-  STAMP="${VERSION}-debug.$(date +%m%d%H%M)"
+  STAMP="$(latest_tag_version)-debug.$(date +%m%d%H%M)"
   echo "==> 编译 debug APK（${STAMP}）"
   ./gradlew assembleDebug -PAPP_VERSION_NAME="$STAMP"
 else
