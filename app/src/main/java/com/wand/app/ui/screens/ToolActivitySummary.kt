@@ -105,10 +105,13 @@ private fun toolActivityKind(use: ContentBlock.ToolUse): String {
     use.activity?.kind?.takeIf { it in setOf("edit_file", "read_file", "run_command", "other") }
         ?.let { return it }
     val name = use.name.lowercase().substringAfterLast("__")
+    val hasFilePath = listOf("file_path", "path", "notebook_path").any { key ->
+        (use.input.opt(key) as? String)?.trim()?.isNotEmpty() == true
+    }
     return when {
-        listOf("edit", "write", "patch", "replace", "notebook").any { it in name } -> "edit_file"
-        listOf("read", "grep", "glob", "search", "find", "view", "fetch").any { it in name } -> "read_file"
         listOf("bash", "exec", "command", "shell", "terminal").any { it in name } -> "run_command"
+        hasFilePath && listOf("edit", "write", "replace", "notebookedit").any { it in name } -> "edit_file"
+        hasFilePath && (name == "read" || name == "read_file") -> "read_file"
         else -> "other"
     }
 }

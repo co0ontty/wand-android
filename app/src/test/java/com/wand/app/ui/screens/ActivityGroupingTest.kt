@@ -125,6 +125,22 @@ class ActivityGroupingTest {
     }
 
     @Test
+    fun legacyFallbackNeedsAConcreteFilePathAndNeverCountsSearchAsAFile() {
+        val calls = listOf(
+            tool("read", "Read").copy(input = JSONObject().put("file_path", "src/main.kt")),
+            tool("edit", "Edit").copy(input = JSONObject().put("file_path", "src/main.kt")),
+            tool("grep", "Grep").copy(input = JSONObject().put("path", "src/main.kt")),
+            tool("glob", "Glob").copy(input = JSONObject().put("path", "src")),
+            tool("search", "Search"),
+            tool("fetch", "WebFetch"),
+            tool("missing", "Read"),
+            tool("blank", "Edit").copy(input = JSONObject().put("file_path", "  ")),
+        ).map { DisplayItem.Tool(it, null) }
+        val categories = toolActivityCategories(calls)
+        assertEquals(listOf("修改了 1 个文件", "查看了 1 个文件", "其他 6 次调用"), categories.map { it.title })
+    }
+
+    @Test
     fun summaryScopeDoesNotChangeWhenAnotherToolArrives() {
         fun key(blocks: List<ContentBlock>) = collapseActivityItems(
             pairToolBlocks(blocks),
