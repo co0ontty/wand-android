@@ -277,6 +277,8 @@ sealed class ContentBlock {
         val subagent: SubagentMeta?,
         val semantic: ToolUseSemantic? = null,
         val activity: ToolActivity? = null,
+        /** 未走 compact 投影的待办/旧调用也可携带服务端真实首次观察时间。 */
+        val occurredAt: String? = null,
     ) : ContentBlock()
 
     @Immutable
@@ -308,6 +310,7 @@ sealed class ContentBlock {
                     subagent = subagent,
                     semantic = ToolUseSemantic.parse(o.obj("semantic")),
                     activity = ToolActivity.parse(o.obj("activity")),
+                    occurredAt = o.str("occurredAt"),
                 )
                 "tool_result" -> {
                     val rawContent = o.opt("content")

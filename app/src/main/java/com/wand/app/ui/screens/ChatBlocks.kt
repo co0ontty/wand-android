@@ -233,7 +233,9 @@ fun TurnView(
     }
     val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
     val nonSubagentContent = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
-    val activityOnly = remember(nonSubagentContent) { isToolActivityOnly(nonSubagentContent) }
+    val activityOnly = remember(nonSubagentContent, toolResultsById) {
+        isToolActivityOnly(nonSubagentContent, toolResultsById)
+    }
     val parentBlocks = remember(turn.content, collapsed, activityOnly) {
         if (collapsed && !activityOnly) emptyList() else nonSubagentContent
     }
@@ -2565,11 +2567,7 @@ private fun isExplorationTool(name: String): Boolean {
  * 否则 body 整体折叠会把内联缩略图一起藏掉。
  */
 private fun isCollapsibleExplorationTool(use: ContentBlock.ToolUse, result: ContentBlock.ToolResult? = null): Boolean {
-    if (!isExplorationTool(use.name)) return false
-    // 结果带内联图片的工具单卡常驻（缩略图不能被折叠藏起来）。
-    if (!result?.images.isNullOrEmpty()) return false
-    if (use.name == "Read" && readImagePath(use.input) != null) return false
-    return true
+    return isExplorationTool(use.name) && isCollapsibleActivityTool(use, result)
 }
 
 /** 连续思考与普通工具调用共用一条行内活动摘要；正文仍切开活动段。 */
@@ -2661,12 +2659,24 @@ internal fun isTodoUpdateToolName(name: String): Boolean {
 internal fun isToolCardRunning(name: String, sessionReportsRunning: Boolean): Boolean =
     sessionReportsRunning && !isTodoUpdateToolName(name)
 
-internal fun shouldCollapseToolInActivity(name: String): Boolean =
-    name != "AskUserQuestion"
+internal fun shouldCollapseToolInActivity(name: String): Boolean {
+    val operation = name.lowercase().substringAfterLast("__").substringAfterLast("/")
+    return operation !in setOf("askuserquestion", "ask_user_question", "request_user_input", "task", "agent", "subagent")
+}
 
-private fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
+/** activity 是传输压缩元数据，不是折叠资格；旧调用与待办回执也必须进入摘要。 */
+internal fun isCollapsibleActivityTool(
+    use: ContentBlock.ToolUse,
+    result: ContentBlock.ToolResult? = null,
+): Boolean = shouldCollapseToolInActivity(use.name) &&
+    use.semantic !is ToolUseSemantic.QuestionRequest &&
+    use.subagent?.taskId != use.id &&
+    use.activity?.hasImage != true && result?.images.isNullOrEmpty() &&
+    listOf("file_path", "path", "url").none { WandImage.isImagePath(use.input.str(it)) }
+
+internal fun isCollapsibleActivityItem(item: DisplayItem): Boolean = when (item) {
     is DisplayItem.Plain -> item.block is ContentBlock.Thinking
-    is DisplayItem.Tool -> item.use.activity != null && shouldCollapseToolInActivity(item.use.name)
+    is DisplayItem.Tool -> isCollapsibleActivityTool(item.use, item.result)
 }
 
 /**

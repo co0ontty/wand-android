@@ -116,10 +116,14 @@ internal fun toolActivityCategories(items: List<DisplayItem>): List<ToolActivity
 internal fun toolActivityKind(use: ContentBlock.ToolUse): String {
     use.activity?.kind?.takeIf { it in setOf("edit_file", "read_file", "run_command", "other") }
         ?.let { return it }
-    val name = use.name.lowercase().substringAfterLast("__")
-    val hasFilePath = listOf("file_path", "path", "notebook_path").any { key ->
-        (use.input.opt(key) as? String)?.trim()?.isNotEmpty() == true
+    val name = use.name.lowercase().substringAfterLast("__").substringAfterLast("/")
+    val hasMultipleFiles = listOf("paths", "file_paths", "files").any { key ->
+        (use.input.optJSONArray(key)?.length() ?: 0) > 1
     }
+    val hasFilePath = !hasMultipleFiles &&
+        listOf("file_path", "path", "filename", "file", "notebook_path").any { key ->
+            (use.input.opt(key) as? String)?.trim()?.isNotEmpty() == true
+        }
     return when {
         listOf("bash", "exec", "command", "shell", "terminal").any { it in name } -> "run_command"
         hasFilePath && listOf("edit", "write", "replace", "notebookedit").any { it in name } -> "edit_file"
@@ -139,7 +143,9 @@ internal fun latestCommandOccurredAt(items: List<DisplayItem>, pendingOnly: Bool
         .filterIsInstance<DisplayItem.Tool>()
         .filter { toolActivityKind(it.use) == "run_command" && (!pendingOnly || it.result == null) }
         .mapNotNull { item ->
-            item.use.activity?.occurredAt?.let { raw -> runCatching { Instant.parse(raw) }.getOrNull() }
+            (item.use.activity?.occurredAt ?: item.use.occurredAt)?.let { raw ->
+                runCatching { Instant.parse(raw) }.getOrNull()
+            }
         }
         .maxOrNull()
 
@@ -159,14 +165,16 @@ internal fun activityNeedsThinkingPlaceholder(group: ActivityGroup): Boolean =
     group.running &&
         (group.items.lastOrNull() as? DisplayItem.Plain)?.block is ContentBlock.Thinking
 
-/** 普通工具/思考消息不再套一层 Wand 回复折叠头。交互卡和正文仍保留原外壳。 */
-internal fun isToolActivityOnly(blocks: List<ContentBlock>): Boolean =
-    blocks.any { it is ContentBlock.Thinking || it is ContentBlock.ToolUse && it.activity != null } &&
-        blocks.all {
-            it is ContentBlock.Thinking || it is ContentBlock.ToolResult ||
-                it is ContentBlock.ToolUse && it.activity != null ||
-                it is ContentBlock.Text && it.text.isBlank()
-        }
+/** 外壳与活动段共用同一资格判定，避免旧调用/待办多出一层大卡片。 */
+internal fun isToolActivityOnly(
+    blocks: List<ContentBlock>,
+    externalResults: Map<String, ContentBlock.ToolResult> = emptyMap(),
+): Boolean {
+    val items = pairToolBlocks(blocks, externalResults).filterNot { item ->
+        item is DisplayItem.Plain && (item.block as? ContentBlock.Text)?.text?.isBlank() == true
+    }
+    return items.isNotEmpty() && items.all { isCollapsibleActivityItem(it) }
+}
 
 /** 调用按原始时间线排列；同文件多次调用不合并，只去重重传的工具 id。 */
 internal fun toolActivityTimeline(items: List<DisplayItem>): List<DisplayItem> {
@@ -179,8 +187,20 @@ internal fun toolActivityTimeline(items: List<DisplayItem>): List<DisplayItem> {
     }
 }
 
-internal fun toolActivityItemLabel(use: ContentBlock.ToolUse): String =
-    use.activity?.label?.takeIf { it.isNotBlank() } ?: "调用 ${use.name}"
+internal fun toolActivityItemLabel(use: ContentBlock.ToolUse): String {
+    use.activity?.label?.takeIf { it.isNotBlank() }?.let { return it }
+    val path = listOf("file_path", "path", "filename", "file", "notebook_path")
+        .firstNotNullOfOrNull { (use.input.opt(it) as? String)?.trim()?.takeIf(String::isNotBlank) }
+        .orEmpty().replace('\\', '/').split('/').filter(String::isNotBlank).takeLast(2).joinToString("/")
+    val name = use.name.replace(Regex("\\s+"), " ").trim().take(80).ifBlank { "工具" }
+    val label = when (toolActivityKind(use)) {
+        "edit_file" -> "修改 $path"
+        "read_file" -> "查看 $path"
+        "run_command" -> "运行命令 · $name"
+        else -> "调用 $name"
+    }
+    return if (label.length > 120) label.take(119) + "…" else label
+}
 
 /** 小字活动菜单原位展开为固定高度时间线，单条点开才请求完整内容。 */
 @Composable
@@ -317,7 +337,7 @@ private fun ToolActivityEntryRow(item: DisplayItem, key: String, running: Boolea
     val callRunning = tool?.let { toolActivityCallRunning(kind, it, running) } ?: false
     val status = tool?.let { toolActivityEntryStatus(kind, ToolActivityEntry(listOf(it)), running) }
     val label = tool?.let { toolActivityItemLabel(it.use) } ?: "深度思考"
-    val clock = tool?.use?.activity?.occurredAt?.let { raw ->
+    val clock = (tool?.use?.activity?.occurredAt ?: tool?.use?.occurredAt)?.let { raw ->
         runCatching { commandEventClock(Instant.parse(raw)) }.getOrNull()
     }
     var open by rememberSaveable(key) { mutableStateOf(false) }
@@ -366,7 +386,7 @@ internal fun toolActivityCallRunning(kind: String, item: DisplayItem.Tool, group
 
 internal fun toolActivityEntryStatus(kind: String, entry: ToolActivityEntry, groupRunning: Boolean): String = when {
     entry.calls.any { it.result?.isError == true } -> "失败"
-    entry.calls.all { it.result != null } -> "完成"
+    entry.calls.all { it.result != null || isTodoUpdateToolName(it.use.name) } -> "完成"
     entry.calls.any { toolActivityCallRunning(kind, it, groupRunning) } -> "运行中"
     else -> "未返回"
 }

@@ -65,7 +65,7 @@ class ActivityGroupingTest {
         )
 
     @Test
-    fun thinkingAndCompactToolsShareInlineGroupsWhileLegacyToolsStayInPlace() {
+    fun thinkingLegacyAndCompactToolsShareInlineGroups() {
         val blocks = listOf(
             ContentBlock.Thinking("planning", null),
             tool("old", "Read"),
@@ -74,13 +74,11 @@ class ActivityGroupingTest {
             ContentBlock.Text("done", null),
         )
         val segments = collapseActivityItems(pairToolBlocks(blocks), true, true)
-        assertEquals(4, segments.size)
-        assertEquals(1, (segments[0] as SegmentRenderItem.Activity).group.items.size)
-        assertTrue(segments[1] is SegmentRenderItem.Item)
-        val group = (segments[2] as SegmentRenderItem.Activity).group
-        assertEquals(2, group.items.size)
+        assertEquals(2, segments.size)
+        val group = (segments[0] as SegmentRenderItem.Activity).group
+        assertEquals(4, group.items.size)
         assertTrue(group.running)
-        assertTrue(segments[3] is SegmentRenderItem.Item)
+        assertTrue(segments[1] is SegmentRenderItem.Item)
     }
 
     @Test
