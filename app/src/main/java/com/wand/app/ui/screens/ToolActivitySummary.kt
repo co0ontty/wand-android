@@ -47,6 +47,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -338,9 +339,10 @@ private fun ToolActivityEntryRow(item: DisplayItem, key: String, running: Boolea
         ) {
             Box(Modifier.size(5.dp).clip(CircleShape)
                 .background(if (callRunning) WandColors.brand else WandColors.textMuted))
+            if (clock != null) Text(clock, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                color = WandColors.textMuted)
             Text(label, fontSize = 11.sp, color = WandColors.textSecondary,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            if (clock != null) Text(clock, fontSize = 10.sp, color = WandColors.textMuted)
             if (status != null) Text(status, fontSize = 10.sp,
                 color = if (status == "失败") WandColors.danger else WandColors.textMuted)
             ExpandChevron(expanded = open, tint = WandColors.textMuted, size = 14.dp,
