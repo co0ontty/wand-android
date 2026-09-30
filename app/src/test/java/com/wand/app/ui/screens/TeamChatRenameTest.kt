@@ -52,6 +52,24 @@ class TeamChatRenameTest {
     }
 
     @Test
+    fun groupTitleFollowsTaskInsteadOfTeamNameWithoutChangingHistory() {
+        val raw = JSONObject("""{
+            "run":{"id":"run","teamId":"team","team":{"id":"team","name":"开发团队"},"taskId":"task"},
+            "chatTitle":"修复登录任务处理群","steps":[],"chatTurns":[]
+        }""")
+        val detail = AiTeamRunDetail.parse(raw)!!
+        assertEquals("修复登录任务处理群", detail.presentationChatTitle)
+        assertEquals("开发团队", detail.run.team?.name)
+        val renamed = detail.copy(chatTitle = "整理文档任务处理群", displayTeam = newTeam)
+        assertEquals("整理文档任务处理群", renamed.presentationChatTitle)
+        assertEquals("开发团队", detail.run.team?.name)
+        assertEquals("任务处理群", detail.copy(chatTitle = "  ").presentationChatTitle)
+        assertEquals("任务处理群", detail.copy(chatTitle = null).presentationChatTitle)
+        val legacy = AiTeamRunDetail.parse(JSONObject().put("run", JSONObject().put("id", "old")))!!
+        assertEquals("任务处理群", legacy.presentationChatTitle)
+    }
+
+    @Test
     fun detailParsesDisplaySeparatelyFromRunSnapshot() {
         val raw = JSONObject("""{
             "run":{"id":"run","teamId":"team","team":{"id":"team","name":"旧群名",

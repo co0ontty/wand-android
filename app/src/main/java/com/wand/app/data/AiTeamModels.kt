@@ -203,8 +203,11 @@ data class AiTeamRunDetail(
     val memberStates: Map<String, String> = emptyMap(),
     /** 展示身份按稳定 id 合并最新团队定义；运行快照仍在 run.team，不用于展示改名。 */
     val displayTeam: AiTeam? = null,
+    /** 服务端从当前任务标题派生的群名，与团队定义/执行快照分开。 */
+    val chatTitle: String? = null,
 ) {
     val presentationTeam: AiTeam? get() = displayTeam ?: run.team
+    val presentationChatTitle: String get() = chatTitle?.trim()?.takeIf { it.isNotEmpty() } ?: "任务处理群"
 
     companion object {
         fun parse(item: JSONObject): AiTeamRunDetail? {
@@ -215,6 +218,7 @@ data class AiTeamRunDetail(
                 chatTurns = ConversationTurn.parseList(item.arr("chatTurns")) ?: emptyList(),
                 memberStates = parseStateMap(item.obj("memberStates")),
                 displayTeam = item.obj("displayTeam")?.let { AiTeam.parse(it) },
+                chatTitle = item.str("chatTitle"),
             )
         }
 

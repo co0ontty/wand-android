@@ -405,7 +405,7 @@ fun AiTeamChatScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         WandDetailTopBar(
-            title = activeDetail?.presentationTeam?.name?.takeIf { it.isNotBlank() } ?: "AI 团队群聊",
+            title = activeDetail?.presentationChatTitle ?: "任务处理群",
             subtitle = listOfNotNull(
                 taskIdentifier?.let { "任务 $it" },
                 "${activeDetail?.presentationTeam?.members?.size ?: 0} 位成员",
