@@ -304,6 +304,39 @@ class ActivityGroupingTest {
     }
 
     @Test
+    fun timelineKeepsMixedInvocationOrderAndRepeatedFileCallsSeparate() {
+        val read = DisplayItem.Tool(tool("read", "Read", "read_file", "same-file"), null)
+        val edit = DisplayItem.Tool(tool("edit", "Edit", "edit_file", "same-file"), null)
+        val nextEdit = DisplayItem.Tool(tool("next-edit", "Edit", "edit_file", "same-file"), null)
+        val command = DisplayItem.Tool(tool("run", "Bash", "run_command"), null)
+        val thinking = pairToolBlocks(listOf(ContentBlock.Thinking("planning", null))).single()
+        val timeline = toolActivityTimeline(listOf(read, thinking, command, edit, nextEdit, edit))
+        assertEquals(listOf(read, thinking, command, edit, nextEdit), timeline)
+        assertEquals(1, toolActivityCategories(timeline).first { it.kind == "edit_file" }.count)
+        assertEquals(240f, TOOL_ACTIVITY_TIMELINE_HEIGHT.value)
+    }
+
+    @Test
+    fun activityOnlyTurnsBypassOuterHeaderWithoutHidingProseOrInteractiveCards() {
+        val read = tool("read", "Read", "read_file", "file-a")
+        assertTrue(isToolActivityOnly(listOf(read, ContentBlock.ToolResult("read", "", false, true, null))))
+        assertTrue(isToolActivityOnly(listOf(ContentBlock.Thinking("plan", null), read)))
+        assertFalse(isToolActivityOnly(listOf(ContentBlock.Text("正文", null), read)))
+        assertFalse(isToolActivityOnly(listOf(tool("ask", "AskUserQuestion"))))
+        assertFalse(isToolActivityOnly(emptyList()))
+    }
+
+    @Test
+    fun timelineUsesOnlyCompactIdentityAndNeverInputOrResultText() {
+        val use = tool("edit", "Edit", "edit_file", "file-a").copy(
+            activity = ToolActivity("edit_file", "修改 src/main.kt", "file-a"),
+            input = JSONObject().put("old_string", "secret"),
+        )
+        assertEquals("修改 src/main.kt", toolActivityItemLabel(use))
+        assertEquals("调用 Grep", toolActivityItemLabel(tool("grep", "Grep", "other")))
+    }
+
+    @Test
     fun summaryScopeDoesNotChangeWhenAnotherToolArrives() {
         fun key(blocks: List<ContentBlock>) = collapseActivityItems(
             pairToolBlocks(blocks),

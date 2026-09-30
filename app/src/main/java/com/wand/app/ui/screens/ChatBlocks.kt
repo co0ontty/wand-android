@@ -233,8 +233,9 @@ fun TurnView(
     }
     val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
     val nonSubagentContent = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
-    val parentBlocks = remember(turn.content, collapsed) {
-        if (collapsed) emptyList() else nonSubagentContent
+    val activityOnly = remember(nonSubagentContent) { isToolActivityOnly(nonSubagentContent) }
+    val parentBlocks = remember(turn.content, collapsed, activityOnly) {
+        if (collapsed && !activityOnly) emptyList() else nonSubagentContent
     }
     val preview = remember(nonSubagentContent, collapsed) {
         if (collapsed) replyPreview(nonSubagentContent) else ""
@@ -250,7 +251,7 @@ fun TurnView(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        if (showHeader) {
+        if (showHeader && !activityOnly) {
             ChatMessageTime(conversationTurnClock(turn), alignEnd = false)
             // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
             // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
@@ -271,7 +272,7 @@ fun TurnView(
                 },
             )
         }
-        if (showContent && (!showHeader || !collapsed)) {
+        if (showContent && (!showHeader || !collapsed || activityOnly)) {
             if (parentBlocks.isNotEmpty()) {
                 SegmentBlocks(
                     blocks = parentBlocks,
@@ -288,7 +289,7 @@ fun TurnView(
         }
         val usageIsLive = isLastTurn && isResponding
         // 流式用量由输入栏上方的常驻状态坞承接；响应结束后仍在回复尾部保留完整用量。
-        if (!usageIsLive && (!showHeader || !collapsed) && turn.usage?.hasVisibleValue == true) {
+        if (!usageIsLive && (!showHeader || !collapsed || activityOnly) && turn.usage?.hasVisibleValue == true) {
             UsageSummaryRow(turn.usage, isLive = false)
         }
     }

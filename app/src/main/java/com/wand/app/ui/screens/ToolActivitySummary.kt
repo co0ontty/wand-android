@@ -1,5 +1,6 @@
 package com.wand.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -14,7 +15,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -34,13 +39,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -53,10 +59,12 @@ import com.wand.app.ui.theme.reduceMotionEnabled
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 private const val ACTIVITY_WAIT_REFRESH_MS = 1_000L
 private val COMMAND_CLOCK_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss")
+internal val TOOL_ACTIVITY_TIMELINE_HEIGHT = 240.dp
 
 internal data class ToolActivityCategory(
     val kind: String,
@@ -70,14 +78,6 @@ internal data class ToolActivityCategory(
             "read_file" -> "查看了 $count 个文件"
             "run_command" -> "运行了 $count 条命令"
             else -> "其他 $count 次调用"
-        }
-
-    val itemName: String
-        get() = when (kind) {
-            "edit_file" -> "文件修改"
-            "read_file" -> "文件查看"
-            "run_command" -> "命令"
-            else -> "工具调用"
         }
 }
 
@@ -158,7 +158,30 @@ internal fun activityNeedsThinkingPlaceholder(group: ActivityGroup): Boolean =
     group.running &&
         (group.items.lastOrNull() as? DisplayItem.Plain)?.block is ContentBlock.Thinking
 
-/** 对话末尾的轻量活动摘要。分类展开只渲染占位条目，单条点开才请求完整内容。 */
+/** 普通工具/思考消息不再套一层 Wand 回复折叠头。交互卡和正文仍保留原外壳。 */
+internal fun isToolActivityOnly(blocks: List<ContentBlock>): Boolean =
+    blocks.any { it is ContentBlock.Thinking || it is ContentBlock.ToolUse && it.activity != null } &&
+        blocks.all {
+            it is ContentBlock.Thinking || it is ContentBlock.ToolResult ||
+                it is ContentBlock.ToolUse && it.activity != null ||
+                it is ContentBlock.Text && it.text.isBlank()
+        }
+
+/** 调用按原始时间线排列；同文件多次调用不合并，只去重重传的工具 id。 */
+internal fun toolActivityTimeline(items: List<DisplayItem>): List<DisplayItem> {
+    val seen = mutableSetOf<String>()
+    return items.filter { item ->
+        when (item) {
+            is DisplayItem.Tool -> item.use.id.isBlank() || seen.add(item.use.id)
+            is DisplayItem.Plain -> item.block is ContentBlock.Thinking
+        }
+    }
+}
+
+internal fun toolActivityItemLabel(use: ContentBlock.ToolUse): String =
+    use.activity?.label?.takeIf { it.isNotBlank() } ?: "调用 ${use.name}"
+
+/** 小字活动菜单原位展开为固定高度时间线，单条点开才请求完整内容。 */
 @Composable
 internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
     val categories = remember(group.items) { toolActivityCategories(group.items) }
@@ -172,6 +195,9 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
     if (categories.isEmpty() && thinking.isEmpty() && !thinkingPlaceholder) return
     val key = cardFoldKey(LocalChatSessionId.current, scope)
     var menuOpen by rememberSaveable(key) { mutableStateOf(false) }
+    BackHandler(enabled = menuOpen) { menuOpen = false }
+    val timeline = remember(group.items) { toolActivityTimeline(group.items) }
+    val timelineState = rememberLazyListState()
     val latestCommandAt = remember(group.items) { latestCommandOccurredAt(group.items) }
     val pendingCommandAt = remember(group.items) { latestCommandOccurredAt(group.items, pendingOnly = true) }
     val pendingCommand = group.running && activityHasPendingCommand(group.items)
@@ -229,7 +255,7 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 44.dp)
-                .clickable(role = Role.Button, onClickLabel = if (menuOpen) "收起工具分类" else "查看工具分类") {
+                .clickable(role = Role.Button, onClickLabel = if (menuOpen) "收起工具时间线" else "查看工具时间线") {
                     menuOpen = !menuOpen
                 }
                 .semantics { stateDescription = if (menuOpen) "已展开" else "已收起" }
@@ -266,26 +292,16 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
             )
         }
         ToolActivityReveal(menuOpen) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+            LazyColumn(
+                state = timelineState,
+                modifier = Modifier.fillMaxWidth().height(TOOL_ACTIVITY_TIMELINE_HEIGHT),
             ) {
-                if (thinking.isNotEmpty()) {
-                    CompositionLocalProvider(LocalActivityFoldCompact provides true) {
-                        thinking.forEachIndexed { index, text ->
-                            ThinkingBlock(
-                                text = text,
-                                streaming = group.running && index == thinking.lastIndex &&
-                                    group.items.lastOrNull() is DisplayItem.Plain,
-                                foldKey = "$key/thinking-$index",
-                            )
-                        }
-                    }
-                } else if (thinkingPlaceholder) {
-                    Text("思考内容生成中…", fontSize = 11.sp, color = WandColors.textMuted)
-                }
-                categories.forEach { category ->
-                    ToolActivityCategorySection(category, "$key/${category.kind}", group.running)
+                itemsIndexed(timeline, key = { index, item ->
+                    (item as? DisplayItem.Tool)?.use?.id?.takeIf { it.isNotBlank() } ?: "thinking-$index"
+                }) { index, item ->
+                    val itemId = (item as? DisplayItem.Tool)?.use?.id?.takeIf { it.isNotBlank() }
+                        ?: "thinking-$index"
+                    ToolActivityEntryRow(item, "$key/$itemId", group.running, menuOpen)
                 }
             }
         }
@@ -293,83 +309,50 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
 }
 
 @Composable
-private fun ToolActivityCategorySection(category: ToolActivityCategory, key: String, running: Boolean) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            category.title,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = WandColors.textMuted,
-            modifier = Modifier.padding(start = 8.dp, top = 10.dp, bottom = 3.dp),
-        )
-        Column(modifier = Modifier.padding(start = 8.dp)) {
-            category.entries.forEachIndexed { index, entry ->
-                ToolActivityEntryRow(
-                    entry,
-                    category.kind,
-                    "${category.itemName} ${index + 1}",
-                    "$key/${entry.calls.first().use.id.ifBlank { index.toString() }}",
-                    running,
-                )
-            }
-        }
+private fun ToolActivityEntryRow(item: DisplayItem, key: String, running: Boolean, menuOpen: Boolean) {
+    val tool = item as? DisplayItem.Tool
+    val thinking = ((item as? DisplayItem.Plain)?.block as? ContentBlock.Thinking)?.thinking
+    val kind = tool?.let { toolActivityKind(it.use) } ?: "thinking"
+    val callRunning = tool?.let { toolActivityCallRunning(kind, it, running) } ?: false
+    val status = tool?.let { toolActivityEntryStatus(kind, ToolActivityEntry(listOf(it)), running) }
+    val label = tool?.let { toolActivityItemLabel(it.use) } ?: "深度思考"
+    val clock = tool?.use?.activity?.occurredAt?.let { raw ->
+        runCatching { commandEventClock(Instant.parse(raw)) }.getOrNull()
     }
-}
-
-@Composable
-private fun ToolActivityEntryRow(
-    entry: ToolActivityEntry,
-    kind: String,
-    label: String,
-    key: String,
-    running: Boolean,
-) {
-    val status = toolActivityEntryStatus(kind, entry, running)
     var open by rememberSaveable(key) { mutableStateOf(false) }
-
-    Column {
+    LaunchedEffect(menuOpen) { if (!menuOpen) open = false }
+    val lineColor = WandColors.border
+    Column(modifier = Modifier.drawBehind {
+        val x = 6.5.dp.toPx()
+        drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.dp.toPx())
+    }) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 44.dp)
                 .clickable(role = Role.Button, onClickLabel = "查看$label") { open = !open }
                 .semantics { stateDescription = if (open) "已展开" else "已收起" }
-                .padding(horizontal = 8.dp, vertical = 9.dp),
+                .padding(horizontal = 4.dp, vertical = 9.dp),
         ) {
-            Text(label, fontSize = 11.sp, color = WandColors.textSecondary, modifier = Modifier.weight(1f))
-            Text(
-                status,
-                fontSize = 10.sp,
-                color = if (status == "失败") WandColors.danger else WandColors.textMuted,
-            )
-            ExpandChevron(
-                expanded = open,
-                tint = WandColors.textMuted,
-                modifier = Modifier.padding(start = 6.dp),
-                size = 14.dp,
-                contentDescription = null,
-            )
+            Box(Modifier.size(5.dp).clip(CircleShape)
+                .background(if (callRunning) WandColors.brand else WandColors.textMuted))
+            Text(label, fontSize = 11.sp, color = WandColors.textSecondary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (clock != null) Text(clock, fontSize = 10.sp, color = WandColors.textMuted)
+            if (status != null) Text(status, fontSize = 10.sp,
+                color = if (status == "失败") WandColors.danger else WandColors.textMuted)
+            ExpandChevron(expanded = open, tint = WandColors.textMuted, size = 14.dp,
+                contentDescription = null)
         }
-        ToolActivityReveal(open) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(start = 8.dp, end = 4.dp, bottom = 8.dp),
-            ) {
-                entry.calls.forEachIndexed { index, item ->
-                    if (entry.calls.size > 1) {
-                        Text(
-                            "第 ${index + 1} 次调用",
-                            fontSize = 10.sp,
-                            color = WandColors.textMuted,
-                        )
-                    }
-                    ToolActivitySingleDetail(
-                        item = item,
-                        key = "$key/${item.use.id.ifBlank { index.toString() }}",
-                        open = open,
-                        running = toolActivityCallRunning(kind, item, running),
-                    )
+        ToolActivityReveal(open && menuOpen) {
+            Column(modifier = Modifier.padding(start = 18.dp, end = 4.dp, bottom = 8.dp)) {
+                if (tool != null) {
+                    ToolActivitySingleDetail(item = tool, key = key, open = open && menuOpen, running = callRunning)
+                } else {
+                    Text(thinking?.takeIf { it.isNotBlank() } ?: "思考内容生成中…",
+                        fontSize = 11.sp, lineHeight = 17.sp, color = WandColors.textSecondary)
                 }
             }
         }
@@ -404,6 +387,8 @@ private fun ToolActivitySingleDetail(item: DisplayItem.Tool, key: String, open: 
         error = null
         try {
             detail = api.fetchToolDetail(sessionId, use.id)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (failure: Exception) {
             error = failure.message ?: "加载失败，请重试"
         } finally {
@@ -472,9 +457,9 @@ private fun ToolActivityReveal(visible: Boolean, content: @Composable () -> Unit
     val motion = !reduceMotionEnabled()
     AnimatedVisibility(
         visible = visible,
-        enter = if (motion) fadeIn(WandMotion.tweenEnter()) + expandVertically(animationSpec = WandMotion.tweenEnter())
+        enter = if (motion) fadeIn(WandMotion.tweenEnter()) + expandVertically(expandFrom = Alignment.Top, animationSpec = WandMotion.tweenEnter())
             else fadeIn(androidx.compose.animation.core.snap()),
-        exit = if (motion) fadeOut(WandMotion.tweenExit()) + shrinkVertically(animationSpec = WandMotion.tweenExit())
+        exit = if (motion) fadeOut(WandMotion.tweenExit()) + shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = WandMotion.tweenExit())
             else fadeOut(androidx.compose.animation.core.snap()),
     ) { content() }
 }
