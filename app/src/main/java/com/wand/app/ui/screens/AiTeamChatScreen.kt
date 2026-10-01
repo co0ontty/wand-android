@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
@@ -1341,6 +1342,9 @@ private fun TeamReportFileCard(file: TeamReportFile, baseUrl: String) {
     var downloading by remember(file) { mutableStateOf(false) }
     var opened by remember(file) { mutableStateOf(false) }
     var error by remember(file) { mutableStateOf<String?>(null) }
+    val title = file.preview?.title ?: file.name
+    val excerpt = file.preview?.excerpt?.takeIf { it.isNotBlank() }
+        ?: if (file.preview != null) "报告暂无正文" else "点击查看完整报告"
     fun download() {
         if (downloading || baseUrl.isBlank()) return
         downloading = true
@@ -1367,26 +1371,36 @@ private fun TeamReportFileCard(file: TeamReportFile, baseUrl: String) {
         Row(
             modifier = Modifier.fillMaxWidth().clickable(
                 enabled = baseUrl.isNotBlank(), role = Role.Button,
-                onClickLabel = "预览${file.name}", onClick = { preview = true },
+                onClickLabel = "查看完整报告：$title", onClick = { preview = true },
             ).padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
-            Box(Modifier.size(44.dp, 48.dp).clip(WandShapes.sm).background(WandColors.brandSoft),
-                contentAlignment = Alignment.Center) {
-                Icon(WandIcons.toolResult, contentDescription = null, tint = WandColors.brand,
-                    modifier = Modifier.size(28.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(excerpt, fontSize = 12.sp, lineHeight = 19.sp,
+                    color = WandColors.textSecondary, maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(file.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Markdown · ${teamReportFileSize(file.size)} · 成员报告", fontSize = 11.sp,
-                    color = WandColors.textMuted)
+            Column(Modifier.size(54.dp, 76.dp).clip(WandShapes.xs)
+                .border(0.55.dp, WandColors.border, WandShapes.xs).background(WandColors.surface)
+                .padding(6.dp).clearAndSetSemantics { contentDescription = "文档缩略图" },
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(WandIcons.toolResult, contentDescription = null, tint = WandColors.brand,
+                    modifier = Modifier.size(12.dp))
+                Text(title, fontSize = 6.sp, lineHeight = 8.sp, fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(file.preview?.excerpt.orEmpty(), fontSize = 6.sp, lineHeight = 8.sp,
+                    color = WandColors.textMuted, maxLines = 4, overflow = TextOverflow.Ellipsis)
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Text("点击文件预览", fontSize = 11.sp, color = WandColors.textMuted, modifier = Modifier.weight(1f))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(file.name, fontSize = 10.sp, color = WandColors.textMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Markdown · ${teamReportFileSize(file.size)}", fontSize = 10.sp, color = WandColors.textMuted)
+            }
             Text(when { downloading -> "下载中…"; error != null -> "重试下载"; opened -> "已打开"; else -> "下载" },
                 fontSize = 12.sp, color = WandColors.brand, textAlign = TextAlign.End,
                 modifier = Modifier.widthIn(min = 80.dp).heightIn(min = 40.dp)

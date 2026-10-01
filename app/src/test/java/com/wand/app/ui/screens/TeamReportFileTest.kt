@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.TeamReportFile
+import com.wand.app.data.TeamReportPreview
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -29,6 +30,24 @@ class TeamReportFileTest {
             assertNull(TeamReportFile.parse(JSONObject(input)))
         }
         assertEquals(0L, TeamReportFile.parse(JSONObject("""{"stepId":"s","path":"/tmp/a.md","name":"a.md","size":0}"""))!!.size)
+    }
+
+    @Test
+    fun reportTitleAndBoundedExcerptSurviveParsingAndParticipateInIdentity() {
+        val turn = ConversationTurn.parse(JSONObject("""{
+            "role":"assistant","content":[{"type":"text","text":"✅ 完成「任务」"}],
+            "reportFile":{"stepId":"step-1","path":"/tmp/2-member.md","name":"2-member.md","size":512,
+                "preview":{"title":"真实报告标题","excerpt":"验证通过。"}}
+        }"""))
+        assertEquals(TeamReportPreview("真实报告标题", "验证通过。"), turn.reportFile!!.preview)
+        assertNotEquals(teamTurnFingerprint(turn), teamTurnFingerprint(turn.copy(
+            reportFile = turn.reportFile!!.copy(preview = TeamReportPreview("真实报告标题", "更改了摘录。")))))
+        val empty = TeamReportFile.parse(JSONObject("""{
+            "stepId":"s","path":"/tmp/a.md","name":"a.md","size":0,
+            "preview":{"title":"空报告","excerpt":""}
+        }"""))!!
+        assertEquals("", empty.preview!!.excerpt)
+        assertNull(TeamReportFile("s", "/tmp/a.md", "a.md", 1).preview)
     }
 
     @Test

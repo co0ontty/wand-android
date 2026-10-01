@@ -409,7 +409,13 @@ data class TurnAuthor(
 }
 
 @Immutable
-data class TeamReportFile(val stepId: String, val path: String, val name: String, val size: Long) {
+data class TeamReportPreview(val title: String, val excerpt: String)
+
+@Immutable
+data class TeamReportFile(
+    val stepId: String, val path: String, val name: String, val size: Long,
+    val preview: TeamReportPreview? = null,
+) {
     companion object {
         fun parse(o: JSONObject?): TeamReportFile? {
             o ?: return null
@@ -418,7 +424,12 @@ data class TeamReportFile(val stepId: String, val path: String, val name: String
             val stepId = o.str("stepId")?.takeIf { it.isNotBlank() } ?: return null
             val size = o.optLong("size", -1)
             if (size < 0) return null
-            return TeamReportFile(stepId, path, name, size)
+            val preview = o.obj("preview")?.let { p ->
+                p.str("title")?.takeIf { it.isNotBlank() }?.let { title ->
+                    TeamReportPreview(title, p.str("excerpt").orEmpty())
+                }
+            }
+            return TeamReportFile(stepId, path, name, size, preview)
         }
     }
 }
