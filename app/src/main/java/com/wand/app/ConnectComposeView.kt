@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -51,9 +53,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -70,7 +78,11 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.wand.app.R
+import com.wand.app.ui.components.WORKSPACE_REVEAL_END
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandConnectionScene
 import com.wand.app.ui.components.WandButton
@@ -84,6 +96,7 @@ import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandMorphingIcon
 import com.wand.app.ui.components.WandTextField
+import com.wand.app.ui.components.revealFraction
 import com.wand.app.data.ServerProfile
 import com.wand.app.data.ServerProfiles
 import com.wand.app.ui.theme.AmbientBackground
@@ -93,6 +106,7 @@ import com.wand.app.ui.theme.WandSpacing
 import com.wand.app.ui.theme.WandTheme
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.theme.wandSelectedSurface
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 interface ConnectUiListener {
@@ -667,6 +681,9 @@ private fun ConnectScreen(
 private fun ConnectionOpening(onComplete: () -> Unit) {
     val reduceMotion = reduceMotionEnabled()
     val progress = remember { Animatable(if (reduceMotion) 1f else 0f) }
+    // 场景里工作区标的落点（窗口坐标）。layout 后才量得到，但飞行标首帧就要画在屏幕中心，
+    // 所以起点不依赖测量（用窗口中心），落地偏移测到之前一直是 0。
+    var landingBounds by remember { mutableStateOf<Rect?>(null) }
     LaunchedEffect(reduceMotion) {
         if (reduceMotion) {
             progress.snapTo(1f)
@@ -676,16 +693,29 @@ private fun ConnectionOpening(onComplete: () -> Unit) {
         }
         onComplete()
     }
+    val journey = progress.value
+    // 没测到落点就先不动（否则会拿 0 尺寸当终点、把标缩没）。
+    val travel = if (reduceMotion || landingBounds == null) 0f else openingMarkTravel(journey)
+    val density = LocalDensity.current
+    val markSize = OpeningMarkSize
+    val markSizePx = with(density) { markSize.toPx() }
+    val landing = landingBounds
+    // 起点：窗口中心 = 系统 splash 图标的位置（实测 splash 图标就在屏幕正中）。
+    // 用 containerSize 而不是 onGloballyPositioned：首帧还没有测量结果，而这一帧恰好
+    // 是与 splash 接上的那一帧。
+    val windowCenter = LocalWindowInfo.current.containerSize.let {
+        Offset(it.width / 2f, it.height / 2f)
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(WandColors.bgPrimary)
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-        contentAlignment = Alignment.Center,
+            .background(WandColors.bgPrimary),
     ) {
         Column(
             modifier = Modifier
+                .align(Alignment.Center)
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .widthIn(max = 400.dp)
                 .fillMaxWidth()
                 .padding(horizontal = WandSpacing.xl),
@@ -697,10 +727,14 @@ private fun ConnectionOpening(onComplete: () -> Unit) {
                 color = WandColors.brand,
             )
             WandConnectionScene(
-                progress = progress.value,
+                progress = journey,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = WandSpacing.xxl),
+                // 飞行标就是场景里的那只标（同一个实例从中心飞过去），所以场景那只先不画。
+                // 测不到落点（layout 没报）时退回场景自画，插图不会少一只标。
+                markAlpha = if (reduceMotion || landingBounds == null) null else 0f,
+                onMarkPlaced = { landingBounds = it },
             )
             Text(
                 "把工作，接到手边",
@@ -714,8 +748,73 @@ private fun ConnectionOpening(onComplete: () -> Unit) {
                 modifier = Modifier.padding(top = WandSpacing.xs),
             )
         }
+        if (!reduceMotion) {
+            val delta = landing?.let { it.center - windowCenter } ?: Offset.Zero
+            val landingSizePx = landing?.width ?: markSizePx
+            OpeningBrandMark(
+                diameter = markSize,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset {
+                        IntOffset(
+                            (delta.x * travel).roundToInt(),
+                            (delta.y * travel).roundToInt(),
+                        )
+                    }
+                    .graphicsLayer {
+                        val scale =
+                            openingMarkSize(markSizePx, landingSizePx, travel) / markSizePx
+                        scaleX = scale
+                        scaleY = scale
+                    },
+            )
+        }
     }
 }
+
+/** 开屏品牌标的起始直径。取系统 splash 图标里那只猫的实测尺寸（Pixel 8 / API 36 / 420dpi：162dp），
+ *  换图标或换平台渲染后要重测：抓 splash 首帧量猫的像素宽 ÷ density。 */
+private val OpeningMarkSize = 162.dp
+
+/** 猫在 `ic_launcher_foreground`（108 viewport）里只占中间 60，放大后标盒直径就等于猫的实际直径。 */
+private const val BRAND_CAT_ZOOM = 108f / 60f
+
+/**
+ * 只有猫、没有底板的品牌标，直径按猫的实际尺寸计算。
+ * 用 `ic_launcher_foreground` 同一份形状，所以它和系统 splash 上那只猫逐像素一致。
+ */
+@Composable
+private fun OpeningBrandMark(diameter: Dp, modifier: Modifier = Modifier) {
+    Box(modifier.size(diameter)) {
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = BRAND_CAT_ZOOM
+                    scaleY = BRAND_CAT_ZOOM
+                },
+        )
+    }
+}
+
+/**
+ * 开屏飞入进度：`0` = 屏幕中心（与系统 splash 上那只猫同一位置，先停一拍再动），
+ * `1` = 场景里的工作区标位，与工作区成形（[WORKSPACE_REVEAL_END]）同一拍落地。
+ * 时间窗内再套一层标准缓动：猫是「位置变化」，要落稳而不是匀速滑。
+ */
+internal fun openingMarkTravel(journey: Float): Float =
+    WandMotion.easing.transform(
+        revealFraction(journey, OPENING_MARK_HOLD, WORKSPACE_REVEAL_END),
+    )
+
+/** 标的实际直径：从 [startSize] 收到落点尺寸 [landingSize]。 */
+internal fun openingMarkSize(startSize: Float, landingSize: Float, travel: Float): Float =
+    startSize + (landingSize - startSize) * travel.coerceIn(0f, 1f)
+
+/** 起飞前的停顿占整段旅程的比例：先让用户认出「还是刚才那只猫」，再飞（与工作区开始显现同一拍）。 */
+internal const val OPENING_MARK_HOLD = 0.12f
 
 @Composable
 private fun ConnectionFeedback(message: String?, isError: Boolean, reduceMotion: Boolean) {

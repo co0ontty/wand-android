@@ -6,7 +6,11 @@
         <item name="colorAccent">@color/accent</item>
         <item name="android:windowBackground">@color/background</item>
         <item name="android:windowSplashScreenBackground">@color/background</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- 不带底板的自适应 splash 图标：平台本来会把启动图标那块冷蓝灰圆底直接垫在暖米色
+             开屏底上（`windowSplashScreenIconBackgroundColor` 对自适应图标不生效），
+             换成同色底后圆底融进背景，只剩中间那只猫——
+             它和紧接的开屏首帧（屏幕中心同一只猫）逐像素接上。 -->
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_splash</item>
         <item name="android:statusBarColor">@color/background</item>
         <item name="android:navigationBarColor">@color/background</item>
         <item name="materialAlertDialogTheme">@style/Theme.Wand.Dialog</item>

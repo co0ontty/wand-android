@@ -1,5 +1,6 @@
 package com.wand.app.ui.theme
 
+import android.content.Context
 import android.provider.Settings
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.core.CubicBezierEasing
@@ -7,6 +8,7 @@ import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.InfiniteRepeatableSpec
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.SpringSpec
@@ -302,6 +304,29 @@ object WandTerminal {
 
 val LocalReduceMotion = staticCompositionLocalOf { false }
 
+/**
+ * 减少动效判定（非 Compose 入口用，例如 Java Activity 决定是否播开屏）。
+ * 与 [rememberReduceMotion] 同一份规则：动画时长倍率为 0 或窗口/过渡动画被关掉。
+ */
+fun reduceMotionEnabled(context: Context): Boolean {
+    return try {
+        val resolver = context.contentResolver
+        val animator = Settings.Global.getFloat(
+            resolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        )
+        val transition = Settings.Global.getFloat(
+            resolver,
+            Settings.Global.TRANSITION_ANIMATION_SCALE,
+            1f,
+        )
+        animator == 0f || transition == 0f
+    } catch (_: Exception) {
+        false
+    }
+}
+
 @Composable
 @ReadOnlyComposable
 fun reduceMotionEnabled(): Boolean = LocalReduceMotion.current
@@ -309,24 +334,7 @@ fun reduceMotionEnabled(): Boolean = LocalReduceMotion.current
 @Composable
 private fun rememberReduceMotion(): Boolean {
     val context = LocalContext.current
-    return remember(context) {
-        try {
-            val resolver = context.contentResolver
-            val animator = Settings.Global.getFloat(
-                resolver,
-                Settings.Global.ANIMATOR_DURATION_SCALE,
-                1f,
-            )
-            val transition = Settings.Global.getFloat(
-                resolver,
-                Settings.Global.TRANSITION_ANIMATION_SCALE,
-                1f,
-            )
-            animator == 0f || transition == 0f
-        } catch (_: Exception) {
-            false
-        }
-    }
+    return remember(context) { reduceMotionEnabled(context) }
 }
 
 fun WandAppearanceMode.toNightMode(): Int = when (this) {
@@ -374,6 +382,11 @@ object WandMotion {
     /** 呼吸动画 scale 高点。过大看起来像在跳。 */
     const val breathScaleMax = 1.12f
 
+    /** 分镜时间基：开屏把 0..1 切成多个时间窗（信号 → 工作区 → 手机），
+     *  时间基保持线性，每个窗口自己的动感由各自的缓动负责。
+     *  用强调/标准缓动当时间基会把整段故事挤进前 1/5（实测插画 170ms 内就长完）。 */
+    val storyboard: Easing = LinearEasing
+
     /** 标准缓动（兼容旧调用）。 */
     val easing: Easing = FastOutSlowInEasing
 
@@ -393,7 +406,9 @@ object WandMotion {
     fun <T> tweenEnter(): TweenSpec<T> = tween(normal, easing = enterEasing)
 
     fun <T> openingJourney(): TweenSpec<T> =
-        tween(openingJourneyDuration, easing = emphasized)
+        // 分镜是 0..1 上的多个时间窗（信号 72..413ms、工作区 192..576ms、手机 557..922ms），
+        // 时间基必须线性；每段自己的落稳交给窗口内的缓动（见 openingMarkTravel）。
+        tween(openingJourneyDuration, easing = storyboard)
 
     fun <T> tweenExit(): TweenSpec<T> = tween(fast, easing = exitEasing)
 

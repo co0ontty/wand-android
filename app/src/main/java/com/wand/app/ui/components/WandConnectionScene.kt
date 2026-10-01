@@ -11,11 +11,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -29,12 +32,19 @@ import kotlin.math.roundToInt
  * Decorative connection story adapted from the Web login illustration: three sources flow into
  * one Wand workspace, then a signal reaches the phone. [progress] is a one-shot value in 0..1;
  * the owning screen controls its timing. With reduced motion the completed scene is shown at once.
+ *
+ * 工作区显现完成于 [WORKSPACE_REVEAL_END]；开屏飞入标（[onMarkPlaced]）的落点与它对齐，
+ * 让标落地和工作区成形是同一拍。
  */
 @Composable
 fun WandConnectionScene(
     progress: Float,
     modifier: Modifier = Modifier,
     height: Dp = 184.dp,
+    /** 覆盖工作区标的 alpha；null = 跟随工作区显现（默认）。 */
+    markAlpha: Float? = null,
+    /** 让调用方拿到工作区标的窗口坐标与尺寸（开屏把中心那只标飞到这里）。 */
+    onMarkPlaced: ((Rect) -> Unit)? = null,
 ) {
     val shownProgress = if (reduceMotionEnabled()) 1f else progress.coerceIn(0f, 1f)
     val brand = WandColors.brand
@@ -44,8 +54,8 @@ fun WandConnectionScene(
     val ink = WandColors.textSecondary
     val success = WandColors.success
     val terminal = WandTerminal.background
-    val workspaceReveal = reveal(shownProgress, 0.20f, 0.60f)
-    val phoneReveal = reveal(shownProgress, 0.58f, 0.96f)
+    val workspaceReveal = revealFraction(shownProgress, WORKSPACE_REVEAL_START, WORKSPACE_REVEAL_END)
+    val phoneReveal = revealFraction(shownProgress, 0.58f, 0.96f)
 
     BoxWithConstraints(
         modifier = modifier
@@ -78,7 +88,7 @@ fun WandConnectionScene(
                 }
                 drawPath(route, border.copy(alpha = 0.85f), style = Stroke(1.2f * scale))
 
-                val signal = reveal(shownProgress, index * 0.075f, 0.43f + index * 0.075f)
+                val signal = revealFraction(shownProgress, index * 0.075f, 0.43f + index * 0.075f)
                 if (signal > 0f && signal < 1f) {
                     val center = cubicPoint(
                         point(x, 53f), point(x, 76f), point(180f, 65f), point(180f, 85f), signal,
@@ -165,7 +175,7 @@ fun WandConnectionScene(
                 Color.White.copy(alpha = 0.45f * workspaceReveal),
                 point(109f, 141f), point(167f, 141f), 2f * scale,
             )
-            val outputReveal = reveal(shownProgress, 0.42f, 0.75f)
+            val outputReveal = revealFraction(shownProgress, 0.42f, 0.75f)
             drawLine(
                 success.copy(alpha = outputReveal), point(109f, 148f),
                 point(109f + 66f * outputReveal, 148f), 2f * scale,
@@ -181,7 +191,7 @@ fun WandConnectionScene(
                 )
             }
             drawPath(destinationRoute, border.copy(alpha = phoneReveal), style = Stroke(1.2f * scale))
-            val outbound = reveal(shownProgress, 0.64f, 0.92f)
+            val outbound = revealFraction(shownProgress, 0.64f, 0.92f)
             if (outbound > 0f && outbound < 1f) {
                 val center = cubicPoint(
                     point(260f, 133f), point(273f, 133f), point(277f, 113f),
@@ -220,14 +230,23 @@ fun WandConnectionScene(
         Box(
             modifier = Modifier
                 .offset(x = (left + 100f * sceneScale).dp, y = (top + 92f * sceneScale).dp)
-                .graphicsLayer { alpha = workspaceReveal },
+                .graphicsLayer { alpha = markAlpha ?: workspaceReveal }
+                .then(
+                    if (onMarkPlaced == null) Modifier
+                    else Modifier.onGloballyPositioned { onMarkPlaced(it.boundsInWindow()) },
+                ),
         ) {
             WandBrandMark(size = (22f * sceneScale).roundToInt().coerceAtLeast(18))
         }
     }
 }
 
-private fun reveal(progress: Float, start: Float, end: Float): Float =
+/** 工作区显现窗口：开屏飞入标落点与之对齐。 */
+internal const val WORKSPACE_REVEAL_START = 0.20f
+internal const val WORKSPACE_REVEAL_END = 0.60f
+
+/** [progress] 落在 [start]..[end] 之间的线性进度（0..1），窗口外夹紧。 */
+internal fun revealFraction(progress: Float, start: Float, end: Float): Float =
     ((progress - start) / (end - start)).coerceIn(0f, 1f)
 
 private fun cubicPoint(a: Offset, b: Offset, c: Offset, d: Offset, time: Float): Offset {

@@ -22,6 +22,7 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
+import com.wand.app.ui.theme.ThemeKt;
 import com.wand.app.data.ServerProfile;
 import com.wand.app.data.WandAuth;
 import com.wand.app.data.WandHttp;
@@ -132,7 +133,12 @@ public class ConnectActivity extends AppCompatActivity {
         profilesChanged = getIntent().getBooleanExtra(EXTRA_PROFILES_CHANGED, false);
         boolean launcherEntry = Intent.ACTION_MAIN.equals(getIntent().getAction())
                 && getIntent().hasCategory(Intent.CATEGORY_LAUNCHER);
-        boolean playOpening = savedInstanceState == null && !managementMode && launcherEntry;
+        // 减少动效的用户不播开屏：位移/缩放动画没有瞬时版本可看（整段就是一段位移），
+        // 播出来只会快闪一帧海报，还平白把自动连接压后 1 秒。直接交给表单/自动连接。
+        boolean playOpening = savedInstanceState == null
+                && !managementMode
+                && launcherEntry
+                && !ThemeKt.reduceMotionEnabled(this);
         openingComplete = !playOpening;
         // ConnectActivity is the server-management boundary. A previous native runtime
         // must not keep reconnecting or emitting notifications while profiles are edited.

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 冷启动 splash 图标的底板：与 splash 背景同一个 @color/background（浅色/深色各自解析），
+     所以系统给自适应图标垫的那块圆底看不见，只剩中间那只像素猫。
+     换色只改 colors.xml 的 background，不要在这里写死色值。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@color/background"
+        android:pathData="M0,0h108v108h-108z" />
+</vector>
