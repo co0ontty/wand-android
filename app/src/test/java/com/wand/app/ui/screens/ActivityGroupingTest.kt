@@ -252,6 +252,74 @@ class ActivityGroupingTest {
     }
 
     @Test
+    fun collapsedSummaryLeadsWithTheLatestCommandTime() {
+        val running = tool("run", "Bash", "run_command").copy(
+            activity = ToolActivity("run_command", "运行命令", occurredAt = "2026-09-30T12:03:04Z"),
+        )
+        val items = listOf(
+            DisplayItem.Tool(tool("read", "Read", "read_file", "file-a"), null),
+            DisplayItem.Tool(running, null),
+        )
+        val parts = toolActivitySummaryParts(
+            categories = toolActivityCategories(items),
+            hasThinking = false,
+            thinkingRunning = true,
+            thinkingPlaceholder = false,
+            leadClock = commandEventClock(Instant.parse("2026-09-30T12:03:04Z"), ZoneId.of("Asia/Shanghai")),
+            pendingCommand = true,
+            waitLabel = "已等待 5 秒",
+        )
+        assertEquals("20:03:04", parts.first().text)
+        assertEquals(ToolActivitySummaryTone.Clock, parts.first().tone)
+        assertEquals("  ", parts.first().joiner)
+        assertEquals(listOf("查看了 1 个文件", "运行了 1 条命令", "运行中", "已等待 5 秒"), parts.drop(1).map { it.text })
+        assertEquals(ToolActivitySummaryTone.AccentPulse, parts[3].tone)
+    }
+
+    @Test
+    fun collapsedSummaryKeepsThinkingFirstWithoutAnInventedTime() {
+        val thinking = pairToolBlocks(listOf(ContentBlock.Thinking("working", null)))
+        assertEquals(
+            listOf("深度思考", "中"),
+            toolActivitySummaryParts(
+                categories = toolActivityCategories(thinking),
+                hasThinking = true,
+                thinkingRunning = true,
+                thinkingPlaceholder = false,
+                leadClock = null,
+                pendingCommand = false,
+                waitLabel = null,
+            ).map { it.text },
+        )
+        val placeholder = pairToolBlocks(listOf(ContentBlock.Thinking("  ", null)))
+        val placeholderParts = toolActivitySummaryParts(
+            categories = toolActivityCategories(placeholder),
+            hasThinking = false,
+            thinkingRunning = true,
+            thinkingPlaceholder = true,
+            leadClock = null,
+            pendingCommand = false,
+            waitLabel = null,
+        )
+        assertEquals(listOf("思考中"), placeholderParts.map { it.text })
+        assertEquals(ToolActivitySummaryTone.AccentPulse, placeholderParts.single().tone)
+        // 旧历史没有真实时间：正文自己起头，不插占位、不补造。
+        val finished = listOf(DisplayItem.Tool(tool("old", "Bash", "run_command"), null))
+        assertEquals(
+            listOf("运行了 1 条命令"),
+            toolActivitySummaryParts(
+                categories = toolActivityCategories(finished),
+                hasThinking = false,
+                thinkingRunning = false,
+                thinkingPlaceholder = false,
+                leadClock = null,
+                pendingCommand = false,
+                waitLabel = null,
+            ).map { it.text },
+        )
+    }
+
+    @Test
     fun fileCountsDeduplicateAnonymousFileKeyButDetailsKeepEachToolId() {
         val calls = listOf(
             tool("e1", "Edit", "edit_file", "same-file"),

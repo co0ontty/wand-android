@@ -202,6 +202,59 @@ internal fun toolActivityItemLabel(use: ContentBlock.ToolUse): String {
     return if (label.length > 120) label.take(119) + "…" else label
 }
 
+internal const val ACTIVITY_SUMMARY_DOT = " · "
+
+/** 收起态摘要里一段文字的强调方式；具体颜色与呼吸动效由渲染层决定。 */
+internal enum class ToolActivitySummaryTone { Text, Accent, AccentPulse, Clock }
+
+/**
+ * 收起态摘要的一段：文字、强调方式，以及与下一段之间的连接符。
+ * 时间列后面只留空档，其余各段之间用间隔点。
+ */
+internal data class ToolActivitySummaryPart(
+    val text: String,
+    val tone: ToolActivitySummaryTone = ToolActivitySummaryTone.Text,
+    val joiner: String = ACTIVITY_SUMMARY_DOT,
+)
+
+/**
+ * 收起态摘要的显示顺序。
+ *
+ * 最新一条命令的真实时间排在整行最前，和展开行的时间列同一个位置；
+ * 旧历史没有真实时间时不插入占位，绝不补造时间。
+ * 「运行中 / 已等待」仍跟在命令计数后面。
+ */
+internal fun toolActivitySummaryParts(
+    categories: List<ToolActivityCategory>,
+    hasThinking: Boolean,
+    thinkingRunning: Boolean,
+    thinkingPlaceholder: Boolean,
+    leadClock: String?,
+    pendingCommand: Boolean,
+    waitLabel: String?,
+): List<ToolActivitySummaryPart> {
+    val parts = mutableListOf<ToolActivitySummaryPart>()
+    leadClock?.let { parts += ToolActivitySummaryPart(it, ToolActivitySummaryTone.Clock, "  ") }
+    if (hasThinking || thinkingPlaceholder) {
+        // 思考中：无正文时整段是活动色；有正文时只有后缀「中」跟着呼吸。
+        val suffix = hasThinking && thinkingRunning && categories.isEmpty()
+        parts += ToolActivitySummaryPart(
+            text = if (hasThinking) "深度思考" else "思考中",
+            tone = if (hasThinking) ToolActivitySummaryTone.Text else ToolActivitySummaryTone.AccentPulse,
+            joiner = if (suffix) "" else ACTIVITY_SUMMARY_DOT,
+        )
+        if (suffix) parts += ToolActivitySummaryPart("中", ToolActivitySummaryTone.AccentPulse)
+    }
+    categories.forEach { category ->
+        parts += ToolActivitySummaryPart(category.title)
+        if (category.kind == "run_command" && pendingCommand) {
+            parts += ToolActivitySummaryPart("运行中", ToolActivitySummaryTone.AccentPulse)
+            waitLabel?.let { parts += ToolActivitySummaryPart(it) }
+        }
+    }
+    return parts
+}
+
 /** 小字活动菜单原位展开为固定高度时间线，单条点开才请求完整内容。 */
 @Composable
 internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
@@ -244,29 +297,29 @@ internal fun ToolActivitySummary(group: ActivityGroup, scope: String) {
         1f
     }
     val emphasis = WandColors.brand
+    val parts = toolActivitySummaryParts(
+        categories = categories,
+        hasThinking = thinking.isNotEmpty(),
+        thinkingRunning = group.running,
+        thinkingPlaceholder = thinkingPlaceholder,
+        leadClock = latestCommandAt?.let { commandEventClock(it) },
+        pendingCommand = pendingCommand,
+        waitLabel = pendingCommandAt?.let { commandWaitLabel(it, nowMillis) },
+    )
     val summary = buildAnnotatedString {
-        if (thinking.isNotEmpty()) {
-            append("深度思考")
-            if (group.running && categories.isEmpty()) {
-                withStyle(SpanStyle(color = emphasis.copy(alpha = pulse))) { append("中") }
+        parts.forEachIndexed { index, part ->
+            val style = when (part.tone) {
+                ToolActivitySummaryTone.Text -> null
+                ToolActivitySummaryTone.Accent -> SpanStyle(color = emphasis)
+                ToolActivitySummaryTone.AccentPulse -> SpanStyle(color = emphasis.copy(alpha = pulse))
+                ToolActivitySummaryTone.Clock -> SpanStyle(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    color = WandColors.textMuted,
+                )
             }
-        } else if (thinkingPlaceholder) {
-            withStyle(SpanStyle(color = emphasis.copy(alpha = pulse))) { append("思考中") }
-        }
-        categories.forEach { category ->
-            if (length > 0) append(" · ")
-            append(category.title)
-            if (category.kind == "run_command") {
-                latestCommandAt?.let { at ->
-                    append("  ")
-                    withStyle(SpanStyle(color = emphasis)) { append(commandEventClock(at)) }
-                }
-                if (pendingCommand) {
-                    append(" · ")
-                    withStyle(SpanStyle(color = emphasis.copy(alpha = pulse))) { append("运行中") }
-                    pendingCommandAt?.let { at -> append(" · ${commandWaitLabel(at, nowMillis)}") }
-                }
-            }
+            if (style == null) append(part.text) else withStyle(style) { append(part.text) }
+            if (index < parts.lastIndex) append(part.joiner)
         }
     }
     Column(modifier = Modifier.fillMaxWidth()) {
