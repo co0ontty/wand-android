@@ -26,6 +26,7 @@ import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
@@ -65,59 +66,52 @@ internal fun PadLandingScreen(
 ) {
     val overview = homeOverview(directoryTreeGroups(groups))
     val sessions = padLandingSessions(groups)
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .ambientBackground()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
+    Column(modifier = Modifier.fillMaxSize().ambientBackground()) {
+        // 与其它详情页共用同一条顶栏：宽屏下两个栏目的顶栏基线对齐，
+        // 落地页不会再把自己的标题和主操作画进状态栏，也不再是「另一个应用的首页」。
+        WandDetailTopBar(
+            title = "工作概览",
+            subtitle = "从左侧选择任务，或在这里继续会话",
+            actions = { WandButton(label = "新建任务", onClick = onNewTask, compact = true) },
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            WandCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    PadLandingMetric("在跑", overview.running, WandColors.success, Modifier.weight(1f))
+                    PadLandingMetric("等你", overview.needsYou, WandColors.permission, Modifier.weight(1f))
+                    PadLandingMetric("全部会话", overview.sessions, WandColors.textPrimary, Modifier.weight(1f))
+                }
+            }
+            Text(
+                "继续工作",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            if (sessions.isEmpty()) {
                 Text(
-                    "工作概览",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary,
-                )
-                Text(
-                    "从左侧选择任务，或在这里继续会话",
+                    "还没有会话。从左侧新建任务开始。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = WandColors.textSecondary,
                 )
             }
-            WandButton(label = "新建任务", onClick = onNewTask, compact = true)
-        }
-        WandCard(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                PadLandingMetric("在跑", overview.running, WandColors.success, Modifier.weight(1f))
-                PadLandingMetric("等你", overview.needsYou, WandColors.permission, Modifier.weight(1f))
-                PadLandingMetric("全部会话", overview.sessions, WandColors.textPrimary, Modifier.weight(1f))
+            sessions.forEachIndexed { index, entry ->
+                PadLandingSessionRow(entry, index, onOpenSession)
             }
-        }
-        Text(
-            "继续工作",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = WandColors.textPrimary,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-        if (sessions.isEmpty()) {
-            Text(
-                "还没有会话。从左侧新建任务开始。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textSecondary,
-            )
-        }
-        sessions.forEachIndexed { index, entry ->
-            PadLandingSessionRow(entry, index, onOpenSession)
         }
     }
 }

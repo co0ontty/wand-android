@@ -24,7 +24,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,7 +51,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,6 +77,7 @@ import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.ambientBackground
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.AiTeamChatScreen
@@ -783,6 +788,15 @@ private fun WideReadyContent(
     showDetailBack: Boolean,
 ) {
     val density = LocalDensity.current.density
+    // 中缝上下收进系统栏：侧栏和画布本来就各自处理系统栏内边距，中缝只画在真实内容区里。
+    val seamTopPx = with(LocalDensity.current) { WindowInsets.systemBars.getTop(this) }.toFloat()
+    val seamBottomPx = with(LocalDensity.current) { WindowInsets.systemBars.getBottom(this) }.toFloat()
+    // 亮色下中缝是画布投给侧栏的一道暖影；暗色下投影看不见，改用一档更亮的描边色表达相邻表面。
+    val seamColor = if (isWandDarkTheme()) {
+        WandColors.border.copy(alpha = 0.52f)
+    } else {
+        WandColors.borderStrong.copy(alpha = 0.18f)
+    }
     var sidebarDragDeltaDp by rememberSaveable { mutableStateOf(0f) }
     val minSidebarWidth = 220.dp
     val maxSidebarWidth = (windowWidth - 360.dp)
@@ -823,53 +837,59 @@ private fun WideReadyContent(
                 .width(sidebarWidth)
                 .fillMaxHeight(),
         ) {
-            WideSidebarPanel(modifier = Modifier.fillMaxSize()) {
-                val reduceMotion = reduceMotionEnabled()
-                AnimatedContent(
-                    targetState = sidebarCollapsed,
+            val reduceMotion = reduceMotionEnabled()
+            AnimatedContent(
+                targetState = sidebarCollapsed,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = {
+                    if (reduceMotion) {
+                        fadeIn(snap()) togetherWith fadeOut(snap())
+                    } else {
+                        fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
+                    }
+                },
+                label = "wideSidebarContent",
+            ) { collapsed ->
+                Box(
                     modifier = Modifier.fillMaxSize(),
-                    transitionSpec = {
-                        if (reduceMotion) {
-                            fadeIn(snap()) togetherWith fadeOut(snap())
-                        } else {
-                            fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
-                        }
-                    },
-                    label = "wideSidebarContent",
-                ) { collapsed ->
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.TopStart,
-                    ) {
-                        if (collapsed) {
-                            CollapsedDirectoryRail(
-                                groups = taskState.groups,
-                                selectedTaskId = selectedTaskId,
-                                selectedSessionId = selectedSessionId,
-                                peekDirectoryId = peekDirectoryId,
-                                rootWindowTop = { rootWindowTop[0] },
-                                onToggleDirectory = { group, top ->
-                                    if (peekDirectoryId == group.workspaceId) {
-                                        peekDirectoryId = null
-                                    } else {
-                                        peekAnchorTop = top
-                                        peekDirectoryId = group.workspaceId
-                                    }
-                                },
-                                onDirectoryTop = { top ->
-                                    if (abs(peekAnchorTop.value - top.value) > 0.5f) peekAnchorTop = top
-                                },
-                                onNewTask = {
+                    contentAlignment = Alignment.TopStart,
+                ) {
+                    if (collapsed) {
+                        CollapsedDirectoryRail(
+                            groups = taskState.groups,
+                            selectedTaskId = selectedTaskId,
+                            selectedSessionId = selectedSessionId,
+                            peekDirectoryId = peekDirectoryId,
+                            rootWindowTop = { rootWindowTop[0] },
+                            onToggleDirectory = { group, top ->
+                                if (peekDirectoryId == group.workspaceId) {
                                     peekDirectoryId = null
-                                    taskState.requestNewTask()
-                                    onToggleSidebarCollapsed()
-                                },
-                                onExpandSidebar = {
-                                    peekDirectoryId = null
-                                    onToggleSidebarCollapsed()
-                                },
-                            )
-                        } else {
+                                } else {
+                                    peekAnchorTop = top
+                                    peekDirectoryId = group.workspaceId
+                                }
+                            },
+                            onDirectoryTop = { top ->
+                                if (abs(peekAnchorTop.value - top.value) > 0.5f) peekAnchorTop = top
+                            },
+                            onNewTask = {
+                                peekDirectoryId = null
+                                taskState.requestNewTask()
+                                onToggleSidebarCollapsed()
+                            },
+                            onExpandSidebar = {
+                                peekDirectoryId = null
+                                onToggleSidebarCollapsed()
+                            },
+                        )
+                    } else {
+                        // 宽屏时这里是侧栏：内容留出与中缝等宽的呼吸位，
+                        // 卡片不再贴着中缝被切，两侧栏目有同一种页边距节奏。
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 12.dp),
+                        ) {
                             TaskListScreen(
                                 state = taskState,
                                 api = api,
@@ -904,7 +924,8 @@ private fun WideReadyContent(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxHeight(),
+                .fillMaxHeight()
+                .paneSeam(seamColor = seamColor, seamTopPx = seamTopPx, seamBottomPx = seamBottomPx),
         ) {
             val reduceMotion = reduceMotionEnabled()
             AnimatedContent(
@@ -1037,29 +1058,33 @@ private fun SidebarResizeHandle(
     }
 }
 
-@Composable
-private fun WideSidebarPanel(
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val divider = WandColors.border
-    Box(
-        modifier = modifier
-            .background(WandColors.bgElevated)
-            .drawBehind {
-                val stroke = 1.dp.toPx()
-                val x = size.width - stroke / 2f
-                drawLine(
-                    color = divider,
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Butt,
-                )
-            },
-    ) {
-        content()
-    }
+/** 双栏中缝的柔光宽度：够宽才看得出是渐隐，而不是一条竖线。 */
+private val PaneSeamWidth = 14.dp
+
+/**
+ * 宽屏双栏的中缝。
+ *
+ * 侧栏原先在右缘画一条 1dp 实线，从状态栏一路切到手势条，加上侧栏自带的浅色底块，
+ * 左右两栏看起来像两个页面拼在一起。这里改成画在画布左缘的一道柔光：
+ * 横向渐隐、上下收进系统栏范围，中缝既不压到系统栏，也不再是一条硬线。
+ */
+private fun Modifier.paneSeam(
+    seamColor: Color,
+    seamTopPx: Float,
+    seamBottomPx: Float,
+): Modifier = drawBehind {
+    val seamWidth = PaneSeamWidth.toPx()
+    val seamHeight = size.height - seamTopPx - seamBottomPx
+    if (seamHeight <= 0f) return@drawBehind
+    drawRect(
+        brush = Brush.horizontalGradient(
+            colors = listOf(Color.Transparent, seamColor),
+            startX = -seamWidth,
+            endX = 0f,
+        ),
+        topLeft = Offset(-seamWidth, seamTopPx),
+        size = Size(seamWidth, seamHeight),
+    )
 }
 
 
