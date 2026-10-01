@@ -1160,7 +1160,8 @@ internal fun HomeSessionRow(
                 if (session.employeeId != null) {
                     EmployeeAvatar(session.employeeId,
                         employee?.name ?: session.employeeName,
-                        employee?.avatar ?: session.employeeAvatar, size = 28.dp)
+                        employee?.avatar ?: session.employeeAvatar,
+                        size = 28.dp, provider = session.provider)
                 } else if (teamChat != null) {
                     Icon(
                         WandIcons.agent,

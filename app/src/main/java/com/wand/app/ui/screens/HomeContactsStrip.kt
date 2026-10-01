@@ -93,7 +93,8 @@ private fun HomeContact(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (employee != null) EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 24.dp)
+        if (employee != null) EmployeeAvatar(employee.id, employee.name, employee.avatar,
+            size = 24.dp, provider = employee.agents.firstOrNull()?.provider)
         else Icon(icon, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(20.dp))
         Column {
             Text(kind, color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall)

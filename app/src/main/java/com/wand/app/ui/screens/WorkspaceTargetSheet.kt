@@ -112,7 +112,8 @@ fun WorkspaceTargetSheet(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 28.dp)
+                            EmployeeAvatar(employee.id, employee.name, employee.avatar,
+                                size = 28.dp, provider = employee.agents.firstOrNull()?.provider)
                             Column {
                                 Text(employee.name, color = WandColors.textPrimary,
                                     style = MaterialTheme.typography.titleSmall)

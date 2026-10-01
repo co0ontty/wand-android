@@ -195,6 +195,7 @@ fun TurnView(
     employeeId: String? = null,
     employeeName: String? = null,
     employeeAvatar: String? = null,
+    employeeProvider: String? = null,
     isLastTurn: Boolean = false,
     isResponding: Boolean = false,
     activeCommandIds: Set<String>? = null,
@@ -265,6 +266,7 @@ fun TurnView(
                 employeeId = employeeId,
                 employeeName = employeeName,
                 employeeAvatar = employeeAvatar,
+                employeeProvider = employeeProvider,
                 onToggle = {
                     val next = !collapsed
                     setCollapsed(next)
@@ -313,6 +315,7 @@ private fun AssistantReplyHeader(
     employeeId: String?,
     employeeName: String?,
     employeeAvatar: String?,
+    employeeProvider: String?,
     onToggle: () -> Unit,
 ) {
     val employeeReply = author == null && employeeId != null
@@ -344,7 +347,8 @@ private fun AssistantReplyHeader(
             .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
         if (employeeReply) {
-            EmployeeAvatar(employeeId, employeeName, employeeAvatar, size = 26.dp)
+            EmployeeAvatar(employeeId, employeeName, employeeAvatar,
+                size = 26.dp, provider = employeeProvider)
         } else {
             Box(
                 contentAlignment = Alignment.Center,

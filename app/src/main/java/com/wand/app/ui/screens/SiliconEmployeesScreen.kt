@@ -120,7 +120,8 @@ fun SiliconEmployeesScreen(
                     contentPadding = PaddingValues(14.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 28.dp)
+                        EmployeeAvatar(employee.id, employee.name, employee.avatar,
+                            size = 28.dp, provider = employee.agents.firstOrNull()?.provider)
                         Column(Modifier.weight(1f).padding(start = 12.dp)) {
                             Text(employee.name, color = WandColors.textPrimary,
                                 style = MaterialTheme.typography.titleSmall,

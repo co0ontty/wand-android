@@ -632,7 +632,8 @@ fun ChatScreen(
                     if (employeeId != null) {
                         EmployeeAvatar(employeeId,
                             liveEmployee?.name ?: store.snapshot?.employeeName,
-                            liveEmployee?.avatar ?: store.snapshot?.employeeAvatar)
+                            liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
+                            provider = store.snapshot?.provider)
                     } else WandProviderMark(store.snapshot?.provider)
                     Column(
                         horizontalAlignment = Alignment.Start,
@@ -871,6 +872,7 @@ fun ChatScreen(
                                             employeeId = employeeId,
                                             employeeName = liveEmployee?.name ?: store.snapshot?.employeeName,
                                             employeeAvatar = liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
+                                            employeeProvider = store.snapshot?.provider,
                                             isLastTurn = item.index == store.messages.lastIndex,
                                             isResponding = store.isResponding,
                                             activeCommandIds = activeCommandIds,
