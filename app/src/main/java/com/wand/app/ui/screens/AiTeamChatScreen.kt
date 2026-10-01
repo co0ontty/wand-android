@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -75,6 +76,7 @@ import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamStep
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.TeamRunAction
+import com.wand.app.data.TeamReportFile
 import com.wand.app.data.TurnAuthor
 import com.wand.app.data.WandApi
 import com.wand.app.data.UploadedFile
@@ -105,6 +107,7 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.reduceMotionEnabled
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -849,7 +852,7 @@ private fun TeamTurnRow(
         TeamChatTurnKind.User -> TeamUserRow(turn, presentationId, scope, baseUrl, onOpenDoc)
         TeamChatTurnKind.Leader -> TeamLeaderCard(turn, presentationId, scope, rosterNames,
             onOpenMemberSession, onOpenDoc)
-        TeamChatTurnKind.Step -> TeamStepRow(turn, presentationId, scope, rosterNames, steps,
+        TeamChatTurnKind.Step -> TeamStepRow(turn, presentationId, scope, baseUrl, rosterNames, steps,
             onOpenMemberSession, onOpenDoc)
     }
 }
@@ -1329,12 +1332,82 @@ private fun TeamLeaderCard(
     }
 }
 
-/** 成员发言：步骤状态芯片 + 报告正文（气泡或全宽文档卡）。 */
+/** 与 IM 文件消息一致：文件身份与大小先显示，正文只在点击后读取。 */
+@Composable
+private fun TeamReportFileCard(file: TeamReportFile, baseUrl: String) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var preview by remember(file) { mutableStateOf(false) }
+    var downloading by remember(file) { mutableStateOf(false) }
+    var opened by remember(file) { mutableStateOf(false) }
+    var error by remember(file) { mutableStateOf<String?>(null) }
+    fun download() {
+        if (downloading || baseUrl.isBlank()) return
+        downloading = true
+        opened = false
+        error = null
+        coroutineScope.launch {
+            try {
+                WandServerFileLink.downloadAndOpen(context, baseUrl, file.path)
+                opened = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: "文件下载失败"
+            } finally {
+                downloading = false
+            }
+        }
+    }
+    Column(
+        modifier = Modifier.widthIn(max = TeamMessageBubbleMaxWidth).fillMaxWidth()
+            .clip(WandShapes.md).border(0.55.dp, WandColors.border, WandShapes.md)
+            .background(WandColors.surfaceSoft),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(
+                enabled = baseUrl.isNotBlank(), role = Role.Button,
+                onClickLabel = "预览${file.name}", onClick = { preview = true },
+            ).padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(44.dp, 48.dp).clip(WandShapes.sm).background(WandColors.brandSoft),
+                contentAlignment = Alignment.Center) {
+                Icon(WandIcons.toolResult, contentDescription = null, tint = WandColors.brand,
+                    modifier = Modifier.size(28.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(file.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Markdown · ${teamReportFileSize(file.size)} · 成员报告", fontSize = 11.sp,
+                    color = WandColors.textMuted)
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("点击文件预览", fontSize = 11.sp, color = WandColors.textMuted, modifier = Modifier.weight(1f))
+            Text(when { downloading -> "下载中…"; error != null -> "重试下载"; opened -> "已打开"; else -> "下载" },
+                fontSize = 12.sp, color = WandColors.brand, textAlign = TextAlign.End,
+                modifier = Modifier.widthIn(min = 80.dp).heightIn(min = 40.dp)
+                    .clip(WandShapes.xs).clickable(enabled = !downloading && baseUrl.isNotBlank(),
+                        role = Role.Button, onClickLabel = "下载${file.name}", onClick = { download() })
+                    .padding(vertical = 10.dp))
+        }
+        error?.let { Text(it, fontSize = 11.sp, color = WandColors.danger,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
+    }
+    if (preview) TextPreviewDialog(path = file.path, baseUrl = baseUrl,
+        onDismiss = { preview = false }, onOpenExternally = { preview = false; download() })
+}
+
+/** 成员发言：步骤状态芯片 + 报告文件卡片；未完成/普通发言保持原气泡。 */
 @Composable
 private fun TeamStepRow(
     turn: ConversationTurn,
     presentationId: String,
     scope: String,
+    baseUrl: String,
     rosterNames: List<String>,
     steps: List<AiTeamStep>,
     onOpenMemberSession: (String) -> Unit,
@@ -1343,7 +1416,8 @@ private fun TeamStepRow(
     val report = parseStepReport(chatTurnText(turn))
     // 报告正文是剥掉 `✅ 完成「…」` 前缀之后的那一段（两端同口径）。
     val text = report?.body ?: chatTurnText(turn)
-    val stepStatus = teamStepStatus(steps, report)
+    val stepStatus = turn.reportFile?.let { file -> steps.find { it.id == file.stepId }?.status }
+        ?: teamStepStatus(steps, report)
     val name = turn.author?.name ?: "成员"
     val avatar = chatAvatarSpec(turn.author)
     val shape = teamChatMessageShape(TeamChatTurnKind.Step, text)
@@ -1361,7 +1435,9 @@ private fun TeamStepRow(
                 }
             },
         )
-        TeamMessageBody(
+        if (turn.reportFile != null) {
+            TeamReportFileCard(turn.reportFile, baseUrl)
+        } else TeamMessageBody(
             shape = shape,
             text = text,
             own = false,

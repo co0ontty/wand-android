@@ -409,6 +409,21 @@ data class TurnAuthor(
 }
 
 @Immutable
+data class TeamReportFile(val stepId: String, val path: String, val name: String, val size: Long) {
+    companion object {
+        fun parse(o: JSONObject?): TeamReportFile? {
+            o ?: return null
+            val path = o.str("path")?.takeIf { it.isNotBlank() } ?: return null
+            val name = o.str("name")?.takeIf { it.isNotBlank() } ?: return null
+            val stepId = o.str("stepId")?.takeIf { it.isNotBlank() } ?: return null
+            val size = o.optLong("size", -1)
+            if (size < 0) return null
+            return TeamReportFile(stepId, path, name, size)
+        }
+    }
+}
+
+@Immutable
 data class ConversationTurn(
     val role: String,
     val content: List<ContentBlock>,
@@ -419,6 +434,8 @@ data class ConversationTurn(
     val notice: Boolean = false,
     /** 群聊署名；普通会话没有。 */
     val author: TurnAuthor? = null,
+    /** 报告正文不在群聊中铺开；点文件卡片再按需读取。 */
+    val reportFile: TeamReportFile? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): ConversationTurn {
@@ -432,6 +449,7 @@ data class ConversationTurn(
                 completedAt = o.str("completedAt"),
                 notice = o.bool("notice") == true,
                 author = TurnAuthor.parse(o.obj("author")),
+                reportFile = TeamReportFile.parse(o.obj("reportFile")),
             )
         }
 

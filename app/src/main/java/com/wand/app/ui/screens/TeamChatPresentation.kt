@@ -83,6 +83,12 @@ fun parseStepReport(text: String): TeamStepReport? {
     )
 }
 
+fun teamReportFileSize(size: Long): String = when {
+    size < 1024 -> "$size B"
+    size < 1024 * 1024 -> String.format(java.util.Locale.ROOT, "%.1f KB", size / 1024.0)
+    else -> String.format(java.util.Locale.ROOT, "%.1f MB", size / (1024.0 * 1024.0))
+}
+
 /** 负责人派工那几行：`1. **@实现者** T1 类型与存储迁移（依据：第 1 步「设计规格」的产物）`。 */
 private val ASSIGN_LINE = Regex("^\\d+\\.\\s*\\*\\*@(.+?)\\*\\*\\s*(.+)$")
 /** 新数据（S5）：`（依据：第 N 步「标题」的产物）`。 */
@@ -299,6 +305,7 @@ data class TeamTurnFingerprint(
     val completedAt: String?,
     val author: List<String?>?,
     val blocks: List<String>,
+    val reportFile: com.wand.app.data.TeamReportFile? = null,
 )
 
 fun teamTurnFingerprint(turn: ConversationTurn): TeamTurnFingerprint? {
@@ -309,6 +316,7 @@ fun teamTurnFingerprint(turn: ConversationTurn): TeamTurnFingerprint? {
         author = author?.let { listOf(it.id, it.name, it.leader.toString(), it.sessionId,
             it.provider, it.model, it.thinkingEffort, it.avatar) },
         blocks = turn.content.map { (it as ContentBlock.Text).text },
+        reportFile = turn.reportFile,
     )
 }
 
