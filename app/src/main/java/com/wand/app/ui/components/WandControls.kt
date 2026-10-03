@@ -17,9 +17,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.BottomSheetDefaults
@@ -80,18 +80,19 @@ fun WandButton(
     compact: Boolean = false,
 ) {
     val content: @Composable RowScope.() -> Unit = {
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                color = when (variant) {
+        if (loading || icon != null) {
+            WandStatusIconSlot(
+                indicatorColor = if (loading) when (variant) {
                     WandButtonVariant.Primary, WandButtonVariant.Danger, WandButtonVariant.Success -> Color.White
                     WandButtonVariant.Secondary, WandButtonVariant.Text -> WandColors.brand
                     WandButtonVariant.DangerText -> WandColors.danger
-                },
-                strokeWidth = 2.dp,
+                } else LocalContentColor.current,
+                containerColor = Color.Transparent,
+                running = loading,
+                icon = icon ?: WandIcons.refresh,
+                boxSize = 18.dp,
+                iconSize = 18.dp,
             )
-        } else if (icon != null) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
         }
         Text(label, style = MaterialTheme.typography.labelLarge)
         if (!loading && trailingIcon != null) {

@@ -499,6 +499,18 @@ fun DiffCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                val changePreview = when {
+                    oldText.isNotEmpty() || newText.isNotEmpty() -> {
+                        val before = oldText.trimEnd('\n').lineSequence().count().takeIf { oldText.isNotEmpty() } ?: 0
+                        val after = newText.trimEnd('\n').lineSequence().count().takeIf { newText.isNotEmpty() } ?: 0
+                        if (isWrite) "写入 $after 行" else "替换 $before 行 → $after 行"
+                    }
+                    movePath.isNotEmpty() -> "移动到 $movePath"
+                    else -> ""
+                }
+                ToolPreviewText(changePreview)
+                ToolPreviewText(toolResultCardPreview(result),
+                    if (result?.isError == true) WandColors.danger else WandColors.textMuted)
             }
             CardStatusPill(text = statusText, color = statusColor, compact = compact)
             if (hasBody) {
@@ -732,15 +744,18 @@ fun TerminalCard(
                 iconSize = if (compact) ChatCardMetrics.iconSizeCompact else ChatCardMetrics.iconSizeRegular,
                 cornerRadius = if (compact) ChatCardMetrics.iconCornerCompact else ChatCardMetrics.iconCornerRegular,
             )
-            Text(
-                "$ " + if (command.length > 80) command.take(77) + "…" else command.ifBlank { "命令" },
-                fontSize = if (compact) ChatCardMetrics.titleCompact else ChatCardMetrics.titleRegular,
-                fontFamily = FontFamily.Monospace,
-                color = TermText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "$ " + command.ifBlank { "命令" },
+                    fontSize = if (compact) ChatCardMetrics.titleCompact else ChatCardMetrics.titleRegular,
+                    fontFamily = FontFamily.Monospace,
+                    color = TermText,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                ToolPreviewText(toolResultCardPreview(result),
+                    if (result?.isError == true) TermErrorText else TermText.copy(alpha = 0.7f))
+            }
             CardStatusPill(text = statusText, color = statusColor, compact = compact)
             if (hasBody) {
                 CardChevronSlot(

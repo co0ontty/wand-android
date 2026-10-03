@@ -194,6 +194,8 @@ internal fun CollapsedDirectoryRail(
 internal fun DirectoryPeekOverlay(
     anchorTop: Dp,
     group: TaskDirectoryGroup,
+    /** 内容为空时的说明：在跑档下「没有在跑、失败或待处理」不等于「什么都没有」。 */
+    emptyNote: String = "这个目录还没有任务或终端。",
     selectedTaskId: String?,
     selectedSessionId: String?,
     onOpenTask: (WorkspaceTaskSummary) -> Unit,
@@ -233,6 +235,7 @@ internal fun DirectoryPeekOverlay(
             width = panelWidth,
             bodyMax = bodyMax,
             group = group,
+            emptyNote = emptyNote,
             selectedTaskId = selectedTaskId,
             selectedSessionId = selectedSessionId,
             onOpenTask = onOpenTask,
@@ -248,6 +251,7 @@ private fun DirectoryPeekPanel(
     width: Dp,
     bodyMax: Dp,
     group: TaskDirectoryGroup,
+    emptyNote: String,
     selectedTaskId: String?,
     selectedSessionId: String?,
     onOpenTask: (WorkspaceTaskSummary) -> Unit,
@@ -317,7 +321,7 @@ private fun DirectoryPeekPanel(
         ) {
             if (group.tasks.isEmpty() && group.standaloneSessions.isEmpty()) {
                 Text(
-                    "这个目录还没有任务或终端。",
+                    emptyNote,
                     style = MaterialTheme.typography.bodySmall,
                     color = WandColors.textMuted,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
@@ -326,7 +330,6 @@ private fun DirectoryPeekPanel(
             group.tasks.forEach { task ->
                 PeekTaskBlock(
                     task = task,
-                    parentNames = listOf(group.workspaceName),
                     selectedTaskId = selectedTaskId,
                     selectedSessionId = selectedSessionId,
                     onOpenTask = { onOpenTask(task) },
@@ -343,7 +346,7 @@ private fun DirectoryPeekPanel(
                 group.standaloneSessions.forEachIndexed { index, session ->
                     PeekSessionRow(
                         session = session,
-                        label = listSessionLabel(session.withLiveTitle(), index, listOf(group.workspaceName)),
+                        label = listSessionLabel(session.withLiveTitle(), index),
                         selected = session.id == selectedSessionId,
                         onClick = { onOpenSession(session, null) },
                     )
@@ -356,7 +359,6 @@ private fun DirectoryPeekPanel(
 @Composable
 private fun PeekTaskBlock(
     task: WorkspaceTaskSummary,
-    parentNames: Collection<String>,
     selectedTaskId: String?,
     selectedSessionId: String?,
     onOpenTask: () -> Unit,
@@ -401,11 +403,7 @@ private fun PeekTaskBlock(
                 task.sessions.forEachIndexed { index, session ->
                     PeekSessionRow(
                         session = session,
-                        label = listSessionLabel(
-                            session.withLiveTitle(),
-                            index,
-                            parentNames + task.name,
-                        ),
+                        label = listSessionLabel(session.withLiveTitle(), index),
                         selected = session.id == selectedSessionId,
                         onClick = { onOpenSession(session) },
                     )

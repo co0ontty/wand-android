@@ -8,6 +8,8 @@ import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.Workspace
+import com.wand.app.data.WandApiException
+import kotlinx.coroutines.CancellationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -50,6 +52,29 @@ class AiTeamPresentationTest {
         val projects = listOf(workspace("newest"), workspace("older"))
         assertEquals("newest", defaultTeamStartProjectId(projects))
         assertEquals("", defaultTeamStartProjectId(listOf(workspace("wand-global"))))
+    }
+
+    @Test
+    fun refreshedProjectSelectionKeepsValidChoiceAndDropsUnavailableChoice() {
+        val projects = listOf(workspace("newest"), workspace("older"), workspace("wand-global"))
+        assertEquals("older", teamStartSelectedProjectId(projects, "older"))
+        assertEquals("", teamStartSelectedProjectId(projects, "removed"))
+        assertEquals("", teamStartSelectedProjectId(projects, "wand-global"))
+        assertEquals("newest", teamStartSelectedProjectId(projects, ""))
+        assertEquals("", teamStartSelectedProjectId(listOf(workspace("older", cwd = "")), "older"))
+        assertEquals("", teamStartSelectedProjectId(emptyList(), "older"))
+    }
+
+    @Test
+    fun directStartOnlyAllowsRetryAfterDefiniteHttpRejection() {
+        listOf(400, 401, 403, 404, 422, 429).forEach { status ->
+            assertFalse("明确拒收 $status", teamDirectFailureUnconfirmed(WandApiException(status, "拒收")))
+        }
+        listOf(null, 408, 409, 500, 502, 503).forEach { status ->
+            org.junit.Assert.assertTrue("结果未知 $status", teamDirectFailureUnconfirmed(WandApiException(status, "未知")))
+        }
+        org.junit.Assert.assertTrue(teamDirectFailureUnconfirmed(IllegalStateException("无有效回执")))
+        org.junit.Assert.assertTrue(teamDirectFailureUnconfirmed(CancellationException("请求取消")))
     }
 
     @Test

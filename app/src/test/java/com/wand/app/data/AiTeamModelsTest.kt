@@ -10,6 +10,33 @@ import org.junit.Test
 class AiTeamModelsTest {
 
     @Test
+    fun employeeIdentitySurvivesDtoDraftAndJsonRoundTrip() {
+        val input = JSONObject().put("id", "m_1").put("name", "员工")
+            .put("employeeId", "e_real").put("avatar", "cat:4").put("role", "verify")
+            .put("agents", JSONArray().put(JSONObject().put("provider", "codex")))
+        val member = AiTeamMember.parse(input)!!
+        val draft = AiTeamDraft.from(AiTeam("t", "团队", "", listOf(member)))
+        val body = draft.copy(description = "未保存的说明").toJson().getJSONArray("members").getJSONObject(0)
+        assertEquals("e_real", body.getString("employeeId"))
+        assertEquals(member, AiTeamMember.parse(body))
+        assertEquals("verify", body.getString("role"))
+    }
+
+    @Test
+    fun legacyManualAndExplicitUnbindAlwaysWriteJsonNull() {
+        for (input in listOf(JSONObject(), JSONObject().put("employeeId", JSONObject.NULL),
+            JSONObject().put("employeeId", "  "))) {
+            val member = AiTeamMember.parse(input.put("id", "m_old").put("name", "同名员工"))!!
+            assertNull(member.employeeId)
+            val body = member.toJson()
+            assertEquals(true, body.has("employeeId"))
+            assertEquals(true, body.isNull("employeeId"))
+        }
+        val bound = AiTeamMember("m", "员工", "", emptyList(), false, employeeId = "e_real")
+        assertEquals(true, bound.copy(employeeId = null).toJson().isNull("employeeId"))
+    }
+
+    @Test
     fun teamRunListKeepsChatEntryAndTaskSummary() {
         val runs = AiTeamRun.parseList(
             JSONArray().put(

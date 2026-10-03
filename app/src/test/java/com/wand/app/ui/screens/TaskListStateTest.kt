@@ -240,149 +240,136 @@ class TaskListStateTest {
     }
 
     @Test
-    fun treeExpansionSurvivesNavigationAndRevealsSelectedSession() = runBlocking {
-        val selectedSession = WorkspaceSessionSummary(
-            id = "session-1",
-            provider = "claude",
-            sessionKind = "structured",
-            runner = "structured",
-            title = "Selected",
-            status = "idle",
-            cwd = "/repo",
-            startedAt = null,
-        )
-        val selectedTask = WorkspaceTaskSummary(
-            task = task("task-1", "Task"),
-            cwd = "/repo",
-            isolated = false,
-            worktreeError = null,
-            sessions = listOf(selectedSession),
-            totalSessions = 1,
-        )
-        val group = group("ws-1", "/repo").copy(tasks = listOf(selectedTask))
-        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
-        assertTrue(state.load())
-
-        state.toggleDirectory(group.id)
-        state.toggleTask(selectedTask.id)
-        assertTrue(state.isDirectoryCollapsed(group.id))
-        assertTrue(state.isTaskCollapsed(selectedTask.id))
-
-        state.expandPathToSelection(taskId = selectedTask.id, sessionId = selectedSession.id)
-
-        assertFalse(state.isDirectoryCollapsed(group.id))
-        assertFalse(state.isTaskCollapsed(selectedTask.id))
-        state.toggleDirectory(group.id)
-        assertTrue(state.isDirectoryCollapsed(group.id))
-    }
-
-    @Test
-    fun treeExpansionTracksStandaloneSections() = runBlocking {
-        val standalone = WorkspaceSessionSummary(
-            id = "standalone-1",
-            provider = "shell",
-            sessionKind = "pty",
-            runner = "pty",
-            title = null,
-            status = "idle",
-            cwd = "/repo",
-            startedAt = null,
-        )
-        val group = group("ws-1", "/repo").copy(standaloneSessions = listOf(standalone))
-        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
-        assertTrue(state.load())
-
-        state.toggleDirectory(group.id)
-        state.toggleStandalone(group.id)
-        assertTrue(state.isDirectoryCollapsed(group.id))
-        assertTrue(state.isStandaloneCollapsed(group.id))
-
-        state.expandPathToSelection(taskId = null, sessionId = standalone.id)
-
-        assertFalse(state.isDirectoryCollapsed(group.id))
-        assertFalse(state.isStandaloneCollapsed(group.id))
-    }
-
-    @Test
-    fun emptyTaskNameForwardsPromptSoServerCanNameIt() = runBlocking {
-        val port = FakeWorkspacePort()
-        val state = TaskListState(port)
-
-        // 没起名时把首个提示词交给服务端总结标题；占位名只作为兜底回传，服务端会据提示词改写。
-        val result = state.createTask("", "/work/wand", worktree = false, description = "帮我重构会话恢复流程")
-
-        assertNotNull(result)
-        assertEquals("新任务", port.taskRequests.single().name)
-        assertEquals("帮我重构会话恢复流程", port.taskRequests.single().description)
-        assertNull(state.mutationError)
-    }
-
-    @Test
-    fun createTaskSessionForwardsPromptAndSelectedModelWithoutRenamingTask() = runBlocking {
-        val port = FakeWorkspacePort()
-        val state = TaskListState(port)
-        val session = state.createTaskWindow("task-1", WorkspaceSessionTarget.Claude,
-            WorkspaceSessionKind.Structured, prompt = "Investigate tests",
-            model = "chosen-model", thinkingEffort = "deep")
-        assertEquals("created-session", session?.id)
-        assertEquals("task-1", port.createdWindowBindings.single().workspaceTaskId)
-        assertEquals(listOf("Investigate tests"), port.createdWindowPrompts)
-        assertEquals(listOf("chosen-model"), port.createdWindowModels)
-        assertEquals(listOf("deep"), port.createdWindowEfforts)
-        assertTrue(port.renamedTasks.isEmpty())
-        assertNull(state.mutationError)
-    }
-
-    @Test
-    fun unnamedTaskSelectionExpandsItsTaskNotStandaloneSection() = runBlocking {
-        val unnamedSession = WorkspaceSessionSummary(
-            id = "unnamed-session",
-            provider = "claude",
-            sessionKind = "structured",
-            runner = "structured",
-            title = "Loose",
-            status = "idle",
-            cwd = "/repo",
-            startedAt = null,
-        )
-        val unnamedTask = WorkspaceTaskSummary(
-            task = task("task-unnamed", "未命名任务"),
-            cwd = "/repo",
-            isolated = false,
-            worktreeError = null,
-            sessions = listOf(unnamedSession),
-            totalSessions = 1,
-        )
-        val group = group("ws-1", "/repo").copy(tasks = listOf(unnamedTask))
-        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
-        assertTrue(state.load())
-
-        state.toggleDirectory(group.id)
-        state.toggleStandalone(group.id)
-        assertTrue(state.isDirectoryCollapsed(group.id))
-        assertTrue(state.isStandaloneCollapsed(group.id))
-
-        state.toggleTask(unnamedTask.id)
-        state.expandPathToSelection(taskId = unnamedTask.id, sessionId = unnamedSession.id)
-
-        assertFalse(state.isDirectoryCollapsed(group.id))
-        assertFalse(state.isTaskCollapsed(unnamedTask.id))
-        assertTrue(state.isStandaloneCollapsed(group.id))
-    }
-
-    @Test
-    fun expansionStateSurvivesStoreReuse() = runBlocking {
-        val store = MemoryTaskListExpansionStore()
+    fun sectionFoldsDefaultToExpandAndPersistPerSection() = runBlocking {
         val group = group("ws-1", "/repo")
-        val first = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
-        assertTrue(first.load())
-        first.toggleDirectory(group.id)
-        first.toggleTask("task-1")
+        val store = MemoryTaskListExpansionStore()
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
+        assertTrue(state.load())
 
+        assertEquals(HomeFoldMode.Expand, state.sectionFold(FOLD_SECTION_RECENT))
+        assertEquals(HomeFoldMode.Expand, state.sectionFold(FOLD_SECTION_WORKSPACE))
+
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Running)
+        state.selectSectionFold(FOLD_SECTION_RECENT, HomeFoldMode.Collapse)
+
+        assertEquals(HomeFoldMode.Running, state.workspaceFold)
+        assertEquals(HomeFoldMode.Collapse, state.recentFold)
+        // 两个区各存各的：改一个不影响另一个。
         val restored = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
-        assertTrue(restored.isDirectoryCollapsed(group.id))
-        assertTrue(restored.isTaskCollapsed("task-1"))
-        assertFalse(restored.isStandaloneCollapsed(group.id))
+        assertEquals(HomeFoldMode.Running, restored.sectionFold(FOLD_SECTION_WORKSPACE))
+        assertEquals(HomeFoldMode.Collapse, restored.sectionFold(FOLD_SECTION_RECENT))
+    }
+
+    @Test
+    fun reselectingTheSameSectionFoldKeepsItAndOtherSectionsUntouched() = runBlocking {
+        val group = group("ws-1", "/repo")
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
+        assertTrue(state.load())
+
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Collapse)
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Collapse)
+
+        assertEquals(HomeFoldMode.Collapse, state.workspaceFold)
+        assertEquals(HomeFoldMode.Expand, state.recentFold)
+    }
+
+    @Test
+    fun draggingAWorkspaceCollapsesTheWorkspaceSection() = runBlocking {
+        val group = group("a", "/a").copy(tasks = listOf(WorkspaceTaskSummary(
+            task = task("task-1", "任务"),
+            cwd = "/a",
+            isolated = false,
+            worktreeError = null,
+            sessions = emptyList(),
+            totalSessions = 0,
+        )))
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
+        assertTrue(state.load())
+        assertEquals(HomeFoldMode.Expand, state.workspaceFold)
+
+        // 拿起卡片 = 这一区收成标题行（收放只有小节表头那一个入口）。
+        state.startDirectoryReorder(group.id)
+
+        assertEquals(HomeFoldMode.Collapse, state.workspaceFold)
+        assertEquals(HomeFoldMode.Expand, state.recentFold)
+    }
+
+    @Test
+    fun sectionFoldCanStillPersistExpand() = runBlocking {
+        val group = group("ws-1", "/repo")
+        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) })
+        assertTrue(state.load())
+
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Collapse)
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Expand)
+
+        assertEquals(HomeFoldMode.Expand, state.workspaceFold)
+    }
+
+    @Test
+    fun temporaryExpansionRevealsOnlyChosenGroupAndNeverPersists() = runBlocking {
+        for (section in listOf(FOLD_SECTION_RECENT, FOLD_SECTION_WORKSPACE)) {
+            for (mode in listOf(HomeFoldMode.Collapse, HomeFoldMode.Running)) {
+                val store = MemoryTaskListExpansionStore()
+                val state = TaskListState(FakeWorkspacePort(), store)
+                state.selectSectionFold(section, mode)
+                state.toggleTemporaryExpansion(section, "chosen")
+
+                assertEquals(HomeFoldMode.Expand, state.groupFold(section, "chosen"))
+                assertEquals(mode, state.groupFold(section, "other"))
+                assertEquals(mode, state.sectionFold(section))
+                assertEquals(mode, store.sectionFold(section))
+                assertEquals(mode, TaskListState(FakeWorkspacePort(), store).groupFold(section, "chosen"))
+                // 后台刷新不打断正在查找；离页清理后重新跟随全局。
+                assertTrue(state.load(silent = true))
+                assertEquals(HomeFoldMode.Expand, state.groupFold(section, "chosen"))
+                state.clearTemporaryExpansions()
+                assertFalse(state.hasTemporaryExpansion)
+                assertEquals(mode, state.groupFold(section, "chosen"))
+            }
+        }
+    }
+
+    @Test
+    fun repeatedHeaderClickAndExplicitModeSelectionRestoreGlobalDisplay() {
+        val state = TaskListState(FakeWorkspacePort())
+        state.selectSectionFold(FOLD_SECTION_RECENT, HomeFoldMode.Running)
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Collapse)
+        state.toggleTemporaryExpansion(FOLD_SECTION_RECENT, "same-id")
+        state.toggleTemporaryExpansion(FOLD_SECTION_WORKSPACE, "same-id")
+        state.toggleTemporaryExpansion(FOLD_SECTION_RECENT, "same-id")
+        assertEquals(HomeFoldMode.Running, state.groupFold(FOLD_SECTION_RECENT, "same-id"))
+        assertEquals(HomeFoldMode.Expand, state.groupFold(FOLD_SECTION_WORKSPACE, "same-id"))
+
+        // 再点已选中的全局档位，也应取消这一区的临时覆盖。
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Collapse)
+        assertFalse(state.hasTemporaryExpansion)
+        assertEquals(HomeFoldMode.Collapse, state.groupFold(FOLD_SECTION_WORKSPACE, "same-id"))
+        state.selectSectionFold(FOLD_SECTION_RECENT, HomeFoldMode.Expand)
+        state.toggleTemporaryExpansion(FOLD_SECTION_RECENT, "same-id")
+        assertFalse(state.hasTemporaryExpansion)
+    }
+
+    @Test
+    fun temporaryExpandRestoresIdleSessionsAndEmptyTasksHiddenByRunningMode() {
+        val state = TaskListState(FakeWorkspacePort())
+        state.selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Running)
+        val idle = WorkspaceSessionSummary(
+            id = "idle", provider = "claude", sessionKind = "structured", runner = null,
+            title = "空闲会话", status = "idle", cwd = "/repo", startedAt = null, inFlight = false,
+        )
+        val tasks = listOf(
+            WorkspaceTaskSummary(task("task-1", "有会话"), "/repo", false, null, listOf(idle), 1),
+            WorkspaceTaskSummary(task("task-2", "待办"), "/repo", false, null, emptyList(), 0),
+        )
+        assertTrue(foldVisibleTasks(state.groupFold(FOLD_SECTION_WORKSPACE, "ws"), tasks).isEmpty())
+        state.toggleTemporaryExpansion(FOLD_SECTION_WORKSPACE, "ws")
+        val fold = state.groupFold(FOLD_SECTION_WORKSPACE, "ws")
+        assertEquals(tasks, foldVisibleTasks(fold, tasks))
+        assertEquals(listOf(idle), foldVisibleSessions(fold, listOf(idle)))
+        assertTrue(isTaskSessionsExpanded(fold, 1, 1))
+        state.clearTemporaryExpansions()
+        assertTrue(foldVisibleTasks(state.groupFold(FOLD_SECTION_WORKSPACE, "ws"), tasks).isEmpty())
     }
 
     @Test
@@ -395,47 +382,6 @@ class TaskListStateTest {
 
         assertTrue(port.taskRequests.isEmpty())
         assertTrue(port.renamedTasks.isEmpty())
-    }
-
-    @Test
-    fun draggingExpandedWorkspacePersistsCollapsedState() = runBlocking {
-        val group = group("a", "/a").copy(tasks = listOf(WorkspaceTaskSummary(
-            task = task("task-1", "任务"),
-            cwd = "/a",
-            isolated = false,
-            worktreeError = null,
-            sessions = emptyList(),
-            totalSessions = 0,
-        )))
-        val store = MemoryTaskListExpansionStore()
-        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
-        assertTrue(state.load())
-        assertFalse(state.isDirectoryCollapsed(group.id))
-
-        state.startDirectoryReorder(group.id)
-        assertTrue(state.isDirectoryCollapsed(group.id))
-        assertEquals(setOf(group.id), store.collapsedIds(TASK_LIST_EXPANSION_DIRS))
-        state.finishDirectoryReorder()
-        assertTrue(state.isDirectoryCollapsed(group.id))
-        state.toggleDirectory(group.id)
-        assertFalse(state.isDirectoryCollapsed(group.id))
-
-        state.startDirectoryReorder(group.id)
-        state.cancelDirectoryReorder()
-        assertTrue(state.isDirectoryCollapsed(group.id))
-        assertEquals(setOf(group.id), store.collapsedIds(TASK_LIST_EXPANSION_DIRS))
-    }
-
-    @Test
-    fun draggingEmptyWorkspaceDoesNotSaveAnInvisibleCollapse() = runBlocking {
-        val group = group("empty", "/empty")
-        val store = MemoryTaskListExpansionStore()
-        val state = TaskListState(FakeWorkspacePort().apply { groups = listOf(group) }, store)
-        assertTrue(state.load())
-        state.startDirectoryReorder(group.id)
-        state.finishDirectoryReorder()
-        assertFalse(state.isDirectoryCollapsed(group.id))
-        assertTrue(store.collapsedIds(TASK_LIST_EXPANSION_DIRS).isEmpty())
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

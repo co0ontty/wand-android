@@ -236,8 +236,17 @@ class AppNavTest {
     }
 
     @Test
-    fun roundTrip_aiTeamScreens() {
-        assertEquals(Screen.AiTeams, roundTrip(Screen.AiTeams))
+    fun roundTrip_contactsTabs() {
+        assertEquals(Screen.Contacts(), roundTrip(Screen.Contacts()))
+        assertEquals(
+            Screen.Contacts(ContactsTab.Chats),
+            roundTrip(Screen.Contacts(ContactsTab.Chats)),
+        )
+        // 合并前的两个页面键仍能恢复：不落到空页，也不丢分段。
+        assertEquals(listOf(Screen.SessionList, Screen.Contacts(ContactsTab.Chats)),
+            restoreKeys("session-list", "ai-teams"))
+        assertEquals(listOf(Screen.SessionList, Screen.Contacts(ContactsTab.Employees)),
+            restoreKeys("session-list", "silicon-employees"))
         val detail = roundTrip(Screen.AiTeamDetail("team_1"))
         assertEquals(Screen.AiTeamDetail("team_1"), detail)
         // teamId 里的特殊字符不破坏恢复（\u0001 才是字段分隔符）。

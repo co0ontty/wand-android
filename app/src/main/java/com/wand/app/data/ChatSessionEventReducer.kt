@@ -45,7 +45,10 @@ object ChatSessionEventReducer {
         pending: PendingSessionSettings = PendingSessionSettings(),
     ): ChatSessionEventState {
         val previousError = current.snapshot?.structuredState?.lastError
-        var next = current.copy(snapshot = snapshot)
+        var next = current.copy(snapshot = snapshot.copy(
+            completionRevision = maxOf(current.snapshot?.completionRevision ?: 0, snapshot.completionRevision ?: 0),
+            viewedCompletionRevision = maxOf(current.snapshot?.viewedCompletionRevision ?: 0, snapshot.viewedCompletionRevision ?: 0),
+        ))
         snapshot.messages?.let {
             next = applyMessages(
                 next,
@@ -329,6 +332,7 @@ object ChatSessionEventReducer {
         if (changes.title != null || changes.description != null || changes.summary != null
             || changes.titleGenerating != null || changes.providerCliActive != null
             || changes.providerCliExitCode != null || changes.ptyBusy != null
+            || changes.completionRevision != null || changes.viewedCompletionRevision != null
         ) {
             next.snapshot?.let { snapshot ->
                 next = next.copy(snapshot = snapshot.copy(
@@ -339,6 +343,8 @@ object ChatSessionEventReducer {
                     ptyBusy = changes.ptyBusy ?: snapshot.ptyBusy,
                     providerCliActive = changes.providerCliActive ?: snapshot.providerCliActive,
                     providerCliExitCode = changes.providerCliExitCode ?: snapshot.providerCliExitCode,
+                    completionRevision = maxOf(snapshot.completionRevision ?: 0, changes.completionRevision ?: 0),
+                    viewedCompletionRevision = maxOf(snapshot.viewedCompletionRevision ?: 0, changes.viewedCompletionRevision ?: 0),
                 ))
             }
         }

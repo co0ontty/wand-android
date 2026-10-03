@@ -32,7 +32,9 @@ class HomePresentationTest {
         // 重连只是链路抖动，任务还在推进，不该催促用户。
         assertEquals(HomeSessionPulse.Running, homeSessionPulse("reconnecting"))
         assertEquals(HomeSessionPulse.NeedsYou, homeSessionPulse("permission"))
+        assertEquals(HomeSessionPulse.NeedsYou, homeSessionPulse("permission-blocked"))
         assertEquals(HomeSessionPulse.NeedsYou, homeSessionPulse("waiting-input"))
+        assertEquals(HomeSessionPulse.NeedsYou, homeSessionPulse("waiting_input"))
         assertEquals(HomeSessionPulse.NeedsYou, homeSessionPulse("failed"))
         assertEquals(HomeSessionPulse.Quiet, homeSessionPulse("idle"))
         assertEquals(HomeSessionPulse.Quiet, homeSessionPulse("exited"))

@@ -26,6 +26,7 @@ fun wandStatusPresentation(status: String?): WandStatusPresentation {
         "reconnecting" -> WandStatusPresentation(normalized, "重连中", WandStatusTone.Warning, true)
         "stopped" -> WandStatusPresentation(normalized, "已停止", WandStatusTone.Warning, false)
         "failed" -> WandStatusPresentation(normalized, "已失败", WandStatusTone.Danger, false)
+        "just-completed" -> WandStatusPresentation(normalized, "刚完成", WandStatusTone.Success, false)
         "idle" -> WandStatusPresentation(normalized, "空闲", WandStatusTone.Neutral, false)
         "exited" -> WandStatusPresentation(normalized, "已退出", WandStatusTone.Neutral, false)
         "archived" -> WandStatusPresentation(normalized, "已归档", WandStatusTone.Neutral, false)

@@ -1,31 +1,16 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.dp
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.orderWorkspaceSessions
 import com.wand.app.ui.Screen
-import kotlin.math.abs
-
-private val TaskSessionSwipeMinDistance = 72.dp
 
 /**
- * 可被左右滑动切换的「兄弟会话」列表：
+ * 列表点选转场使用的「兄弟会话」列表：
  * - 任务会话 → 同任务下的全部工作窗口；
  * - 未分组会话 → 同目录下的未分组会话。未命名任务仍保留自身边界。
  *
- * 顺序与侧栏展示一致，滑动方向据此判定。
+ * 顺序与侧栏展示一致，转场方向据此判定。
  */
 internal fun siblingSessionsFor(
     groups: List<TaskDirectoryGroup>,
@@ -50,23 +35,6 @@ internal fun siblingSessionsFor(
     }
     if (sessionId.isNullOrBlank()) return emptyList()
     return emptyList()
-}
-
-/**
- * Returns the adjacent session for a completed horizontal swipe.
- * A left swipe advances to the next tab; a right swipe goes back to the previous tab.
- */
-internal fun taskSessionSwipeTarget(
-    sessions: List<WorkspaceSessionSummary>,
-    currentSessionId: String,
-    horizontalDrag: Float,
-    minDistance: Float = 72f,
-): WorkspaceSessionSummary? {
-    if (abs(horizontalDrag) < minDistance) return null
-    val currentIndex = sessions.indexOfFirst { it.id == currentSessionId }
-    if (currentIndex < 0) return null
-    val targetIndex = currentIndex + if (horizontalDrag < 0f) 1 else -1
-    return sessions.getOrNull(targetIndex)
 }
 
 internal fun taskSessionTransitionDirection(
@@ -97,59 +65,4 @@ private fun taskSessionScreenIdentity(screen: Screen): TaskSessionScreenIdentity
     is Screen.Chat -> TaskSessionScreenIdentity(screen.taskId, screen.sessionId)
     is Screen.PtyTerminal -> TaskSessionScreenIdentity(screen.taskId, screen.sessionId)
     else -> null
-}
-
-/**
- * Adds left/right navigation to the sibling sessions without interfering with vertical scroll.
- *
- * 仅在横向位移足以切换会话时接管指针，其余时间不干扰终端文字选择与滚动。
- */
-@Composable
-internal fun Modifier.taskSessionSwipe(
-    sessions: List<WorkspaceSessionSummary>,
-    currentSessionId: String,
-    onSelect: (WorkspaceSessionSummary) -> Unit,
-): Modifier {
-    if (sessions.size < 2) return this
-    val latestOnSelect = rememberUpdatedState(onSelect)
-    val density = LocalDensity.current
-    val minDistancePx = with(density) { TaskSessionSwipeMinDistance.toPx() }
-    val sessionIds = remember(sessions) { sessions.map { it.id } }
-    return pointerInput(sessionIds, currentSessionId, minDistancePx) {
-        awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            var horizontal = 0f
-            var vertical = 0f
-            var claimed = false
-            var released = false
-            while (!released) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                if (change.changedToUpIgnoreConsumed()) {
-                    released = true
-                    continue
-                }
-                val delta = change.positionChange()
-                horizontal += delta.x
-                vertical += delta.y
-                if (claimed) {
-                    change.consume()
-                    continue
-                }
-                // 只有明确要切会话时才接管；斜向拖动（纵向分量更大）不接管。
-                if (abs(horizontal) >= minDistancePx && abs(horizontal) > abs(vertical)) {
-                    claimed = true
-                    change.consume()
-                }
-            }
-            if (claimed) {
-                taskSessionSwipeTarget(
-                    sessions = sessions,
-                    currentSessionId = currentSessionId,
-                    horizontalDrag = horizontal,
-                    minDistance = minDistancePx,
-                )?.let(latestOnSelect.value)
-            }
-        }
-    }
 }

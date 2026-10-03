@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,8 +36,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -70,13 +67,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamRunDetail
-import com.wand.app.data.BOARD_TASK_EFFORTS
 import com.wand.app.data.BOARD_TASK_PRIORITIES
-import com.wand.app.data.BOARD_TASK_PROVIDERS
 import com.wand.app.data.BOARD_TASK_DETAIL_STATUSES
 import com.wand.app.data.BOARD_TASK_STATUSES
 import com.wand.app.data.BoardTask
@@ -88,16 +84,13 @@ import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
 import com.wand.app.data.boardAgentModelName
-import com.wand.app.data.boardAgentModelOptions
 import com.wand.app.data.boardParentTaskOptions
 import com.wand.app.data.groupBoardSessionsByAgent
-import com.wand.app.data.boardTaskEffortLabel
 import com.wand.app.data.boardTaskKindLabel
 import com.wand.app.data.boardTaskModeLabel
 import com.wand.app.data.boardTaskPriorityLabel
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
-import com.wand.app.data.normalizeBoardTaskAgentMode
 import com.wand.app.data.patchBoardTaskBody
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
@@ -143,6 +136,8 @@ fun TaskBoardScreen(
     embedded: Boolean = false,
     /** 首页嵌入态隐藏看板搜索，独立看板保留自己的搜索框。 */
     showSearchField: Boolean = true,
+    /** 页面底部还浮着东西（首页的菜单胶囊）时，给列表尾部留出的避让高度。 */
+    bottomClearance: Dp = 0.dp,
 ) {
     val scope = rememberCoroutineScope()
     var tasks by remember { mutableStateOf<List<BoardTask>>(emptyList()) }
@@ -307,6 +302,7 @@ fun TaskBoardScreen(
                     workspaces = workspaces,
                     query = query,
                     showSearch = showSearchField,
+                    bottomClearance = bottomClearance,
                     filterWorkspaceId = filterWorkspaceId,
                     statusFilter = statusFilter,
                     onQueryChange = onQueryChange,
@@ -470,6 +466,7 @@ private fun TaskBoardList(
     onOpenSession: (String, Boolean) -> Unit,
     onCreateForStatus: (String) -> Unit,
     modifier: Modifier = Modifier,
+    bottomClearance: Dp = 0.dp,
 ) {
     val grouped = groupedBoardTasks(tasks)
     val archived = boardArchivedTasks(tasks)
@@ -525,7 +522,7 @@ private fun TaskBoardList(
     LazyColumn(
         modifier = modifier,
         state = listState,
-        contentPadding = PaddingValues(6.dp, 8.dp, 6.dp, 24.dp),
+        contentPadding = PaddingValues(6.dp, 8.dp, 6.dp, 24.dp + bottomClearance),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item(key = "hero") {
@@ -1402,6 +1399,7 @@ internal fun TaskBoardDetailPane(
     onDelete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onMoveSession: (com.wand.app.data.BoardTaskSession) -> Unit,
+    baseUrl: String = "",
     /** 「打开群聊」：参数是团队运行 id，由上层落到 IM 群聊页。 */
     onOpenTeamChat: (runId: String, taskIdentifier: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -1690,6 +1688,7 @@ internal fun TaskBoardDetailPane(
             teamRun?.let { detail ->
                 WandTeamRunPanel(
                     detail = detail,
+                    baseUrl = baseUrl,
                     busy = busy,
                     onAction = onTeamRunAction,
                     onOpenGroupChat = { runId -> onOpenTeamChat(runId, task.identifier) },

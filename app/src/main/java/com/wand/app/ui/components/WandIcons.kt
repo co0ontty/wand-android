@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Commit
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Close
@@ -115,6 +116,9 @@ object WandIcons {
 
     /** task / agent / subagent。 */
     val agent: ImageVector = Icons.Outlined.Groups
+
+    /** 通讯录（员工 + 群聊）。 */
+    val contacts: ImageVector = Icons.Outlined.Contacts
 
     /** todo 列表。 */
     val todo: ImageVector = Icons.Outlined.Checklist

@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -73,11 +74,13 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.wand.app.data.AiTeamDetailRequestGuard
+import com.wand.app.data.AiTeamDeliveryExpansion
+import com.wand.app.data.mergeAiTeamRunDetail
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamStep
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.TeamRunAction
-import com.wand.app.data.TeamReportFile
 import com.wand.app.data.TurnAuthor
 import com.wand.app.data.WandApi
 import com.wand.app.data.UploadedFile
@@ -96,6 +99,9 @@ import com.wand.app.ui.WandTextPreview
 import com.wand.app.ui.TextPreviewDialog
 import com.wand.app.ui.parseUserAttachmentText
 import com.wand.app.ui.sendActionVisual
+import com.wand.app.ui.components.WandTeamReportFileCard
+import com.wand.app.ui.components.WandTeamDeliveryBody
+import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandCard
@@ -157,7 +163,21 @@ fun AiTeamChatScreen(
     var detail by remember(runId) { mutableStateOf<AiTeamRunDetail?>(null) }
     var loadError by remember(runId) { mutableStateOf<String?>(null) }
     var busy by remember(runId) { mutableStateOf(false) }
-    var detailsOpen by remember(runId) { mutableStateOf(false) }
+    var detailExpansion by remember(runId) { mutableStateOf(AiTeamDeliveryExpansion()) }
+    val detailsOpen = detailExpansion.expanded(currentRunId)
+    val detailRequests = remember(runId, currentRunId, api) { AiTeamDetailRequestGuard() }
+    val actionRequests = remember(runId, currentRunId, api) { AiTeamDetailRequestGuard() }
+    DisposableEffect(detailRequests, actionRequests) {
+        onDispose { detailRequests.invalidate(); actionRequests.invalidate() }
+    }
+
+    suspend fun refreshDetail(targetRunId: String): AiTeamRunDetail? {
+        val ticket = detailRequests.begin()
+        val fetched = api.aiTeamRunDetail(targetRunId)
+        if (!detailRequests.accepts(ticket) || currentRunId != targetRunId) return null
+        detail = mergeAiTeamRunDetail(detail, fetched, targetRunId)
+        return detail?.takeIf { it.run.id == targetRunId }
+    }
     var sendError by remember(runId) { mutableStateOf<String?>(null) }
     var localTurns by remember(runId) { mutableStateOf<List<LocalChatTurn>>(emptyList()) }
     /** 全文弹层（设计 §6）：同一时刻只开一条；正文是全文，不是预览。 */
@@ -199,7 +219,8 @@ fun AiTeamChatScreen(
             when (event) {
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
                     arrivalState = teamArrivalResumed(arrivalState)
-                    scope.launch { detail = runCatching { api.aiTeamRunDetail(currentRunId) }.getOrNull() ?: detail }
+                    val targetRunId = currentRunId
+                    scope.launch { runCatching { refreshDetail(targetRunId) } }
                 }
                 androidx.lifecycle.Lifecycle.Event.ON_PAUSE,
                 androidx.lifecycle.Lifecycle.Event.ON_STOP,
@@ -214,9 +235,8 @@ fun AiTeamChatScreen(
     LaunchedEffect(api, currentRunId, resumed) {
         if (!resumed) return@LaunchedEffect
         while (true) {
-            val result = runCatching { api.aiTeamRunDetail(currentRunId) }
-            // 拉失败不清空已有内容：群聊宁可停在旧消息上，也不整屏闪回加载态。
-            detail = result.getOrNull() ?: detail
+            val targetRunId = currentRunId
+            val result = runCatching { refreshDetail(targetRunId) }
             val fetched = result.getOrNull()
             if (fetched != null) {
                 localTurns = settleLocalTurns(localTurns, fetched.chatTurns)
@@ -224,7 +244,7 @@ fun AiTeamChatScreen(
             if (fetched != null && !aiTeamRunActive(fetched.run.status) && fetched.run.taskId.isNotBlank()) {
                 val runs = runCatching { api.teamRunsForTask(fetched.run.taskId) }.getOrNull()
                 val newer = runs?.let { newestRunOnSameChat(fetched.run, it) }
-                if (newer != null) {
+                if (newer != null && currentRunId == targetRunId && detail?.run?.id == targetRunId) {
                     currentRunId = newer
                     continue
                 }
@@ -276,7 +296,7 @@ fun AiTeamChatScreen(
                     )
                     listPinned = true
                     val acknowledgement = try {
-                        api.sendInput(sessionId, prompt, respondImmediately = true)
+                        api.sendStructuredInput(sessionId, prompt)
                     } catch (cause: Exception) {
                         if (chatSendDefinitelyRejected(cause)) {
                             localTurns = localTurns.filterNot { it.sentAtMillis == sentAt }
@@ -389,11 +409,17 @@ fun AiTeamChatScreen(
         if (busy) return
         if (docMessage != null) docClosing = true
         busy = true
+        val targetRunId = currentRunId
+        val ticket = actionRequests.begin()
         scope.launch {
-            val result = runCatching { api.actOnTeamRun(currentRunId, action) }
+            val result = runCatching { api.actOnTeamRun(targetRunId, action) }
+            if (!actionRequests.accepts(ticket) || currentRunId != targetRunId) {
+                busy = false
+                return@launch
+            }
             // 结果原位呈现：成功就换上新 detail 并清掉红字，失败写在同一行，不弹 Toast。
             result.getOrNull()?.let {
-                detail = it
+                detail = mergeAiTeamRunDetail(detail, it, targetRunId)
                 sendError = null
             } ?: run {
                 sendError = result.exceptionOrNull()?.message ?: "团队操作失败"
@@ -432,7 +458,8 @@ fun AiTeamChatScreen(
                         detail = current,
                         expanded = detailsOpen,
                         modifier = Modifier.align(Alignment.CenterHorizontally),
-                        onToggle = { detailsOpen = !detailsOpen },
+                        onToggle = { detailExpansion = detailExpansion.toggle(currentRunId) },
+                        baseUrl = api.baseUrl,
                         onOpenMemberSession = onOpenMemberSession,
                         onOpenFullSession = onOpenFullSession,
                     )
@@ -581,12 +608,12 @@ fun AiTeamChatScreen(
 private fun TeamChatContextBar(
     detail: AiTeamRunDetail,
     expanded: Boolean,
+    baseUrl: String,
     modifier: Modifier = Modifier,
     onToggle: () -> Unit,
     onOpenMemberSession: (String) -> Unit,
     onOpenFullSession: (String) -> Unit,
 ) {
-    val motion = !reduceMotionEnabled()
     Column(
         modifier = modifier
             .widthIn(max = TeamChatReadableMaxWidth)
@@ -605,7 +632,9 @@ private fun TeamChatContextBar(
         ) {
             Text("群公告", style = MaterialTheme.typography.labelSmall, color = WandColors.brand)
             Text(
-                detail.run.objective.lineSequence().firstOrNull()?.ifBlank { "查看本次任务" } ?: "查看本次任务",
+                detail.delivery?.conclusion?.takeIf { it.isNotBlank() }?.let { "负责人交付说明：$it" }
+                    ?: detail.delivery?.headline
+                    ?: detail.run.objective.lineSequence().firstOrNull()?.ifBlank { "查看本次任务" } ?: "查看本次任务",
                 style = MaterialTheme.typography.bodySmall,
                 color = WandColors.textPrimary,
                 maxLines = 1,
@@ -623,13 +652,7 @@ private fun TeamChatContextBar(
             onOpenDetails = { if (!expanded) onToggle() },
             onOpenMemberSession = onOpenMemberSession,
         )
-        AnimatedVisibility(
-            visible = expanded,
-            enter = if (motion) fadeIn(WandMotion.tweenEnter()) +
-                expandVertically(WandMotion.tweenEnter()) else EnterTransition.None,
-            exit = if (motion) fadeOut(WandMotion.tweenExit()) +
-                shrinkVertically(WandMotion.tweenExit()) else ExitTransition.None,
-        ) {
+        WandInlinePanel(visible = expanded, growFrom = Alignment.Top) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -638,6 +661,7 @@ private fun TeamChatContextBar(
                     .padding(top = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                WandTeamDeliveryBody(detail, baseUrl)
                 TeamMainTaskCard(detail)
                 TeamOfficeStrip(detail, onOpenMemberSession)
                 detail.run.chatSessionId?.let { sessionId ->
@@ -1333,88 +1357,6 @@ private fun TeamLeaderCard(
     }
 }
 
-/** 与 IM 文件消息一致：文件身份与大小先显示，正文只在点击后读取。 */
-@Composable
-private fun TeamReportFileCard(file: TeamReportFile, baseUrl: String) {
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    var preview by remember(file) { mutableStateOf(false) }
-    var downloading by remember(file) { mutableStateOf(false) }
-    var opened by remember(file) { mutableStateOf(false) }
-    var error by remember(file) { mutableStateOf<String?>(null) }
-    val title = file.preview?.title ?: file.name
-    val excerpt = file.preview?.excerpt?.takeIf { it.isNotBlank() }
-        ?: if (file.preview != null) "报告暂无正文" else "点击查看完整报告"
-    fun download() {
-        if (downloading || baseUrl.isBlank()) return
-        downloading = true
-        opened = false
-        error = null
-        coroutineScope.launch {
-            try {
-                WandServerFileLink.downloadAndOpen(context, baseUrl, file.path)
-                opened = true
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                error = failure.message ?: "文件下载失败"
-            } finally {
-                downloading = false
-            }
-        }
-    }
-    Column(
-        modifier = Modifier.widthIn(max = TeamMessageBubbleMaxWidth).fillMaxWidth()
-            .clip(WandShapes.md).border(0.55.dp, WandColors.border, WandShapes.md)
-            .background(WandColors.surfaceSoft),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable(
-                enabled = baseUrl.isNotBlank(), role = Role.Button,
-                onClickLabel = "查看完整报告：$title", onClick = { preview = true },
-            ).padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(excerpt, fontSize = 12.sp, lineHeight = 19.sp,
-                    color = WandColors.textSecondary, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            }
-            Column(Modifier.size(54.dp, 76.dp).clip(WandShapes.xs)
-                .border(0.55.dp, WandColors.border, WandShapes.xs).background(WandColors.surface)
-                .padding(6.dp).clearAndSetSemantics { contentDescription = "文档缩略图" },
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(WandIcons.toolResult, contentDescription = null, tint = WandColors.brand,
-                    modifier = Modifier.size(12.dp))
-                Text(title, fontSize = 6.sp, lineHeight = 8.sp, fontWeight = FontWeight.SemiBold,
-                    color = WandColors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(file.preview?.excerpt.orEmpty(), fontSize = 6.sp, lineHeight = 8.sp,
-                    color = WandColors.textMuted, maxLines = 4, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(file.name, fontSize = 10.sp, color = WandColors.textMuted,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Markdown · ${teamReportFileSize(file.size)}", fontSize = 10.sp, color = WandColors.textMuted)
-            }
-            Text(when { downloading -> "下载中…"; error != null -> "重试下载"; opened -> "已打开"; else -> "下载" },
-                fontSize = 12.sp, color = WandColors.brand, textAlign = TextAlign.End,
-                modifier = Modifier.widthIn(min = 80.dp).heightIn(min = 40.dp)
-                    .clip(WandShapes.xs).clickable(enabled = !downloading && baseUrl.isNotBlank(),
-                        role = Role.Button, onClickLabel = "下载${file.name}", onClick = { download() })
-                    .padding(vertical = 10.dp))
-        }
-        error?.let { Text(it, fontSize = 11.sp, color = WandColors.danger,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
-    }
-    if (preview) TextPreviewDialog(path = file.path, baseUrl = baseUrl,
-        onDismiss = { preview = false }, onOpenExternally = { preview = false; download() })
-}
-
 /** 成员发言：步骤状态芯片 + 报告文件卡片；未完成/普通发言保持原气泡。 */
 @Composable
 private fun TeamStepRow(
@@ -1450,7 +1392,7 @@ private fun TeamStepRow(
             },
         )
         if (turn.reportFile != null) {
-            TeamReportFileCard(turn.reportFile, baseUrl)
+            WandTeamReportFileCard(turn.reportFile, baseUrl, Modifier.widthIn(max = TeamMessageBubbleMaxWidth))
         } else TeamMessageBody(
             shape = shape,
             text = text,
@@ -1662,13 +1604,15 @@ private fun TeamChatComposer(
                 voicePressed = voice.pressed,
                 onExpandedChange = {},
                 trailingActions = { requestFocus, sendAndRefocus ->
-                    VoiceMicButton(
-                        voice = voice,
-                        voiceMode = false,
-                        onToggleMode = requestFocus,
-                        onMicDown = onMicDown,
-                    )
                     TeamChatSendStop(
+                        voiceAction = {
+                            VoiceMicButton(
+                                voice = voice,
+                                voiceMode = false,
+                                onToggleMode = requestFocus,
+                                onMicDown = onMicDown,
+                            )
+                        },
                         visual = visual,
                         active = active,
                         busy = busy,
@@ -1677,16 +1621,7 @@ private fun TeamChatComposer(
                         onStop = onStop,
                     )
                 },
-                expandedControls = {
-                    Box(modifier = Modifier.weight(1f)) {
-                        ComposerActionsMenu(
-                            backdrop = null,
-                            uploading = uploading,
-                            attachOpen = attachOpen,
-                            onAttachOpenChange = { attachOpen = it },
-                        )
-                    }
-                },
+                controls = { Spacer(modifier = Modifier.weight(1f)) },
             )
             if (error != null) {
                 Text(
@@ -1706,6 +1641,7 @@ private fun TeamChatComposer(
  */
 @Composable
 private fun TeamChatSendStop(
+    voiceAction: @Composable () -> Unit,
     visual: SendActionVisual,
     active: Boolean,
     busy: Boolean,
@@ -1713,18 +1649,7 @@ private fun TeamChatSendStop(
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
-    if (visual == SendActionVisual.Stop) {
-        SubmitMorphButton(
-            visual = visual,
-            contentDescription = "停止团队",
-            onClick = onStop,
-            enabled = !busy,
-            fillColor = WandColors.textPrimary,
-            contentTint = WandColors.surface,
-        )
-        return
-    }
-    if (active) {
+    if (active && visual != SendActionVisual.Stop) {
         SubmitMorphButton(
             visual = SendActionVisual.Stop,
             contentDescription = "停止团队",
@@ -1734,6 +1659,7 @@ private fun TeamChatSendStop(
             contentTint = WandColors.danger,
         )
     }
+    voiceAction()
     SubmitMorphButton(
         visual = visual,
         contentDescription = when (visual) {
@@ -1741,19 +1667,22 @@ private fun TeamChatSendStop(
             SendActionVisual.Sent -> "已发送"
             SendActionVisual.Failed -> "发送失败，可重试"
             SendActionVisual.Blocked -> "当前没有可发送内容"
+            SendActionVisual.Stop -> "停止团队"
             else -> "发送消息"
         },
-        onClick = onSend,
-        enabled = visual == SendActionVisual.Send && canSubmit && !busy,
+        onClick = if (visual == SendActionVisual.Stop) onStop else onSend,
+        enabled = !busy && (visual == SendActionVisual.Stop || (visual == SendActionVisual.Send && canSubmit)),
         fillColor = when (visual) {
             SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
             SendActionVisual.Failed -> WandColors.dangerSoft
+            SendActionVisual.Stop -> WandColors.textPrimary
             else -> WandColors.textSecondary.copy(alpha = 0.16f)
         },
         contentTint = when (visual) {
             SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> Color.White
             SendActionVisual.Failed -> WandColors.danger
-            else -> WandColors.textMuted.copy(alpha = 0.45f)
+            SendActionVisual.Stop -> WandColors.surface
+            else -> WandColors.textSecondary
         },
     )
 }

@@ -45,12 +45,17 @@ fun effectiveSessionStatus(
     providerCliActive: Boolean?,
     inFlight: Boolean?,
     permissionBlocked: Boolean = false,
+    completionRevision: Int? = null,
+    viewedCompletionRevision: Int? = null,
 ): String {
     if (permissionBlocked) return "permission"
     if (sessionIsResponding(sessionKind, status, provider, ptyBusy, providerCliActive, inFlight)) {
         return if (status == "thinking") "thinking" else "running"
     }
     val normalized = status?.trim().orEmpty()
+    if ((completionRevision ?: 0) > (viewedCompletionRevision ?: 0)
+        && normalized in setOf("idle", "running", "exited")
+    ) return "just-completed"
     return if (normalized.isEmpty() || normalized in BUSY_STATUSES) "idle" else normalized
 }
 
@@ -65,6 +70,8 @@ fun SessionSnapshot.activityStatus(): String = effectiveSessionStatus(
     providerCliActive = providerCliActive,
     inFlight = structuredState?.inFlight,
     permissionBlocked = hasPendingPermission,
+    completionRevision = if (archived == true || (providerCliExitCode ?: 0) != 0) 0 else completionRevision,
+    viewedCompletionRevision = viewedCompletionRevision,
 )
 
 fun WorkspaceSessionSummary.activityStatus(): String = effectiveSessionStatus(
@@ -74,4 +81,6 @@ fun WorkspaceSessionSummary.activityStatus(): String = effectiveSessionStatus(
     ptyBusy = ptyBusy,
     providerCliActive = providerCliActive,
     inFlight = inFlight,
+    completionRevision = if (archived == true || (providerCliExitCode ?: 0) != 0) 0 else completionRevision,
+    viewedCompletionRevision = viewedCompletionRevision,
 )

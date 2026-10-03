@@ -5,6 +5,7 @@ import com.wand.app.data.ExecutionSubject
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTeamChat
+import com.wand.app.data.WorkspaceSessionTeamStep
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.WorkspaceTaskSummary
@@ -40,27 +41,6 @@ class TaskListPresentationTest {
         assertNull(route.taskId)
         assertNull(route.workspaceName)
         assertNull(route.taskName)
-    }
-
-    @Test
-    fun collapsedIdCodecRoundTripsAndDropsBlanks() {
-        assertEquals("a\nb", encodeCollapsedIds(listOf("b", "a", "")))
-        assertEquals(setOf("a", "b"), decodeCollapsedIds("b\n a \n\n"))
-    }
-
-    @Test
-    fun horizontalSwipeSelectsAdjacentTaskSession() {
-        val sessions = listOf(
-            session("structured", "structured").copy(id = "session-1"),
-            session("pty", null).copy(id = "session-2"),
-            session("structured", "structured").copy(id = "session-3"),
-        )
-
-        assertEquals("session-2", taskSessionSwipeTarget(sessions, "session-1", -80f)?.id)
-        assertEquals("session-1", taskSessionSwipeTarget(sessions, "session-2", 80f)?.id)
-        assertNull(taskSessionSwipeTarget(sessions, "session-1", -40f))
-        assertNull(taskSessionSwipeTarget(sessions, "session-3", -80f))
-        assertNull(taskSessionSwipeTarget(sessions, "missing", 80f))
     }
 
     @Test
@@ -347,21 +327,42 @@ class TaskListPresentationTest {
 
     @Test
     fun treeDisclosureHidesNeedlessCaretsAndKeepsTerminalsOpen() {
-        assertFalse(isDirectoryExpanded(userCollapsed = true))
-        assertTrue(isDirectoryExpanded(userCollapsed = false))
-
         assertFalse(showsTaskSessionDisclosure(0))
         assertTrue(showsTaskSessionDisclosure(1))
-        assertFalse(isTaskSessionsExpanded(userCollapsed = false, sessionCount = 0))
-        assertTrue(isTaskSessionsExpanded(userCollapsed = false, sessionCount = 0, isOnlyTask = true))
-        assertFalse(isTaskSessionsExpanded(userCollapsed = true, sessionCount = 2))
-        assertTrue(isTaskSessionsExpanded(userCollapsed = false, sessionCount = 2))
+        // 展开档：没有终端的任务默认收起来，只有它是目录里唯一任务时才展开引导建首个会话。
+        assertFalse(isTaskSessionsExpanded(HomeFoldMode.Expand, visibleSessionCount = 0, totalSessions = 0))
+        assertTrue(
+            isTaskSessionsExpanded(
+                HomeFoldMode.Expand,
+                visibleSessionCount = 0,
+                totalSessions = 0,
+                isOnlyTask = true,
+            ),
+        )
+        assertTrue(isTaskSessionsExpanded(HomeFoldMode.Expand, visibleSessionCount = 2, totalSessions = 2))
+        // 收起档永不展开。
+        assertFalse(isTaskSessionsExpanded(HomeFoldMode.Collapse, visibleSessionCount = 2, totalSessions = 2))
+        // 在跑档：露出在跑、失败或待处理的会话才展开；一条都没有 → 收成任务行（一级行留着）。
+        assertTrue(isTaskSessionsExpanded(HomeFoldMode.Running, visibleSessionCount = 1, totalSessions = 3))
+        assertFalse(isTaskSessionsExpanded(HomeFoldMode.Running, visibleSessionCount = 0, totalSessions = 3))
     }
 
     @Test
-    fun listSessionLabelAvoidsRepeatingDirectoryName() {
-        val session = session("pty", null).copy(title = "wand", cwd = "/Users/me/wand")
-        assertEquals("Claude 1", listSessionLabel(session, 0, listOf("wand")))
+    fun listSessionLabelKeepsTitleEvenWhenItRepeatsTheTaskName() {
+        val session = session("structured", "structured").copy(title = "重构会话恢复流程")
+        assertEquals("重构会话恢复流程", listSessionLabel(session, 0))
+    }
+
+    @Test
+    fun listSessionLabelFallsBackForDirectoryLeafAndPlaceholderTitles() {
+        val leaf = session("pty", null).copy(title = "wand", cwd = "/Users/me/wand")
+        assertEquals("Claude 1", listSessionLabel(leaf, 0))
+        val placeholder = session("structured", "structured").copy(title = "会话")
+        assertEquals("Claude 1", listSessionLabel(placeholder, 0))
+        val provider = session("structured", "structured").copy(title = "claude")
+        assertEquals("Claude 1", listSessionLabel(provider, 0))
+        val already = session("structured", "structured").copy(title = "Claude 1")
+        assertEquals("Claude 1", listSessionLabel(already, 0))
     }
 
     @Test
@@ -568,6 +569,105 @@ class TaskListPresentationTest {
     }
 
     @Test
+    fun recentHomeGroupsFoldEmployeeConversationsUnderOneHeader() {
+        val older = session("structured", "codex").copy(id = "e-older",
+            employeeId = "e-1", employeeName = "虎妞", startedAt = "2026-09-28T08:00:00.000Z")
+        val newer = session("structured", "codex").copy(id = "e-newer",
+            employeeId = "e-1", employeeName = "虎妞", startedAt = "2026-09-30T08:00:00.000Z")
+        val other = session("structured", "codex").copy(id = "other",
+            employeeId = "e-2", employeeName = "初二", startedAt = "2026-09-29T08:00:00.000Z")
+        val conversations = recentHomeConversations(listOf(groupWithTasks(listOf(
+            task().copy(sessions = listOf(older, newer, other))))))
+
+        val groups = recentHomeGroups(conversations)
+
+        assertEquals(listOf("employee:e-1", "employee:e-2", "blank-terminal"),
+            groups.map { it.key })
+        assertEquals(listOf("e-newer", "e-older"), groups[0].conversations.map { it.session.id })
+        assertTrue(groups[0].isCollapsible)
+        // 单条会话的组不折叠：一级行本身就是那张会话卡。
+        assertFalse(groups[1].isCollapsible)
+    }
+
+    @Test
+    fun recentHomeGroupsKeepTerminalsApartFromEmployees() {
+        val pty = session("pty", "pty").copy(id = "pty-1", provider = "codex",
+            startedAt = "2026-09-30T08:00:00.000Z")
+        val blank = session("pty", "pty").copy(id = "blank-1", provider = null,
+            startedAt = "2026-09-29T08:00:00.000Z")
+        val shell = session("pty", "pty").copy(id = "shell-1", provider = "shell",
+            startedAt = "2026-09-28T08:00:00.000Z")
+        val conversations = recentHomeConversations(listOf(groupWithTasks(listOf(
+            task().copy(sessions = listOf(blank, shell, pty))))))
+
+        val groups = recentHomeGroups(conversations)
+
+        assertEquals(listOf("pty", "blank-terminal"), groups.map { it.key })
+        assertEquals(listOf("PTY 终端", "空白终端"), groups.map { it.title })
+        // 空 provider 与显式 shell 都是「空白终端」，各自不拆散。
+        assertEquals(listOf("blank-1", "shell-1"), groups[1].conversations.map { it.session.id })
+    }
+
+    @Test
+    fun recentHomeGroupsProjectLiveEmployeeIdentity() {
+        val older = session("structured", "codex").copy(id = "a", employeeId = "e-1",
+            employeeName = "旧名字", employeeAvatar = "old", startedAt = "2026-09-30T08:00:00.000Z")
+        val newer = session("structured", "codex").copy(id = "b", employeeId = "e-1",
+            employeeName = "旧名字", employeeAvatar = "old", startedAt = "2026-09-29T08:00:00.000Z")
+        val conversations = recentHomeConversations(listOf(groupWithTasks(listOf(
+            task().copy(sessions = listOf(older, newer))))))
+
+        val renamed = recentHomeGroups(conversations,
+            listOf(employee("e-1", name = "赛博虎妞", avatar = "new")))
+        assertEquals("赛博虎妞", renamed.first().title)
+        assertEquals("new", renamed.first().avatar)
+        // 定义被删除：退回会话自己的身份快照，不显示空标题。
+        val deleted = recentHomeGroups(conversations)
+        assertEquals("旧名字", deleted.first().title)
+        assertEquals("old", deleted.first().avatar)
+    }
+
+    @Test
+    fun homeGroupIdentityUsesTeamThenTerminalFallbacks() {
+        val team = session("structured", "codex").copy(id = "team",
+            teamChat = WorkspaceSessionTeamChat("run-1", "设计组", 2, "team-1"))
+
+        // 团队一级只放群聊，同一团队的多次开工合成一行；老消息缺 teamId 退回 runId。
+        assertEquals("team:team-1", homeGroupKeyOf(team))
+        assertEquals("team:run-1", homeGroupKeyOf(team.copy(
+            teamChat = team.teamChat?.copy(teamId = null))))
+        // 防御：没有员工身份的派发步骤按一次运行归团队，不丢会话。
+        assertEquals("team-run:run-1", homeGroupKeyOf(team.copy(
+            teamChat = null, teamStep = teamStep("run-1", "虎妞"))))
+        assertEquals("pty", homeGroupKeyOf(session("pty", "pty").copy(provider = "claude")))
+        assertEquals("blank-terminal", homeGroupKeyOf(session("pty", "pty").copy(provider = null)))
+    }
+
+    @Test
+    fun recentHomeGroupsKeepTeamDispatchedWorkUnderItsEmployee() {
+        val chat = session("structured", "codex").copy(id = "chat",
+            startedAt = "2026-09-30T09:00:00.000Z",
+            teamChat = WorkspaceSessionTeamChat("run-1", "前端组", 3, "team-1"))
+        // 团队派发的成员会话自带 employeeId：它算这位员工的，只在员工下面标出来源团队。
+        val member = session("structured", "codex").copy(id = "member", employeeId = "e-1",
+            employeeName = "虎妞", startedAt = "2026-09-30T08:00:00.000Z",
+            teamStep = teamStep("run-1", "虎妞"))
+        val direct = session("structured", "codex").copy(id = "direct", employeeId = "e-1",
+            employeeName = "虎妞", startedAt = "2026-09-30T07:00:00.000Z")
+        val conversations = recentHomeConversations(listOf(groupWithTasks(listOf(
+            task().copy(sessions = listOf(chat, member, direct))))))
+
+        val groups = recentHomeGroups(conversations)
+
+        assertEquals(listOf("team:team-1", "employee:e-1", "blank-terminal"),
+            groups.map { it.key })
+        assertEquals("前端组", groups[0].title)
+        // 派发的成员会话与员工自己的会话同属一行，团队不把它们抢走。
+        assertEquals(listOf("member", "direct"), groups[1].conversations.map { it.session.id })
+        assertEquals("前端组", groups[1].conversations.first().session.teamStep?.teamName)
+    }
+
+    @Test
     fun contactsChooseLatestMatchingHistoryWithoutConfusingCliAndEmployee() {
         val employee = session("structured", "codex").copy(id = "employee",
             employeeId = "e-1", startedAt = "2026-09-30T08:00:00.000Z")
@@ -592,6 +692,25 @@ class TaskListPresentationTest {
         }
         assertEquals("team", contactConversation(oldTeamMarker,
             ExecutionSubject.team("team-1"), setOf("run-1"))?.session?.id)
+    }
+
+    @Test
+    fun homeGroupShowsHeaderForTeamChatButNotForLoneEmployeeSession() {
+        val lone = session("structured", "codex").copy(id = "only", employeeId = "e-1",
+            employeeName = "虎妞", startedAt = "2026-09-30T08:00:00.000Z")
+        val chat = session("structured", "codex").copy(id = "chat",
+            startedAt = "2026-09-30T09:00:00.000Z",
+            teamChat = WorkspaceSessionTeamChat("run-1", "前端组", 3, "team-1"))
+        val groups = recentHomeGroups(recentHomeConversations(listOf(groupWithTasks(listOf(
+            task().copy(sessions = listOf(chat, lone)))))))
+
+        assertEquals(listOf("team:team-1", "employee:e-1", "blank-terminal"),
+            groups.map { it.key })
+        // 团队：即使只挂一条群聊，也保留「一级 = 团队名」这一行。
+        assertFalse(groups[0].isCollapsible)
+        assertTrue(homeGroupShowsHeader(groups[0]))
+        // 员工单条：一级行就是那张会话卡，不套空壳。
+        assertFalse(homeGroupShowsHeader(groups[1]))
     }
 
     private fun groupWithTasks(tasks: List<WorkspaceTaskSummary>) = TaskDirectoryGroup(
@@ -619,6 +738,29 @@ class TaskListPresentationTest {
         worktreeError = null,
         sessions = emptyList(),
         totalSessions = 0,
+    )
+
+    private fun employee(id: String, name: String = "虎妞", avatar: String = "cat") =
+        com.wand.app.data.SiliconEmployee(
+            id = id,
+            name = name,
+            duty = "",
+            prompt = "",
+            avatar = avatar,
+            agents = emptyList(),
+        )
+
+    private fun teamStep(runId: String, memberName: String) = WorkspaceSessionTeamStep(
+        runId = runId,
+        stepId = "step-$memberName",
+        kind = "work",
+        title = "任务",
+        memberId = "m-1",
+        memberName = memberName,
+        teamName = "前端组",
+        stepStatus = "running",
+        runStatus = "running",
+        runFinished = false,
     )
 
     private fun session(kind: String?, runner: String?) = WorkspaceSessionSummary(

@@ -342,6 +342,8 @@ data class WorkspaceSessionSummary(
     val startedAt: String?,
     val ptyBusy: Boolean? = null,
     val providerCliActive: Boolean? = null,
+    val providerCliExitCode: Int? = null,
+    val archived: Boolean? = null,
     val inFlight: Boolean? = null,
     /** 团队群聊会话（AI 团队 relay）；普通会话为 null。 */
     val teamChat: WorkspaceSessionTeamChat? = null,
@@ -350,6 +352,8 @@ data class WorkspaceSessionSummary(
     val employeeId: String? = null,
     val employeeName: String? = null,
     val employeeAvatar: String? = null,
+    val completionRevision: Int? = null,
+    val viewedCompletionRevision: Int? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -367,12 +371,16 @@ data class WorkspaceSessionSummary(
                 startedAt = o.str("startedAt"),
                 ptyBusy = o.bool("ptyBusy"),
                 providerCliActive = o.bool("providerCliActive"),
+                providerCliExitCode = o.int("providerCliExitCode"),
+                archived = o.bool("archived"),
                 inFlight = o.obj("structuredState")?.bool("inFlight") ?: o.bool("inFlight"),
                 teamChat = WorkspaceSessionTeamChat.parse(o.obj("teamChat")),
                 teamStep = WorkspaceSessionTeamStep.parse(o.obj("teamStep")),
                 employeeId = o.str("employeeId")?.takeIf { it.isNotEmpty() },
                 employeeName = o.str("employeeName")?.takeIf { it.isNotEmpty() },
                 employeeAvatar = o.str("employeeAvatar")?.takeIf { it.isNotEmpty() },
+                completionRevision = o.int("completionRevision"),
+                viewedCompletionRevision = o.int("viewedCompletionRevision"),
             )
         }
 

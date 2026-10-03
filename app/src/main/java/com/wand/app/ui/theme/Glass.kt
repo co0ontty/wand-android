@@ -280,12 +280,15 @@ fun Modifier.glassSurface(
  *
  * @param tint 覆盖底色（语义弱底卡：dangerSoft / thinkingSoft…）。
  * @param rimTint 语义强调色混入底色，不再画边。
+ * @param elevation 投影高度。默认卡片自身的极轻一档；浮在内容之上的面（如首页的菜单胶囊）
+ *   需要比卡片略高一点才看得出是浮起的一层。
  */
 @Composable
 fun Modifier.glassCard(
     shape: Shape = WandShapes.md,
     tint: Color? = null,
     rimTint: Color? = null,
+    elevation: Dp = WandGlass.card.shadowElevation,
 ): Modifier {
     var style = WandGlass.card
     if (rimTint != null) style = style.tinted(rimTint)
@@ -295,7 +298,7 @@ fun Modifier.glassCard(
         ?: style.tint.copy(alpha = style.fallbackAlpha)
     val (keyShadow, ambientShadow) = cardShadowColors()
     return this
-        .layeredShadow(shape, style.shadowElevation, keyShadow, ambientShadow)
+        .layeredShadow(shape, elevation, keyShadow, ambientShadow)
         .clip(shape)
         .background(bg)
 }

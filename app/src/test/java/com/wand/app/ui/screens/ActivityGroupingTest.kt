@@ -277,6 +277,25 @@ class ActivityGroupingTest {
     }
 
     @Test
+    fun activityTimelineFollowsTheNewestCallUntilTheUserScrollsAway() {
+        // 空时间线没有可跟随的目标。
+        assertFalse(shouldFollowActivityTail(menuOpen = true, pinnedToLatest = true, itemCount = 0))
+        // 收起的面板不滚动。
+        assertFalse(shouldFollowActivityTail(menuOpen = false, pinnedToLatest = true, itemCount = 3))
+        // 用户自己往上翻过（贴尾状态被翻掉）就不再抢视线。
+        assertFalse(shouldFollowActivityTail(menuOpen = true, pinnedToLatest = false, itemCount = 3))
+        // 展开且贴尾：追加新调用就继续跟到最新。
+        assertTrue(shouldFollowActivityTail(menuOpen = true, pinnedToLatest = true, itemCount = 3))
+    }
+
+    @Test
+    fun activityTimelineTailIndexPointsAtTheNewestItem() {
+        assertEquals(2, activityTimelineTailIndex(3))
+        assertEquals(0, activityTimelineTailIndex(1))
+        assertEquals(-1, activityTimelineTailIndex(0))
+    }
+
+    @Test
     fun collapsedSummaryKeepsThinkingFirstWithoutAnInventedTime() {
         val thinking = pairToolBlocks(listOf(ContentBlock.Thinking("working", null)))
         assertEquals(

@@ -19,12 +19,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +54,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -65,6 +68,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -78,6 +82,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -118,13 +123,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import com.wand.app.ui.components.SessionCompletionViewEffect
 import kotlinx.coroutines.flow.collect
 import com.wand.app.SessionWatcher
 import com.wand.app.data.ContentBlock
@@ -132,12 +137,10 @@ import com.wand.app.data.matchesModelSearch
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
-import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TurnUsage
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
-import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.SESSION_MODE_OPTIONS
 import com.wand.app.data.sessionModeLabel
 import com.wand.app.data.supportedSessionModeIds
@@ -165,12 +168,15 @@ import com.wand.app.ui.components.NoOverscroll
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import com.wand.app.ui.components.WandMorphingIcon
+
 import androidx.activity.compose.BackHandler
 import com.wand.app.ui.SendActionVisual
 import com.wand.app.ui.sendActionVisual
 import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandInlinePanelAction
-import com.wand.app.ui.components.WandMorphIconButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandSnackbarHost
 import com.wand.app.ui.components.showWandNotice
@@ -179,6 +185,8 @@ import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandProviderMark
+import com.wand.app.ui.components.WandStatusIconSlot
+import com.wand.app.data.WandProvider
 import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
@@ -188,11 +196,15 @@ import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.reduceMotionEnabled
+import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.glassBackdropSource
 import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -204,43 +216,63 @@ private enum class ChatScrollMode {
 /** LazyColumn 中正向手指位移表示内容被拉向更早的消息。 */
 internal fun shouldPauseBottomFollow(userScrollDeltaY: Float): Boolean = userScrollDeltaY > 0f
 
-/** 仅用户把顶部哨兵拉进视口时翻页；布局/贴底/惯性滚动不能自动翻空历史。 */
-internal fun shouldAutoLoadEarlierMessages(
-    isUserScroll: Boolean,
-    scrollingTowardHistory: Boolean,
-    topSentinelVisible: Boolean,
+/** 打开会话时先铺满两屏；之后再靠用户上拉继续往前翻。 */
+internal const val EARLIER_TARGET_SCREENS = 2f
+
+/** 一轮「需要上一页」里最多补几页：估算偏差不至于把整段历史一次性翻完。 */
+private const val MAX_EARLIER_PAGES_PER_ROUND = 8
+
+/** 网络失败后的静默重试间隔；期间只留加载圈，不弹提示。 */
+private const val EARLIER_LOAD_RETRY_MS = 1500L
+
+/** 上拉到离列表绝对顶部不超过这么多像素时就补上一页，避免撞到硬边才开始等。 */
+private const val EARLIER_TOP_SLOP_PX = 48
+
+/**
+ * 是否需要静默翻上一页（没有按钮、没有文案、没有点击）：
+ * - 用户已经上拉到列表绝对顶部 —— 继续往前翻一屏；
+ * - 已加载内容按已测量行高估算不到目标屏数 —— 打开会话时补满两屏，无需用户操作。
+ * 正在翻一条很长的回复中间（第 0 项仍可见、但滚动偏移很大）不算到顶，不会误触发。
+ */
+internal fun shouldLoadEarlierPage(
     canLoadEarlier: Boolean,
-    loadingEarlier: Boolean,
-    requestedThisGesture: Boolean,
-): Boolean = isUserScroll && scrollingTowardHistory && topSentinelVisible &&
-    canLoadEarlier && !loadingEarlier && !requestedThisGesture
+    userPulledToTop: Boolean,
+    loadedRowCount: Int,
+    measuredRowHeightsPx: List<Int>,
+    viewportHeightPx: Int,
+    targetScreens: Float = EARLIER_TARGET_SCREENS,
+): Boolean {
+    if (!canLoadEarlier || viewportHeightPx <= 0 || loadedRowCount <= 0) return false
+    if (userPulledToTop) return true
+    // 首帧还没量到任何行时先不动，等布局稳定再决定补不补页。
+    if (measuredRowHeightsPx.isEmpty()) return false
+    val estimatedContentHeightPx = measuredRowHeightsPx.average() * loadedRowCount
+    return estimatedContentHeightPx < viewportHeightPx * targetScreens
+}
+
+/** 顶部静默翻页的观察值：需要上一页、上一页已经结束（成败都算）、当前是否正在加载。 */
+private data class EarlierLoadProbe(
+    val needed: Boolean,
+    val attempts: Int,
+    val loading: Boolean,
+)
 
 internal data class EarlierLoadAnchor(
     val itemKey: Any?,
     val scrollOffset: Int,
     val turnOffset: Int,
     val blockOffset: Int,
+    /** prepend 前这一项的高度；同一项被从头部撑高时用来补回阅读位置。 */
+    val itemSize: Int = 0,
 )
 
 internal fun earlierLoadAdvanced(anchor: EarlierLoadAnchor, turnOffset: Int, blockOffset: Int): Boolean =
     turnOffset < anchor.turnOffset || (turnOffset == anchor.turnOffset && blockOffset < anchor.blockOffset)
 
-/**
- * 顶部翻页入口的文案。
- *
- * `visibleCount` 是服务端算好的「头部里用户可感知的条数」——默认收起的工具 / 思考块不计入，
- * 它们在结构化视图里本来就合并成一条折叠条，不该被当成几十条更早消息（那会让人以为还得翻
- * 几十次）。旧服务端不下发该字段（null）时干脆不报数字，不拿块数冒充条数。
- */
-internal fun earlierLoadLabel(
-    loading: Boolean,
-    blockPaging: Boolean,
-    visibleCount: Int?,
-): String = when {
-    loading -> "正在加载更早内容…"
-    !blockPaging -> "加载更早消息"
-    visibleCount == null || visibleCount <= 0 -> "加载更早步骤"
-    else -> "加载更早步骤 · 还有 $visibleCount 条"
+/** 同一列表项从头部被 prepend 撑高时，滚动偏移要加上增高量，阅读位置才不会往下跳。 */
+internal fun earlierAnchorScrollOffset(anchor: EarlierLoadAnchor, laidOutSize: Int?): Int {
+    val grown = laidOutSize?.let { (it - anchor.itemSize).coerceAtLeast(0) } ?: 0
+    return anchor.scrollOffset + grown
 }
 
 /** 状态坞只承接流式状态 / 子 Agent；完成时间和用量留在各轮消息里，避免右下角再显一遍。 */
@@ -275,11 +307,6 @@ fun ChatScreen(
     serverDisplayName: String,
     workspaceName: String? = null,
     taskName: String? = null,
-    taskId: String? = null,
-    siblingSessions: List<WorkspaceSessionSummary> = emptyList(),
-    onSwitchSession: ((WorkspaceSessionSummary) -> Unit)? = null,
-    onCreateTaskSession: ((SessionSnapshot) -> Unit)? = null,
-    onDeleteTaskSession: ((WorkspaceSessionSummary) -> Unit)? = null,
     isHapticEnabled: () -> Boolean,
     drafts: SessionDraftStore,
     showBack: Boolean = true,
@@ -292,7 +319,7 @@ fun ChatScreen(
             sessionId = sessionId,
             drafts = drafts,
             parentScope = composerScope,
-            ready = { !store.loading && store.snapshot != null },
+            ready = { !store.loading && !store.providerSwitching && store.snapshot != null },
             send = store::submitInput,
             notice = { store.toast = it },
         )
@@ -308,6 +335,11 @@ fun ChatScreen(
         onDispose { store.shutdown() }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    SessionCompletionViewEffect(api, sessionId,
+        ready = !store.loading && store.snapshot != null && store.loadError == null,
+        completionRevision = store.snapshot?.completionRevision,
+        viewedCompletionRevision = store.snapshot?.viewedCompletionRevision,
+    )
     var liveEmployee by remember(sessionId) { mutableStateOf<SiliconEmployee?>(null) }
     val employeeId = store.snapshot?.employeeId
     LaunchedEffect(api, employeeId, lifecycleOwner) {
@@ -379,6 +411,20 @@ fun ChatScreen(
     }
     var listViewportHeightPx by remember(sessionId) { mutableIntStateOf(0) }
     val scrollScope = rememberCoroutineScope()
+    // 活动段向上展开会撑高所在 item；容器按帧补偿滚动，让摘要行停在原屏幕位置。
+    // 同一个 item 只保留最后一次补偿：连点开合时旧循环立即让位，避免互相打架。
+    val anchorJobs = remember { mutableMapOf<String, Job>() }
+    val keepActivityAnchor: (String) -> Unit = remember(listState, scrollScope) {
+        { key ->
+            if (key.isNotBlank()) {
+                anchorJobs.remove(key)?.cancel()
+                // 点击这一帧同步读位置：此时列表还是展开前的布局，读到的就是摘要行原位。
+                listState.itemTailOffset(key)?.let { target ->
+                    anchorJobs[key] = scrollScope.launch { listState.keepItemTailAnchor(key, target) }
+                }
+            }
+        }
+    }
     val haptic = LocalHapticFeedback.current
 
     val context = LocalContext.current
@@ -435,17 +481,16 @@ fun ChatScreen(
         }
     }
 
-    // 历史不再整段隐藏，分页入口始终可达。
-    val showLoadEarlierSentinel = store.canLoadEarlier
-    val headerOffset = if (showLoadEarlierSentinel) 1 else 0
+    // 更早内容不再占一个列表项：没有按钮、没有文案，加载圈浮在顶部。
+    val headerOffset = 0
     // bottomIndex 是最后的 chat-bottom 哨兵下标（即它之前的项数）。
     val bottomIndex = headerOffset + displayItems.size
     var earlierLoadAnchor by remember(sessionId) { mutableStateOf<EarlierLoadAnchor?>(null) }
-    val requestEarlier: () -> Unit = {
-        if (store.canLoadEarlier && !store.loadingEarlier) {
-            scrollMode = ChatScrollMode.Manual
+    val captureEarlierLoadAnchor: () -> Unit = {
+        // 只在用户手动浏览时保阅读位置；贴底跟随补页时交给贴底逻辑重新贴底，不抢滚动。
+        if (scrollMode == ChatScrollMode.Manual) {
             val firstContent = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                it.key != "chat-load-earlier" && it.key != "chat-bottom"
+                it.key != "chat-bottom"
             }
             earlierLoadAnchor = EarlierLoadAnchor(
                 itemKey = firstContent?.key,
@@ -454,12 +499,27 @@ fun ChatScreen(
                 } ?: 0,
                 turnOffset = store.loadedOffset,
                 blockOffset = store.leadingBlockOffset,
+                itemSize = firstContent?.size ?: 0,
             )
-            store.loadEarlier()
         }
     }
-    // 点击按钮和上拉共用锚点。稳定 key 的消息在 prepend 后仍保持原位，不能让固定在
-    // index=0 的哨兵把阅读位置锁在列表最上方，也不能因为哨兵还可见而连翻多页。
+    // 锚点未落地前不翻下一页。同一条 turn 从头部被撑高时，落地时按增高量补回偏移。
+    val earlierPageNeeded: () -> Boolean = {
+        val pulledToTop = scrollMode == ChatScrollMode.Manual &&
+            listState.firstVisibleItemIndex == 0 &&
+            listState.firstVisibleItemScrollOffset <= EARLIER_TOP_SLOP_PX
+        earlierLoadAnchor == null && shouldLoadEarlierPage(
+            canLoadEarlier = store.canLoadEarlier,
+            userPulledToTop = pulledToTop,
+            loadedRowCount = displayItems.size,
+            measuredRowHeightsPx = listState.layoutInfo.visibleItemsInfo
+                .filter { it.key != "chat-bottom" }
+                .map { it.size },
+            viewportHeightPx = listViewportHeightPx,
+        )
+    }
+    val latestEarlierPageNeeded = rememberUpdatedState(earlierPageNeeded)
+    // 锚点在 prepend 后落回原位：消息 key 稳定，不能让加载位把阅读位置锁在最上方。
     LaunchedEffect(store.loadedOffset, store.leadingBlockOffset, store.loadingEarlier, earlierLoadAnchor) {
         val anchor = earlierLoadAnchor ?: return@LaunchedEffect
         if (earlierLoadAdvanced(anchor, store.loadedOffset, store.leadingBlockOffset)) {
@@ -472,9 +532,12 @@ fun ChatScreen(
                         messageItemTurnIndex(item) < lastUserTurnIndex,
                 ) == anchor.itemKey
             }
+            val laidOutSize = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.key == anchor.itemKey }
+                ?.size
             listState.scrollToItem(
                 if (anchoredIndex >= 0) headerOffset + anchoredIndex else headerOffset,
-                anchor.scrollOffset,
+                earlierAnchorScrollOffset(anchor, laidOutSize),
             )
             earlierLoadAnchor = null
         } else if (!store.loadingEarlier) {
@@ -482,15 +545,36 @@ fun ChatScreen(
             earlierLoadAnchor = null
         }
     }
-    val latestRequestEarlier = rememberUpdatedState(requestEarlier)
+    // 静默翻页：需要上一页就自动补，不提示也不等点击；
+    // 没取到（网络失败 / 状态已变）不弹提示，只把 loading 留在原位并稍后重试。
+    LaunchedEffect(listState, sessionId) {
+        var pagesInRound = 0
+        snapshotFlow {
+            EarlierLoadProbe(
+                needed = latestEarlierPageNeeded.value(),
+                attempts = store.earlierPageAttempts,
+                loading = store.loadingEarlier,
+            )
+        }
+            .distinctUntilChanged()
+            .collect { probe ->
+                if (!probe.needed) {
+                    pagesInRound = 0
+                    return@collect
+                }
+                if (probe.loading || store.loadingEarlier) return@collect
+                if (pagesInRound >= MAX_EARLIER_PAGES_PER_ROUND) return@collect
+                if (!latestEarlierPageNeeded.value()) return@collect
+                captureEarlierLoadAnchor()
+                if (store.loadEarlierPage()) pagesInRound += 1 else delay(EARLIER_LOAD_RETRY_MS)
+            }
+    }
 
     // 用户一开始向上浏览旧内容就立即暂停贴底跟随。流式消息刷新很频繁，若等拖动
     // 累计超过某个阈值才暂停，阈值内的新 token 会先把列表重新拽回底部。
     // Manual 模式不会因用户自己滚回底部而退出；只有“回到底部”按钮或主动发送才恢复。
     val followPauseConnection = remember(focusManager, listState, store) {
         object : NestedScrollConnection {
-            private var requestedThisGesture = false
-
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput) {
                     if (available.y != 0f) focusManager.clearFocus()
@@ -499,28 +583,6 @@ fun ChatScreen(
                     }
                 }
                 return Offset.Zero
-            }
-
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                if (shouldAutoLoadEarlierMessages(
-                        isUserScroll = source == NestedScrollSource.UserInput,
-                        scrollingTowardHistory = consumed.y + available.y > 0f,
-                        topSentinelVisible = listState.layoutInfo.visibleItemsInfo.any {
-                            it.key == "chat-load-earlier"
-                        },
-                        canLoadEarlier = store.canLoadEarlier,
-                        loadingEarlier = store.loadingEarlier,
-                        requestedThisGesture = requestedThisGesture,
-                    )) {
-                    requestedThisGesture = true
-                    latestRequestEarlier.value()
-                }
-                return Offset.Zero
-            }
-
-            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                requestedThisGesture = false
-                return Velocity.Zero
             }
         }
     }
@@ -606,6 +668,7 @@ fun ChatScreen(
         LocalChatApi provides api,
         LocalChatSessionId provides sessionId,
         LocalCardExpandDefaults provides store.cardDefaults,
+        LocalActivityAnchorKeeper provides keepActivityAnchor,
     ) {
     Scaffold(
         containerColor = Color.Transparent,
@@ -613,10 +676,9 @@ fun ChatScreen(
         topBar = {
             // 稳定标题 + 简明会话上下文；避免流式任务名和长路径持续跳动、抢占操作区。
             // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
-            Column {
-                WandDetailTopBar(
-                    title = "对话详情",
-                    backdrop = activeBackdrop,
+            WandDetailTopBar(
+                title = "对话详情",
+                backdrop = activeBackdrop,
                 contentHeight = 56.dp,
                 leading = if (showBack) {
                     {
@@ -683,27 +745,7 @@ fun ChatScreen(
                 actions = {
                     GitChangesButton(quickCommit, compact = true) { quickCommit.openPanel() }
                 },
-                )
-                // 顶部「其他会话」快捷条：任务内展示同任务工作窗口；未分组会话展示同
-                // 目录的兄弟终端。都没有第二个会话时整条隐藏，不占垂直空间。
-                if (taskId != null && onSwitchSession != null && onCreateTaskSession != null) {
-                    TaskSessionTabStrip(
-                        api = api,
-                        taskId = taskId,
-                        currentSessionId = sessionId,
-                        onSelect = onSwitchSession,
-                        onCreated = onCreateTaskSession,
-                        onDeleted = onDeleteTaskSession,
-                    )
-                } else if (taskId == null && onSwitchSession != null && siblingSessions.size >= 2) {
-                    StandaloneSessionTabStrip(
-                        sessions = siblingSessions,
-                        currentSessionId = sessionId,
-                        parentNames = listOfNotNull(workspaceName?.trim()?.takeIf { it.isNotEmpty() }),
-                        onSelect = onSwitchSession,
-                    )
-                }
-            }
+            )
         },
         bottomBar = { BottomBar(
             backdrop = activeBackdrop,
@@ -743,17 +785,6 @@ fun ChatScreen(
                         focusManager.clearFocus()
                     }
                 }
-                .then(
-                    if (onSwitchSession != null) {
-                        Modifier.taskSessionSwipe(
-                            sessions = siblingSessions,
-                            currentSessionId = sessionId,
-                            onSelect = onSwitchSession,
-                        )
-                    } else {
-                        Modifier
-                    },
-                )
                 .then(if (chromeSettled) Modifier.glassBackdropSource(glassBackdrop) else Modifier),
         ) {
             AmbientBackground(Modifier.fillMaxSize())
@@ -796,45 +827,6 @@ fun ChatScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        // 显式分页控件常驻在已加载内容顶部，保证更早消息始终可达。
-                        if (showLoadEarlierSentinel) {
-                            item(key = "chat-load-earlier") {
-                                TextButton(
-                                    onClick = requestEarlier,
-                                    enabled = !store.loadingEarlier,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp),
-                                ) {
-                                    if (store.loadingEarlier) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = WandColors.brand,
-                                        )
-                                        Spacer(Modifier.size(8.dp))
-                                    } else {
-                                        Icon(
-                                            WandIcons.history,
-                                            contentDescription = null,
-                                            tint = WandColors.brand,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                        Spacer(Modifier.size(8.dp))
-                                    }
-                                    val blockPaging = store.leadingBlockOffset > 0
-                                    Text(
-                                        earlierLoadLabel(
-                                            loading = store.loadingEarlier,
-                                            blockPaging = blockPaging,
-                                            visibleCount = store.leadingVisibleCount,
-                                        ),
-                                        fontSize = 12.sp,
-                                        color = WandColors.textSecondary,
-                                    )
-                                }
-                            }
-                        }
                         // key 基于绝对 turn 位置/稳定工具 id：prepend 分页不会重建所有卡片。
                         // 同一个 item key 同时充当卡片的 fold scope（设计规格 v2 §8.2）：
                         // 列表键与卡片折叠态用同一个结构身份，只在一处计算。
@@ -908,6 +900,17 @@ fun ChatScreen(
                         item(key = "chat-bottom") {
                             Spacer(modifier = Modifier.size(1.dp))
                         }
+                    }
+                    // 补页/重试只在原位转圈，不占列表高度，也不写文案。
+                    if (store.loadingEarlier || store.earlierLoadFailed) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 10.dp)
+                                .size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = WandColors.brand,
+                        )
                     }
                     val currentScrubberItem = conversationScrubberIndexForDisplayItem(
                         scrubberTargets,
@@ -1288,10 +1291,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(9.dp),
             ) {
-                ProviderBrandMark(
-                    provider = provider,
-                    size = 52,
-                )
+                LaunchProviderPicker(store)
                 // apple-design §15 Typography：大字号配负 tracking、SemiBold 而非 Bold，
                 // 让 provider 名既有存在感又不喧宾夺主。
                 Text(
@@ -1303,7 +1303,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    "输入消息，让它帮你完成任务",
+                    "输入消息，让它帮你完成任务 · 点 Logo 更换工具",
                     fontSize = 13.5.sp,
                     lineHeight = 19.sp,
                     color = WandColors.textSecondary,
@@ -1333,6 +1333,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         selected = store.selectedModel?.takeUnless { it == "default" } ?: "default",
                         onSelect = { store.setModel(it.takeUnless { id -> id == "default" }) },
                         searchable = true,
+                        enabled = !store.providerSwitching,
                     )
                     HorizontalDivider(
                         thickness = 0.5.dp,
@@ -1348,9 +1349,73 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         options = thinkingLevels(store).map { it.id to it.menuLabel },
                         selected = store.thinkingEffort,
                         onSelect = store::chooseThinkingEffort,
+                        enabled = !store.providerSwitching,
                     )
                 }
             }
+        }
+    }
+}
+
+/** 空白对话的 Logo 原位打开工具菜单；切换保留同一会话和同一个输入 composer。 */
+@Composable
+private fun LaunchProviderPicker(store: ChatStore) {
+    var menuOpen by remember(store) { mutableStateOf(false) }
+    BackHandler(enabled = menuOpen) { menuOpen = false }
+    LaunchedEffect(store.canSwitchProvider) {
+        if (!store.canSwitchProvider) menuOpen = false
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box {
+            Box(
+                modifier = Modifier.size(52.dp).semantics {
+                    contentDescription = "更换 CLI 工具，当前 ${store.snapshot?.providerLabel.orEmpty()}"
+                    role = Role.Button
+                }.clickable(enabled = store.canSwitchProvider, role = Role.Button) { menuOpen = true },
+            ) {
+                WandInPlaceSwap(contentKey = store.snapshot?.provider, enterScale = 1f, exitScale = 1f) { shown ->
+                    ProviderBrandMark(provider = shown as? String, size = 52)
+                }
+                WandStatusIconSlot(
+                    running = store.providerSwitching,
+                    icon = WandIcons.expand,
+                    indicatorColor = WandColors.brand,
+                    containerColor = WandColors.bgElevated,
+                    boxSize = 20.dp,
+                    iconSize = 13.dp,
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                )
+            }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                containerColor = WandColors.bgElevated,
+            ) {
+                WandProvider.entries.forEach { tool ->
+                    DropdownMenuItem(
+                        text = { Text(tool.displayName) },
+                        leadingIcon = { WandProviderMark(tool.id) },
+                        trailingIcon = if (store.snapshot?.provider == tool.id) {
+                            { Icon(WandIcons.check, contentDescription = "当前工具", tint = WandColors.brand) }
+                        } else null,
+                        onClick = { menuOpen = false; store.chooseProvider(tool.id) },
+                    )
+                }
+            }
+        }
+        Box(
+            modifier = Modifier.fillMaxWidth().height(38.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                store.providerSwitchError ?: if (store.providerSwitching) "正在切换工具…"
+                    else store.providerSwitchResult.orEmpty(),
+                color = if (store.providerSwitchError != null) WandColors.danger else WandColors.textSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+            )
         }
     }
 }
@@ -1398,6 +1463,7 @@ private fun LaunchSettingPicker(
     selected: String,
     onSelect: (String) -> Unit,
     searchable: Boolean = false,
+    enabled: Boolean = true,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -1437,6 +1503,7 @@ private fun LaunchSettingPicker(
                     interactionSource = interactionSource,
                     indication = LocalIndication.current,
                     role = Role.DropdownList,
+                    enabled = enabled,
                 ) { expanded = true }
                 .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
@@ -2016,26 +2083,17 @@ private fun InputBar(
                 onSend = sendAndRefocus,
             )
         },
-        expandedControls = { controlsCompact ->
-            BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                val compactChips = controlsCompact || maxWidth < 300.dp
-                val compactModel = maxWidth < 260.dp
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    ComposerActionsMenu(
-                        backdrop = backdrop,
-                        uploading = uploading,
-                        attachOpen = attachOpen,
-                        onAttachOpenChange = onAttachOpenChange,
-                    )
-                    if (store.isStructured) {
-                        ModeChip(store, compact = compactChips)
-                        ModelChip(store, compact = compactModel, modifier = Modifier.weight(1f))
-                        ThinkingChip(store, compact = compactChips)
-                    }
+        controls = {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (store.isStructured) {
+                    ModeChip(store)
+                    ModelThinkingChip(store)
                 }
             }
         },
@@ -2090,19 +2148,8 @@ private fun TrailingSendStop(
     ).let { visual ->
         if (visual == SendActionVisual.Send && !canSubmit) SendActionVisual.Blocked else visual
     }
-    // 运行中且没有草稿：这一枚按钮的语义就是「停止」，与「发送」共用同一个位置、互相变形。
-    if (visual == SendActionVisual.Stop) {
-        voiceAction()
-        SubmitMorphButton(
-            visual = visual,
-            contentDescription = "停止任务",
-            onClick = onStop,
-            fillColor = WandColors.textPrimary,
-            contentTint = WandColors.surface,
-        )
-        return
-    }
-    if (store.isResponding) {
+    // 主按钮始终是同一个实例；运行中有草稿时保留左侧的独立停止入口。
+    if (store.isResponding && visual != SendActionVisual.Stop) {
         SubmitMorphButton(
             visual = SendActionVisual.Stop,
             contentDescription = "停止任务",
@@ -2119,26 +2166,29 @@ private fun TrailingSendStop(
             SendActionVisual.Sent -> "已发送"
             SendActionVisual.Failed -> "发送失败，可重试"
             SendActionVisual.Blocked -> "当前没有可发送内容"
-            else -> "发送消息"
+            SendActionVisual.Stop -> "停止任务"
+            else -> if (store.isResponding) "排队发送消息" else "发送消息"
         },
-        onClick = onSend,
-        enabled = visual == SendActionVisual.Send,
+        onClick = if (visual == SendActionVisual.Stop) onStop else onSend,
+        enabled = visual == SendActionVisual.Send || visual == SendActionVisual.Stop,
         fillColor = when (visual) {
             SendActionVisual.Send -> WandColors.brand
             SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
             SendActionVisual.Failed -> WandColors.dangerSoft
+            SendActionVisual.Stop -> WandColors.textPrimary
             else -> WandColors.textSecondary.copy(alpha = 0.16f)
         },
         contentTint = when (visual) {
             SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> Color.White
             SendActionVisual.Failed -> WandColors.danger
-            else -> WandColors.textMuted.copy(alpha = 0.45f)
+            SendActionVisual.Stop -> WandColors.surface
+            else -> WandColors.textSecondary
         },
     )
 }
 
 /**
- * 提交按钮：箭头 / 转圈 / 对勾 / 叉 / 停止五种形态在同一个 32dp 圆里交叉淡入 + 缩放。
+ * 提交按钮：箭头 / 转圈 / 对勾 / 叉 / 停止在固定圆形底内交叉淡入 + 缩放。
  * 按钮本身不移动、不变大（规则 3「全程在同一位置完成」+ 规则 4「同构变形」）。
  */
 @Composable
@@ -2199,6 +2249,34 @@ internal fun SubmitMorphButton(
 }
 
 /** 控制行通用胶囊徽标：图标 + 文字 + 弱色底 + 下拉箭头。 */
+/** item 尾部（活动段摘要行）当前相对视口起点的像素位置。 */
+private fun LazyListState.itemTailOffset(key: String): Int? =
+    layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.let { it.offset + it.size }
+
+/**
+ * 保持 [key] 这个列表 item 尾部（活动段摘要行）停在 [target] 处。
+ *
+ * 向上展开的工具时间线让 item 高度逐帧变化；这里每帧补偿「读数偏差 + 上一帧的高度增量」：
+ * 只补读数偏差会让摘要行永远落后一帧的高度（读数本身就滞后一帧），补偿量自身携带着增量信息。
+ * 跑满 [maxFrames] 的短窗口即结束（覆盖 240ms 的进入动画，高刷屏也够），
+ * 列表底部的 clamp 由 scrollBy 自身处理。
+ */
+private suspend fun LazyListState.keepItemTailAnchor(key: String, target: Int, maxFrames: Int = 48) {
+    var previousTail: Int? = null
+    var lastCompensation = 0
+    repeat(maxFrames) {
+        withFrameNanos { }
+        val info = layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        val tail = info.offset + info.size
+        val previous = previousTail
+        previousTail = tail
+        // 上一帧的高度增量 = 读数变化 + 上一帧实际补偿掉的量。
+        val increment = if (previous == null) 0 else tail - previous + lastCompensation
+        val delta = tail - target + increment
+        lastCompensation = if (delta != 0) scrollBy(delta.toFloat()).toInt() else 0
+    }
+}
+
 @Composable
 internal fun ControlChip(
     icon: ImageVector,
@@ -2210,51 +2288,77 @@ internal fun ControlChip(
     showText: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val visualModifier = if (showText) {
-        Modifier
-            .height(ComposerActionVisualSize)
-            .padding(horizontal = 10.dp)
-    } else {
-        Modifier.size(ComposerActionVisualSize)
-    }
+    val dark = isWandDarkTheme()
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val motionEnabled = !reduceMotionEnabled()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenPress()),
+        label = "controlChipScale",
+    )
+
+    // 精巧全圆角胶囊：半透明通透底色 + 极细柔和微边框
+    val chipBg = WandColors.surface.copy(alpha = if (dark) 0.70f else 0.90f)
+    val chipBorderColor = WandColors.border.copy(alpha = if (dark) 0.50f else 0.65f)
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .widthIn(min = 44.dp)
-            .heightIn(min = 48.dp)
-            .semantics {
+            .heightIn(min = 34.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .semantics(mergeDescendants = true) {
                 this.contentDescription = contentDescription
                 role = Role.Button
             }
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+            .clip(CircleShape)
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                interactionSource = interaction,
+                indication = ripple(bounded = true),
+                onClick = onClick,
+            ),
     ) {
+        val rowModifier = if (showText && text.isNotBlank()) {
+            Modifier
+                .height(28.dp)
+                .clip(CircleShape)
+                .background(chipBg)
+                .border(0.75.dp, chipBorderColor, CircleShape)
+                .padding(horizontal = 8.dp)
+        } else {
+            Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(chipBg)
+                .border(0.75.dp, chipBorderColor, CircleShape)
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (showText) Arrangement.spacedBy(4.dp) else Arrangement.Center,
-            modifier = visualModifier,
+            horizontalArrangement = Arrangement.Center,
+            modifier = rowModifier,
         ) {
             Icon(
                 icon,
                 contentDescription = null,
                 tint = tint,
-                modifier = Modifier.size(ComposerActionIconSize),
+                modifier = Modifier.size(13.dp),
             )
-            if (showText) {
+            if (showText && text.isNotBlank()) {
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text,
-                    fontSize = 12.sp,
+                    text = text,
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp,
                     fontWeight = FontWeight.Medium,
                     color = tint,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    // 取可用宽度但允许收缩：空间紧张时省略号缩列，而非撑出固定 130dp 把按钮挤掉。
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Icon(
-                    WandIcons.expand,
-                    contentDescription = null,
-                    tint = tint.copy(alpha = 0.7f),
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.widthIn(max = 140.dp),
                 )
             }
         }
@@ -2331,10 +2435,13 @@ internal fun ComposerChoiceSheet(
     searchPlaceholder: String = "搜索模型",
 ) {
     var query by remember { mutableStateOf("") }
-    val visibleOptions = if (searchable) {
-        options.filter { matchesModelSearch(query, it.first, it.second) }
-    } else {
-        options
+    val visibleOptions = remember(options, selected, query) {
+        val filtered = if (searchable && query.isNotBlank()) {
+            options.filter { matchesModelSearch(query, it.first, it.second) }
+        } else {
+            options
+        }
+        prioritizeSelectedItem(filtered, selected) { it.first }
     }
     WandBottomSheet(
         onDismissRequest = onDismiss,
@@ -2388,9 +2495,9 @@ internal fun ComposerChoiceSheet(
     }
 }
 
-/** 执行模式徽标 + 下拉菜单（中途切换 managed/full-access/...）。codex 锁 full-access。 */
+/** 执行模式徽标（纯 Logo 极简显示；点开查看与切换）。codex 锁 full-access。 */
 @Composable
-private fun ModeChip(store: ChatStore, compact: Boolean = false) {
+private fun ModeChip(store: ChatStore, modifier: Modifier = Modifier) {
     val provider = store.snapshot?.provider
     val isCodex = provider == "codex"
     val supportedModeIds = supportedSessionModeIds(provider)
@@ -2398,24 +2505,24 @@ private fun ModeChip(store: ChatStore, compact: Boolean = false) {
     // 高权限模式（托管 / 全权限）用橙色提示，其余用次要色。
     val tint = if (store.mode == "full-access" || store.mode == "managed")
         WandColors.warning else WandColors.textSecondary
-    Box {
+    Box(modifier = modifier) {
         ControlChip(
             icon = WandIcons.permission,
-            text = sessionModeLabel(store.mode),
+            text = "",
             tint = tint,
             contentDescription = buildString {
-                append("执行模式：${sessionModeLabel(store.mode)}")
+                append("当前执行模式：${sessionModeLabel(store.mode)}")
                 if (isCodex) append("，Codex 会话固定")
             },
             enabled = !isCodex,
-            showText = !compact,
+            showText = false,
         ) { open = true }
         if (open) {
             ComposerChoiceSheet(
                 title = "执行模式",
                 options = SESSION_MODE_OPTIONS
                     .filter { it.id in supportedModeIds }
-                    .map { it.id to it.label },
+                    .map { it.id to "${it.label} · ${it.description}" },
                 selected = store.mode,
                 onSelect = { id ->
                     store.chooseMode(id)
@@ -2427,67 +2534,162 @@ private fun ModeChip(store: ChatStore, compact: Boolean = false) {
     }
 }
 
-/** 模型和思考深度分别打开，避免调整深度前必须滑过整个模型目录。 */
+/** 模型与思考深度合体弹层：上方思考深度横向快捷切换，下方模型搜索与列表。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModelChip(store: ChatStore, modifier: Modifier = Modifier, compact: Boolean = false) {
-    var open by remember { mutableStateOf(false) }
-    Box(modifier = modifier) {
-        ControlChip(
-            icon = WandIcons.tune,
-            text = shortModelLabel(store),
-            tint = WandColors.brand,
-            contentDescription = "模型：${modelDisplayLabel(store, store.selectedModel)}",
-            showText = !compact,
-            modifier = Modifier.fillMaxWidth(),
-        ) { open = true }
-        if (open) {
-            ComposerChoiceSheet(
-                title = "模型",
-                options = buildList {
-                    add("default" to "默认 · ${modelDisplayLabel(store, null)}")
-                    store.availableModels.filter { it.id != "default" }.forEach { model ->
-                        add(model.id to model.label)
+internal fun ModelThinkingChoiceSheet(
+    store: ChatStore,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val thinkingOptions = remember(store.snapshot?.provider, store.selectedModel, store.thinkingEffort) {
+        thinkingLevels(store)
+    }
+    val selectedModelId = store.selectedModel?.takeUnless { it == "default" } ?: "default"
+    val modelOptions = remember(store.availableModels, store.selectedModel, selectedModelId) {
+        val base = buildList {
+            add("default" to "默认 · ${modelDisplayLabel(store, null)}")
+            store.availableModels.filter { it.id != "default" }.forEach { model ->
+                add(model.id to model.label)
+            }
+        }
+        prioritizeSelectedItem(base, selectedModelId) { it.first }
+    }
+    val visibleModels = remember(modelOptions, query, selectedModelId) {
+        if (query.isNotBlank()) {
+            val matches = modelOptions.filter { matchesModelSearch(query, it.first, it.second) }
+            prioritizeSelectedItem(matches, selectedModelId) { it.first }
+        } else {
+            modelOptions
+        }
+    }
+
+    WandBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        NoOverscroll {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 640.dp)
+                    .imePadding()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
+            ) {
+                // 顶部：思考深度分段快捷切换
+                Text(
+                    "思考深度",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textSecondary,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    thinkingOptions.forEach { option ->
+                        val isSelected = option.id == store.thinkingEffort
+                        val chipBg = if (isSelected) WandColors.brandSoft else WandColors.surface
+                        val chipBorder = if (isSelected) WandColors.brand else WandColors.border.copy(alpha = 0.6f)
+                        val chipTint = if (isSelected) WandColors.brand else WandColors.textSecondary
+                        Box(
+                            modifier = Modifier
+                                .clip(WandShapes.full)
+                                .background(chipBg)
+                                .border(0.8.dp, chipBorder, WandShapes.full)
+                                .clickable {
+                                    store.chooseThinkingEffort(option.id)
+                                }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                option.menuLabel,
+                                fontSize = 12.5.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = chipTint,
+                            )
+                        }
                     }
-                },
-                selected = store.selectedModel?.takeUnless { it == "default" } ?: "default",
-                searchable = true,
-                onSelect = { id ->
-                    store.setModel(id.takeUnless { it == "default" })
-                    open = false
-                },
-                onDismiss = { open = false },
-            )
+                }
+
+                HorizontalDivider(
+                    color = WandColors.border.copy(alpha = 0.45f),
+                    thickness = 0.6.dp,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                )
+
+                // 中间：模型搜索
+                Text(
+                    "模型",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WandColors.textSecondary,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                WandTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "搜索模型",
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            WandIcons.search,
+                            contentDescription = null,
+                            tint = WandColors.textMuted,
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                )
+
+                // 下部：模型列表
+                ChoiceOptionsList(
+                    options = visibleModels,
+                    selected = selectedModelId,
+                    accent = WandColors.brand,
+                    accentSoft = WandColors.brandSoft,
+                    emptyLabel = "没有匹配的模型",
+                    onSelect = { id ->
+                        store.setModel(id.takeUnless { it == "default" })
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
         }
     }
 }
 
+/** 模型与思考深度合体徽标：Logo +「模型名 · 思考程度」。 */
 @Composable
-private fun ThinkingChip(store: ChatStore, compact: Boolean = false) {
+private fun ModelThinkingChip(store: ChatStore, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
-    val tint = when (store.thinkingEffort) {
+    val thinkingTint = when (store.thinkingEffort) {
         "standard" -> WandColors.success
         "deep" -> WandColors.warning
         "max" -> WandColors.danger
         else -> WandColors.brand
     }
-    Box(modifier = Modifier.width(if (compact) 44.dp else 80.dp)) {
+    val labelText = "${shortModelLabel(store)} · ${thinkingLabel(store, store.thinkingEffort)}"
+    Box(modifier = modifier) {
         ControlChip(
-            icon = WandIcons.thinking,
-            text = thinkingLabel(store, store.thinkingEffort),
-            tint = tint,
-            contentDescription = "思考深度：${thinkingLabel(store, store.thinkingEffort)}",
-            showText = !compact,
-            modifier = Modifier.fillMaxWidth(),
+            icon = WandIcons.sparkle,
+            text = labelText,
+            tint = thinkingTint,
+            contentDescription = "模型与思考深度：模型 ${modelDisplayLabel(store, store.selectedModel)}，思考深度 ${thinkingLabel(store, store.thinkingEffort)}",
+            showText = true,
         ) { open = true }
         if (open) {
-            ComposerChoiceSheet(
-                title = "思考深度",
-                options = thinkingLevels(store).map { it.id to it.menuLabel },
-                selected = store.thinkingEffort,
-                onSelect = { id ->
-                    store.chooseThinkingEffort(id)
-                    open = false
-                },
+            ModelThinkingChoiceSheet(
+                store = store,
                 onDismiss = { open = false },
             )
         }
@@ -2505,35 +2707,39 @@ internal fun ComposerActionsMenu(
     attachOpen: Boolean,
     onAttachOpenChange: (Boolean) -> Unit,
 ) {
-    if (uploading) {
-        // 上传中：按钮原地变成转圈，位置和尺寸都不变（规则 3）。
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(ComposerActionTouchSize)
-                .semantics {
-                    contentDescription = "正在上传附件"
-                    role = Role.Button
-                },
-        ) {
-            CircularProgressIndicator(
-                color = WandColors.textSecondary,
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(ComposerActionIconSize),
-            )
-        }
-        return
-    }
-    // ＋ ⇄ ✕ 同构变形：同一个按钮，展开时转成关闭（规则 4）。
-    WandMorphIconButton(
-        expanded = attachOpen,
-        collapsedIcon = WandIcons.add,
-        expandedIcon = WandIcons.close,
-        contentDescription = if (attachOpen) "收起添加附件" else "添加附件",
-        onClick = { onAttachOpenChange(!attachOpen) },
-        touchSize = ComposerActionTouchSize,
-        iconSize = ComposerActionIconSize,
+    val attachProgress by animateFloatAsState(
+        targetValue = if (attachOpen) 1f else 0f,
+        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.morph()),
+        label = "composerAttachMorph",
     )
+    FilledComposerAction(
+        enabled = !uploading,
+        fillColor = if (attachOpen) WandColors.brandSoft else WandColors.surface,
+        contentDescription = when {
+            uploading -> "正在上传附件"
+            attachOpen -> "收起添加附件"
+            else -> "添加照片或文件"
+        },
+        onClick = { onAttachOpenChange(!attachOpen) },
+    ) {
+        WandInPlaceSwap(contentKey = uploading, modifier = Modifier.size(ComposerActionIconSize)) { busy ->
+            if (busy as Boolean) {
+                CircularProgressIndicator(
+                    color = WandColors.brand,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(ComposerActionIconSize),
+                )
+            } else {
+                WandMorphingIcon(
+                    progress = attachProgress,
+                    from = WandIcons.add,
+                    to = WandIcons.close,
+                    tint = if (attachOpen) WandColors.brand else WandColors.textPrimary,
+                    modifier = Modifier.size(ComposerActionIconSize),
+                )
+            }
+        }
+    }
 }
 
 // MARK: - 按住说话（端侧语音识别）
@@ -2602,6 +2808,11 @@ internal fun VoiceMicButton(
 ) {
     val currentOnToggle by rememberUpdatedState(onToggleMode)
     val currentOnMicDown by rememberUpdatedState(onMicDown)
+    val micProgress by animateFloatAsState(
+        targetValue = if (voiceMode && !voice.pressed) 1f else 0f,
+        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.morph()),
+        label = "composerMicMorph",
+    )
     val iconTint = when {
         voice.pressed && voice.canceling -> WandColors.danger
         voice.pressed -> WandColors.brand
@@ -2609,7 +2820,7 @@ internal fun VoiceMicButton(
     }
     val scale by animateFloatAsState(
         if (voice.pressed) 1.1f else 1f,
-        WandMotion.tweenFast(),
+        WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenPress()),
         label = "micScale",
     )
     Box(
@@ -2619,9 +2830,9 @@ internal fun VoiceMicButton(
             .clip(CircleShape)
             .semantics {
                 role = Role.Button
-                contentDescription = if (voiceMode) "切回键盘输入" else "语音输入"
-                stateDescription = if (voice.pressed) "正在录音" else if (voiceMode) "语音模式" else "键盘模式"
-                onClick(label = if (voiceMode) "切回键盘" else "切换到语音模式") {
+                contentDescription = if (voiceMode) "切回键盘输入" else "长按说话，松开完成，上滑取消"
+                stateDescription = if (voice.pressed) "正在录音" else "长按录音"
+                onClick(label = "聚焦文字输入") {
                     currentOnToggle()
                     true
                 }
@@ -2638,14 +2849,17 @@ internal fun VoiceMicButton(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(ComposerActionVisualSize)
+                .clip(CircleShape)
+                .background(if (voice.pressed) WandColors.brandSoft else WandColors.surface)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                 },
         ) {
-            Icon(
-                if (voiceMode && !voice.pressed) WandIcons.keyboard else WandIcons.mic,
-                contentDescription = null,
+            WandMorphingIcon(
+                progress = micProgress,
+                from = WandIcons.mic,
+                to = WandIcons.keyboard,
                 tint = iconTint,
                 modifier = Modifier.size(ComposerActionIconSize),
             )

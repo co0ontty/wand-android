@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -74,6 +76,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -261,7 +265,9 @@ fun WandInPlaceSwap(
                 ExitTransition.None
             }
             // togetherWith 的顺序是「进场内容 → 退场内容」，写反了会看到两层内容对调错位。
-            enter togetherWith exit
+            (enter togetherWith exit).using(
+                if (motionEnabled) SizeTransform { _, _ -> WandMotion.tweenNormal() } else null,
+            )
         },
         label = "inPlaceSwap",
     ) { key ->
@@ -314,7 +320,7 @@ fun WandStatusIconSlot(
             .clip(RoundedCornerShape(cornerRadius))
             .background(container),
     ) {
-        if (motionEnabled) {
+        if (motionEnabled && indicatorAlpha > 0f) {
             CircularProgressIndicator(
                 color = indicatorColor,
                 strokeWidth = 2.dp,
@@ -327,7 +333,7 @@ fun WandStatusIconSlot(
                         scaleY = 1f - 0.22f * p
                     },
             )
-        } else {
+        } else if (!motionEnabled) {
             // 关闭动画的设备上不旋转：静态刷新图标 + 状态色（旋转属于动效）。
             Icon(
                 WandIcons.refresh,
@@ -356,6 +362,27 @@ fun WandStatusIconSlot(
 }
 
 // MARK: - 标签指示条
+
+/**
+ * 形状自己的圆角像素值（取不到就回落 [fallbackPx]）。
+ *
+ * 用 [Shape.createOutline] 取而不是按类型强转：调用方给什么形状，指示条就跟着它圆。
+ * 整圆端形状（胶囊）会返回一个远大于实际高度的值，绘制时再按行高收成半个高。
+ */
+internal fun indicatorShapeRadiusPx(
+    shape: Shape,
+    density: Density,
+    fallbackPx: Float,
+): Float {
+    // 量一个好的尺寸就够：圆角半径与尺寸无关，只有「整圆端」才需要按实际高度收，
+    // 那一步在绘制时按真实行高做（见 WandSegmentedTrack 的 drawBehind）。
+    val probe = Size(1_000f, 1_000f)
+    return when (val outline = shape.createOutline(probe, LayoutDirection.Ltr, density)) {
+        is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+        is Outline.Rectangle -> 0f
+        else -> fallbackPx
+    }
+}
 
 /**
  * 均匀分段的下标 → 指示条 [左边缘, 右边缘] 的比例（0..1）。
@@ -416,7 +443,15 @@ fun WandSegmentedTrack(
         label = "indicatorRight",
     )
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val cornerPx = with(density) { 10.dp.toPx() }
+    // 指示条圆角跟着 [indicatorShape] 走：以前这里写死 10dp，
+    // 容器用整圆端（胶囊）时内层弧度就会小于外层，两层对不上。
+    val shapeCornerPx = remember(indicatorShape, density) {
+        indicatorShapeRadiusPx(
+            shape = indicatorShape,
+            density = density,
+            fallbackPx = with(density) { 10.dp.toPx() },
+        )
+    }
     val strokePx = with(density) { 0.8.dp.toPx() }
     Box(
         modifier = modifier
@@ -436,6 +471,9 @@ fun WandSegmentedTrack(
                     val indicatorLeft = size.width * left
                     val indicatorWidth = (size.width * (right - left)).coerceAtLeast(0f)
                     if (indicatorWidth <= 0f) return@drawBehind
+                    // 整圆端形状按这一行的高度收成半个高：外层半径 − 容器边距 = 内层半径，
+                    // 「胶囊 + 内嵌胶囊」才是同一条弧度（同心）。
+                    val cornerPx = shapeCornerPx.coerceAtMost(size.height / 2f)
                     drawRoundRect(
                         color = indicatorColor,
                         topLeft = Offset(indicatorLeft, 0f),
@@ -475,8 +513,8 @@ fun WandInlineSearchField(
     placeholder: String,
     modifier: Modifier = Modifier,
     autoFocus: Boolean = true,
+    focusRequester: FocusRequester = remember { FocusRequester() },
 ) {
-    val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val motionEnabled = !reduceMotionEnabled()

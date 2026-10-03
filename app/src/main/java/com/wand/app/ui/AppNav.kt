@@ -34,9 +34,11 @@ sealed class Screen {
         val taskId: String? = null,
     ) : Screen()
     data object Settings : Screen()
-    /** AI 团队页：团队定义列表 + 新建入口（编辑器见 [AiTeamEditor]）。 */
-    data object AiTeams : Screen()
-    data object SiliconEmployees : Screen()
+    /**
+     * 通讯录：员工与团队名称目录。点头像改资料，点名字开新对话。
+     * initialTab 只为兼容合并前的分段键，页内不再切换分段。
+     */
+    data class Contacts(val initialTab: ContactsTab = ContactsTab.Employees) : Screen()
     data class SiliconEmployeeEditor(val employeeId: String? = null) : Screen()
     /** 团队详情：成员组织图 + 「直接开工」表单（§6.2 A2/A3）。 */
     data class AiTeamDetail(val teamId: String) : Screen()
@@ -67,6 +69,17 @@ sealed class Screen {
         val workspaceName: String,
         val taskName: String,
     ) : Screen()
+}
+
+/** 通讯录的两个分段：员工（个人）与群聊（团队）。 */
+enum class ContactsTab(val storageValue: String) {
+    Employees("employees"),
+    Chats("chats");
+
+    companion object {
+        fun fromStorage(value: String?): ContactsTab =
+            entries.firstOrNull { it.storageValue == value } ?: Employees
+    }
 }
 
 /** Chat / PTY 首帧很重，手机栈用交叉淡入淡出，避免和滑动转场抢同一帧。 */
@@ -222,6 +235,8 @@ class NavState {
         private const val MISSIONS_KEY = "missions"
         private const val TASK_BOARD_KEY = "task-board"
         private const val SETTINGS_KEY = "settings"
+        private const val CONTACTS_KEY = "contacts"
+        /** 合并前的两个页面键：老栈恢复时落到通讯录对应分段，不变成空页。 */
         private const val AI_TEAMS_KEY = "ai-teams"
         private const val SILICON_EMPLOYEES_KEY = "silicon-employees"
         private const val SILICON_EMPLOYEE_EDITOR_KEY = "silicon-employee-editor"
@@ -262,8 +277,7 @@ class NavState {
                 TASK_BOARD_KEY + FIELD_SEP + workspaceId.orEmpty() + FIELD_SEP + taskId.orEmpty()
             }
             Screen.Settings -> SETTINGS_KEY
-            Screen.AiTeams -> AI_TEAMS_KEY
-            Screen.SiliconEmployees -> SILICON_EMPLOYEES_KEY
+            is Screen.Contacts -> CONTACTS_KEY + FIELD_SEP + initialTab.storageValue
             is Screen.SiliconEmployeeEditor -> SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP + employeeId.orEmpty()
             is Screen.AiTeamDetail -> AI_TEAM_DETAIL_KEY + FIELD_SEP + teamId
             is Screen.AiTeamEditor ->
@@ -310,8 +324,11 @@ class NavState {
                 )
             }
             this == SETTINGS_KEY -> Screen.Settings
-            this == AI_TEAMS_KEY -> Screen.AiTeams
-            this == SILICON_EMPLOYEES_KEY -> Screen.SiliconEmployees
+            startsWith(CONTACTS_KEY + FIELD_SEP) ->
+                Screen.Contacts(ContactsTab.fromStorage(removePrefix(CONTACTS_KEY + FIELD_SEP)))
+            this == CONTACTS_KEY -> Screen.Contacts()
+            this == AI_TEAMS_KEY -> Screen.Contacts(ContactsTab.Chats)
+            this == SILICON_EMPLOYEES_KEY -> Screen.Contacts(ContactsTab.Employees)
             startsWith(SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP) ->
                 Screen.SiliconEmployeeEditor(removePrefix(SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP)
                     .takeIf(String::isNotBlank))

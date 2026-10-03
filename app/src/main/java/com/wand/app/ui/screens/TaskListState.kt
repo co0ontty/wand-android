@@ -55,15 +55,32 @@ class TaskListState(
     var newTaskRequest by mutableLongStateOf(0L)
         private set
 
-    private val directoryExpansion = mutableStateMapOf<String, Boolean>().apply {
-        expansionStore.collapsedIds(TASK_LIST_EXPANSION_DIRS).forEach { put(it, false) }
+    /** 首页「最近对话」那一区的折叠档位（员工/团队/终端分组）。 */
+    var recentFold by mutableStateOf(expansionStore.sectionFold(FOLD_SECTION_RECENT))
+        private set
+
+    /** 首页「任务与工作区」那一区的折叠档位（工作区 → 任务 → 终端）。 */
+    var workspaceFold by mutableStateOf(expansionStore.sectionFold(FOLD_SECTION_WORKSPACE))
+        private set
+
+    /** 仅本次浏览有效的分组展开，不写入全局档位或持久化存储。 */
+    private val temporaryExpandedGroups = mutableStateMapOf<Pair<String, String>, Boolean>()
+    val hasTemporaryExpansion: Boolean get() = temporaryExpandedGroups.isNotEmpty()
+
+    fun groupFold(section: String, groupId: String): HomeFoldMode =
+        if (temporaryExpandedGroups[section to groupId] == true) HomeFoldMode.Expand
+        else sectionFold(section)
+
+    fun toggleTemporaryExpansion(section: String, groupId: String) {
+        if (sectionFold(section) == HomeFoldMode.Expand) return
+        val key = section to groupId
+        if (temporaryExpandedGroups.remove(key) == null) temporaryExpandedGroups[key] = true
     }
-    private val taskExpansion = mutableStateMapOf<String, Boolean>().apply {
-        expansionStore.collapsedIds(TASK_LIST_EXPANSION_TASKS).forEach { put(it, false) }
+
+    fun clearTemporaryExpansions() {
+        temporaryExpandedGroups.clear()
     }
-    private val standaloneExpansion = mutableStateMapOf<String, Boolean>().apply {
-        expansionStore.collapsedIds(TASK_LIST_EXPANSION_LOOSE).forEach { put(it, false) }
-    }
+
     private val loadMutex = Mutex()
     private val mutationMutex = Mutex()
     private val orderSaveMutex = Mutex()
@@ -103,66 +120,24 @@ class TaskListState(
         return true
     }
 
-    fun isDirectoryCollapsed(groupId: String): Boolean = directoryExpansion[groupId] == false
-
-    fun toggleDirectory(groupId: String) {
-        directoryExpansion[groupId] = isDirectoryCollapsed(groupId)
-        persistDirectoryExpansion()
+    /** 某一区的折叠档位。区内每一层都跟随它 —— 控制只在小节表头那一行上。 */
+    fun sectionFold(section: String): HomeFoldMode = when (section) {
+        FOLD_SECTION_RECENT -> recentFold
+        else -> workspaceFold
     }
 
-    fun isTaskCollapsed(taskId: String): Boolean = taskExpansion[taskId] == false
-
-    fun toggleTask(taskId: String) {
-        taskExpansion[taskId] = isTaskCollapsed(taskId)
-        persistTaskExpansion()
-    }
-
-    fun isStandaloneCollapsed(groupId: String): Boolean = standaloneExpansion[groupId] == false
-
-    fun toggleStandalone(groupId: String) {
-        standaloneExpansion[groupId] = isStandaloneCollapsed(groupId)
-        persistStandaloneExpansion()
-    }
-
-    /** Keep the selected branch visible after returning from a task or session detail. */
-    fun expandPathToSelection(taskId: String?, sessionId: String?) {
-        if (taskId == null && sessionId == null) return
-        groups.forEach { group ->
-            val selectedTask = group.tasks.firstOrNull { task ->
-                task.id == taskId || task.sessions.any { it.id == sessionId }
-            }
-            if (selectedTask != null) {
-                directoryExpansion[group.id] = true
-                taskExpansion[selectedTask.id] = true
-            } else if (group.standaloneSessions.any { it.id == sessionId }) {
-                directoryExpansion[group.id] = true
-                standaloneExpansion[group.id] = true
-            }
+    /** 改某一区：档位按服务端持久化，区内所有层一起变。 */
+    fun selectSectionFold(section: String, mode: HomeFoldMode) {
+        temporaryExpandedGroups.keys.filter { it.first == section }.forEach {
+            temporaryExpandedGroups.remove(it)
         }
-        persistDirectoryExpansion()
-        persistTaskExpansion()
-        persistStandaloneExpansion()
-    }
-
-    private fun persistDirectoryExpansion() {
-        expansionStore.setCollapsedIds(
-            TASK_LIST_EXPANSION_DIRS,
-            directoryExpansion.filterValues { !it }.keys,
-        )
-    }
-
-    private fun persistTaskExpansion() {
-        expansionStore.setCollapsedIds(
-            TASK_LIST_EXPANSION_TASKS,
-            taskExpansion.filterValues { !it }.keys,
-        )
-    }
-
-    private fun persistStandaloneExpansion() {
-        expansionStore.setCollapsedIds(
-            TASK_LIST_EXPANSION_LOOSE,
-            standaloneExpansion.filterValues { !it }.keys,
-        )
+        if (sectionFold(section) == mode) return
+        if (section == FOLD_SECTION_RECENT) {
+            recentFold = mode
+        } else {
+            workspaceFold = mode
+        }
+        expansionStore.setSectionFold(section, mode)
     }
 
     suspend fun load(silent: Boolean = false): Boolean = loadMutex.withLock {
@@ -388,16 +363,18 @@ class TaskListState(
         deleted
     }
 
-    /** 长按时先把被拖的工作区收成标题行；落点后保持收起，点标题仍可重新展开。 */
+    /**
+     * 长按时先把被拖的工作区收成标题行；落点后保持收起。
+     * 收放只有小节表头那一个入口，所以这里改的是整个「任务与工作区」那一区。
+     */
     fun startDirectoryReorder(draggedId: String) {
         dragStartOrder = groupIdsInOrder(groups)
         dragPreviousPendingOrder = pendingGroupOrder
         val dragged = groups.firstOrNull { it.id == draggedId }
         if (dragged != null && (dragged.tasks.isNotEmpty() || dragged.standaloneSessions.isNotEmpty()) &&
-            !isDirectoryCollapsed(draggedId)
+            workspaceFold.expanded
         ) {
-            directoryExpansion[draggedId] = false
-            persistDirectoryExpansion()
+            selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Collapse)
         }
     }
 

@@ -189,7 +189,7 @@ fun WorkspaceTaskScreen(
     }
 
     deleteSessionTarget?.let { session ->
-        val label = listSessionLabel(session.withLiveTitle(), 0, listOf(taskName, workspaceName))
+        val label = listSessionLabel(session.withLiveTitle(), 0)
         WandDialog(
             title = "删除终端？",
             onDismissRequest = { if (!deleteSessionBusy) { deleteSessionTarget = null; deleteSessionError = null } },
@@ -537,11 +537,6 @@ private fun TaskSessionList(
                     session = session,
                     index = state.orderedSessions.indexOf(session),
                     isSelected = session.id == state.selectedSessionId,
-                    parentNames = listOfNotNull(
-                        state.detail.name.takeIf { it.isNotBlank() },
-                        state.detail.cwd.replace('\\', '/').trimEnd('/').substringAfterLast('/')
-                            .takeIf { it.isNotEmpty() },
-                    ),
                     onClick = { onSelectSession(session) },
                     onDelete = { onDeleteSession(session) },
                     onMove = { onMoveSession(session) },
@@ -565,7 +560,6 @@ private fun SessionSummaryRow(
     session: WorkspaceSessionSummary,
     index: Int,
     isSelected: Boolean,
-    parentNames: Collection<String> = emptyList(),
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onMove: () -> Unit,
@@ -575,7 +569,7 @@ private fun SessionSummaryRow(
     val icon = BrandLogos.painterForProvider(provider)
     val accent = if (provider == "codex") WandColors.info else WandColors.brand
     val iconTint = BrandLogos.tintForProvider(provider, accent)
-    val label = listSessionLabel(session.withLiveTitle(), index, parentNames)
+    val label = listSessionLabel(session.withLiveTitle(), index)
     Row(
         modifier = modifier
             .fillMaxWidth()

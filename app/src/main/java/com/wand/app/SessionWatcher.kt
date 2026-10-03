@@ -189,6 +189,8 @@ object SessionWatcher {
                         generating = snap.titleGenerating,
                         ptyBusy = snap.ptyBusy,
                         permissionBlocked = snap.hasPendingPermission,
+                        completionRevision = snap.completionRevision,
+                        viewedCompletionRevision = snap.viewedCompletionRevision,
                     )
                     snap.status?.let { w.status = it }
                     w.archived = snap.archived ?: false
@@ -286,12 +288,16 @@ object SessionWatcher {
         changes.archived?.let { w.archived = it }
         changes.title?.takeIf { it.isNotEmpty() }?.let { w.label = it }
             ?: changes.summary?.takeIf { it.isNotEmpty() }?.let { w.label = it }
-        if (changes.title != null || changes.titleGenerating != null || changes.ptyBusy != null) {
+        if (changes.title != null || changes.titleGenerating != null || changes.ptyBusy != null
+            || changes.completionRevision != null || changes.viewedCompletionRevision != null
+        ) {
             SessionTitleStore.apply(
                 sid,
                 title = changes.title,
                 generating = changes.titleGenerating,
                 ptyBusy = changes.ptyBusy,
+                completionRevision = changes.completionRevision,
+                viewedCompletionRevision = changes.viewedCompletionRevision,
             )
         }
         changes.permissionBlocked?.let {

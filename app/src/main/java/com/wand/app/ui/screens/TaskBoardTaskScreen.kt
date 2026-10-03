@@ -12,6 +12,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.repeatOnLifecycle
+import com.wand.app.data.AiTeamDetailRequestGuard
+import com.wand.app.data.mergeAiTeamRunDetail
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BoardTask
@@ -59,6 +62,7 @@ fun TaskBoardTaskScreen(
     api: TaskBoardPort,
     workspaceApi: WorkspacePort,
     taskId: String,
+    baseUrl: String = "",
     showBack: Boolean = true,
     onBack: () -> Unit,
     /**
@@ -79,6 +83,11 @@ fun TaskBoardTaskScreen(
     var teams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
     var employees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
     var teamRun by remember(taskId) { mutableStateOf<AiTeamRunDetail?>(null) }
+    val teamRequests = remember(taskId, api) { AiTeamDetailRequestGuard() }
+    val teamActionRequests = remember(taskId, api) { AiTeamDetailRequestGuard() }
+    DisposableEffect(teamRequests, teamActionRequests) {
+        onDispose { teamRequests.invalidate(); teamActionRequests.invalidate() }
+    }
     var lastAgent by remember { mutableStateOf(BoardTaskAgent.default()) }
     var loading by remember(taskId) { mutableStateOf(true) }
     var error by remember(taskId) { mutableStateOf<String?>(null) }
@@ -101,11 +110,13 @@ fun TaskBoardTaskScreen(
      * 只有「确实没有 run」才清空，否则瞬时网络抖动会让运行卡 6s 闪烁消失。
      */
     suspend fun refreshTeamRun() {
+        val ticket = teamRequests.begin()
         val runs = runCatching { api.teamRunsForTask(taskId) }.getOrNull() ?: return
-        val latest = runs.firstOrNull() ?: run { teamRun = null; return }
-        // 同一轮直接覆盖；换轮了但 detail 拉不下来时保留旧的，下一轮刷新再切。
+        if (!teamRequests.accepts(ticket)) return
+        val latest = runs.firstOrNull { it.taskId == taskId } ?: run { teamRun = null; return }
         val detail = runCatching { api.aiTeamRunDetail(latest.id) }.getOrNull() ?: return
-        teamRun = detail
+        if (!teamRequests.accepts(ticket) || detail.run.taskId != taskId) return
+        teamRun = mergeAiTeamRunDetail(teamRun, detail, latest.id)
     }
 
     suspend fun refresh(showProgress: Boolean = false) {
@@ -196,13 +207,16 @@ fun TaskBoardTaskScreen(
         val runId = teamRun?.run?.id ?: return
         if (busy) return
         busy = true
+        val ticket = teamActionRequests.begin()
         scope.launch {
             try {
-                teamRun = api.actOnTeamRun(runId, action)
+                val received = api.actOnTeamRun(runId, action)
+                if (!teamActionRequests.accepts(ticket) || teamRun?.run?.id != runId || received.run.taskId != taskId) return@launch
+                teamRun = mergeAiTeamRunDetail(teamRun, received, runId)
                 error = null
                 onTaskChanged()
             } catch (e: Exception) {
-                error = e.message ?: "团队操作失败"
+                if (teamActionRequests.accepts(ticket)) error = e.message ?: "团队操作失败"
             } finally {
                 busy = false
             }
@@ -281,6 +295,7 @@ fun TaskBoardTaskScreen(
                     )
                 }
                 else -> TaskBoardDetailPane(
+                    baseUrl = baseUrl,
                     task = current,
                     workspaces = workspaces,
                     models = models,

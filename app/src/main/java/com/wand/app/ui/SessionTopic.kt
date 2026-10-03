@@ -4,6 +4,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.SessionCompletion
 
 const val SESSION_TITLE_MAX_LENGTH = 24
 const val SESSION_DESCRIPTION_MAX_LENGTH = 120
@@ -35,6 +36,7 @@ object SessionTitleStore {
     private val generating = mutableStateMapOf<String, Boolean>()
     private val ptyBusy = mutableStateMapOf<String, Boolean>()
     private val permissionBlocked = mutableStateMapOf<String, Boolean>()
+    private val completions = mutableStateMapOf<String, SessionCompletion>()
 
     fun titleOf(id: String): String? = titles[id]?.takeIf { it.isNotEmpty() }
 
@@ -45,12 +47,16 @@ object SessionTitleStore {
     /** 运行期覆盖：true 表示这个会话正卡在权限/等待输入上，需要用户处理。 */
     fun permissionBlockedOf(id: String): Boolean? = permissionBlocked[id]
 
+    fun completionOf(id: String): SessionCompletion? = completions[id]
+
     fun apply(
         id: String,
         title: String? = null,
         generating: Boolean? = null,
         ptyBusy: Boolean? = null,
         permissionBlocked: Boolean? = null,
+        completionRevision: Int? = null,
+        viewedCompletionRevision: Int? = null,
     ) {
         if (id.isEmpty()) return
         title?.let { value ->
@@ -60,6 +66,11 @@ object SessionTitleStore {
         if (generating != null) this.generating[id] = generating
         if (ptyBusy != null) this.ptyBusy[id] = ptyBusy
         if (permissionBlocked != null) this.permissionBlocked[id] = permissionBlocked
+        if (completionRevision != null || viewedCompletionRevision != null) {
+            completions[id] = (completions[id] ?: SessionCompletion()).merge(
+                SessionCompletion(completionRevision ?: 0, viewedCompletionRevision ?: 0),
+            )
+        }
     }
 
     fun clear() {
@@ -67,6 +78,7 @@ object SessionTitleStore {
         generating.clear()
         ptyBusy.clear()
         permissionBlocked.clear()
+        completions.clear()
     }
 }
 
@@ -185,8 +197,16 @@ fun WorkspaceSessionSummary.withLiveTitle(): WorkspaceSessionSummary {
     val liveBusy = SessionTitleStore.ptyBusyOf(id)
     val nextTitle = liveTitle ?: title
     val nextBusy = liveBusy ?: ptyBusy
-    if (nextTitle == title && nextBusy == ptyBusy) return this
-    return copy(title = nextTitle, ptyBusy = nextBusy)
+    val completion = SessionCompletion(completionRevision ?: 0, viewedCompletionRevision ?: 0)
+        .merge(SessionTitleStore.completionOf(id) ?: SessionCompletion())
+    if (nextTitle == title && nextBusy == ptyBusy
+        && completion.completionRevision == (completionRevision ?: 0)
+        && completion.viewedCompletionRevision == (viewedCompletionRevision ?: 0)
+    ) return this
+    return copy(title = nextTitle, ptyBusy = nextBusy,
+        completionRevision = completion.completionRevision,
+        viewedCompletionRevision = completion.viewedCompletionRevision,
+    )
 }
 
 private fun collapseWhitespace(value: String): String = value.replace(WHITESPACE_REGEX, " ").trim()

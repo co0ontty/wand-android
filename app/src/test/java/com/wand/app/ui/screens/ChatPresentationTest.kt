@@ -15,26 +15,61 @@ class ChatPresentationTest {
     }
 
     @Test
-    fun userScrollingIntoTopSentinelLoadsOneEarlierPagePerGesture() {
+    fun scrollingToTheTopQuietlyLoadsOneEarlierPage() {
         fun shouldLoad(
-            isUserScroll: Boolean = true,
-            scrollingTowardHistory: Boolean = true,
-            topSentinelVisible: Boolean = true,
             canLoadEarlier: Boolean = true,
-            loadingEarlier: Boolean = false,
-            requestedThisGesture: Boolean = false,
-        ) = shouldAutoLoadEarlierMessages(
-            isUserScroll, scrollingTowardHistory, topSentinelVisible,
-            canLoadEarlier, loadingEarlier, requestedThisGesture,
+            userPulledToTop: Boolean = true,
+            loadedRowCount: Int = 20,
+            measuredRowHeightsPx: List<Int> = List(6) { 900 },
+            viewportHeightPx: Int = 1000,
+        ) = shouldLoadEarlierPage(
+            canLoadEarlier = canLoadEarlier,
+            userPulledToTop = userPulledToTop,
+            loadedRowCount = loadedRowCount,
+            measuredRowHeightsPx = measuredRowHeightsPx,
+            viewportHeightPx = viewportHeightPx,
         )
 
+        // 用户上拉到列表绝对顶部才翻页；还在一条长回复中间（没到顶）不翻。
         assertEquals(true, shouldLoad())
-        assertEquals(false, shouldLoad(isUserScroll = false)) // 初始贴底/惯性滚动
-        assertEquals(false, shouldLoad(scrollingTowardHistory = false))
-        assertEquals(false, shouldLoad(topSentinelVisible = false))
         assertEquals(false, shouldLoad(canLoadEarlier = false))
-        assertEquals(false, shouldLoad(loadingEarlier = true))
-        assertEquals(false, shouldLoad(requestedThisGesture = true))
+        assertEquals(false, shouldLoad(userPulledToTop = false))
+    }
+
+    @Test
+    fun openingASessionFillsTwoScreensWithoutAnyUserScroll() {
+        fun fills(
+            loadedRowCount: Int,
+            measuredRowHeightsPx: List<Int>,
+            viewportHeightPx: Int = 1000,
+        ) = shouldLoadEarlierPage(
+            canLoadEarlier = true,
+            userPulledToTop = false,
+            loadedRowCount = loadedRowCount,
+            measuredRowHeightsPx = measuredRowHeightsPx,
+            viewportHeightPx = viewportHeightPx,
+        )
+
+        // 6 行 × 200px = 1200px < 2 × 1000px：打开会话时静默补上一页。
+        assertEquals(true, fills(loadedRowCount = 6, measuredRowHeightsPx = List(6) { 200 }))
+        // 10 行 × 200px = 两屏：不再往下翻，等用户自己上拉。
+        assertEquals(false, fills(loadedRowCount = 10, measuredRowHeightsPx = List(6) { 200 }))
+        // 还没量到任何行、视口未知时什么都不做。
+        assertEquals(false, fills(loadedRowCount = 6, measuredRowHeightsPx = emptyList()))
+        assertEquals(false, fills(loadedRowCount = 0, measuredRowHeightsPx = List(6) { 200 }))
+        assertEquals(
+            false,
+            fills(loadedRowCount = 6, measuredRowHeightsPx = List(6) { 200 }, viewportHeightPx = 0),
+        )
+    }
+
+    @Test
+    fun earlierAnchorKeepsReadingPositionWhenTheSameItemGrowsFromTheHead() {
+        val anchor = EarlierLoadAnchor("turn-1", scrollOffset = 40, turnOffset = 1, blockOffset = 80, itemSize = 900)
+
+        assertEquals(40, earlierAnchorScrollOffset(anchor, laidOutSize = null))
+        assertEquals(40, earlierAnchorScrollOffset(anchor, laidOutSize = 800))
+        assertEquals(340, earlierAnchorScrollOffset(anchor, laidOutSize = 1200))
     }
 
     @Test
@@ -45,31 +80,6 @@ class ChatPresentationTest {
         assertEquals(false, earlierLoadAdvanced(anchor, turnOffset = 81, blockOffset = 0))
         assertEquals(true, earlierLoadAdvanced(anchor, turnOffset = 80, blockOffset = 10))
         assertEquals(true, earlierLoadAdvanced(anchor, turnOffset = 40, blockOffset = 0))
-    }
-
-    /** 顶部翻页文案只报服务端算好的可见条数；旧服务端不报数字，也不拿块数冒充。 */
-    @Test
-    fun earlierLoadLabelReportsVisibleStepsInsteadOfBlocks() {
-        assertEquals(
-            "加载更早步骤 · 还有 2 条",
-            earlierLoadLabel(loading = false, blockPaging = true, visibleCount = 2),
-        )
-        assertEquals(
-            "加载更早步骤",
-            earlierLoadLabel(loading = false, blockPaging = true, visibleCount = 0),
-        )
-        assertEquals(
-            "加载更早步骤",
-            earlierLoadLabel(loading = false, blockPaging = true, visibleCount = null),
-        )
-        assertEquals(
-            "加载更早消息",
-            earlierLoadLabel(loading = false, blockPaging = false, visibleCount = null),
-        )
-        assertEquals(
-            "正在加载更早内容…",
-            earlierLoadLabel(loading = true, blockPaging = true, visibleCount = 2),
-        )
     }
 
     @Test

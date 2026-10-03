@@ -95,11 +95,13 @@ fun WandDetailBackButton(
     onClick: () -> Unit,
     contentDescription: String = "返回",
     icon: ImageVector = WandIcons.close,
+    enabled: Boolean = true,
 ) {
     ToolbarIconButton(
         icon = icon,
         contentDescription = contentDescription,
         onClick = onClick,
         iconSize = 22.dp,
+        enabled = enabled,
     )
 }

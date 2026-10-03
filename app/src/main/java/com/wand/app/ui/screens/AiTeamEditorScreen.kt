@@ -11,11 +11,15 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -34,6 +38,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,6 +57,8 @@ import com.wand.app.data.AiTeamDraft
 import com.wand.app.data.AiTeamMember
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.ModelsResponse
+import com.wand.app.data.SiliconEmployee
+import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.ui.SEND_SENT_DWELL_MS
 import com.wand.app.ui.components.WandAgentFields
@@ -54,7 +67,6 @@ import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandCrumb
-import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
@@ -62,12 +74,15 @@ import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInlinePanel
+import com.wand.app.ui.components.WandInPlaceSwap
+import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** 保存按钮的三段原位反馈：加载 → 完成 → 结果，位置与尺寸不变（动效硬要求 3）。 */
@@ -80,8 +95,8 @@ private enum class TeamSavePhase { Idle, Saving, Saved, Failed }
  * - 保存后停在原地显示「已保存」，改动未保存时返回会先确认；
  * - 删除团队带确认，删掉后回到团队列表（调用方负责出栈）。
  *
- * 只读时（团队详情页）展示的是同一份模型，这里写回去时把 Android 不编辑的
- * `avatar` / `role` 原样带上，避免一次改名就抹掉 Web 上选好的头像与职责标注。
+ * 通讯录绑定只投影员工名字/头像/候选；团队职责、角色标注与负责人仍属于团队。
+ * 手工 CLI 与模板沿用原行为，不按同名猜员工身份。
  */
 @Composable
 fun AiTeamEditorScreen(
@@ -94,6 +109,7 @@ fun AiTeamEditorScreen(
     onDeleted: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val motionEnabled = !reduceMotionEnabled()
     // 新建保存成功后原地转成「编辑这个新团队」：后续保存走 PUT，标题也跟着变。
     var editingId by remember(teamId) { mutableStateOf(teamId) }
     var draft by remember { mutableStateOf<AiTeamDraft?>(null) }
@@ -111,13 +127,44 @@ fun AiTeamEditorScreen(
     var confirmDiscard by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
+    // 与团队加载分离：通讯录失败/重试只更新只读投影，绝不重置团队草稿。
+    var employees by remember(api) { mutableStateOf<List<SiliconEmployee>?>(null) }
+    var employeeLoading by remember(api) { mutableStateOf(true) }
+    var employeeError by remember(api) { mutableStateOf<String?>(null) }
+    var employeeReload by remember(api) { mutableStateOf(0) }
+    // null = 收起，-1 = 邀请新成员，其余为原位替换的下标。
+    var inviteTarget by remember { mutableStateOf<Int?>(null) }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    fun closeInvite() {
+        inviteTarget = null
+        keyboard?.hide()
+    }
+
+    LaunchedEffect(api, employeeReload) {
+        employeeLoading = true
+        employeeError = null
+        try {
+            employees = api.listSiliconEmployees(includeArchived = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            employeeError = e.message ?: "通讯录加载失败，团队草稿已保留。"
+        } finally {
+            employeeLoading = false
+        }
+    }
 
     LaunchedEffect(api, teamId, templateId, reload) {
         loading = true
         loadError = null
         // 模型目录只影响下拉选项；拿不到就用「跟随服务端默认」一项兜底，不挡编辑。
-        models = runCatching { api.boardModels() }.getOrNull()
-        val defaultAgent = runCatching { api.boardTaskAgentDefaults() }.getOrNull()
+        models = runCatching { api.boardModels() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull()
+        val defaultAgent = runCatching { api.boardTaskAgentDefaults() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull()
         try {
             if (teamId == null) {
                 val template = aiTeamTemplateById(templateId) ?: aiTeamTemplateById(AI_TEAM_BLANK_TEMPLATE_ID)!!
@@ -139,6 +186,8 @@ fun AiTeamEditorScreen(
                     expandedMember = -1
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             loadError = e.message ?: "无法加载团队"
         } finally {
@@ -148,7 +197,7 @@ fun AiTeamEditorScreen(
 
     val current = draft
     val dirty = current != null && initialDraft != null && current != initialDraft
-    val errors = current?.let(::aiTeamDraftErrors) ?: emptyList()
+    val errors = current?.let(::aiTeamEmployeeDraftErrors) ?: emptyList()
 
     /** 任何一次编辑都清掉上一轮的保存结果（结果文案不越过下一次改动）。 */
     fun editDraft(next: AiTeamDraft) {
@@ -159,8 +208,10 @@ fun AiTeamEditorScreen(
     }
 
     fun save() {
+        if (phase == TeamSavePhase.Saving || deleting) return
         val editing = draft ?: return
-        val problems = aiTeamDraftErrors(editing)
+        closeInvite()
+        val problems = aiTeamEmployeeDraftErrors(editing)
         showErrors = true
         if (problems.isNotEmpty()) {
             statusText = ""
@@ -187,6 +238,8 @@ fun AiTeamEditorScreen(
                 // 完成态停留一拍再回到「保存」，结果文案留在原地（失败态比完成态久）。
                 delay(SEND_SENT_DWELL_MS)
                 if (phase == TeamSavePhase.Saved) phase = TeamSavePhase.Idle
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // 失败原因原位留着，直到用户改下一处（不自动消失，也不用 Toast）。
                 saveError = e.message ?: "保存团队失败。"
@@ -196,11 +249,16 @@ fun AiTeamEditorScreen(
     }
 
     fun leave() {
+        // 保存或删除已交给服务端时，留在原位等待确定结果，避免离页取消后误以为没有写入。
+        if (phase == TeamSavePhase.Saving || deleting) return
+        if (inviteTarget != null) { closeInvite(); return }
         if (dirty) confirmDiscard = true else onBack()
     }
 
     fun patchMember(index: Int, patch: (AiTeamMember) -> AiTeamMember) {
+        if (phase == TeamSavePhase.Saving || deleting) return
         val editing = draft ?: return
+        if (index !in editing.members.indices) return
         // 设为负责人时同步卸任其他成员（服务端要求恰好一位，界面先保证一致）。
         val members = if (patch(editing.members[index]).isLeader) {
             setTeamLeader(editing.members, index).let { set ->
@@ -212,19 +270,39 @@ fun AiTeamEditorScreen(
         editDraft(editing.copy(members = members))
     }
 
-    BackHandler { leave() }
+    BackHandler {
+        if (inviteTarget != null) closeInvite()
+        else if (expandedMember >= 0) expandedMember = -1
+        else leave()
+    }
+
+    fun pickEmployee(employee: SiliconEmployee) {
+        if (phase == TeamSavePhase.Saving || deleting || employeeLoading || employeeError != null) return
+        val editing = draft ?: return
+        val target = inviteTarget ?: return
+        val latestEmployee = employees?.firstOrNull { it.id == employee.id } ?: return
+        val next = inviteTeamEmployee(editing, latestEmployee, target.takeIf { it >= 0 })
+        if (next != editing) {
+            editDraft(next)
+            expandedMember = if (target < 0) next.members.lastIndex else target
+        }
+        closeInvite()
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
             WandDetailTopBar(
                 title = "",
-                leading = { WandDetailBackButton(onClick = { leave() }) },
+                leading = null,
                 titleContent = {
                     Column(modifier = Modifier.weight(1f)) {
                         WandBreadcrumb(
                             crumbs = listOf(
-                                WandCrumb("AI 团队", onClick = { leave() }),
+                                WandCrumb(
+                                    "AI 团队",
+                                    onClick = if (phase == TeamSavePhase.Saving || deleting) null else ({ leave() }),
+                                ),
                                 WandCrumb(teamEditorTitle(editingId == null)),
                             ),
                         )
@@ -242,7 +320,7 @@ fun AiTeamEditorScreen(
                         WandIconButton(
                             icon = WandIcons.delete,
                             contentDescription = "删除团队",
-                            onClick = { confirmDelete = true },
+                            onClick = { closeInvite(); confirmDelete = true },
                             variant = WandIconButtonVariant.Toolbar,
                             tint = WandColors.danger,
                             enabled = !deleting && phase != TeamSavePhase.Saving,
@@ -255,12 +333,18 @@ fun AiTeamEditorScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .imePadding(),
         ) {
             when {
-                loading -> CircularProgressIndicator(
-                    color = WandColors.brand,
-                    modifier = Modifier.align(Alignment.Center).size(26.dp),
+                loading -> WandStatusIconSlot(
+                    indicatorColor = WandColors.brand,
+                    containerColor = Color.Transparent,
+                    running = true,
+                    icon = WandIcons.refresh,
+                    boxSize = 44.dp,
+                    iconSize = 26.dp,
+                    modifier = Modifier.align(Alignment.Center),
                 )
                 current == null -> Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -323,28 +407,68 @@ fun AiTeamEditorScreen(
                         current.members[index].id.ifBlank { "team-member-draft-$index" }
                     }) { index ->
                         TeamMemberCard(
-                            member = current.members[index],
+                            member = teamEmployeeProjection(current.members[index], employees),
+                            bindingStatus = teamEmployeeBindingStatus(current.members[index], employees),
+                            inviteOpen = inviteTarget == index,
+                            inviteContent = {
+                                AiTeamEmployeeInvitePanel(
+                                    employees, employeeLoading, employeeError, current.members, index,
+                                    phase != TeamSavePhase.Saving && !deleting,
+                                    onRetry = { employeeReload += 1 }, onClose = { closeInvite() },
+                                    onPick = { pickEmployee(it) },
+                                )
+                            },
+                            onInvite = { if (inviteTarget == index) closeInvite() else inviteTarget = index },
+                            onUnbind = { patchMember(index) { unbindTeamEmployee(it, employees) }; closeInvite() },
                             index = index,
                             models = models,
                             expanded = expandedMember == index,
                             canRemove = current.members.size > AI_TEAM_MIN_MEMBERS,
                             enabled = phase != TeamSavePhase.Saving && !deleting,
-                            modifier = Modifier.animateItem(),
+                            modifier = if (motionEnabled) Modifier.animateItem(
+                                fadeInSpec = WandMotion.tweenFast(),
+                                placementSpec = WandMotion.tweenNormal(),
+                                fadeOutSpec = WandMotion.tweenExit(),
+                            ) else Modifier,
                             onToggle = {
+                                closeInvite()
                                 expandedMember = if (expandedMember == index) -1 else index
                             },
                             onPatch = { patch -> patchMember(index, patch) },
                             onRemove = {
+                                closeInvite()
                                 editDraft(current.copy(members = removeTeamMember(current.members, index)))
                                 expandedMember = -1
                             },
                             onSetLeader = { editDraft(current.copy(members = setTeamLeader(current.members, index))) },
                         )
                     }
+                    item(key = "team-invite-employee") {
+                        Column {
+                            WandButton(
+                                label = "从通讯录邀请员工",
+                                onClick = { if (inviteTarget == -1) closeInvite() else inviteTarget = -1 },
+                                modifier = Modifier.fillMaxWidth(),
+                                variant = WandButtonVariant.Secondary,
+                                icon = WandIcons.add,
+                                enabled = current.members.size < AI_TEAM_MAX_MEMBERS &&
+                                    phase != TeamSavePhase.Saving && !deleting,
+                            )
+                            WandInlinePanel(visible = inviteTarget == -1, growFrom = Alignment.Top) {
+                                AiTeamEmployeeInvitePanel(
+                                    employees, employeeLoading, employeeError, current.members, null,
+                                    phase != TeamSavePhase.Saving && !deleting,
+                                    onRetry = { employeeReload += 1 }, onClose = { closeInvite() },
+                                    onPick = { pickEmployee(it) },
+                                )
+                            }
+                        }
+                    }
                     item(key = "team-add-member") {
                         WandButton(
-                            label = "添加成员",
+                            label = "添加手工 CLI 成员",
                             onClick = {
+                                closeInvite()
                                 val agent = current.members.lastOrNull()?.agents?.firstOrNull()
                                 val next = addTeamMember(current.members, agent)
                                 if (next.size != current.members.size) {
@@ -358,6 +482,16 @@ fun AiTeamEditorScreen(
                             icon = WandIcons.add,
                             enabled = current.members.size < AI_TEAM_MAX_MEMBERS &&
                                 phase != TeamSavePhase.Saving && !deleting,
+                        )
+                    }
+                    item(key = "team-save") {
+                        TeamSaveCard(
+                            isNew = editingId == null,
+                            phase = phase,
+                            statusText = statusText,
+                            error = saveError,
+                            canSave = errors.isEmpty(),
+                            onSave = { save() },
                         )
                     }
                     if (showErrors && errors.isNotEmpty()) {
@@ -374,16 +508,6 @@ fun AiTeamEditorScreen(
                             }
                         }
                     }
-                    item(key = "team-save") {
-                        TeamSaveCard(
-                            isNew = editingId == null,
-                            phase = phase,
-                            statusText = statusText,
-                            error = saveError,
-                            canSave = errors.isEmpty(),
-                            onSave = { save() },
-                        )
-                    }
                 }
             }
         }
@@ -392,7 +516,7 @@ fun AiTeamEditorScreen(
     if (confirmDelete) {
         WandDialog(
             title = "删除团队「${initialDraft?.name ?: current?.name.orEmpty()}」？",
-            onDismissRequest = { confirmDelete = false },
+            onDismissRequest = { if (!deleting) confirmDelete = false },
             icon = WandIcons.delete,
             confirm = WandDialogAction(
                 label = if (deleting) "删除中…" else "删除团队",
@@ -406,6 +530,8 @@ fun AiTeamEditorScreen(
                             api.deleteAiTeam(id)
                             confirmDelete = false
                             onDeleted()
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             saveError = e.message ?: "删除团队失败。"
                             phase = TeamSavePhase.Failed
@@ -417,7 +543,7 @@ fun AiTeamEditorScreen(
                     }
                 },
             ),
-            dismiss = WandDialogAction(label = "取消", onClick = { confirmDelete = false }),
+            dismiss = WandDialogAction(label = "取消", enabled = !deleting, onClick = { confirmDelete = false }),
         ) {
             Text(
                 "已经开始的运行不受影响，会按启动时的团队快照继续。",
@@ -559,7 +685,7 @@ private fun TeamStepStepper(
             icon = WandIcons.minus,
             contentDescription = "减少 5 步",
             onClick = onDecrease,
-            variant = WandIconButtonVariant.Compact,
+            variant = WandIconButtonVariant.Quiet,
             tint = WandColors.textSecondary,
             enabled = enabled && canDecreaseTeamMaxSteps(value),
         )
@@ -577,7 +703,7 @@ private fun TeamStepStepper(
             icon = WandIcons.add,
             contentDescription = "增加 5 步",
             onClick = onIncrease,
-            variant = WandIconButtonVariant.Compact,
+            variant = WandIconButtonVariant.Quiet,
             tint = WandColors.textSecondary,
             enabled = enabled && canIncreaseTeamMaxSteps(value),
         )
@@ -587,6 +713,11 @@ private fun TeamStepStepper(
 @Composable
 private fun TeamMemberCard(
     member: AiTeamMember,
+    bindingStatus: String?,
+    inviteOpen: Boolean,
+    inviteContent: @Composable () -> Unit,
+    onInvite: () -> Unit,
+    onUnbind: () -> Unit,
     index: Int,
     models: ModelsResponse?,
     expanded: Boolean,
@@ -598,6 +729,7 @@ private fun TeamMemberCard(
     onRemove: () -> Unit,
     onSetLeader: () -> Unit,
 ) {
+    val bound = member.employeeId != null
     val label = teamMemberDisplayName(member, index)
     val candidates = member.agents
     val duplicates = duplicateTeamCandidates(candidates)
@@ -611,10 +743,16 @@ private fun TeamMemberCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .semantics {
+                    role = Role.Button
+                    stateDescription = if (expanded) "已展开" else "已收起"
+                }
                 .clickable(enabled = enabled, onClick = onToggle)
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            EmployeeAvatar(member.employeeId ?: member.id, member.name, member.avatar,
+                modifier = Modifier.padding(end = 10.dp), provider = member.agents.firstOrNull()?.provider)
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -624,6 +762,7 @@ private fun TeamMemberCard(
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (member.isLeader) {
                         // §2.3 F1：展开/收起的标题行只留一份名字 + 一枚矢量星，
@@ -660,6 +799,20 @@ private fun TeamMemberCard(
                 modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                WandButton(
+                    label = if (bound) "替换通讯录员工" else "绑定通讯录员工",
+                    onClick = onInvite,
+                    modifier = Modifier.fillMaxWidth(),
+                    variant = WandButtonVariant.Secondary,
+                    compact = true,
+                    enabled = enabled,
+                )
+                WandInlinePanel(visible = inviteOpen, growFrom = Alignment.Top, content = inviteContent)
+                if (bindingStatus != null) {
+                    Text(bindingStatus, color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall)
+                    WandButton("改为手工 CLI（解除绑定）", onClick = onUnbind,
+                        variant = WandButtonVariant.Secondary, compact = true, enabled = enabled)
+                }
                 WandTextField(
                     value = member.name,
                     onValueChange = { name -> onPatch { it.copy(name = name) } },
@@ -667,7 +820,7 @@ private fun TeamMemberCard(
                     label = "成员名字",
                     placeholder = "例如：实现者",
                     singleLine = true,
-                    enabled = enabled,
+                    enabled = enabled && !bound,
                 )
                 WandTextField(
                     value = member.duty,
@@ -683,7 +836,8 @@ private fun TeamMemberCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(WandShapes.sm)
-                        .clickable(enabled = enabled && !member.isLeader, onClick = onSetLeader)
+                        .clickable(enabled = enabled && !member.isLeader, role = Role.Button, onClick = onSetLeader)
+                        .heightIn(min = 48.dp)
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -697,13 +851,24 @@ private fun TeamMemberCard(
                         Icon(WandIcons.check, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(18.dp))
                     }
                 }
+                Text("团队角色标注", color = WandColors.textSecondary, style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("any" to "通用", "plan" to "规划", "work" to "执行", "verify" to "验收").forEach { (role, label) ->
+                        WandButton(label, onClick = { onPatch { it.copy(role = role) } }, compact = true,
+                            variant = if ((member.role ?: "any") == role) WandButtonVariant.Primary else WandButtonVariant.Secondary,
+                            enabled = enabled)
+                    }
+                }
                 Text(
                     "执行候选 · 首选在前，启动失败按顺序降级",
                     color = WandColors.textSecondary,
                     style = MaterialTheme.typography.labelMedium,
                 )
                 candidates.forEachIndexed { candidateIndex, agent ->
-                    TeamCandidateRow(
+                    if (bound) {
+                        Text("${aiTeamCandidateLabel(candidateIndex)} · ${agent.provider} · ${agent.model} · ${agent.thinkingEffort}",
+                            color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall)
+                    } else TeamCandidateRow(
                         agent = agent,
                         label = aiTeamCandidateLabel(candidateIndex),
                         models = models,
@@ -727,7 +892,7 @@ private fun TeamMemberCard(
                         variant = WandButtonVariant.Secondary,
                         compact = true,
                         icon = WandIcons.add,
-                        enabled = enabled && candidates.size < AI_TEAM_MAX_CANDIDATES,
+                        enabled = enabled && !bound && candidates.size < AI_TEAM_MAX_CANDIDATES,
                     )
                     WandButton(
                         label = "移除成员",
@@ -774,21 +939,21 @@ private fun TeamCandidateRow(
                 icon = WandIcons.arrowUp,
                 contentDescription = "把$label 上移",
                 onClick = { onMove(-1) },
-                variant = WandIconButtonVariant.Compact,
+                variant = WandIconButtonVariant.Quiet,
                 enabled = enabled && index > 0,
             )
             WandIconButton(
                 icon = WandIcons.expand,
                 contentDescription = "把$label 下移",
                 onClick = { onMove(1) },
-                variant = WandIconButtonVariant.Compact,
+                variant = WandIconButtonVariant.Quiet,
                 enabled = enabled && index < total - 1,
             )
             WandIconButton(
                 icon = WandIcons.close,
                 contentDescription = if (total <= 1) "至少要保留 1 个候选" else "删除$label",
                 onClick = onRemove,
-                variant = WandIconButtonVariant.Compact,
+                variant = WandIconButtonVariant.Quiet,
                 tint = WandColors.danger,
                 enabled = enabled && total > 1,
             )
@@ -813,24 +978,13 @@ private fun TeamSaveCard(
     onSave: () -> Unit,
 ) {
     WandCard(contentPadding = PaddingValues(14.dp)) {
-        // 结果行固定占位：加载 → 完成 → 失败都在同一位置显示，尺寸不跳（硬要求 3）。
-        // 完成态停留一拍后回到「保存」，结果文案留着直到下一次编辑。
+        // 按钮先布局，反馈永远在按钮下方；长错误只向下生长，不把重试入口推走。
         val result = when (phase) {
             TeamSavePhase.Saved -> statusText.ifBlank { "已保存。" }
             TeamSavePhase.Failed -> error ?: "保存团队失败。"
             TeamSavePhase.Saving -> "保存中…"
             TeamSavePhase.Idle -> if (statusText.isNotBlank()) statusText else if (canSave) "" else "上面还有要改的地方。"
         }
-        Text(
-            result,
-            color = when {
-                phase == TeamSavePhase.Failed -> WandColors.danger
-                statusText.isNotBlank() -> WandColors.success
-                else -> WandColors.textMuted
-            },
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
         WandButton(
             label = when (phase) {
                 TeamSavePhase.Saving -> "保存中…"
@@ -841,7 +995,32 @@ private fun TeamSaveCard(
             modifier = Modifier.fillMaxWidth(),
             loading = phase == TeamSavePhase.Saving,
             enabled = phase != TeamSavePhase.Saving,
-            icon = if (phase == TeamSavePhase.Saved) WandIcons.check else null,
+            icon = when (phase) {
+                TeamSavePhase.Saved -> WandIcons.check
+                TeamSavePhase.Failed -> WandIcons.refresh
+                else -> WandIcons.edit
+            },
         )
+        Box(Modifier.fillMaxWidth().height(48.dp).padding(top = 8.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }) {
+            WandInPlaceSwap(
+                contentKey = Triple(result, phase == TeamSavePhase.Failed, statusText.isNotBlank()),
+                enterScale = 1f,
+                exitScale = 1f,
+            ) { key ->
+                @Suppress("UNCHECKED_CAST")
+                val feedback = key as Triple<String, Boolean, Boolean>
+                Text(
+                    feedback.first,
+                    color = when {
+                        feedback.second -> WandColors.danger
+                        feedback.third -> WandColors.success
+                        else -> WandColors.textMuted
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                )
+            }
+        }
     }
 }

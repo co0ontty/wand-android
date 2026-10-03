@@ -379,13 +379,16 @@ fun WandCard(
 
 /**
  * 非 Column 布局使用的标准卡片表面。页面不再直接依赖玻璃引擎，未来更换实现只改此处。
+ *
+ * @param elevation 投影高度，默认卡片自身那档；浮在内容之上的面可以抬高一档。
  */
 @Composable
 fun Modifier.wandCardSurface(
     shape: Shape = WandShapes.md,
     tint: Color? = null,
     rimTint: Color? = null,
-): Modifier = glassCard(shape = shape, tint = tint, rimTint = rimTint)
+    elevation: Dp = WandGlass.card.shadowElevation,
+): Modifier = glassCard(shape = shape, tint = tint, rimTint = rimTint, elevation = elevation)
 
 /**
  * 顶栏 / 工具栏里的统一图标按钮（对齐 iOS toolbar button）。

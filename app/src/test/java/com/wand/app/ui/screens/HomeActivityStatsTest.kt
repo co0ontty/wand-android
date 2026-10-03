@@ -17,9 +17,12 @@ import org.junit.Test
  * 三件事各自只测一次，互不复制（D14）：
  * 1. **唯一整行门** [homeActivityStripVisible]——它就是调用处实际用的那个门（D13），
  *    所以另有一条读源码的接线守卫（[callSiteWiresTheOnlyStripGate]）保证没有第二层 gate；
- * 2. **统计对象**在默认/只看等你两态下的计数、两枚胶囊与选中语义，必须全部来自
+ * 2. **统计对象**在默认 / 只看等你 / 只看在跑三态下的计数、两枚胶囊与选中语义，必须全部来自
  *    最终可见会话，分母才是全量数；
- * 3. **空态文案**指向可关闭的「已选等你」筛选。
+ * 3. **空态文案**指向可关闭的那一道筛选。
+ *
+ * 三段式总档位不住在状态行里（安静时状态行照旧不留空壳），它挂在小节表头的文字右边，
+ * 与状态行的显隐互不影响。
  */
 class HomeActivityStatsTest {
 
@@ -40,7 +43,36 @@ class HomeActivityStatsTest {
         assertEquals("0 / 1 条待处理", stats.countLabel)
         assertTrue(stats.showsAttentionPill())
         assertTrue(homeActivityStripVisible(showingBoard = false, stats = stats))
-        assertFalse("同一批数据在未筛选时仍然不给空壳", homeActivityStripVisible(showingBoard = false, stats = statsFor(quietGroups(), false)))
+        assertFalse("同一批数据在未筛选时仍然不给空壳", homeActivityStripVisible(showingBoard = false, stats = statsFor(quietGroups(), attentionOnly = false)))
+    }
+
+    @Test
+    fun runningFilterCountsTheRunningBatchWithoutTouchingTheStripGate() {
+        val stats = statsFor(fullGroups(), runningOnly = true)
+
+        // 只看在跑：可见列表只剩两条在跑的，分母仍是全量。
+        assertEquals("2 / 4 条在跑", stats.countLabel)
+        assertTrue(stats.runningOnly)
+        assertFalse(stats.attentionOnly)
+        // 在跑不是状态行的开关（开关在折叠控制里），所以安静时状态行照旧不渲染。
+        val idle = statsFor(quietGroups(), runningOnly = true)
+        assertEquals("0 / 1 条在跑", idle.countLabel)
+        assertFalse(homeActivityStripVisible(showingBoard = false, stats = idle))
+    }
+
+    /** 单层覆盖把子树放开时可见行更多，但报数必须是「在跑几个」，不是「看见几行」。 */
+    @Test
+    fun runningCountReportsRunningSessionsNotVisibleRows() {
+        val all = fullGroups()
+        val stats = homeActivityStats(
+            globalOverview = homeOverview(all),
+            finalOverview = homeOverview(all),
+            attentionOnly = false,
+            runningOnly = true,
+        )
+
+        assertEquals("2 / 4 条在跑", stats.countLabel)
+        assertEquals("2 个在跑", stats.runningPillLabel())
     }
 
     @Test
@@ -96,7 +128,7 @@ class HomeActivityStatsTest {
     // MARK: - 空态文案
 
     @Test
-    fun emptyCopyPointsAtTheAttentionFilter() {
+    fun emptyCopyPointsAtTheFilterThatEmptiedTheList() {
         val copy = homeSessionEmptyCopy()
 
         assertEquals(
@@ -119,22 +151,29 @@ class HomeActivityStatsTest {
         )
         assertFalse("渲染点之前不得再叠一层分段/筛选门", callSite.contains("if (!showingBoard") || callSite.contains("&& !attentionOnly"))
         assertFalse("旧的 selecting/attentionOnly 组合门不得回归", taskList.contains("if (!showingBoard && (selecting || !attentionOnly))"))
+        assertTrue(
+            "三段式总档位必须挂在小节表头的文字右边（第一行是「最近对话」或「任务与工作区」）",
+            taskList.contains("HomeSectionHeaderRow("),
+        )
         assertFalse("组件内不得再有第二个整行早退", chrome.contains("if (!stats.showsRow("))
         assertFalse("showsRow 已删除，不得留任何引用", taskList.contains("showsRow") || chrome.contains("showsRow"))
     }
 
     // MARK: - fixtures
 
-    /** 走和生产代码完全一样的链路：全量 → 只看等你 → 统计。 */
+    /** 走和生产代码完全一样的链路：全量 → 只看等你 / 只看在跑 → 统计。 */
     private fun statsFor(
         groups: List<TaskDirectoryGroup>,
-        attentionOnly: Boolean,
+        attentionOnly: Boolean = false,
+        runningOnly: Boolean = false,
     ): HomeActivityStats {
+        // 「在跑」不删行（一级行留着、只决定露哪几行），所以可见集合就是全量。
         val visible = if (attentionOnly) attentionOnlyGroups(groups) else groups
         return homeActivityStats(
             globalOverview = homeOverview(groups),
             finalOverview = homeOverview(visible),
             attentionOnly = attentionOnly,
+            runningOnly = runningOnly,
         )
     }
 

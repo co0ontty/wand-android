@@ -154,6 +154,13 @@ internal val LocalActivityFoldCompact = compositionLocalOf { false }
 internal val LocalChatSessionId = compositionLocalOf { "" }
 
 /**
+ * 折叠块改变自身高度时，请求容器保持该列表 item 尾部（活动段摘要行）的屏幕位置。
+ * 向上展开的面板会当场把 item 撑高，若不补偿，摘要行会连同后续内容一起被推走。
+ * 容器按帧补偿滚动；找不到对应 item 时静默忽略。
+ */
+internal val LocalActivityAnchorKeeper = compositionLocalOf<(String) -> Unit> { {} }
+
+/**
  * 当前卡片所属容器的结构性 fold scope（消息 → 段 → 活动摘要逐层拼）。
  * 卡片只读它拼自己的 fold key，不再自己拼 scope；scope 里不得出现内容片段。
  */
@@ -288,6 +295,8 @@ fun TurnView(
                     onAskToggle = onAskToggle,
                     onAskSubmit = onAskSubmit,
                     segmentScope = messageScope,
+                    // 列表 item key：活动段向上展开时容器靠它把摘要行留在原位。
+                    listItemKey = foldScope,
                 )
             }
         }
@@ -1846,6 +1855,8 @@ private fun SegmentBlocks(
     /** 本段所属容器的 fold scope（消息级 item key；子代理页传 `sub-<id>`）。 */
     segmentScope: String,
     showSubagentTags: Boolean = true,
+    /** 外层聊天列表 item key；只有消息级渲染才有，子代理页为空串。 */
+    listItemKey: String = "",
 ) {
     val items = remember(blocks, toolResultsById) {
         pairToolBlocks(blocks, toolResultsById)
@@ -1882,6 +1893,7 @@ private fun SegmentBlocks(
                         ToolActivitySummary(
                             group = renderItem.group,
                             scope = activityScope,
+                            listItemKey = listItemKey,
                         )
                     }
                 }
@@ -1959,6 +1971,13 @@ private fun RenderDisplayItem(
                         result = item.result,
                         running = item.result == null && isLastTurn && isResponding,
                         expandDefault = expandDefault(cardDefaults.editCards),
+                        foldKey = toolFoldKey,
+                    )
+                    isDecisionToolCall(use, item.result) -> ToolCard(
+                        use = use,
+                        result = item.result,
+                        running = item.result == null && isLastTurn && isResponding,
+                        expandDefault = false,
                         foldKey = toolFoldKey,
                     )
                     use.name == "Bash" -> TerminalCard(
@@ -2668,11 +2687,32 @@ internal fun shouldCollapseToolInActivity(name: String): Boolean {
     return operation !in setOf("askuserquestion", "ask_user_question", "request_user_input", "task", "agent", "subagent")
 }
 
+/** A late result can identify a decision whose older invocation was already cached. */
+internal fun isDecisionToolCall(use: ContentBlock.ToolUse, result: ContentBlock.ToolResult? = null): Boolean =
+    use.semantic is ToolUseSemantic.Decision || result?.decision == true
+
+/**
+ * 决策卡标题下的摘要行。摘要只来自服务端语义投影（入参与迟到结果携带同一份 label），
+ * 客户端不再自己拼文案；没有投影（旧服务端）时退回通用描述。
+ */
+internal fun decisionSummaryLabel(use: ContentBlock.ToolUse, result: ContentBlock.ToolResult?): String {
+    val semantic = (result?.semantic as? ToolUseSemantic.Decision)
+        ?: (use.semantic as? ToolUseSemantic.Decision)
+    return semantic?.summary?.label?.takeIf { it.isNotBlank() } ?: "选择 / 评分 / 是非判断"
+}
+
+internal fun toolCardExpanded(
+    use: ContentBlock.ToolUse,
+    result: ContentBlock.ToolResult?,
+    overrideCode: Int,
+    derivedDefault: Boolean,
+): Boolean = foldExpanded(overrideCode, if (isDecisionToolCall(use, result)) false else derivedDefault)
+
 /** activity 是传输压缩元数据，不是折叠资格；旧调用与待办回执也必须进入摘要。 */
 internal fun isCollapsibleActivityTool(
     use: ContentBlock.ToolUse,
     result: ContentBlock.ToolResult? = null,
-): Boolean = shouldCollapseToolInActivity(use.name) &&
+): Boolean = shouldCollapseToolInActivity(use.name) && !isDecisionToolCall(use, result) &&
     use.semantic !is ToolUseSemantic.QuestionRequest &&
     use.subagent?.taskId != use.id &&
     use.activity?.hasImage != true && result?.images.isNullOrEmpty() &&
@@ -2735,11 +2775,12 @@ internal fun cardHeaderModifier(compact: Boolean): Modifier =
             vertical = if (compact) ChatCardMetrics.headerPaddingVCompact else ChatCardMetrics.headerPaddingVRegular,
         )
 
-/** 两层折叠共用的展开容器：从头部下沿向下长出，收起是同一段动画的倒放。 */
+/** 共用展开容器：默认向下；聊天决策详情向上展开以保持触发卡头原位，收起倒放。 */
 @Composable
 internal fun FoldableCardBody(
     visible: Boolean,
     modifier: Modifier = Modifier,
+    expandFrom: Alignment.Vertical = Alignment.Top,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceMotion = reduceMotionEnabled()
@@ -2747,16 +2788,16 @@ internal fun FoldableCardBody(
         visible = visible,
         modifier = modifier,
         enter = if (reduceMotion) {
-            fadeIn(snap()) + expandVertically(expandFrom = Alignment.Top, animationSpec = snap())
+            fadeIn(snap()) + expandVertically(expandFrom = expandFrom, animationSpec = snap())
         } else {
             fadeIn(WandMotion.tweenEnter()) +
-                expandVertically(expandFrom = Alignment.Top, animationSpec = WandMotion.tweenEnter())
+                expandVertically(expandFrom = expandFrom, animationSpec = WandMotion.tweenEnter())
         },
         exit = if (reduceMotion) {
-            fadeOut(snap()) + shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = snap())
+            fadeOut(snap()) + shrinkVertically(shrinkTowards = expandFrom, animationSpec = snap())
         } else {
             fadeOut(WandMotion.tweenExit()) +
-                shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = WandMotion.tweenExit())
+                shrinkVertically(shrinkTowards = expandFrom, animationSpec = WandMotion.tweenExit())
         },
     ) {
         Column(content = content)
@@ -2924,15 +2965,27 @@ fun BlockView(
             // 落单的 ToolUse（正常路径已在 TurnView 配对，这里兜底）
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (showSubagentTag) SubagentTag(block.subagent)
-                ToolActivitySummary(
-                    group = ActivityGroup("orphan", listOf(DisplayItem.Tool(block, null)), streaming),
-                    scope = foldKey,
-                )
+                if (isDecisionToolCall(block)) {
+                    ToolCard(block, null, running = streaming, foldKey = foldKey)
+                } else {
+                    ToolActivitySummary(
+                        group = ActivityGroup("orphan", listOf(DisplayItem.Tool(block, null)), streaming),
+                        scope = foldKey,
+                    )
+                }
             }
         }
         is ContentBlock.ToolResult -> {
-            // 落单的 ToolResult 兜底：渲染成无头工具卡的结果区样式
-            if (block.text.isNotEmpty() || block.truncated) {
+            // 落单的 ToolResult 兜底：渲染成无头工具卡的结果区样式。
+            // 决策结果的摘要就在它自己的语义投影上，不能丢掉。
+            if (block.decision) {
+                ToolCard(
+                    use = ContentBlock.ToolUse(block.toolUseId, "本地决策", null, JSONObject(), block.subagent, block.semantic),
+                    result = block,
+                    expandDefault = false,
+                    foldKey = foldKey,
+                )
+            } else if (block.text.isNotEmpty() || block.truncated) {
                 OrphanResultBlock(block, expandDefault = expandDefault, foldKey = foldKey)
             }
         }
@@ -3138,6 +3191,7 @@ fun ToolCard(
 ) {
     val compact = LocalActivityFoldCompact.current
     val compactTodoUpdate = isTodoUpdateToolName(use.name)
+    val decision = isDecisionToolCall(use, result)
     // TodoWrite / TaskUpdate 只是把新的待办快照写入会话流，不会产生 tool_result。
     // 不能把后续模型仍在生成，误显示成这一次待办更新仍在执行。
     val toolRunning = isToolCardRunning(use.name, running)
@@ -3154,8 +3208,10 @@ fun ToolCard(
     val hasBody = toolCardHasBody(use.input, result)
     val sourceLabel = remember(use.name) { toolSourceLabel(use.name) }
     // 展开态 = 用户显式收放 ?: RenderDisplayItem 传入的卡片偏好。
-    var foldOverride by rememberFoldOverrideCode(foldKey)
-    val expanded = foldExpanded(foldOverride, expandDefault)
+    val decisionFoldKey = if (decision && use.id.isNotBlank())
+        cardFoldKey(LocalChatSessionId.current, "decision:${use.id}") else foldKey
+    var foldOverride by rememberFoldOverrideCode(decisionFoldKey)
+    val expanded = toolCardExpanded(use, result, foldOverride, expandDefault)
     val statusColor = when {
         isError -> WandColors.danger
         toolRunning -> WandColors.brand
@@ -3174,24 +3230,63 @@ fun ToolCard(
     val toolSummaryText = remember(use.description, use.input) {
         toolSummary(use.description, use.input)
     }
-    val summary = if (compactTodoUpdate) {
+    val summary = if (decision) {
+        // 与 Web 同一份服务端投影：结论 → 题数 → 被判定内容；实验性标记两边一致。
+        "${decisionSummaryLabel(use, result)} · 实验性"
+    } else if (use.preview?.isNotBlank() == true) {
+        use.preview
+    } else if (compactTodoUpdate) {
         if (todoSummary.isEmpty()) "" else "· $todoSummary"
     } else {
         toolSummaryText
     }
 
+    val body: @Composable () -> Unit = {
+        FoldableCardBody(
+            visible = expanded && hasBody,
+            expandFrom = if (decision) Alignment.Bottom else Alignment.Top,
+        ) {
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = WandColors.border.copy(alpha = 0.7f),
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
+            ) {
+                if (decision) result?.let { ToolResultBody(it, showSectionLabel = true) }
+                if (hasInput) ToolInputBody(use.input)
+                if (!decision) result?.let { toolResult ->
+                    ToolResultBody(toolResult, showSectionLabel = hasInput)
+                }
+                // 「未返回」不再是一片空白：头部已经给了状态，展开区补一句原因。
+                if (noResult) {
+                    Text(
+                        "本次调用没有返回结果",
+                        fontSize = 11.sp,
+                        color = WandColors.textMuted,
+                    )
+                }
+            }
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .wandCardSurface(WandShapes.md, rimTint = if (isError) statusColor else null),
     ) {
+        if (decision) body()
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ChatCardMetrics.iconToText),
             modifier = Modifier
                 .fillMaxWidth()
                 .then(if (hasBody) Modifier.clickableWithoutRipple {
-                    foldOverride = foldToggleCode(foldOverride, expandDefault)
+                    foldOverride = foldToggleCode(foldOverride, if (decision) false else expandDefault)
+                } else Modifier)
+                .then(if (decision) Modifier.semantics {
+                    stateDescription = if (expanded) "详情已展开" else "详情已收起"
                 } else Modifier)
                 .then(cardHeaderModifier(compact)),
         ) {
@@ -3212,7 +3307,7 @@ fun ToolCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    ToolCardTitle(name = use.name, isError = isError, foldCompact = compact)
+                    ToolCardTitle(name = if (decision) "本地决策" else use.name, isError = isError, foldCompact = compact)
                     sourceLabel?.let { source ->
                         Text(
                             source,
@@ -3246,6 +3341,8 @@ fun ToolCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                if (!decision) ToolPreviewText(toolResultCardPreview(result),
+                    if (isError) WandColors.danger else WandColors.textMuted)
             }
             CardStatusPill(text = statusText, color = statusColor, compact = compact)
             if (hasBody) {
@@ -3279,30 +3376,7 @@ fun ToolCard(
                 )
             }
         }
-        FoldableCardBody(visible = expanded && hasBody) {
-            HorizontalDivider(
-                thickness = 0.5.dp,
-                color = WandColors.border.copy(alpha = 0.7f),
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
-            ) {
-                if (hasInput) ToolInputBody(use.input)
-                result?.let { toolResult ->
-                    ToolResultBody(toolResult, showSectionLabel = hasInput)
-                }
-                // 「未返回」不再是一片空白：头部已经给了状态，展开区补一句原因。
-                if (noResult) {
-                    Text(
-                        "本次调用没有返回结果",
-                        fontSize = 11.sp,
-                        color = WandColors.textMuted,
-                    )
-                }
-            }
-        }
+        if (!decision) body()
     }
 }
 
@@ -3332,7 +3406,7 @@ fun ExplorationGroupCard(
     }
     val messageScope = foldScope.takeIf { it.isNotBlank() }
         ?: "explore:${items.firstOrNull()?.use?.id.orEmpty()}"
-    ToolActivitySummary(group = group, scope = cardFoldId(messageScope, "explore"))
+    ToolActivitySummary(group = group, scope = cardFoldId(messageScope, "explore"), listItemKey = foldScope)
 }
 
 private data class ToolInputEntry(val key: String, val value: String)

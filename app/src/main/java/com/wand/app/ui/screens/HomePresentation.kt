@@ -2,6 +2,7 @@ package com.wand.app.ui.screens
 
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.activityStatus
 import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.withLiveTitle
@@ -21,12 +22,16 @@ import java.time.ZoneId
 /** 会话在首页关心的三态：在跑、等你、安静。其余状态一律归 Quiet。 */
 internal enum class HomeSessionPulse { Running, NeedsYou, Quiet }
 
-internal fun homeSessionPulse(status: String?): HomeSessionPulse = when (status) {
-    // reconnecting 仍在推进任务，只是链路抖动，归到「在跑」而不是「等你」。
-    "running", "thinking", "reconnecting" -> HomeSessionPulse.Running
-    // permission / waiting-input 是真的在等用户；failed 也需要人去看一眼。
-    "permission", "waiting-input", "failed" -> HomeSessionPulse.NeedsYou
-    else -> HomeSessionPulse.Quiet
+internal fun homeSessionPulse(status: String?): HomeSessionPulse {
+    val normalized = status?.trim()?.lowercase()?.replace('_', '-').orEmpty()
+    return when (normalized) {
+        // reconnecting 仍在推进任务，只是链路抖动，归到「在跑」而不是「等你」。
+        "running", "thinking", "reconnecting" -> HomeSessionPulse.Running
+        // permission / waiting-input 是真的在等用户；failed 也需要人去看一眼。
+        // permission-blocked、waiting_input 是同一语义的别名。
+        "permission", "permission-blocked", "waiting-input", "failed" -> HomeSessionPulse.NeedsYou
+        else -> HomeSessionPulse.Quiet
+    }
 }
 
 /**
@@ -106,6 +111,115 @@ internal fun attentionOnlyGroups(groups: List<TaskDirectoryGroup>): List<TaskDir
         if (tasks.isEmpty() && standalone.isEmpty()) null
         else group.copy(tasks = tasks, standaloneSessions = standalone)
     }
+
+/**
+ * 首页每个小节的三段式显示方式（控制长在小节表头的文字右边）：
+ * - [Expand] 展开：这一区的会话照常全列；
+ * - [Collapse] 收起：这一区折成一级行（员工/团队分组、工作区、任务都是标题行）；
+ * - [Running] 在跑：一级行照旧留着，把在跑、失败和等待处理的会话露出来，空闲的藏起来。
+ *
+ * 声明顺序就是分段控件里从左到右的顺序，也是持久化用的下标顺序。
+ *
+ * 公开可见性：它是 [TaskListState] / [TaskListExpansionStore] 的公开属性类型（与 [HomeListMode] 一样）。
+ */
+enum class HomeFoldMode(val label: String, val actionLabel: String) {
+    Expand("展开", "全部展开"),
+    Collapse("收起", "全部收起"),
+    Running("在跑", "只看在跑、刚完成、失败和待处理的会话");
+
+    /** 这一档下这一层是不是展开的（「在跑」只筛内容，不折起来）。 */
+    val expanded: Boolean get() = this != Collapse
+
+    /** 这一档要不要筛掉空闲会话，只留在跑、失败和待处理。 */
+    val filtersRunning: Boolean get() = this == Running
+}
+
+/** 持久化值只认这三档；未知/旧值一律回落到「展开」，不让历史脏值把列表锁死。 */
+private val HOME_FOLD_MODE_STORAGE: Map<HomeFoldMode, String> = mapOf(
+    HomeFoldMode.Expand to "expand",
+    HomeFoldMode.Collapse to "collapse",
+    HomeFoldMode.Running to "running",
+)
+
+internal fun homeFoldModeStorageValue(mode: HomeFoldMode): String =
+    HOME_FOLD_MODE_STORAGE.getValue(mode)
+
+internal fun parseHomeFoldMode(raw: String?): HomeFoldMode =
+    HOME_FOLD_MODE_STORAGE.entries.firstOrNull { it.value == raw?.trim() }?.key ?: HomeFoldMode.Expand
+
+/** 这一层按档位该渲染哪些会话：在跑档留在跑、失败和待处理的，其余档全留。 */
+internal fun foldVisibleSessions(
+    fold: HomeFoldMode,
+    sessions: List<WorkspaceSessionSummary>,
+): List<WorkspaceSessionSummary> =
+    if (fold.filtersRunning) sessions.filter(::sessionKeptByRunningFold) else sessions
+
+/**
+ * 任务这一层按档位该渲染哪几个任务：在跑档只留真有在跑、失败或待处理会话的任务，
+ * 一条都没有的任务不显示（工作区那一行仍然保留）。
+ */
+internal fun foldVisibleTasks(
+    fold: HomeFoldMode,
+    tasks: List<WorkspaceTaskSummary>,
+): List<WorkspaceTaskSummary> =
+    if (!fold.filtersRunning) tasks else tasks.filter { foldVisibleSessions(fold, it.sessions).isNotEmpty() }
+
+/** 「最近对话」里的一组分同样处理。 */
+internal fun foldVisibleConversations(
+    fold: HomeFoldMode,
+    conversations: List<HomeRecentConversation>,
+): List<HomeRecentConversation> =
+    if (fold.filtersRunning) conversations.filter { sessionKeptByRunningFold(it.session) } else conversations
+
+/**
+ * 这一层的内容要不要展开：收起档永不展开；在跑档只有真的露出一条在跑、失败或待处理的会话才展开，
+ * 否则收成一级行——「在跑」与「全部收起」的区别就在这里。
+ */
+internal fun foldExpandsContent(fold: HomeFoldMode, visibleCount: Int): Boolean =
+    fold.expanded && visibleCount > 0
+
+/**
+ * 「在跑」档留下的会话：真的在推进，或者失败 / 等你处理。
+ * 空闲、已退出、停在提示符上的会话仍然藏起来。
+ */
+internal fun sessionKeptByRunningFold(session: WorkspaceSessionSummary): Boolean =
+    sessionPulse(session) != HomeSessionPulse.Quiet || session.withLiveTitle().activityStatus() == "just-completed"
+
+/**
+ * 目录 peek：按档位只留在跑、失败和待处理的会话，整条筛空就不显示。
+ * 首页列表不走这条：那里一级行必须留着，由卡片自己按档位筛行。
+ */
+internal fun foldModeGroups(
+    mode: HomeFoldMode,
+    groups: List<TaskDirectoryGroup>,
+): List<TaskDirectoryGroup> = if (!mode.filtersRunning) {
+    groups
+} else {
+    groups.mapNotNull { group ->
+        val tasks = group.tasks.mapNotNull(::runningFoldTask)
+        val standalone = group.standaloneSessions.filter(::sessionKeptByRunningFold)
+        if (tasks.isEmpty() && standalone.isEmpty()) null
+        else group.copy(tasks = tasks, standaloneSessions = standalone)
+    }
+}
+
+/** 一个任务只留在跑、失败和待处理的会话；一条都不剩时返回 null。 */
+private fun runningFoldTask(task: WorkspaceTaskSummary): WorkspaceTaskSummary? {
+    val sessions = task.sessions.filter(::sessionKeptByRunningFold)
+    return if (sessions.isEmpty()) null else task.copy(sessions = sessions, totalSessions = sessions.size)
+}
+
+/**
+ * 单个分组的投影。被筛掉时保留目录身份、只把内容清空，
+ * 交给调用方显示自己的空态（条目直接消失会让 peek 看起来像目录不存在）。
+ */
+internal fun foldModeGroup(mode: HomeFoldMode, group: TaskDirectoryGroup): TaskDirectoryGroup =
+    foldModeGroups(mode, listOf(group)).firstOrNull()
+        ?: group.copy(tasks = emptyList(), standaloneSessions = emptyList())
+
+/** 被筛空的说明：不能把「没在跑」说成「什么都没有」。 */
+internal fun foldModeEmptyNote(mode: HomeFoldMode): String =
+    if (mode.filtersRunning) "这个目录没有在跑、失败或待处理的会话。" else "这个目录还没有任务或终端。"
 
 /**
  * 拖动排序：把 [from] 位置的元素搬到 [to] 位置，其余元素保持相对顺序。

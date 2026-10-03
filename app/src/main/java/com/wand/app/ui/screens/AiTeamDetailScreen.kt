@@ -1,5 +1,6 @@
 package com.wand.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,11 +8,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -24,10 +28,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,8 +59,12 @@ import com.wand.app.ui.components.WandCrumb
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandInPlaceSwap
+import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -74,68 +86,108 @@ fun AiTeamDetailScreen(
     onEditTeam: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var team by remember { mutableStateOf<AiTeam?>(null) }
+    var team by remember(teamId) { mutableStateOf<AiTeam?>(null) }
     var runs by remember(teamId) { mutableStateOf<List<AiTeamRun>>(emptyList()) }
     var latestOffice by remember(teamId) { mutableStateOf<AiTeamRunDetail?>(null) }
-    var runsError by remember { mutableStateOf<String?>(null) }
+    var runsError by remember(teamId) { mutableStateOf<String?>(null) }
+    var runsLoading by remember(teamId) { mutableStateOf(true) }
     // 执行候选的模型名要把 `default` 哨兵换成一个具体的默认模型（同 Web 目录口径）。
     var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var projects by remember { mutableStateOf<List<Workspace>>(emptyList()) }
+    var projectsLoading by remember { mutableStateOf(true) }
+    var projectsError by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshNonce by remember { mutableStateOf(0) }
 
-    var note by remember { mutableStateOf("") }
-    // "" = 还没选，实际提交用 defaultTeamStartProjectId 的缺省（列表首个 = 最近一个）。
+    var note by remember(teamId) { mutableStateOf("") }
+    // 尚未选择时使用最近项目；明确选中的项目失效后要求重选。
     var pickedWorkspaceId by remember { mutableStateOf("") }
     var projectMenuOpen by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
+    var startUnconfirmed by rememberSaveable(teamId) { mutableStateOf(false) }
 
-    LaunchedEffect(api, teamId, refreshNonce) {
+    LaunchedEffect(api, workspaceApi, teamId, refreshNonce) {
         loading = true
-        try {
-            team = api.listAiTeams().firstOrNull { it.id == teamId }
-            error = null
-        } catch (e: Exception) {
-            error = e.message ?: "无法加载团队详情"
-        } finally {
-            loading = false
-        }
-        runCatching { api.listAiTeamRuns(teamId = teamId, limit = 20) }
-            .onSuccess { loaded ->
-                runs = loaded
-                runsError = null
-                latestOffice = loaded.firstOrNull()?.let { run ->
-                    runCatching { api.aiTeamRunDetail(run.id) }.getOrNull()
+        runsLoading = true
+        projectsLoading = true
+        coroutineScope {
+            launch {
+                try {
+                    team = api.listAiTeams().firstOrNull { it.id == teamId }
+                    error = null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    error = e.message ?: "无法加载团队详情"
+                } finally {
+                    loading = false
                 }
             }
-            .onFailure { runsError = it.message ?: "无法加载协作动态" }
-        // 项目列表失败不挡组织图展示：候选为空时开工区自己原位说明。
-        projects = runCatching { workspaceApi.listWorkspaces() }.getOrDefault(projects)
-        // 模型目录失败只影响候选行的模型名，不挡团队详情。
-        models = runCatching { api.boardModels() }.getOrDefault(models)
+            launch {
+                try {
+                    val loaded = api.listAiTeamRuns(teamId = teamId, limit = 20)
+                    runs = loaded
+                    runsError = null
+                    if (latestOffice?.run?.id != loaded.firstOrNull()?.id) latestOffice = null
+                    latestOffice = loaded.firstOrNull()?.let { api.aiTeamRunDetail(it.id) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    runsError = e.message ?: "无法加载协作动态"
+                } finally {
+                    runsLoading = false
+                }
+            }
+            launch {
+                try {
+                    projects = workspaceApi.listWorkspaces()
+                    projectsError = null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    projectsError = e.message ?: "无法加载项目，请刷新重试。"
+                } finally {
+                    projectsLoading = false
+                }
+            }
+            launch {
+                try {
+                    models = api.boardModels()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // 模型目录失败只影响候选行的模型名，保留已经加载过的目录。
+                }
+            }
+        }
     }
 
     val candidates = teamStartProjectCandidates(projects)
-    val effectiveWorkspaceId = pickedWorkspaceId.ifBlank { defaultTeamStartProjectId(projects) }
+    val effectiveWorkspaceId = teamStartSelectedProjectId(projects, pickedWorkspaceId)
     val selectedProjectName = candidates.firstOrNull { it.id == effectiveWorkspaceId }
         ?.let { it.name.ifBlank { it.id } }
     // 与服务端 boundedText 同口径：trim 后判长度，首尾空白不吃配额。
     val noteError = note.takeIf { it.trim().length > TEAM_DIRECT_NOTE_MAX }?.let { teamDirectNoteError(note) }
-    val canStart = candidates.isNotEmpty() && noteError == null && note.isNotBlank() && !submitting
+    val canStart = effectiveWorkspaceId.isNotBlank() && noteError == null && note.isNotBlank() &&
+        !submitting && !startUnconfirmed
 
     fun submit() {
+        if (submitting || startUnconfirmed) return
         val invalid = teamDirectSubmitError(projects, note)
+            ?: if (effectiveWorkspaceId.isBlank()) "原项目已不可用，请重新选择项目。" else null
         if (invalid != null) {
             submitError = invalid
             return
         }
         submitting = true
         submitError = null
+        val submittedWorkspaceId = effectiveWorkspaceId
+        val submittedNote = note.trim()
         scope.launch {
             try {
-                val direct = api.startDirectTeamRun(teamId, effectiveWorkspaceId, note.trim())
+                val direct = api.startDirectTeamRun(teamId, submittedWorkspaceId, submittedNote)
                 // 成功 = 直接落到这一轮的群聊页：那里能看到派工、能立刻补一句要求。
                 val runId = direct.detail.run.id
                 if (runId.isNotBlank()) {
@@ -145,17 +197,20 @@ fun AiTeamDetailScreen(
                     if (taskId.isNotBlank()) {
                         onOpenTask(taskId)
                     } else {
-                        submitError = "已开工，但响应里没带运行 id，请在任务看板里查找。"
+                        startUnconfirmed = true
                     }
                 }
             } catch (e: Exception) {
-                // 服务端 400/404 文案原样显示（如「AI 团队不能在全局暂存工作区运行…」）。
-                submitError = e.message ?: "开工失败"
+                startUnconfirmed = teamDirectFailureUnconfirmed(e)
+                if (!startUnconfirmed) submitError = e.message ?: "开工失败"
+                if (e is CancellationException) throw e
             } finally {
                 submitting = false
             }
         }
     }
+
+    BackHandler(enabled = submitting) { /* 等待开工结果，避免离页后重复派发。 */ }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -169,12 +224,8 @@ fun AiTeamDetailScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         WandBreadcrumb(
                             crumbs = listOf(
-                                // 返回入口只留一个：面包屑首段，且**永远可点**——它与任务详情不同：
-                                // 宽屏左栏只有会话/任务列表（TaskListScreen 里没有团队列表），
-                                // 本页在宽屏也是经 nav.push 进入，栈里下一层恒为「AI 团队」列表，
-                                // 恒有可回的去处。所以这里不存在「宽屏右栏即顶层」那种态，
-                                // showBack 门控是走不到的分支，按 AGENTS.md 删掉（第 22 步实测取证）。
-                                WandCrumb("AI 团队", onClick = onBack),
+                                // 与通讯录头像入口对应；开工请求中等待确定结果再离开。
+                                WandCrumb("通讯录", onClick = if (submitting) null else onBack),
                                 WandCrumb(team?.name ?: "AI 团队"),
                             ),
                         )
@@ -192,11 +243,13 @@ fun AiTeamDetailScreen(
                         icon = WandIcons.edit,
                         contentDescription = "编辑团队",
                         onClick = onEditTeam,
+                        enabled = team != null && !submitting,
                     )
                     WandIconButton(
                         icon = WandIcons.refresh,
                         contentDescription = "刷新",
                         onClick = { refreshNonce += 1 },
+                        enabled = !loading && !runsLoading && !projectsLoading && !submitting,
                     )
                 },
             )
@@ -205,12 +258,18 @@ fun AiTeamDetailScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .imePadding(),
         ) {
             when {
-                loading && team == null -> CircularProgressIndicator(
-                    color = WandColors.brand,
-                    modifier = Modifier.align(Alignment.Center).size(26.dp),
+                loading && team == null -> WandStatusIconSlot(
+                    indicatorColor = WandColors.brand,
+                    containerColor = Color.Transparent,
+                    running = true,
+                    icon = WandIcons.refresh,
+                    boxSize = 44.dp,
+                    iconSize = 26.dp,
+                    modifier = Modifier.align(Alignment.Center),
                 )
                 error != null && team == null -> Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -256,9 +315,11 @@ fun AiTeamDetailScreen(
                                 runs = runs,
                                 latestOffice = latestOffice,
                                 error = runsError,
-                                onOpenGroupChat = onOpenGroupChat,
-                                onOpenMemberSession = onOpenMemberSession,
-                                onOpenTask = onOpenTask,
+                                loading = runsLoading,
+                                actionsEnabled = !submitting,
+                                onOpenGroupChat = { if (!submitting) onOpenGroupChat(it) },
+                                onOpenMemberSession = { if (!submitting) onOpenMemberSession(it) },
+                                onOpenTask = { if (!submitting) onOpenTask(it) },
                             )
                         }
                         item(key = "ai-team-members") {
@@ -271,6 +332,10 @@ fun AiTeamDetailScreen(
                         item(key = "ai-team-start") {
                             AiTeamStartCard(
                                 candidates = candidates,
+                                projectsLoading = projectsLoading,
+                                projectError = projectsError ?: if (pickedWorkspaceId.isNotBlank() &&
+                                    effectiveWorkspaceId.isBlank() && !projectsLoading
+                                ) "原项目已不可用，请重新选择项目。" else null,
                                 selectedProjectName = selectedProjectName,
                                 projectMenuOpen = projectMenuOpen,
                                 onToggleProjectMenu = { projectMenuOpen = !projectMenuOpen },
@@ -286,7 +351,8 @@ fun AiTeamDetailScreen(
                                 },
                                 noteError = noteError,
                                 submitting = submitting,
-                                submitError = submitError,
+                                startUnconfirmed = startUnconfirmed,
+                                submitError = if (startUnconfirmed) TEAM_DIRECT_UNCONFIRMED_MESSAGE else submitError,
                                 canStart = canStart,
                                 onSubmit = { submit() },
                             )
@@ -303,31 +369,49 @@ private fun AiTeamActivityCard(
     runs: List<AiTeamRun>,
     latestOffice: AiTeamRunDetail?,
     error: String?,
+    loading: Boolean,
+    actionsEnabled: Boolean,
     onOpenGroupChat: (String) -> Unit,
     onOpenMemberSession: (String) -> Unit,
     onOpenTask: (String) -> Unit,
 ) {
     WandCard(contentPadding = PaddingValues(14.dp)) {
-        Text(
-            "协作动态",
-            color = WandColors.textPrimary,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        when {
-            error != null -> Text(
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "协作动态",
+                color = WandColors.textPrimary,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Box(modifier = Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                if (loading) WandStatusIconSlot(
+                    indicatorColor = WandColors.brand,
+                    containerColor = Color.Transparent,
+                    running = true,
+                    icon = WandIcons.refresh,
+                    boxSize = 18.dp,
+                    iconSize = 16.dp,
+                )
+            }
+        }
+        if (error != null) {
+            Text(
                 error,
                 color = WandColors.danger,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp),
             )
-            runs.isEmpty() -> Text(
-                "还没有协作记录。填写下方开工说明，成员会在群聊中分工。",
+        }
+        when {
+            runs.isEmpty() && (loading || error == null) -> Text(
+                if (loading) "正在加载协作动态…"
+                else "还没有协作记录。填写下方开工说明，成员会在群聊中分工。",
                 color = WandColors.textMuted,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp),
             )
-            else -> {
+            runs.isNotEmpty() -> {
                 latestOffice?.let { detail ->
                     TeamOfficeStrip(detail, onOpenMemberSession)
                 }
@@ -359,7 +443,7 @@ private fun AiTeamActivityCard(
                                 if (run.chatSessionId != null) onOpenGroupChat(run.id)
                                 else if (run.taskId.isNotBlank()) onOpenTask(run.taskId)
                             },
-                            enabled = run.chatSessionId != null || run.taskId.isNotBlank(),
+                            enabled = actionsEnabled && (run.chatSessionId != null || run.taskId.isNotBlank()),
                             variant = WandButtonVariant.Text,
                             compact = true,
                         )
@@ -380,6 +464,8 @@ private fun AiTeamMemberCard(member: AiTeamMember, models: ModelsResponse?) {
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f, fill = false),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
             if (member.isLeader) {
                 // §2.3 F1：名字原样保留，角色改用矢量星形标记，不在标题再写一遍「负责人」
@@ -441,6 +527,8 @@ fun aiTeamAgentLabel(agent: BoardTaskAgent, models: ModelsResponse? = null): Str
 @Composable
 private fun AiTeamStartCard(
     candidates: List<Workspace>,
+    projectsLoading: Boolean,
+    projectError: String?,
     selectedProjectName: String?,
     projectMenuOpen: Boolean,
     onToggleProjectMenu: () -> Unit,
@@ -449,6 +537,7 @@ private fun AiTeamStartCard(
     onNoteChange: (String) -> Unit,
     noteError: String?,
     submitting: Boolean,
+    startUnconfirmed: Boolean,
     submitError: String?,
     canStart: Boolean,
     onSubmit: () -> Unit,
@@ -463,7 +552,11 @@ private fun AiTeamStartCard(
         if (candidates.isEmpty()) {
             // 原位提示替代禁用按钮的瞎点击（§4.2：必须有非 global 已有项目）。
             Text(
-                "AI 团队需要先选择一个已有项目",
+                when {
+                    projectsLoading -> "正在加载项目…"
+                    projectError != null -> projectError
+                    else -> "AI 团队需要先选择一个已有项目"
+                },
                 color = WandColors.textMuted,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 6.dp),
@@ -476,7 +569,8 @@ private fun AiTeamStartCard(
                     variant = WandButtonVariant.Secondary,
                     compact = true,
                     trailingIcon = WandIcons.expand,
-                    enabled = !submitting,
+                    enabled = !submitting && !startUnconfirmed,
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 DropdownMenu(
                     expanded = projectMenuOpen,
@@ -506,6 +600,14 @@ private fun AiTeamStartCard(
                 }
             }
         }
+        if (candidates.isNotEmpty() && projectError != null) {
+            Text(
+                projectError,
+                color = WandColors.danger,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
         WandTextField(
             value = note,
             onValueChange = onNoteChange,
@@ -515,7 +617,7 @@ private fun AiTeamStartCard(
             isError = noteError != null,
             minLines = 3,
             maxLines = 8,
-            enabled = !submitting,
+            enabled = !submitting && !startUnconfirmed,
         )
         Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             Text(
@@ -525,26 +627,39 @@ private fun AiTeamStartCard(
                 modifier = Modifier.weight(1f),
             )
             Text(
-                "${note.length}",
+                "${note.trim().length}",
                 color = if (noteError != null) WandColors.danger else WandColors.textMuted,
                 style = MaterialTheme.typography.labelSmall,
             )
         }
-        submitError?.let { message ->
-            Text(
-                message,
-                color = WandColors.danger,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
-        }
         WandButton(
-            label = if (submitting) "开工中…" else "开工",
+            label = when {
+                submitting -> "开工中…"
+                startUnconfirmed -> "开工结果待核对"
+                else -> "开工"
+            },
             onClick = onSubmit,
             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
             enabled = canStart,
             loading = submitting,
-            icon = if (submitting) null else WandIcons.send,
+            icon = if (startUnconfirmed) WandIcons.refresh else WandIcons.send,
         )
+        Box(Modifier.fillMaxWidth().height(48.dp).padding(top = 8.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }) {
+            WandInPlaceSwap(
+                contentKey = Pair(if (submitting) "正在创建任务并安排团队…" else submitError.orEmpty(), submitError != null),
+                enterScale = 1f,
+                exitScale = 1f,
+            ) { key ->
+                @Suppress("UNCHECKED_CAST")
+                val result = key as Pair<String, Boolean>
+                Text(
+                    result.first,
+                    color = if (result.second) WandColors.danger else WandColors.textMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                )
+            }
+        }
     }
 }

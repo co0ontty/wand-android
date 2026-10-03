@@ -7,6 +7,8 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,22 +17,42 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandApiException
@@ -42,6 +64,10 @@ import com.wand.app.ui.appendComposerVoiceText
 import com.wand.app.ui.attachmentPrompt
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandMotion
+import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.isWandDarkTheme
+import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -250,7 +276,10 @@ internal fun PendingAttachmentsPreview(
                     WandAsyncImage(
                         path = file.savedPath,
                         baseUrl = baseUrl,
-                        modifier = Modifier.size(width = 96.dp, height = 72.dp),
+                        modifier = Modifier
+                            .size(width = 96.dp, height = 72.dp)
+                            .clip(WandShapes.sm)
+                            .border(0.8.dp, WandColors.border.copy(alpha = 0.6f), WandShapes.sm),
                         maxWidth = 96,
                         maxHeight = 72,
                     )
@@ -283,6 +312,177 @@ internal fun PendingAttachmentsPreview(
                             modifier = Modifier.size(13.dp),
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/** 判断输入栏是否需要平滑展开为多行工作台态。 */
+internal fun shouldComposerExpand(
+    isFocused: Boolean,
+    voicePressed: Boolean,
+    draftNeedsExpanded: Boolean,
+    hasAttachments: Boolean,
+): Boolean {
+    return isFocused || voicePressed || draftNeedsExpanded || hasAttachments
+}
+
+/**
+ * 将已选中的项优先置顶（若存在），其余项保持原有相对顺序。
+ * 方便用户点开模型或模式选择面板时第一眼即可辨认当前生效的配置项。
+ */
+internal fun <T> prioritizeSelectedItem(
+    items: List<T>,
+    selectedId: String?,
+    idSelector: (T) -> String?,
+): List<T> {
+    if (selectedId == null || items.size <= 1) return items
+    val index = items.indexOfFirst { idSelector(it) == selectedId }
+    if (index <= 0) return items
+    return buildList(items.size) {
+        add(items[index])
+        items.forEachIndexed { i, item ->
+            if (i != index) add(item)
+        }
+    }
+}
+
+/**
+ * 高质感输入槽（Field Capsule）：
+ * - 紧凑外形配合微圆角（WandShapes.md 14dp）；
+ * - 聚焦时背景提亮、边框过渡为品牌色微光聚焦环（Focus Ring）；
+ * - 占位符与输入文字垂直居中严丝合缝；
+ * - 输入内容且聚焦时右上角浮现微型快速清空按钮，单手一键重置草稿；
+ * - 展开态与折叠态平滑适应，高度上限内自然滚动。
+ */
+@Composable
+internal fun ComposerInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    isFocused: Boolean,
+    onFocusChanged: (Boolean) -> Unit,
+    focusRequester: FocusRequester,
+    expanded: Boolean,
+    modifier: Modifier = Modifier,
+    maxLines: Int = if (expanded) 6 else 1,
+    maxHeight: Dp = composerInputMaxHeight(expanded),
+    keyboardOptions: KeyboardOptions = KeyboardOptions(
+        capitalization = KeyboardCapitalization.Sentences,
+        imeAction = ImeAction.Send,
+    ),
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    onTextLayout: (TextLayoutResult) -> Unit = {},
+) {
+    val motionEnabled = !reduceMotionEnabled()
+    val dark = isWandDarkTheme()
+    val shape = WandShapes.md
+
+    val animatedBg by animateColorAsState(
+        targetValue = if (isFocused) {
+            WandColors.surface.copy(alpha = if (dark) 0.88f else 0.96f)
+        } else {
+            WandColors.surfaceSoft.copy(alpha = if (dark) 0.40f else 0.52f)
+        },
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "composerFieldBg",
+    )
+    val animatedBorderColor by animateColorAsState(
+        targetValue = if (isFocused) {
+            WandColors.brand.copy(alpha = 0.72f)
+        } else {
+            WandColors.border.copy(alpha = if (dark) 0.45f else 0.58f)
+        },
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "composerFieldBorder",
+    )
+    val animatedBorderWidth by animateDpAsState(
+        targetValue = if (isFocused) 1.2.dp else 0.8.dp,
+        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
+        label = "composerFieldBorderWidth",
+    )
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(animatedBg)
+            .border(animatedBorderWidth, animatedBorderColor, shape)
+            .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Row(
+            verticalAlignment = if (expanded && maxLines > 1) Alignment.Top else Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 22.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    textStyle = TextStyle(
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp,
+                        color = WandColors.textPrimary,
+                    ),
+                    cursorBrush = SolidColor(WandColors.brand),
+                    minLines = 1,
+                    maxLines = maxLines,
+                    onTextLayout = onTextLayout,
+                    keyboardOptions = keyboardOptions,
+                    keyboardActions = keyboardActions,
+                    decorationBox = { innerTextField ->
+                        Box(
+                            contentAlignment = Alignment.CenterStart,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (value.isEmpty()) {
+                                Text(
+                                    placeholder,
+                                    fontSize = 15.sp,
+                                    lineHeight = 21.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = WandColors.textMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 22.dp, max = maxHeight)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { onFocusChanged(it.isFocused) },
+                )
+            }
+            if (value.isNotEmpty() && isFocused) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .padding(start = 4.dp, end = 2.dp)
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(WandColors.textSecondary.copy(alpha = 0.12f))
+                        .clickable(
+                            role = Role.Button,
+                            onClickLabel = "清空输入",
+                        ) {
+                            onValueChange("")
+                        },
+                ) {
+                    Icon(
+                        WandIcons.close,
+                        contentDescription = "清空",
+                        tint = WandColors.textSecondary,
+                        modifier = Modifier.size(13.dp),
+                    )
                 }
             }
         }

@@ -1,5 +1,10 @@
 package com.wand.app.ui.components
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import com.wand.app.ui.theme.WandShapes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,5 +47,38 @@ class WandMotionKitTest {
     @Test
     fun emptyTrackHasZeroGeometryInsteadOfDividingByZero() {
         assertEquals(0f to 0f, slideEdgeFractions(index = 0, count = 0, gapFraction = 0f))
+    }
+
+    /** 指示条圆角跟着形状走：胶囊形状返回一个大值，绘制时再按行高收成半个高。 */
+    @Test
+    fun indicatorRadiusComesFromTheShapeNotAHardcodedValue() {
+        val density = Density(2f, 1f)
+
+        assertTrue(
+            indicatorShapeRadiusPx(WandShapes.full, density, fallbackPx = 20f) > 400f,
+        )
+        // 默认的 10dp 圆角形状：和老写法（写死 10dp）完全一致。
+        assertEquals(
+            20f,
+            indicatorShapeRadiusPx(WandShapes.sm, density, fallbackPx = 99f),
+            0.01f,
+        )
+        // 直角形状不再自己加圆角，也不吃回落值。
+        assertEquals(
+            0f,
+            indicatorShapeRadiusPx(RectangleShape, density, fallbackPx = 99f),
+            0.01f,
+        )
+    }
+
+    /** 圆角形状的半径与尺寸无关，只有整圆端形状才会撞到「半个高」的天花板。 */
+    @Test
+    fun roundedShapeRadiusDoesNotDependOnSize() {
+        val density = Density(3f, 1f)
+        assertEquals(
+            36f,
+            indicatorShapeRadiusPx(RoundedCornerShape(12.dp), density, fallbackPx = 0f),
+            0.01f,
+        )
     }
 }

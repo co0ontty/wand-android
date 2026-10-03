@@ -17,6 +17,7 @@ import com.wand.app.data.SessionEvent
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
+import com.wand.app.data.WandProvider
 import com.wand.app.wlog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -44,6 +45,12 @@ data class AskUserSelectionState(
     val selected: Map<Int, Set<Int>> = emptyMap(),
     val submitted: Boolean = false,
 )
+
+internal fun canSwitchBlankConversationProvider(snapshot: SessionSnapshot?, messageTotal: Int): Boolean =
+    snapshot != null && snapshot.isStructured && snapshot.status == "idle" && snapshot.archived != true &&
+        snapshot.claudeSessionId.isNullOrBlank() && snapshot.structuredState?.inFlight != true &&
+        snapshot.messages.isNullOrEmpty() && (snapshot.messageTotal ?: 0) == 0 && messageTotal == 0 &&
+        snapshot.queuedMessages.isNullOrEmpty()
 
 class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
@@ -74,6 +81,16 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     var toast by mutableStateOf<String?>(null)
     var snapshot by mutableStateOf<SessionSnapshot?>(null)
         private set
+
+    var providerSwitching by mutableStateOf(false)
+        private set
+    var providerSwitchError by mutableStateOf<String?>(null)
+        private set
+    var providerSwitchResult by mutableStateOf<String?>(null)
+        private set
+    val canSwitchProvider: Boolean get() = !loading && !providerSwitching &&
+        pendingModelMutations == 0 && pendingThinkingMutations == 0 && pendingModeMutations == 0 &&
+        canSwitchBlankConversationProvider(snapshot, messageTotal)
 
     var availableModels by mutableStateOf<List<ModelInfo>>(emptyList())
         private set
@@ -114,6 +131,15 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         private set
     var loadingEarlier by mutableStateOf(false)
         private set
+    /**
+     * 上一页没取回来（网络层失败等）。不弹提示：顶部静默加载位据此继续显示 loading，
+     * 稍后自动重试，取回后清零。
+     */
+    var earlierLoadFailed by mutableStateOf(false)
+        private set
+    /** 每次静默翻页结束（无论成败）自增，UI 据此知道「上一页已经有结果了」。 */
+    var earlierPageAttempts by mutableIntStateOf(0)
+        private set
     val canLoadEarlier: Boolean get() = leadingBlockOffset > 0 || loadedOffset > 0
     private val earlierPageSize = 40
     private val earlierBlockPageSize = 40
@@ -132,9 +158,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private var modelMutationGeneration = 0L
     private var thinkingMutationGeneration = 0L
     private var modeMutationGeneration = 0L
-    private var pendingModelMutations = 0
-    private var pendingThinkingMutations = 0
-    private var pendingModeMutations = 0
+    private var pendingModelMutations by mutableIntStateOf(0)
+    private var pendingThinkingMutations by mutableIntStateOf(0)
+    private var pendingModeMutations by mutableIntStateOf(0)
     private var confirmedModel: String? = null
     private var confirmedThinkingEffort = "off"
     private var confirmedMode = "default"
@@ -289,6 +315,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                     generating = snap.titleGenerating,
                     ptyBusy = snap.ptyBusy,
                     permissionBlocked = snap.hasPendingPermission,
+                    completionRevision = snap.completionRevision,
+                    viewedCompletionRevision = snap.viewedCompletionRevision,
                 )
             }
         }
@@ -304,7 +332,36 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     // MARK: - 模型与思考深度（乐观更新 + 串行请求 + generation 防旧响应覆盖）
 
+    /** Logo 选择只修改这个空白会话；草稿和附件仍由同一个 composer 持有。 */
+    fun chooseProvider(provider: String) {
+        if (!canSwitchProvider || WandProvider.fromId(provider) == null || snapshot?.provider == provider) return
+        providerSwitching = true
+        providerSwitchError = null
+        providerSwitchResult = null
+        scope.launch {
+            try {
+                settingsMutationMutex.withLock {
+                    val snap = api.setProvider(sessionId, provider)
+                    check(snap.id == sessionId && snap.provider == provider && snap.isStructured &&
+                        snap.employeeId == snapshot?.employeeId) { "未收到有效的工具切换回执" }
+                    currentCoroutineContext().ensureActive()
+                    apply(snap)
+                    availableModels = emptyList()
+                    defaultModel = null
+                    loadModels()
+                    providerSwitchResult = "已切换为 ${snap.providerLabel}"
+                }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                providerSwitchError = failure.message ?: "切换工具失败，请重试"
+            } finally {
+                providerSwitching = false
+            }
+        }
+    }
+
     fun setModel(model: String?) {
+        if (providerSwitching) return
         val generation = ++modelMutationGeneration
         pendingModelMutations++
         selectedModel = model
@@ -336,6 +393,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     }
 
     fun chooseThinkingEffort(effort: String) {
+        if (providerSwitching) return
         val generation = ++thinkingMutationGeneration
         pendingThinkingMutations++
         thinkingEffort = effort
@@ -376,6 +434,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     /** 中途切换执行模式（乐观更新 + 失败回滚）。codex 会话固定 full-access，调用方负责拦。 */
     fun chooseMode(newMode: String) {
+        if (providerSwitching) return
         val generation = ++modeMutationGeneration
         pendingModeMutations++
         mode = newMode
@@ -415,6 +474,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     /** Protocol send only: composer owns content, submit concurrency and inline feedback. */
     suspend fun submitInput(text: String) {
+        check(!providerSwitching) { "工具正在切换，请稍后发送" }
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val structured = snapshot?.isStructured
@@ -447,8 +507,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
         try {
             if (structured) {
-                // HTTP confirms receipt; model output continues through the event stream.
-                val accepted = api.sendInput(sessionId, trimmed, respondImmediately = !queueing)
+                // Always acknowledge receipt promptly, including queued input. This flag
+                // controls HTTP response timing; the server owns queue scheduling.
+                val accepted = api.sendStructuredInput(sessionId, trimmed)
                 currentCoroutineContext().ensureActive()
                 apply(accepted)
                 socket.requestResync()
@@ -539,7 +600,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         scope.launch {
             try {
                 if (isStructured) {
-                    api.sendInput(sessionId, answerText, respondImmediately = true)
+                    api.sendStructuredInput(sessionId, answerText)
                 } else {
                     sendPtyChatInput(answerText)
                 }
@@ -694,82 +755,80 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     }
 
     /**
-     * 加载更早的一页（滚动到顶时触发）。两阶段：先按「块」翻完 messages[0] 这条 turn
+     * 静默加载更早的一页，挂起直到这一页有结果。两阶段：先按「块」翻完 messages[0] 这条 turn
      * 被块级窗口切掉的头部，再按「整条 turn」往前翻更早的会话 —— 与 iOS ChatStore 一致。
+     *
+     * 返回 true = 这一页已并入。失败不弹提示，只置 [earlierLoadFailed] 让顶部 loading 留在原位，
+     * 由调用方稍后重试（翻页对用户是透明的）。
      */
-    fun loadEarlier() {
-        when {
-            leadingBlockOffset > 0 -> loadEarlierBlocks()
-            loadedOffset > 0 -> loadEarlierTurns()
+    suspend fun loadEarlierPage(): Boolean {
+        if (loadingEarlier) return false
+        val pagingBlocks = leadingBlockOffset > 0
+        if (!pagingBlocks && loadedOffset <= 0) return false
+        loadingEarlier = true
+        earlierLoadFailed = false
+        return try {
+            if (pagingBlocks) loadEarlierBlocks() else loadEarlierTurns()
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Exception) {
+            wlog("chat", "加载更早内容失败 session=$sessionId：${failure.message}")
+            earlierLoadFailed = true
+            false
+        } finally {
+            loadingEarlier = false
+            earlierPageAttempts++
         }
     }
 
-    /** 把 messages[0] 被切掉的头部按页 prepend 回它的 content。 */
-    private fun loadEarlierBlocks() {
-        if (loadingEarlier) return
+    /** 把 messages[0] 被切掉的头部按页 prepend 回它的 content；true = 这一页已并入。 */
+    private suspend fun loadEarlierBlocks(): Boolean {
         val turnIndex = loadedOffset
         val currentBlockOffset = leadingBlockOffset
-        if (currentBlockOffset <= 0) return
-        val head = messages.firstOrNull() ?: return
+        if (currentBlockOffset <= 0) return false
+        val head = messages.firstOrNull() ?: return false
         val headRole = head.role
-        loadingEarlier = true
-        scope.launch {
-            try {
-                val page = api.fetchEarlierBlocks(
-                    id = sessionId,
-                    turn = turnIndex,
-                    blockOffset = currentBlockOffset,
-                    blockLimit = earlierBlockPageSize,
-                )
-                // 起点被其它更新改过、或 messages[0] 不再是同一条 turn 时不合并，避免错位。
-                val current = messages.firstOrNull()
-                if (loadedOffset == turnIndex &&
-                    leadingBlockOffset == currentBlockOffset &&
-                    current != null &&
-                    current.role == headRole &&
-                    page.blocks.isNotEmpty()
-                ) {
-                    messages = listOf(current.copy(content = page.blocks + current.content)) + messages.drop(1)
-                    leadingBlockOffset = page.blockOffset
-                    leadingBlockTotal = maxOf(leadingBlockTotal, page.blockTotal)
-                    // 翻上来的这一页同样不需要用户数着走：剩余条数以服务端为准（工具块不计入）。
-                    leadingVisibleCount = page.blockVisible
-                }
-            } catch (e: Exception) {
-                toast = e.message ?: "加载更早步骤失败"
-            } finally {
-                loadingEarlier = false
-            }
+        val page = api.fetchEarlierBlocks(
+            id = sessionId,
+            turn = turnIndex,
+            blockOffset = currentBlockOffset,
+            blockLimit = earlierBlockPageSize,
+        )
+        // 起点被其它更新改过、或 messages[0] 不再是同一条 turn 时不合并，避免错位。
+        val current = messages.firstOrNull()
+        if (loadedOffset != turnIndex ||
+            leadingBlockOffset != currentBlockOffset ||
+            current == null ||
+            current.role != headRole ||
+            page.blocks.isEmpty()
+        ) {
+            return false
         }
+        messages = listOf(current.copy(content = page.blocks + current.content)) + messages.drop(1)
+        leadingBlockOffset = page.blockOffset
+        leadingBlockTotal = maxOf(leadingBlockTotal, page.blockTotal)
+        // 翻上来的这一页同样不需要用户数着走：剩余条数以服务端为准（工具块不计入）。
+        leadingVisibleCount = page.blockVisible
+        return true
     }
 
     /** 翻更早的整条 turn：messages[0] 已完整、其前面还有更早 turn 时，prepend 整条并前移 loadedOffset。 */
-    private fun loadEarlierTurns() {
-        if (loadingEarlier) return
+    private suspend fun loadEarlierTurns(): Boolean {
         val currentOffset = loadedOffset
         val newOffset = maxOf(0, currentOffset - earlierPageSize)
         val limit = currentOffset - newOffset
-        if (limit <= 0) return
-        loadingEarlier = true
-        scope.launch {
-            try {
-                val page = api.fetchMessages(sessionId, newOffset, limit)
-                // 仅当起点未被其它更新改动时才 prepend，避免错位重复。
-                if (loadedOffset == currentOffset) {
-                    messages = page.messages + messages
-                    loadedOffset = newOffset
-                    messageTotal = maxOf(messageTotal, page.total)
-                    // 整条翻页拿到的最旧一条是完整 turn，leading 归零并指向新的 messages[0]。
-                    leadingBlockOffset = 0
-                    leadingBlockTotal = messages.firstOrNull()?.content?.size ?: 0
-                    leadingVisibleCount = 0
-                }
-            } catch (e: Exception) {
-                toast = e.message ?: "加载更早消息失败"
-            } finally {
-                loadingEarlier = false
-            }
-        }
+        if (limit <= 0) return false
+        val page = api.fetchMessages(sessionId, newOffset, limit)
+        // 仅当起点未被其它更新改动时才 prepend，避免错位重复。
+        if (loadedOffset != currentOffset) return false
+        messages = page.messages + messages
+        loadedOffset = newOffset
+        messageTotal = maxOf(messageTotal, page.total)
+        // 整条翻页拿到的最旧一条是完整 turn，leading 归零并指向新的 messages[0]。
+        leadingBlockOffset = 0
+        leadingBlockTotal = messages.firstOrNull()?.content?.size ?: 0
+        leadingVisibleCount = 0
+        return true
     }
 }
 

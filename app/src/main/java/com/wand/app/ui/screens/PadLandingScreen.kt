@@ -157,11 +157,7 @@ private fun PadLandingSessionRow(
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    listSessionLabel(
-                        session,
-                        index = index,
-                        parentNames = listOfNotNull(entry.task?.name, entry.group.workspaceName),
-                    ),
+                    listSessionLabel(session, index = index),
                     style = MaterialTheme.typography.bodyLarge,
                     color = WandColors.textPrimary,
                     maxLines = 1,

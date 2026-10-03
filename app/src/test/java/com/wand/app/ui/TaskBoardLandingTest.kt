@@ -48,7 +48,7 @@ class TaskBoardLandingTest {
 
     @Test
     fun otherScreensBelowReplacesTop() {
-        assertEquals(TaskBoardLanding.ReplaceTop, taskBoardLanding(Screen.AiTeams))
+        assertEquals(TaskBoardLanding.ReplaceTop, taskBoardLanding(Screen.Contacts()))
         assertEquals(TaskBoardLanding.ReplaceTop, taskBoardLanding(Screen.Settings))
         assertEquals(TaskBoardLanding.ReplaceTop, taskBoardLanding(Screen.Missions()))
         assertEquals(TaskBoardLanding.ReplaceTop, taskBoardLanding(Screen.AiTeamChat("run-1")))

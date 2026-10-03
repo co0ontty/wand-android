@@ -17,8 +17,10 @@ data class AiTeamMember(
     val isLeader: Boolean,
     /** 头像：空串按 id 哈希选毛色、`cat:<n>` 指定毛色、`data:image/…` 是上传的小图。 */
     val avatar: String = "",
-    /** 职责标注（plan / work / verify / any）；缺省视同 any，Android 编辑器不改它但必须原样回写。 */
+    /** 团队拥有的职责标注（plan / work / verify / any）；缺省视同 any。 */
     val role: String? = null,
+    /** 通讯录身份；旧成员不按名字猜绑定，只有显式选择员工才设置。 */
+    val employeeId: String? = null,
 ) {
     companion object {
         fun parse(item: JSONObject): AiTeamMember? {
@@ -36,6 +38,7 @@ data class AiTeamMember(
                 isLeader = item.bool("isLeader") ?: false,
                 avatar = item.str("avatar") ?: "",
                 role = item.str("role")?.takeIf { it.isNotBlank() },
+                employeeId = item.str("employeeId")?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 
@@ -115,6 +118,8 @@ data class AiTeamDraft(
  */
 fun AiTeamMember.toJson(): JSONObject = JSONObject()
     .put("id", id)
+    // 显式 null 才能解除旧绑定；省略字段会让服务端为旧客户端保留绑定。
+    .put("employeeId", employeeId?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
     .put("name", name.trim())
     .put("duty", duty.trim())
     .put("isLeader", isLeader)
@@ -135,6 +140,7 @@ data class AiTeamRun(
     val chatSessionId: String?,
     val taskTitle: String = "",
     val taskIdentifier: String = "",
+    val updatedAt: String = "",
 ) {
     companion object {
         fun parse(item: JSONObject): AiTeamRun? {
@@ -152,6 +158,7 @@ data class AiTeamRun(
                 chatSessionId = item.str("chatSessionId")?.takeIf { it.isNotBlank() },
                 taskTitle = item.str("taskTitle") ?: "",
                 taskIdentifier = item.str("taskIdentifier") ?: "",
+                updatedAt = item.str("updatedAt") ?: "",
             )
         }
 
@@ -205,6 +212,7 @@ data class AiTeamRunDetail(
     val displayTeam: AiTeam? = null,
     /** 服务端从当前任务标题派生的群名，与团队定义/执行快照分开。 */
     val chatTitle: String? = null,
+    val delivery: AiTeamDeliverySummary? = null,
 ) {
     val presentationTeam: AiTeam? get() = displayTeam ?: run.team
     val presentationChatTitle: String get() = chatTitle?.trim()?.takeIf { it.isNotEmpty() } ?: "任务处理群"
@@ -219,6 +227,7 @@ data class AiTeamRunDetail(
                 memberStates = parseStateMap(item.obj("memberStates")),
                 displayTeam = item.obj("displayTeam")?.let { AiTeam.parse(it) },
                 chatTitle = item.str("chatTitle"),
+                delivery = AiTeamDeliverySummary.parse(item.obj("delivery"))?.takeIf { it.runId == run.id },
             )
         }
 

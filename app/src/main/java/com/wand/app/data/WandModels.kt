@@ -199,10 +199,42 @@ sealed class ToolUseSemantic {
     @Immutable
     data class TaskList(val items: List<SemanticTaskItem>) : ToolUseSemantic()
 
+    /**
+     * 决策卡缩略投影：服务端从请求体与结果 JSON 派生的有界展示数据。
+     * Web 与 Android 渲染同一份 label，不再各自解析原始 command / 结果。
+     */
+    @Immutable
+    data class Decision(val summary: DecisionSummary? = null) : ToolUseSemantic()
+
+    @Immutable
+    data class DecisionSummary(
+        val label: String,
+        val mode: String? = null,
+        val questions: Int? = null,
+        val preview: String? = null,
+        val outcome: String? = null,
+    ) {
+        companion object {
+            fun parse(o: JSONObject?): DecisionSummary? {
+                if (o == null) return null
+                val label = o.str("label")?.takeIf { it.isNotBlank() } ?: return null
+                val questions = if (o.has("questions")) o.optInt("questions").takeIf { it > 0 } else null
+                return DecisionSummary(
+                    label = label,
+                    mode = o.str("mode"),
+                    questions = questions,
+                    preview = o.str("preview"),
+                    outcome = o.str("outcome"),
+                )
+            }
+        }
+    }
+
     companion object {
         fun parse(o: JSONObject?): ToolUseSemantic? {
             if (o == null) return null
             return when (o.str("kind")) {
+                "decision" -> Decision(DecisionSummary.parse(o.obj("summary")))
                 "question_request" -> {
                     val questions = o.arr("questions")?.parseEach { question ->
                         val options = question.arr("options")?.parseEach { option ->
@@ -279,6 +311,7 @@ sealed class ContentBlock {
         val activity: ToolActivity? = null,
         /** 未走 compact 投影的待办/旧调用也可携带服务端真实首次观察时间。 */
         val occurredAt: String? = null,
+        val preview: String? = null,
     ) : ContentBlock()
 
     @Immutable
@@ -290,7 +323,13 @@ sealed class ContentBlock {
         val subagent: SubagentMeta?,
         /** 结果内联图片（站内取图 URL 或 data URI）；服务端已归一化，跨端一致渲染。 */
         val images: List<String> = emptyList(),
-    ) : ContentBlock()
+        /** 服务端语义投影；迟到结果页靠它继续认出这是决策结果并带上同一份摘要。 */
+        val semantic: ToolUseSemantic? = null,
+        val preview: String? = null,
+    ) : ContentBlock() {
+        /** Keeps results-only pages visibly independent when the invocation is outside the window. */
+        val decision: Boolean get() = semantic is ToolUseSemantic.Decision
+    }
 
     /** 协议升级兜底：保留类型与原始载荷，UI 可明确提示而不是整块消失。 */
     @Immutable
@@ -311,6 +350,7 @@ sealed class ContentBlock {
                     semantic = ToolUseSemantic.parse(o.obj("semantic")),
                     activity = ToolActivity.parse(o.obj("activity")),
                     occurredAt = o.str("occurredAt"),
+                    preview = o.str("preview"),
                 )
                 "tool_result" -> {
                     val rawContent = o.opt("content")
@@ -322,6 +362,8 @@ sealed class ContentBlock {
                         truncated = o.bool("_truncated") ?: false,
                         subagent = subagent,
                         images = structuredToolImages(rawContent),
+                        preview = o.str("preview"),
+                        semantic = ToolUseSemantic.parse(o.obj("semantic")),
                     )
                 }
                 else -> Unknown(
@@ -613,6 +655,8 @@ data class SessionSnapshot(
     val employeeId: String? = null,
     val employeeName: String? = null,
     val employeeAvatar: String? = null,
+    val completionRevision: Int? = null,
+    val viewedCompletionRevision: Int? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -677,6 +721,8 @@ data class SessionSnapshot(
             employeeId = o.str("employeeId")?.takeIf { it.isNotEmpty() },
             employeeName = o.str("employeeName")?.takeIf { it.isNotEmpty() },
             employeeAvatar = o.str("employeeAvatar")?.takeIf { it.isNotEmpty() },
+            completionRevision = o.int("completionRevision"),
+            viewedCompletionRevision = o.int("viewedCompletionRevision"),
         )
 
         fun parseList(arr: JSONArray): List<SessionSnapshot> =
@@ -961,6 +1007,8 @@ internal data class WsData(
     val ptyCols: Int? = null,
     val ptyRows: Int? = null,
     val terminalState: PtyTerminalSnapshot? = null,
+    val completionRevision: Int? = null,
+    val viewedCompletionRevision: Int? = null,
 ) {
     /** init 的 data 是完整快照 —— 转成 SessionSnapshot（messages 不带，避免双份内存）。 */
     fun toSnapshot(): SessionSnapshot? {
@@ -982,6 +1030,7 @@ internal data class WsData(
             ptyBusy = ptyBusy,
             providerCliActive = providerCliActive, providerCliExitCode = providerCliExitCode,
             workspaceId = workspaceId, workspaceTaskId = workspaceTaskId,
+            completionRevision = completionRevision, viewedCompletionRevision = viewedCompletionRevision,
         )
     }
 
@@ -1036,6 +1085,8 @@ internal data class WsData(
             ptyCols = o.int("ptyCols"),
             ptyRows = o.int("ptyRows"),
             terminalState = PtyTerminalSnapshot.parse(o.obj("terminalState")),
+            completionRevision = o.int("completionRevision"),
+            viewedCompletionRevision = o.int("viewedCompletionRevision"),
         )
     }
 }

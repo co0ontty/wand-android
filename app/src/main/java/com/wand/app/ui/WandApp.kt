@@ -30,7 +30,6 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -83,8 +82,7 @@ import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.AiTeamChatScreen
 import com.wand.app.ui.screens.AiTeamDetailScreen
 import com.wand.app.ui.screens.AiTeamEditorScreen
-import com.wand.app.ui.screens.AiTeamsScreen
-import com.wand.app.ui.screens.SiliconEmployeesScreen
+import com.wand.app.ui.screens.ContactsScreen
 import com.wand.app.ui.screens.SiliconEmployeeEditorScreen
 import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.MissionsScreen
@@ -100,6 +98,8 @@ import com.wand.app.ui.screens.CollapsedDirectoryRail
 import com.wand.app.ui.screens.DirectoryPeekOverlay
 import com.wand.app.ui.screens.TaskSessionRoute
 import com.wand.app.ui.screens.collapsedRailDirectories
+import com.wand.app.ui.screens.foldModeEmptyNote
+import com.wand.app.ui.screens.foldModeGroup
 import com.wand.app.ui.screens.taskSessionRoute
 import kotlin.math.abs
 import com.wand.app.ui.screens.siblingSessionsFor
@@ -363,6 +363,10 @@ private fun ReadyContent(
             taskState.shutdown()
         }
     }
+    // 手机离页、平板切换详情都结束本次临时展开；标题/任务归属刷新不算导航。
+    LaunchedEffect(taskState, nav.current.transitionKey()) {
+        taskState.clearTemporaryExpansions()
+    }
     LaunchedEffect(taskState.groups, actions.connection.serverId) {
         nav.syncTaskMembership(taskState.groups)
         com.wand.app.WandShortcuts.update(
@@ -482,15 +486,6 @@ private fun SessionDetailScreen(
     onOpenMissionSession: (sessionId: String, screen: Screen.Missions) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    // 结构化聊天页与 PTY 终端页共用同一套「切换 / 删除任务内会话」回调。
-    val onCreateTaskSession: (SessionSnapshot) -> Unit = { session ->
-        scope.launch { taskState.refreshAfterMutation() }
-        switchSession(nav, session, screen)
-    }
-    val onDeleteTaskSession: (WorkspaceSessionSummary) -> Unit = { session ->
-        scope.launch { taskState.refreshAfterMutation() }
-        nav.closeSession(session.id)
-    }
     when (screen) {
         is Screen.SessionList -> Unit
         is Screen.Chat -> ChatScreen(
@@ -499,12 +494,7 @@ private fun SessionDetailScreen(
             serverDisplayName = actions.connection.serverDisplayName,
             workspaceName = screen.workspaceName,
             taskName = screen.taskName,
-            taskId = screen.taskId,
-            siblingSessions = siblingSessionsFor(taskState.groups, screen.taskId, screen.sessionId),
-            onSwitchSession = { session -> switchSession(nav, session, screen) },
-            onCreateTaskSession = onCreateTaskSession,
             isHapticEnabled = actions.settings.isHapticEnabled,
-            onDeleteTaskSession = onDeleteTaskSession,
             drafts = sessionDrafts,
             showBack = showBack,
             onBack = { nav.pop() },
@@ -515,11 +505,6 @@ private fun SessionDetailScreen(
             serverDisplayName = actions.connection.serverDisplayName,
             workspaceName = screen.workspaceName,
             taskName = screen.taskName,
-            taskId = screen.taskId,
-            siblingSessions = siblingSessionsFor(taskState.groups, screen.taskId, screen.sessionId),
-            onSwitchSession = { session -> switchSession(nav, session, screen) },
-            onCreateTaskSession = onCreateTaskSession,
-            onDeleteTaskSession = onDeleteTaskSession,
             isHapticEnabled = actions.settings.isHapticEnabled,
             showBack = showBack,
             onBack = { nav.pop() },
@@ -536,6 +521,7 @@ private fun SessionDetailScreen(
         is Screen.TaskBoard -> if (screen.taskId != null) {
             // 平板 / 折叠屏：看板卡片详情单独占右侧主区，侧栏只留列表与唯一一条顶栏。
             TaskBoardTaskScreen(
+                baseUrl = api.baseUrl,
                 api = api,
                 workspaceApi = api,
                 taskId = screen.taskId,
@@ -581,22 +567,18 @@ private fun SessionDetailScreen(
             onBack = { nav.pop() },
             embedded = embedded,
         )
-        is Screen.AiTeams -> AiTeamsScreen(
+        is Screen.Contacts -> ContactsScreen(
             api = api,
-            // 团队这一支刻意不走 openDetail：宽屏左栏是会话/任务列表，没有团队列表，
-            // setDetail 会把栈里的团队列表覆盖掉，用户就回不去了。push 保留「可回上一层」，
-            // 于是团队详情/群聊的首段面包屑恒有真实落点（与任务详情同栏有列表的情形不同）。
+            // 通讯录这一支刻意不走 openDetail：宽屏左栏是会话/任务列表，没有通讯录列表，
+            // setDetail 会把栈里的通讯录覆盖掉，用户就回不去了。push 保留「可回上一层」，
+            // 于是员工资料/新对话/群聊的首段面包屑恒有真实落点。
             onBack = { nav.pop() },
-            onOpenTeam = { teamId -> nav.push(Screen.AiTeamDetail(teamId)) },
+            onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) },
+            onOpenTeam = { nav.push(Screen.AiTeamDetail(it)) },
+            onCreateEmployee = { nav.push(Screen.SiliconEmployeeEditor()) },
+            onOpenSession = { route -> nav.push(route.toScreen()) },
             onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
             onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
-            onEditTeam = { teamId -> nav.push(Screen.AiTeamEditor(teamId = teamId)) },
-        )
-        is Screen.SiliconEmployees -> SiliconEmployeesScreen(
-            api = api,
-            onBack = { nav.pop() },
-            onEdit = { nav.push(Screen.SiliconEmployeeEditor(it)) },
-            onCreate = { nav.push(Screen.SiliconEmployeeEditor()) },
         )
         is Screen.SiliconEmployeeEditor -> SiliconEmployeeEditorScreen(
             api = api,
@@ -737,8 +719,7 @@ private fun SinglePaneContent(
                 onTaskClosed = nav::closeWorkspaceTask,
                 onSessionClosed = nav::closeSession,
                 onOpenSettings = onOpenSettings,
-                onOpenAiTeams = { nav.push(Screen.AiTeams) },
-                onOpenSiliconEmployees = { nav.push(Screen.SiliconEmployees) },
+                onOpenContacts = { nav.push(Screen.Contacts()) },
                 onSwitchServer = actions.navigation.switchServer,
             )
         } else {
@@ -909,12 +890,12 @@ private fun WideReadyContent(
                                 onTaskClosed = nav::closeWorkspaceTask,
                                 onSessionClosed = nav::closeSession,
                                 onOpenSettings = onOpenSettings,
-                                onOpenAiTeams = { nav.push(Screen.AiTeams) },
-                                onOpenSiliconEmployees = { nav.push(Screen.SiliconEmployees) },
+                                onOpenContacts = {
+                                    if (nav.current !is Screen.Contacts) nav.push(Screen.Contacts())
+                                },
                                 onSwitchServer = actions.navigation.switchServer,
                                 onCollapseSidebar = onToggleSidebarCollapsed,
-                                // 宽屏时这里是侧栏：主操作留在主区，侧栏底部不再塞一条输入条。
-                                showComposer = false,
+                                // 与手机首页共用底部悬浮菜单；视图切换只影响左栏，详情仍留在右侧。
                             )
                         }
                     }
@@ -994,9 +975,13 @@ private fun WideReadyContent(
             }
             if (sidebarCollapsed && peeked != null) {
                 val directory = peeked.group
+                // 目录预览跟随首页三段式档位：在跑档下列在跑、失败和待处理的会话，
+                // 整条被筛空时保留目录身份、由 peek 自己的空态说明原因。
+                val peekGroup = foldModeGroup(taskState.workspaceFold, directory)
                 DirectoryPeekOverlay(
                     anchorTop = peekAnchorTop,
-                    group = directory,
+                    group = peekGroup,
+                    emptyNote = foldModeEmptyNote(taskState.workspaceFold),
                     selectedTaskId = selectedTaskId,
                     selectedSessionId = selectedSessionId,
                     onOpenTask = { task ->
@@ -1097,8 +1082,7 @@ private fun Screen.transitionKey(): String = when (this) {
     is Screen.Missions -> "missions:${taskId.orEmpty()}"
     is Screen.TaskBoard -> "task-board:${workspaceId.orEmpty()}:${taskId.orEmpty()}"
     Screen.Settings -> "settings"
-    Screen.AiTeams -> "ai-teams"
-    Screen.SiliconEmployees -> "silicon-employees"
+    is Screen.Contacts -> "contacts"
     is Screen.SiliconEmployeeEditor -> "silicon-employee-editor:${employeeId.orEmpty()}"
     is Screen.AiTeamDetail -> "ai-team-detail:$teamId"
     is Screen.AiTeamEditor -> "ai-team-editor:${teamId.orEmpty()}:${templateId.orEmpty()}"
@@ -1134,60 +1118,6 @@ private fun SessionSnapshot.detailScreen(): Screen =
         taskId = workspaceTaskId,
     )
 
-/**
- * 「其他终端」快捷切换（对齐 iOS sessionStrip）：按 sessionKind 路由到 Chat / PTY 页，
- * 并用 replaceTop 替换栈顶 —— 返回键仍回到任务详情/会话列表，不会堆一层会话页。
- *
- * 任务内会话带上 taskId 上下文；未分组会话保持 taskId 为空，仅替换为同目录的兄弟会话。
- */
-private fun switchSession(nav: NavState, session: WorkspaceSessionSummary, from: Screen) {
-    switchSession(nav, session.id, session.isStructured, from)
-}
-
-private fun switchSession(nav: NavState, session: SessionSnapshot, from: Screen) {
-    switchSession(nav, session.id, session.isStructured, from)
-}
-
-private fun switchSession(
-    nav: NavState,
-    sessionId: String,
-    isStructured: Boolean,
-    from: Screen,
-) {
-    val context = when (from) {
-        is Screen.Chat -> SessionScreenContext(
-            from.workspaceName,
-            from.taskName,
-            from.workspaceId,
-            from.taskId,
-        )
-        is Screen.PtyTerminal -> SessionScreenContext(
-            from.workspaceName,
-            from.taskName,
-            from.workspaceId,
-            from.taskId,
-        )
-        else -> return
-    }
-    nav.replaceTop(
-        sessionScreen(
-            sessionId = sessionId,
-            structured = isStructured,
-            workspaceName = context.workspaceName,
-            taskName = context.taskName,
-            workspaceId = context.workspaceId,
-            taskId = context.taskId,
-        ),
-    )
-}
-
-private data class SessionScreenContext(
-    val workspaceName: String?,
-    val taskName: String?,
-    val workspaceId: String?,
-    val taskId: String?,
-)
-
 private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.Chat -> taskId
     is Screen.PtyTerminal -> taskId
@@ -1196,8 +1126,7 @@ private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.Missions,
     is Screen.TaskBoard,
     Screen.Settings,
-    Screen.AiTeams,
-    Screen.SiliconEmployees,
+    is Screen.Contacts,
     is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
     // 群聊页的运行 id 不是任务/会话 id：会话 id 由服务端 run 详情给出，不在导航里。
@@ -1213,8 +1142,7 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Missions,
     is Screen.TaskBoard,
     Screen.Settings,
-    Screen.AiTeams,
-    Screen.SiliconEmployees,
+    is Screen.Contacts,
     is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
     is Screen.AiTeamChat,

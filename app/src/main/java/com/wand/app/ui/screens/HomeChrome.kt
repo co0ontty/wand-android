@@ -15,7 +15,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -27,13 +29,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -41,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,19 +50,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -72,6 +74,7 @@ import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.activityStatus
@@ -79,14 +82,19 @@ import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.components.StatusDot
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandSegmentedTrack
+import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandMorphIconButton
+import com.wand.app.ui.components.WandMorphingIcon
 import com.wand.app.ui.components.WandInPlaceSwap
+import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
 import com.wand.app.ui.components.EmployeeAvatar
+import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.WandStatusPresentation
 import com.wand.app.ui.components.WandStatusTone
 import com.wand.app.ui.components.wandStatusPresentation
@@ -103,10 +111,10 @@ import com.wand.app.ui.withLiveTitle
  *
  * 设计取舍（对齐 Cursor for iOS / Claude Code mobile / Codex mobile 的首页共识）：
  * - 顶部是品牌 + 服务器 + 唯一溢出菜单，不再把「会话模式」做成一个像下拉的胶囊；
- * - 任务面板从右上角菜单进入，首页不占用独立的模式切换行；
  * - 状态优先：先告诉你「几个在跑、几个等你」，再给列表；列表是卡片不是文件树；
  * - 需要动手的会话有明确的状态胶囊，而不是只有一个小圆点；
- * - 主操作固定在底部（输入式启动条），随时可以「开口」。
+ * - 手机首页与平板展开侧栏共用底部悬浮胶囊：「对话 / 任务 / 通讯录」直接可达，
+ *   溢出菜单不重复这些入口。
  * 这里只做展示，所有状态计算走 HomePresentation 的纯函数。
  */
 
@@ -115,11 +123,7 @@ import com.wand.app.ui.withLiveTitle
 @Composable
 internal fun HomeTopBar(
     serverDisplayName: String,
-    homeListMode: HomeListMode,
     interactionEnabled: Boolean,
-    onHomeListModeChange: (HomeListMode) -> Unit,
-    onOpenAiTeams: () -> Unit,
-    onOpenSiliconEmployees: () -> Unit,
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)?,
@@ -221,46 +225,6 @@ internal fun HomeTopBar(
                 },
                 containerColor = WandColors.bgElevated,
             ) {
-                Text(
-                    "工作台",
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                )
-                DropdownMenuItem(
-                    text = {
-                        Text(if (homeListMode == HomeListMode.Tasks) "会话列表" else "任务面板")
-                    },
-                    leadingIcon = {
-                        Icon(
-                            if (homeListMode == HomeListMode.Tasks) WandIcons.history else WandIcons.todo,
-                            contentDescription = null,
-                        )
-                    },
-                    onClick = {
-                        menuOpen = false
-                        onHomeListModeChange(
-                            if (homeListMode == HomeListMode.Tasks) HomeListMode.Sessions
-                            else HomeListMode.Tasks,
-                        )
-                    },
-                )
-                Text(
-                    "其他页面",
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textMuted,
-                )
-                DropdownMenuItem(
-                    text = { Text("硅基员工") },
-                    leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
-                    onClick = { menuOpen = false; onOpenSiliconEmployees() },
-                )
-                DropdownMenuItem(
-                    text = { Text("AI 团队") },
-                    leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
-                    onClick = { menuOpen = false; onOpenAiTeams() },
-                )
                 DropdownMenuItem(
                     text = { Text("设置") },
                     leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
@@ -275,15 +239,22 @@ internal fun HomeTopBar(
 
 /**
  * 首页状态行的「在跑 / 等你 / 计数」取自当前可见会话，[totalCount] 是全量数。
+ * [runningOnly] 是折叠控制第三档（只列在跑的），与 [attentionOnly] 互斥。
  */
 internal data class HomeActivityStats(
     val overview: HomeOverview,
     val totalCount: Int,
     val attentionOnly: Boolean,
+    val runningOnly: Boolean = false,
 ) {
-    /** 筛选打开时显示可见数与全量数；否则显示全量数。 */
+    /**
+     * 筛选打开时显示「命中数 / 全量数」；否则显示全量数。
+     * 「在跑」报的是真的在跑的会话数，不是可见行数：某一层被单独设成展开时可见行会更多
+     * （那些行不是「在跑」），按可见行报数会读成「11 / 11 条在跑」这种自相矛盾的话。
+     */
     val countLabel: String
         get() = when {
+            runningOnly -> "${overview.running} / $totalCount 条在跑"
             attentionOnly -> "${overview.sessions} / $totalCount 条待处理"
             else -> "$totalCount 个会话"
         }
@@ -330,15 +301,18 @@ internal fun homeActivityStats(
     globalOverview: HomeOverview,
     finalOverview: HomeOverview,
     attentionOnly: Boolean,
+    runningOnly: Boolean = false,
 ): HomeActivityStats = HomeActivityStats(
     overview = finalOverview,
     totalCount = globalOverview.sessions,
     attentionOnly = attentionOnly,
+    runningOnly = runningOnly,
 )
 
 /**
  * 整行是否渲染的**唯一**门（D13）：调用处直接用它，组件内不得有第二套显隐表达式。
  * 安静且没开筛选时不留空壳；筛选选中态必须留在原地，保证能点同一胶囊关闭。
+ * 折叠控制不住在这一行里（它挂在小节表头的文字右边），所以这条口径保持原样。
  */
 internal fun homeActivityStripVisible(showingBoard: Boolean, stats: HomeActivityStats): Boolean =
     !showingBoard && (
@@ -354,7 +328,8 @@ internal data class HomeSessionEmptyCopy(
 
 /**
  * 有数据、但最终 `visibleGroups` 为空时的空态（§2.28）。
- * 只看等你时，建议指回「已选等你」这枚胶囊。
+ * 只有「只看等你」会把列表筛空：它会整条藏掉没有待处理会话的任务与目录。
+ * 「在跑」不删行（一级行永远留着），所以它没有空态，靠状态行的「0 / N 条在跑」说明。
  */
 internal fun homeSessionEmptyCopy(): HomeSessionEmptyCopy = HomeSessionEmptyCopy(
     title = "没有需要处理的会话",
@@ -434,6 +409,118 @@ internal fun HomeActivityStrip(
                 )
             }
         }
+    }
+}
+
+/**
+ * 列表小节表头行：左边是节名，右边挂三段式控制（[fold] 为 null 时只画标题）。
+ * 总档位住在第一行表头的文字右边，「最近对话」为空时那一行就是「任务与工作区」；
+ * 各分组/任务的控制同样贴在自己那一行文字的右边。
+ */
+@Composable
+internal fun HomeSectionHeaderRow(
+    title: String,
+    emphasized: Boolean,
+    fold: HomeFoldMode?,
+    onSelectFold: (HomeFoldMode) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            color = if (emphasized) WandColors.textPrimary else WandColors.textSecondary,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (emphasized) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (fold != null) {
+            HomeFoldControl(mode = fold, onSelect = onSelectFold)
+        }
+    }
+}
+
+/** 行内折叠控制的宽度：三段等宽、文案两字，贴在标题文字右边也不抢标题宽度。 */
+internal val HomeFoldControlWidth = 118.dp
+
+/** 控制整体高度（含轨道内边距）：比状态胶囊略高，但明显矮于主操作按钮。 */
+internal val HomeFoldControlHeight = 32.dp
+
+/**
+ * 首页会话列表的三段式折叠控制：展开 / 收起 / 在跑。
+ *
+ * 形状、指示条与动效沿用全站唯一的分段控件 [WandSegmentedTrack]（指示条前缘先走、后缘晚一拍，
+ * `reduceMotion` 下退化为瞬时）；选中只换颜色与字重、不换尺寸，所以换档时控件本身不位移。
+ * 「在跑」是一道筛选，所以它和「等你」互斥（由调用处保证），本组件只负责选档。
+ */
+@Composable
+internal fun HomeFoldControl(
+    mode: HomeFoldMode,
+    onSelect: (HomeFoldMode) -> Unit,
+    modifier: Modifier = Modifier,
+    width: Dp = HomeFoldControlWidth,
+    enabled: Boolean = true,
+) {
+    WandSegmentedTrack(
+        itemCount = HomeFoldMode.entries.size,
+        selectedIndex = mode.ordinal,
+        modifier = modifier.width(width),
+        minHeight = HomeFoldControlHeight,
+    ) {
+        HomeFoldMode.entries.forEach { entry ->
+            HomeFoldSegment(
+                mode = entry,
+                selected = entry == mode,
+                enabled = enabled,
+                onClick = { onSelect(entry) },
+            )
+        }
+    }
+}
+
+/** 控制里的一段：选中只换颜色与字重，指示条由 [WandSegmentedTrack] 负责。 */
+@Composable
+private fun RowScope.HomeFoldSegment(
+    mode: HomeFoldMode,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val color by animateColorAsState(
+        targetValue = if (selected) WandColors.brand else WandColors.textSecondary,
+        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()),
+        label = "homeFoldSegmentColor",
+    )
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .heightIn(min = HomeFoldControlHeight - 6.dp)
+            .clip(WandShapes.full)
+            .clickable(
+                enabled = enabled && !selected,
+                role = Role.Tab,
+                onClickLabel = if (selected) null else mode.actionLabel,
+                onClick = onClick,
+            )
+            .semantics {
+                contentDescription = if (selected) "当前${mode.actionLabel}" else mode.actionLabel
+                stateDescription = if (selected) "已选中" else "未选中"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            mode.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = color,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+        )
     }
 }
 
@@ -552,10 +639,10 @@ internal fun HomeWorkspaceCard(
     group: TaskDirectoryGroup,
     employees: List<SiliconEmployee>,
     modifier: Modifier = Modifier,
-    expanded: Boolean,
+    /** 该工作区本次浏览的有效档位；临时展开时不改变小节的全局设置。 */
+    fold: HomeFoldMode,
+    onToggleFold: (() -> Unit)? = null,
     dragging: Boolean = false,
-    standaloneCollapsed: Boolean,
-    taskCollapsed: (String) -> Boolean,
     /** 标题行上的长按拖动手势（由列表侧注入，卡片本身不知道排序实现）。 */
     headerDragModifier: Modifier = Modifier,
     selectedTaskId: String?,
@@ -567,9 +654,7 @@ internal fun HomeWorkspaceCard(
     onToggleManagedTask: (String) -> Unit = {},
     onToggleManagedSession: (String) -> Unit = {},
     onEnterSelection: (taskId: String?, sessionId: String?) -> Unit = { _, _ -> },
-    onToggleGroup: () -> Unit,
-    onToggleTask: (String) -> Unit,
-    onToggleStandalone: () -> Unit,
+
     onOpenTask: (WorkspaceTaskSummary) -> Unit,
     onOpenSession: (WorkspaceSessionSummary, WorkspaceTaskSummary?) -> Unit,
     onMoveSession: (WorkspaceSessionSummary) -> Unit,
@@ -589,8 +674,17 @@ internal fun HomeWorkspaceCard(
     val reduceMotion = reduceMotionEnabled()
     var menuOpen by remember { mutableStateOf(false) }
     // 空工作区没有可折叠的内容：渲染成一行紧凑条目，点它直接去建任务，
-    // 而不是留一张带箭头、点了没反应的卡片。
+    // 而不是留一张带折叠控制、点了没反应的卡片。
     val isEmpty = group.tasks.isEmpty() && group.standaloneSessions.isEmpty()
+    // 在跑档只显示真有在跑、失败或待处理会话的任务（其余任务整条不显示），未分组终端同理；
+    // 工作区这一行本身保留（摘要是它的真实计数）。
+    val visibleTasks = foldVisibleTasks(fold, group.tasks)
+    val standaloneVisible = foldVisibleSessions(fold, group.standaloneSessions)
+    val visibleSessionCount = visibleTasks.sumOf { foldVisibleSessions(fold, it.sessions).size } +
+        standaloneVisible.size
+    // 抓起排序时卡片固定收成标题行（与档位无关），松手后按档位恢复；
+    // 在跑档下这一组一条在跑、失败或待处理都没有时同样收成标题行 —— 一级行留着，行不露。
+    val expanded = !dragging && foldExpandsContent(fold, visibleSessionCount + visibleTasks.size)
 
     WandCard(
         modifier = modifier.fillMaxWidth(),
@@ -601,13 +695,12 @@ internal fun HomeWorkspaceCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(WandShapes.md)
+                // 有内容的目录可临时展开；空目录仍直接创建任务。
                 .clickable(
-                    onClickLabel = when {
-                        isEmpty -> "在 ${group.workspaceName} 新建任务"
-                        expanded -> "收起工作区"
-                        else -> "展开工作区"
-                    },
-                    onClick = { if (isEmpty) onNewTask() else onToggleGroup() },
+                    enabled = !selecting && !dragging && (isEmpty || onToggleFold != null),
+                    onClickLabel = if (isEmpty) "在 ${group.workspaceName} 新建任务"
+                        else if (fold == HomeFoldMode.Expand) "恢复全局显示" else "临时展开全部内容",
+                    onClick = { if (isEmpty) onNewTask() else onToggleFold?.invoke() },
                 )
                 // 长按标题行 = 拿起这张卡片排序；卡片内部的行保留自己的长按多选。
                 .then(headerDragModifier)
@@ -648,17 +741,6 @@ internal fun HomeWorkspaceCard(
                     color = WandColors.textMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (!isEmpty) {
-                TreeDisclosureCaret(
-                    expanded = expanded,
-                    contentDescription = if (expanded) {
-                        "收起工作区 ${group.workspaceName}"
-                    } else {
-                        "展开工作区 ${group.workspaceName}"
-                    },
-                    onClick = onToggleGroup,
                 )
             }
             Box {
@@ -723,99 +805,90 @@ internal fun HomeWorkspaceCard(
                     fadeOut(WandMotion.tweenExit())
             },
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val visibleTasks = group.tasks
-                visibleTasks.forEachIndexed { index, task ->
-                    // 任务块不再有底色，兄弟任务之间用一条发丝线分隔，边界才看得清。
-                    if (index > 0) HomeHairline()
-                    HomeTaskBlock(
-                        task = task,
-                        employees = employees,
-                        parentNames = listOf(group.workspaceName),
-                        nowMillis = nowMillis,
-                        expanded = isTaskSessionsExpanded(
-                            userCollapsed = taskCollapsed(task.id),
-                            sessionCount = task.totalSessions,
-                            isOnlyTask = visibleTasks.size == 1,
-                        ),
-                        selected = isTaskRowSelected(
-                            taskId = task.id,
-                            visibleSessionIds = task.sessions.map { it.id },
-                            selectedTaskId = selectedTaskId,
+            WandInPlaceSwap(contentKey = fold.filtersRunning, enterScale = 1f, exitScale = 1f) { running ->
+                val contentFold = if (running == true) HomeFoldMode.Running else HomeFoldMode.Expand
+                val visibleTasks = foldVisibleTasks(contentFold, group.tasks)
+                val standaloneVisible = foldVisibleSessions(contentFold, group.standaloneSessions)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    visibleTasks.forEachIndexed { index, task ->
+                        // 任务块不再有底色，兄弟任务之间用一条发丝线分隔，边界才看得清。
+                        if (index > 0) HomeHairline()
+                        HomeTaskBlock(
+                            task = task,
+                            employees = employees,
+                            nowMillis = nowMillis,
+                            expanded = isTaskSessionsExpanded(
+                                fold = contentFold,
+                                visibleSessionCount = foldVisibleSessions(contentFold, task.sessions).size,
+                                totalSessions = task.totalSessions,
+                                isOnlyTask = visibleTasks.size == 1,
+                            ),
+                            fold = contentFold,
+                            selected = isTaskRowSelected(
+                                taskId = task.id,
+                                visibleSessionIds = task.sessions.map { it.id },
+                                selectedTaskId = selectedTaskId,
+                                selectedSessionId = selectedSessionId,
+                            ),
                             selectedSessionId = selectedSessionId,
-                        ),
-                        selectedSessionId = selectedSessionId,
-                        selecting = selecting,
-                        managedSelected = task.id in selectedTaskIds,
-                        selectedSessionIds = selectedSessionIds,
-                        onToggleManaged = { onToggleManagedTask(task.id) },
-                        onToggleManagedSession = onToggleManagedSession,
-                        onEnterTaskSelection = { onEnterSelection(task.id, null) },
-                        onEnterSessionSelection = { onEnterSelection(null, it) },
-                        onToggle = { onToggleTask(task.id) },
-                        onOpen = { onOpenTask(task) },
-                        onOpenSession = { onOpenSession(it, task) },
-                        onNewWindow = { onNewWindow(task) },
-                        onRename = { onRename(task) },
-                        onClear = { onClear(task) },
-                        onArchive = { onArchive(task) },
-                        onDelete = { onDelete(task) },
-                        onDeleteSession = onDeleteSession,
-                        onMoveSession = onMoveSession,
-                    )
-                }
-                if (group.standaloneSessions.isNotEmpty()) {
-                    if (group.tasks.isNotEmpty()) HomeHairline()
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(WandShapes.sm)
-                                .clickable(onClick = onToggleStandalone)
-                                .padding(start = 6.dp, top = 6.dp, bottom = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "${group.standaloneSessions.size} 个未分组终端",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = WandColors.textMuted,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TreeDisclosureCaret(
-                                expanded = !standaloneCollapsed,
-                                contentDescription = if (standaloneCollapsed) {
-                                    "展开未分组终端"
-                                } else {
-                                    "收起未分组终端"
-                                },
-                                onClick = onToggleStandalone,
-                            )
-                        }
-                        if (!standaloneCollapsed) {
-                            group.standaloneSessions.forEachIndexed { index, session ->
-                                HomeSessionRow(
-                                    session = session,
-                                    employee = employees.firstOrNull { it.id == session.employeeId },
-                                    label = listSessionLabel(
-                                        session.withLiveTitle(),
-                                        index,
-                                        listOf(group.workspaceName),
-                                    ),
-                                    nowMillis = nowMillis,
-                                    selected = session.id == selectedSessionId,
-                                    selecting = selecting,
-                                    managedSelected = session.id in selectedSessionIds,
-                                    onToggleManaged = { onToggleManagedSession(session.id) },
-                                    onEnterSelection = { onEnterSelection(null, session.id) },
-                                    onClick = { onOpenSession(session, null) },
-                                    onDelete = { onDeleteSession(session) },
-                                    onMove = { onMoveSession(session) },
+                            selecting = selecting,
+                            managedSelected = task.id in selectedTaskIds,
+                            selectedSessionIds = selectedSessionIds,
+                            onToggleManaged = { onToggleManagedTask(task.id) },
+                            onToggleManagedSession = onToggleManagedSession,
+                            onEnterTaskSelection = { onEnterSelection(task.id, null) },
+                            onEnterSessionSelection = { onEnterSelection(null, it) },
+                            onOpen = { onOpenTask(task) },
+                            onOpenSession = { onOpenSession(it, task) },
+                            onNewWindow = { onNewWindow(task) },
+                            onRename = { onRename(task) },
+                            onClear = { onClear(task) },
+                            onArchive = { onArchive(task) },
+                            onDelete = { onDelete(task) },
+                            onDeleteSession = onDeleteSession,
+                            onMoveSession = onMoveSession,
+                        )
+                    }
+                    if (group.standaloneSessions.isNotEmpty() &&
+                        (!contentFold.filtersRunning || standaloneVisible.isNotEmpty())
+                    ) {
+                        if (group.tasks.isNotEmpty()) HomeHairline()
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 6.dp, top = 6.dp, bottom = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "${group.standaloneSessions.size} 个未分组终端",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = WandColors.textMuted,
+                                    modifier = Modifier.weight(1f),
                                 )
+                            }
+                            if (foldExpandsContent(contentFold, standaloneVisible.size)) {
+                                standaloneVisible.forEachIndexed { index, session ->
+                                    HomeSessionRow(
+                                        session = session,
+                                        employee = employees.firstOrNull { it.id == session.employeeId },
+                                        label = listSessionLabel(session.withLiveTitle(), index),
+                                        nowMillis = nowMillis,
+                                        selected = session.id == selectedSessionId,
+                                        selecting = selecting,
+                                        managedSelected = session.id in selectedSessionIds,
+                                        onToggleManaged = { onToggleManagedSession(session.id) },
+                                        onEnterSelection = { onEnterSelection(null, session.id) },
+                                        onClick = { onOpenSession(session, null) },
+                                        onDelete = { onDeleteSession(session) },
+                                        onMove = { onMoveSession(session) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -874,9 +947,11 @@ private fun HomeHairline() {
 private fun HomeTaskBlock(
     task: WorkspaceTaskSummary,
     employees: List<SiliconEmployee>,
-    parentNames: Collection<String>,
     nowMillis: Long,
+    /** 内容是否显示（不可折叠的层由调用方按规则固定成展开）。 */
     expanded: Boolean,
+    /** 这一层的折叠档位，控制选中态读它。 */
+    fold: HomeFoldMode,
     selected: Boolean,
     selectedSessionId: String?,
     selecting: Boolean = false,
@@ -886,7 +961,6 @@ private fun HomeTaskBlock(
     onToggleManagedSession: (String) -> Unit = {},
     onEnterTaskSelection: () -> Unit = {},
     onEnterSessionSelection: (String) -> Unit = {},
-    onToggle: () -> Unit,
     onOpen: () -> Unit,
     onOpenSession: (WorkspaceSessionSummary) -> Unit,
     onMoveSession: (WorkspaceSessionSummary) -> Unit,
@@ -900,6 +974,8 @@ private fun HomeTaskBlock(
     var menuOpen by remember { mutableStateOf(false) }
     val reduceMotion = reduceMotionEnabled()
     val done = task.status == WorkspaceTaskStatus.Done
+    // 在跑档只画在跑、失败和待处理的那几条；摘要仍报这一层的真实会话数（「2 个会话 · 1 运行中」）。
+    val visibleSessions = foldVisibleSessions(fold, task.sessions)
     val counts = homeSessionCounts(task.sessions)
     // 任务块只做「小标题 + 状态引导条」：不再套一层带底色的盒子，
     // 否则工作区卡片里再嵌一张同色卡片，整页看起来像文件树。
@@ -977,13 +1053,6 @@ private fun HomeTaskBlock(
                     color = WandColors.textMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (showsTaskSessionDisclosure(task.totalSessions)) {
-                TreeDisclosureCaret(
-                    expanded = expanded,
-                    contentDescription = if (expanded) "收起会话" else "展开会话",
-                    onClick = onToggle,
                 )
             }
             Box {
@@ -1064,11 +1133,11 @@ private fun HomeTaskBlock(
                             .padding(vertical = 12.dp, horizontal = 6.dp),
                     )
                 } else {
-                    task.sessions.forEachIndexed { index, session ->
+                    visibleSessions.forEachIndexed { index, session ->
                         HomeSessionRow(
                             session = session,
                             employee = employees.firstOrNull { it.id == session.employeeId },
-                            label = listSessionLabel(session.withLiveTitle(), index, parentNames + task.name),
+                            label = listSessionLabel(session.withLiveTitle(), index),
                             nowMillis = nowMillis,
                             selected = session.id == selectedSessionId,
                             selecting = selecting,
@@ -1097,6 +1166,325 @@ private fun HomeTaskBlock(
     }
 }
 
+// MARK: - 最近对话分组
+
+/**
+ * 首页「最近对话」的一张分组卡：一级行交代「谁」和「几件事」，二级行是该员工/团队/终端下的会话。
+ * 员工单条在全局展开时直接显示；收起/在跑时保留标题以便临时展开。团队与终端始终保留一级入口。
+ */
+@Composable
+internal fun HomeGroupCard(
+    group: HomeGroup,
+    employees: List<SiliconEmployee>,
+    /** 这一组本次浏览的有效档位。 */
+    fold: HomeFoldMode,
+    onToggleFold: (() -> Unit)? = null,
+    nowMillis: Long,
+    selectedSessionId: String?,
+    selecting: Boolean = false,
+    selectedSessionIds: Set<String> = emptySet(),
+    onToggleManaged: (String) -> Unit = {},
+    onEnterSelection: (String) -> Unit = {},
+    onOpenSession: (HomeRecentConversation) -> Unit,
+    onDelete: (WorkspaceSessionSummary) -> Unit,
+    onMove: (WorkspaceSessionSummary) -> Unit,
+    conversationCreating: Boolean = false,
+    conversationCreated: Boolean = false,
+    conversationEnabled: Boolean = false,
+    conversationError: String? = null,
+    onCreateConversation: () -> Unit = {},
+    terminalMenuOpen: Boolean = false,
+    onToggleTerminalMenu: () -> Unit = {},
+    onDismissTerminalMenu: () -> Unit = {},
+    onSelectTerminalTarget: (WorkspaceSessionTarget) -> Unit = {},
+    menuResetKey: Any? = null,
+) {
+    val reduceMotion = reduceMotionEnabled()
+    // 在跑档只画在跑、失败和待处理的那几条；一级行（员工/团队/终端）始终留着。
+    val visibleConversations = foldVisibleConversations(fold, group.conversations)
+    // 临时展开前后保留同一标题行，避免单会话员工展开后触发点变成会话入口。
+    val showsHeader = homeGroupShowsHeader(group) || visibleConversations.isEmpty() || onToggleFold != null
+    val menuProgress by animateFloatAsState(
+        targetValue = if (terminalMenuOpen) 1f else 0f,
+        animationSpec = WandMotion.respectMotion(!reduceMotion, WandMotion.morph()),
+        label = "terminalAddMenuIcon",
+    )
+    val menuIconAlpha by animateFloatAsState(
+        targetValue = if (!conversationCreating &&
+            (terminalMenuOpen || (!conversationCreated && conversationError == null))) 1f else 0f,
+        animationSpec = WandMotion.respectMotion(!reduceMotion, WandMotion.tweenFast()),
+        label = "terminalAddFeedback",
+    )
+    val conversationButton: @Composable () -> Unit = {
+        if (group.kind == HomeGroupKind.Employee || group.kind.isTerminal) {
+            val usesMenu = group.kind == HomeGroupKind.Pty
+            val enabled = !selecting && conversationEnabled && !conversationCreating
+            val tint = when {
+                conversationError != null -> WandColors.danger
+                conversationEnabled || conversationCreating || conversationCreated -> WandColors.brand
+                else -> WandColors.textMuted.copy(alpha = 0.48f)
+            }
+            Box(
+                modifier = Modifier.size(44.dp).clip(WandShapes.sm)
+                    .semantics {
+                        contentDescription = when {
+                            conversationCreating -> "正在创建${group.title}的对话"
+                            terminalMenuOpen -> "关闭 PTY 终端新增菜单"
+                            group.kind.isTerminal -> "新建${group.title}"
+                            else -> "与${group.title}新建对话"
+                        }
+                        role = Role.Button
+                    }
+                    .clickable(enabled = enabled, role = Role.Button,
+                        onClick = if (usesMenu) onToggleTerminalMenu else onCreateConversation),
+                contentAlignment = Alignment.Center,
+            ) {
+                WandStatusIconSlot(
+                    indicatorColor = tint,
+                    containerColor = Color.Transparent,
+                    running = conversationCreating,
+                    icon = when {
+                        conversationError != null -> WandIcons.error
+                        conversationCreated -> WandIcons.check
+                        else -> WandIcons.add
+                    },
+                    boxSize = 28.dp,
+                    iconSize = 20.dp,
+                    iconAlpha = if (usesMenu) 1f - menuIconAlpha else 1f,
+                )
+                if (usesMenu) {
+                    // 同一图标实例承载 ＋/关闭；加载/结果仍留在原来的 44dp 触控盒里。
+                    WandMorphingIcon(
+                        progress = menuProgress,
+                        from = WandIcons.add,
+                        to = WandIcons.close,
+                        tint = tint,
+                        modifier = Modifier.graphicsLayer { alpha = menuIconAlpha },
+                    )
+                    DropdownMenu(
+                        expanded = terminalMenuOpen,
+                        onDismissRequest = onDismissTerminalMenu,
+                        containerColor = WandColors.bgElevated,
+                    ) {
+                        WorkspaceSessionTarget.OPTIONS.filterNot { it.isShell }.forEach { target ->
+                            DropdownMenuItem(
+                                text = { Text(target.label) },
+                                leadingIcon = { WandProviderMark(provider = target.raw,
+                                    variant = WandProviderMarkVariant.Tinted) },
+                                enabled = enabled,
+                                onClick = {
+                                    onDismissTerminalMenu()
+                                    onSelectTerminalTarget(target)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    WandCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = WandShapes.lg,
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        // 团队与终端始终是「一级 = 分组、二级 = 会话」；员工单条在全局展开时直接显示会话。
+        // 例外：在跑档下这一组一条都没露出来时，仍然画一级行（只是没有二级内容），
+        // 否则「员工/工作区这些还是保留」就落空了。
+        if (!showsHeader) {
+            HomeGroupSessionRow(
+                conversation = group.conversations.first(),
+                employees = employees,
+                secondary = false,
+                nowMillis = nowMillis,
+                selectedSessionId = selectedSessionId,
+                selecting = selecting,
+                selectedSessionIds = selectedSessionIds,
+                onToggleManaged = onToggleManaged,
+                onEnterSelection = onEnterSelection,
+                onOpenSession = onOpenSession,
+                onDelete = onDelete,
+                onMove = onMove,
+                trailingAction = conversationButton,
+                menuResetKey = menuResetKey,
+                modifier = if (group.kind == HomeGroupKind.Employee) Modifier.height(64.dp) else Modifier,
+            )
+        } else {
+            HomeGroupHeader(
+                group = group,
+                onClick = onToggleFold?.takeIf { !selecting && group.conversations.isNotEmpty() },
+                actionLabel = if (fold == HomeFoldMode.Expand) "恢复全局显示" else "临时展开全部内容",
+                trailingAction = conversationButton,
+            )
+        }
+        WandInlinePanel(visible = conversationError != null, growFrom = Alignment.Top) {
+            Text(
+                conversationError.orEmpty(),
+                color = WandColors.danger,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
+        // 展开就是展开的倒放：从触发点方向上长出来 / 收回去，其他内容顺势下移，不整页重排。
+        AnimatedVisibility(
+            visible = showsHeader && foldExpandsContent(fold, visibleConversations.size),
+            enter = if (reduceMotion) {
+                EnterTransition.None
+            } else {
+                expandVertically(animationSpec = WandMotion.tweenEnter(), expandFrom = Alignment.Top) +
+                    fadeIn(WandMotion.tweenEnter())
+            },
+            exit = if (reduceMotion) {
+                ExitTransition.None
+            } else {
+                shrinkVertically(animationSpec = WandMotion.tweenExit(), shrinkTowards = Alignment.Top) +
+                    fadeOut(WandMotion.tweenExit())
+            },
+        ) {
+            WandInPlaceSwap(contentKey = fold.filtersRunning, enterScale = 1f, exitScale = 1f) { running ->
+                val contentFold = if (running == true) HomeFoldMode.Running else HomeFoldMode.Expand
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    foldVisibleConversations(contentFold, group.conversations).forEach { conversation ->
+                        key(conversation.session.id) {
+                            HomeGroupSessionRow(
+                                conversation = conversation,
+                                employees = employees,
+                                secondary = true,
+                                nowMillis = nowMillis,
+                                selectedSessionId = selectedSessionId,
+                                selecting = selecting,
+                                selectedSessionIds = selectedSessionIds,
+                                onToggleManaged = onToggleManaged,
+                                onEnterSelection = onEnterSelection,
+                                onOpenSession = onOpenSession,
+                                onDelete = onDelete,
+                                onMove = onMove,
+                                menuResetKey = menuResetKey,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 一级行：头像/图标 + 名字 + 「N 个会话 · 谁在跑」+ 快捷新增。 */
+@Composable
+private fun HomeGroupHeader(
+    group: HomeGroup,
+    onClick: (() -> Unit)? = null,
+    actionLabel: String = "临时展开全部内容",
+    trailingAction: @Composable () -> Unit = {},
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WandShapes.md)
+            .clickable(enabled = onClick != null, onClickLabel = actionLabel) { onClick?.invoke() }
+            .then(if (group.kind == HomeGroupKind.Employee || group.kind.isTerminal)
+                Modifier.height(64.dp) else Modifier)
+            .padding(start = 4.dp,
+                end = if (group.kind == HomeGroupKind.Employee || group.kind.isTerminal) 0.dp else 4.dp,
+                top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+            when (group.kind) {
+                HomeGroupKind.Employee -> EmployeeAvatar(
+                    group.employeeId, group.title, group.avatar,
+                    size = 28.dp)
+                // 群聊是个「多人房间」而不是某个 CLI，和群聊会话行用同一个团队图标。
+                HomeGroupKind.Team -> Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(WandShapes.sm)
+                        .background(WandColors.brandSoft.copy(alpha = 0.55f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        WandIcons.agent,
+                        contentDescription = null,
+                        tint = WandColors.brand,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                // 无员工身份的结构化历史仍属于自己的 CLI，不冒充另一种终端入口。
+                HomeGroupKind.Cli -> WandProviderMark(
+                    provider = group.conversations.firstOrNull()?.session?.provider,
+                    variant = WandProviderMarkVariant.Tinted,
+                )
+                HomeGroupKind.Pty, HomeGroupKind.BlankTerminal -> Icon(
+                    WandIcons.terminal,
+                    contentDescription = null,
+                    tint = WandColors.textMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f).padding(start = 10.dp, end = 6.dp)) {
+            Text(
+                group.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                summaryText(false, workspaceSummarySegments(group.conversations.size, group.counts)),
+                style = MaterialTheme.typography.labelMedium,
+                color = WandColors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        trailingAction()
+    }
+}
+
+/** 分组卡里的一行会话：二级时不再重复员工名，标题说「哪个会话」。 */
+@Composable
+private fun HomeGroupSessionRow(
+    conversation: HomeRecentConversation,
+    employees: List<SiliconEmployee>,
+    secondary: Boolean,
+    nowMillis: Long,
+    selectedSessionId: String?,
+    selecting: Boolean,
+    selectedSessionIds: Set<String>,
+    onToggleManaged: (String) -> Unit,
+    onEnterSelection: (String) -> Unit,
+    onOpenSession: (HomeRecentConversation) -> Unit,
+    onDelete: (WorkspaceSessionSummary) -> Unit,
+    onMove: (WorkspaceSessionSummary) -> Unit,
+    trailingAction: @Composable () -> Unit = {},
+    menuResetKey: Any? = null,
+    modifier: Modifier = Modifier,
+) {
+    val session = conversation.session
+    HomeSessionRow(
+        session = session,
+        employee = employees.firstOrNull { it.id == session.employeeId },
+        label = listSessionLabel(session.withLiveTitle(), 0),
+        secondary = secondary,
+        showEmployeeCliBadge = false,
+        nowMillis = nowMillis,
+        selected = session.id == selectedSessionId,
+        selecting = selecting,
+        managedSelected = session.id in selectedSessionIds,
+        onToggleManaged = { onToggleManaged(session.id) },
+        onEnterSelection = { onEnterSelection(session.id) },
+        onClick = { onOpenSession(conversation) },
+        onDelete = { onDelete(session) },
+        onMove = { onMove(session) },
+        trailingAction = trailingAction,
+        menuResetKey = menuResetKey,
+        modifier = modifier,
+    )
+}
+
 // MARK: - 会话行
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1105,6 +1493,10 @@ internal fun HomeSessionRow(
     session: WorkspaceSessionSummary,
     employee: SiliconEmployee? = null,
     label: String,
+    /** 二级行：已有一级行交代员工身份，这里不再重复，改为说「哪个会话」。 */
+    secondary: Boolean = false,
+    /** 最近对话的人物入口不显示某一个 CLI；具体会话仍可显示实际工具。 */
+    showEmployeeCliBadge: Boolean = true,
     nowMillis: Long,
     selected: Boolean,
     selecting: Boolean = false,
@@ -1114,16 +1506,23 @@ internal fun HomeSessionRow(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onMove: () -> Unit,
+    trailingAction: @Composable () -> Unit = {},
+    menuResetKey: Any? = null,
+    modifier: Modifier = Modifier,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
+    var menuOpen by remember(session.id) { mutableStateOf(false) }
+    LaunchedEffect(selecting, menuResetKey) { menuOpen = false }
     val live = session.withLiveTitle()
     val status = live.activityStatus()
     // 权限态只在 WS 事件里，轮询摘要没有；首页要显示它必须先看实时 overlay。
     val permissionBlocked = SessionTitleStore.permissionBlockedOf(session.id) == true
     val presentation = wandStatusPresentation(if (permissionBlocked) "permission" else status)
+    // 二级行不再重复一级行的头像（同一个员工/团队），只用内缩对齐一级标题，留出「从属」的感觉。
+    val rowIndent = if (secondary) 32.dp else 4.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(modifier)
             .wandSelectedRow(
                 selected = if (selecting) managedSelected else selected,
                 shape = WandShapes.sm,
@@ -1138,7 +1537,7 @@ internal fun HomeSessionRow(
                     onLongClickLabel = if (selecting) "切换选择会话" else "进入多选会话",
                     onLongClick = { if (!selecting) onEnterSelection() else onToggleManaged() },
                 )
-                .padding(start = 4.dp, top = 7.dp, bottom = 7.dp, end = 4.dp),
+                .padding(start = rowIndent, top = 7.dp, bottom = 7.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selecting) {
@@ -1147,84 +1546,116 @@ internal fun HomeSessionRow(
             // 联系人优先于底层 CLI；历史会话只依赖创建时的身份快照。
             // 群聊会话是个「多人房间」而不是某个 CLI，用团队图标替掉 provider 标（对齐 Web）。
             val teamChat = session.teamChat
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .then(
-                        if (teamChat != null) Modifier.clip(WandShapes.sm)
-                            .background(WandColors.brandSoft.copy(alpha = 0.55f))
-                        else Modifier,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (session.employeeId != null) {
-                    EmployeeAvatar(session.employeeId,
-                        employee?.name ?: session.employeeName,
-                        employee?.avatar ?: session.employeeAvatar,
-                        size = 28.dp, provider = session.provider)
-                } else if (teamChat != null) {
-                    Icon(
-                        WandIcons.agent,
-                        contentDescription = null,
-                        tint = WandColors.brand,
-                        modifier = Modifier.size(18.dp),
-                    )
-                } else {
-                    WandProviderMark(
-                        provider = session.provider,
-                        variant = WandProviderMarkVariant.Tinted,
-                    )
+            if (!secondary) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .then(
+                            if (teamChat != null) Modifier.clip(WandShapes.sm)
+                                .background(WandColors.brandSoft.copy(alpha = 0.55f))
+                            else Modifier,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (session.employeeId != null) {
+                        EmployeeAvatar(session.employeeId,
+                            employee?.name ?: session.employeeName,
+                            employee?.avatar ?: session.employeeAvatar,
+                            size = 28.dp, provider = session.provider.takeIf { showEmployeeCliBadge })
+                    } else if (teamChat != null) {
+                        Icon(
+                            WandIcons.agent,
+                            contentDescription = null,
+                            tint = WandColors.brand,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    } else {
+                        WandProviderMark(
+                            provider = session.provider,
+                            variant = WandProviderMarkVariant.Tinted,
+                        )
+                    }
                 }
             }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 10.dp),
-            ) {
-                Text(
-                    (employee?.name ?: session.employeeName)?.takeIf { session.employeeId != null } ?: label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = WandColors.textPrimary,
-                    lineHeight = 19.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (secondary) {
+                // 二级行只有一行：标题（是什么东西）+ 团队来源 + 指示灯，状态不再单独占一行。
                 Row(
-                    modifier = Modifier.padding(top = 3.dp),
+                    modifier = Modifier.weight(1f).padding(start = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (teamChat != null) {
-                        // 「群聊 · 团队名 · N 人」：一眼看出这是团队房间，点进去是 IM 页而不是普通聊天。
-                        Text(
-                            "群聊 · ${teamChat.teamName.ifBlank { "AI 团队" }} · ${teamChat.memberCount} 人",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = WandColors.brand,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .clip(WandShapes.xs)
-                                .background(WandColors.brandSoft.copy(alpha = 0.5f))
-                                .padding(horizontal = 5.dp, vertical = 1.dp),
-                        )
-                    }
                     if (session.employeeId != null) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = WandColors.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        WandProviderMark(provider = session.provider,
+                            variant = WandProviderMarkVariant.Tinted)
                     }
-                    SessionStatusPill(presentation = presentation)
                     Text(
-                        sessionMetaLine(live, nowMillis),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = WandColors.textMuted,
+                        label,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = WandColors.textPrimary,
+                        lineHeight = 19.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    session.teamStep?.teamName?.takeIf { it.isNotBlank() }
+                        ?.let { TeamSourceTag(it) }
+                    SessionStatusPill(presentation = presentation)
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp),
+                ) {
+                    Text(
+                        (employee?.name ?: session.employeeName)
+                            ?.takeIf { session.employeeId != null } ?: label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = WandColors.textPrimary,
+                        lineHeight = 19.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(
+                        modifier = Modifier.padding(top = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val teamSource = session.teamStep?.teamName?.takeIf { it.isNotBlank() }
+                        if (teamChat != null) {
+                            // 「群聊 · 团队名 · N 人」：一眼看出这是团队房间，点进去是 IM 页而不是普通聊天。
+                            Text(
+                                "群聊 · ${teamChat.teamName.ifBlank { "AI 团队" }} · ${teamChat.memberCount} 人",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = WandColors.brand,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .clip(WandShapes.xs)
+                                    .background(WandColors.brandSoft.copy(alpha = 0.5f))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                            )
+                        }
+                        // 团队派发的会话落在员工名下：补一句来源，免得看不出这是团队让他做的。
+                        teamSource?.let { TeamSourceTag(it) }
+                        if (session.employeeId != null) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = WandColors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        SessionStatusPill(presentation = presentation)
+                        Text(
+                            sessionMetaLine(live, nowMillis),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = WandColors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
@@ -1258,7 +1689,24 @@ internal fun HomeSessionRow(
                 )
             }
         }
+        trailingAction()
     }
+}
+
+/** 团队派发来源的小标签：`来自 前端组`。 */
+@Composable
+private fun TeamSourceTag(teamName: String) {
+    Text(
+        "来自 $teamName",
+        style = MaterialTheme.typography.labelMedium,
+        color = WandColors.brand,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(WandShapes.xs)
+            .background(WandColors.brandSoft.copy(alpha = 0.5f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
 }
 
 /**
@@ -1305,137 +1753,165 @@ private fun SessionStatusPill(presentation: WandStatusPresentation) {
     }
 }
 
-// MARK: - 底部启动条
+// MARK: - 底部悬浮菜单胶囊
+
+/** 胶囊高；内层指示条高 = 高减去两个边距，两层因此同心（有单测钉住）。 */
+internal val HomeMenuPillHeight = 48.dp
+
+/** 胶囊四周同一条边距：指示条与外层弧线之间的距离（左右也一样）。 */
+internal val HomeMenuPillInset = 4.dp
+
+/** 胶囊最宽值：三段各留约 90dp，再宽只是空档。 */
+internal val HomeMenuPillMaxWidth = 280.dp
+
+private val HomeMenuPillIconSize = 15.dp
+private val HomeMenuPillLabelGap = 6.dp
+private val HomeMenuPillButtonInset = 8.dp
 
 /**
- * 底部固定的启动条：产品的「开口」应该永远在手边。
- * 可输入多行意图，点发送后带进新建任务对话框（目录 / provider 仍走原有流程确认）。
- * 键盘回车留给换行和中文输入法；左侧「＋」直达完整表单。
+ * 悬浮胶囊里的三枚入口，声明顺序就是从左到右的顺序：对话 / 任务 / 通讯录。
+ * 图标走 getter：枚举初始化只带文案，JVM 单测可以直接读顺序与标签。
+ */
+internal enum class HomeMenuPillItem(val label: String, val description: String) {
+    Chats("对话", "切到对话列表"),
+    Tasks("任务", "切到任务面板"),
+    Contacts("通讯录", "打开通讯录");
+
+    val icon: ImageVector
+        get() = when (this) {
+            Chats -> WandIcons.history
+            Tasks -> WandIcons.todo
+            Contacts -> WandIcons.contacts
+        }
+}
+
+/**
+ * 指示条只标「对话 / 任务」这两个视图态：通讯录是去往另一个页面，不是当前视图。
+ */
+internal fun homeMenuPillSelection(mode: HomeListMode): Int =
+    if (mode == HomeListMode.Tasks) HomeMenuPillItem.Tasks.ordinal else HomeMenuPillItem.Chats.ordinal
+
+/** 窄侧栏优先保留完整文案；按实际字号量宽，空间足够才加图标。 */
+internal fun homeMenuPillShowsIcons(availableWidth: Dp, widestLabelWidth: Dp): Boolean {
+    val segmentWidth = (availableWidth - HomeMenuPillInset * 2) / HomeMenuPillItem.entries.size
+    return segmentWidth >= widestLabelWidth + HomeMenuPillButtonInset * 2 +
+        HomeMenuPillIconSize + HomeMenuPillLabelGap
+}
+
+/**
+ * 首页底部左右居中悬浮的菜单胶囊：对话 / 任务 / 通讯录。
+ *
+ * 形状：外层胶囊与选中段都是整圆端（左右两端同一条弧），四周共用 [HomeMenuPillInset]，
+ * 所以内层半径 = 外层半径 − 边距，两层同心；选中段落在最左/最右也不会顶到弧线。
+ *
+ * 材质用页面里最多的一种面——不透明的卡片配方（[wandCardSurface]）：胶囊浮在列表/看板上，
+ * 背后就是任务卡正文，半透明或玻璃采样都会让文字透进来、把圆角轮廓一起糊掉；实心卡片底 +
+ * 发丝描边 + 一层略高于卡片的投影，在米色底和卡片上都始终看得清边界，也和页面里其它浮起的
+ * 面（卡片、提示条）同一种语言。
+ *
+ * 动效：三枚入口一次到底，不做「先展开再选」；切换时指示条滑动（前缘先走、后缘晚一拍），
+ * 图标与文案颜色交叉过渡，`reduceMotion` 下指示条与颜色都退化为瞬时。
  */
 @Composable
-internal fun HomeComposerBar(
-    value: String,
-    onValueChange: (String) -> Unit,
+internal fun HomeMenuPill(
+    mode: HomeListMode,
     enabled: Boolean,
-    onSubmit: (String) -> Unit,
-    onOpenFullDialog: () -> Unit,
+    onSelect: (HomeMenuPillItem) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val trimmed = value.trim()
-    var inputFocused by remember { mutableStateOf(false) }
-    Column(modifier = Modifier.fillMaxWidth().imePadding()) {
-        // 上与列表的分界线：列表被滑动条压住时，边界要看起来是「故意切的」而不是被截断。
-        Box(
+    val selectedIndex = homeMenuPillSelection(mode)
+    val textMeasurer = rememberTextMeasurer()
+    val labelStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+    val density = LocalDensity.current
+    val widestLabelWidth = with(density) {
+        HomeMenuPillItem.entries.maxOf { item ->
+            textMeasurer.measure(item.label, style = labelStyle, maxLines = 1).size.width
+        }.toDp()
+    }
+    BoxWithConstraints(modifier = modifier.widthIn(max = HomeMenuPillMaxWidth)) {
+        val showIcons = homeMenuPillShowsIcons(maxWidth, widestLabelWidth)
+        WandSegmentedTrack(
+            itemCount = HomeMenuPillItem.entries.size,
+            selectedIndex = selectedIndex,
             modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(WandColors.border.copy(alpha = 0.45f)),
-        )
+                // tint 传 surface 是为了拿「不透明」的卡片底：胶囊压在正文上，
+                // 半透明会让背后的文字透成一串可读的噪点（没有玻璃模糊时尤其明显）。
+                .wandCardSurface(shape = WandShapes.full, tint = WandColors.surface, elevation = 3.dp)
+                .border(0.8.dp, WandColors.border.copy(alpha = 0.7f), WandShapes.full),
+            containerShape = WandShapes.full,
+            indicatorShape = WandShapes.full,
+            containerColor = Color.Transparent,
+            // 选中段是弱陶色胶囊：不抢品牌动作色，也不会在卡片底上再压一块高亮白。
+            indicatorColor = WandColors.selectedFill.compositeOver(WandColors.bgPrimary),
+            indicatorBorder = null,
+            padding = HomeMenuPillInset,
+            minHeight = HomeMenuPillHeight,
+        ) {
+            HomeMenuPillItem.entries.forEach { item ->
+                HomeMenuPillButton(
+                    item = item,
+                    selected = item.ordinal == selectedIndex,
+                    showIcon = showIcons,
+                    enabled = enabled,
+                    onClick = { onSelect(item) },
+                )
+            }
+        }
+    }
+}
+
+/** 胶囊里的一段：图标 + 文案，选中只换颜色，指示条由 [WandSegmentedTrack] 负责。 */
+@Composable
+private fun RowScope.HomeMenuPillButton(
+    item: HomeMenuPillItem,
+    selected: Boolean,
+    showIcon: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val color by animateColorAsState(
+        targetValue = if (selected) WandColors.brand else WandColors.textSecondary,
+        animationSpec = WandMotion.respectMotion(reduceMotionEnabled().not(), WandMotion.tweenFast()),
+        label = "menuPillItemColor",
+    )
     Row(
         modifier = Modifier
-            .fillMaxWidth()
-            // edge-to-edge 下窗口不会因键盘而缩，输入条必须自己让开 IME 高度。
-            .background(WandColors.bgElevated.copy(alpha = 0.94f))
-            .padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 10.dp),
+            .weight(1f)
+            .heightIn(min = HomeMenuPillHeight - HomeMenuPillInset * 2)
+            .clip(WandShapes.full)
+            .clickable(
+                enabled = enabled && !selected,
+                role = if (item == HomeMenuPillItem.Contacts) Role.Button else Role.Tab,
+                onClickLabel = item.description,
+                onClick = onClick,
+            )
+            .semantics {
+                contentDescription = if (selected) "当前${item.label}" else item.description
+            }
+            .padding(horizontal = HomeMenuPillButtonInset, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.Center,
     ) {
-        WandIconButton(
-            icon = WandIcons.add,
-            contentDescription = "新建任务",
-            onClick = onOpenFullDialog,
-            enabled = enabled,
-            variant = WandIconButtonVariant.Quiet,
-        )
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 48.dp)
-                .clip(WandShapes.lg)
-                .background(WandColors.surface.copy(alpha = 0.92f))
-                .border(
-                    0.8.dp,
-                    if (inputFocused) WandColors.focusRing else WandColors.border.copy(alpha = 0.7f),
-                    WandShapes.lg,
-                )
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                enabled = enabled,
-                minLines = 1,
-                maxLines = 4,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = WandColors.textPrimary),
-                cursorBrush = SolidColor(WandColors.brand),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                modifier = Modifier.fillMaxWidth().onFocusChanged { inputFocused = it.isFocused },
-                decorationBox = { inner ->
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        if (value.isEmpty()) {
-                            Text(
-                                "描述你想让 AI 做什么…",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = WandColors.textMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        inner()
-                    }
-                },
+        if (showIcon) {
+            Icon(
+                item.icon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(HomeMenuPillIconSize),
             )
         }
-        WandIconButton(
-            icon = WandIcons.send,
-            contentDescription = "用这个提示词新建任务",
-            onClick = {
-                if (trimmed.isEmpty()) return@WandIconButton
-                onSubmit(value)
-            },
-            enabled = enabled && trimmed.isNotEmpty(),
-            variant = WandIconButtonVariant.Accent,
+        Text(
+            item.label,
+            style = MaterialTheme.typography.labelLarge,
+            color = color,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+            modifier = Modifier.padding(start = if (showIcon) HomeMenuPillLabelGap else 0.dp),
         )
-    }
     }
 }
 
 // MARK: - 共享微件
-
-/** 首页里的展开箭头：和卡片展开语义一致（收起时箭头转向，不硬切）。 */
-@Composable
-private fun TreeDisclosureCaret(
-    expanded: Boolean,
-    contentDescription: String,
-    onClick: () -> Unit,
-    label: String? = null,
-) {
-    val motionEnabled = !reduceMotionEnabled()
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 0f else -90f,
-        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenNormal()),
-        label = "homeDisclosureCaret",
-    )
-    Row(
-        modifier = Modifier
-            .clip(WandShapes.sm)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (label != null) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = WandColors.textMuted)
-        }
-        Icon(
-            WandIcons.expand,
-            contentDescription = contentDescription,
-            tint = WandColors.textMuted,
-            modifier = Modifier
-                .size(18.dp)
-                .graphicsLayer { rotationZ = rotation },
-        )
-    }
-}
 
 /** 多选模式下的勾选框：底与描边跟着选中过渡，避免快速多选时整列硬闪。 */
 @Composable

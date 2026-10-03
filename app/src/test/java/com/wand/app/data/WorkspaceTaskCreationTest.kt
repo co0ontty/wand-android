@@ -32,6 +32,20 @@ class WorkspaceTaskCreationTest {
     }
 
     @Test
+    fun blankEmployeeConversationDoesNotSendPromptOrBindOldTask() {
+        val request = createEmployeeWorkspaceTaskWindowRequest(
+            "employee-1", WorkspaceBinding("ws-1", cwd = "/repo"),
+        )
+        assertEquals("/api/structured-sessions", request.path)
+        assertEquals("employee-1", request.body.getString("employeeId"))
+        assertEquals("ws-1", request.body.getString("workspaceId"))
+        assertEquals("/repo", request.body.getString("cwd"))
+        for (key in listOf("prompt", "respondImmediately", "workspaceTaskId", "provider", "model", "thinkingEffort")) {
+            assertFalse(request.body.has(key))
+        }
+    }
+
+    @Test
     fun taskCreationBodyCarriesExplicitWorktreeChoice() {
         val isolated = createWorkspaceTaskRequestBody("Task", "main", true)
         val shared = createWorkspaceTaskRequestBody("Task", null, false)

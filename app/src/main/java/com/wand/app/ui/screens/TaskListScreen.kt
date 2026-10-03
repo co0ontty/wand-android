@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -105,36 +105,6 @@ data class TaskSessionRoute(
     val teamChatRunId: String? = null,
 )
 
-/** 首页草稿在完整表单中继续编辑；只有同一次打开且内容未被后续输入改过才可清理。 */
-internal class HomeComposerDraftState {
-    var text by mutableStateOf("")
-        private set
-    private var revision by mutableLongStateOf(0L)
-    private var handoffOpeningId: Long? = null
-
-    fun edit(value: String) {
-        if (text == value) return
-        text = value
-        revision += 1
-    }
-
-    fun beginHandoff(openingId: Long) {
-        handoffOpeningId = openingId
-    }
-
-    fun editInDialog(openingId: Long, value: String) {
-        if (handoffOpeningId == openingId) edit(value)
-    }
-
-    fun revisionFor(openingId: Long): Long? = revision.takeIf { handoffOpeningId == openingId }
-
-    fun finishHandoff(openingId: Long, submittedRevision: Long? = null) {
-        if (handoffOpeningId != openingId) return
-        if (submittedRevision != null && revision == submittedRevision) edit("")
-        handoffOpeningId = null
-    }
-}
-
 /**
  * Android task-first root. Directory is grouping metadata, named tasks are optional containers,
  * and ungrouped sessions render under the directory's standalone section.
@@ -165,16 +135,30 @@ fun TaskListScreen(
     onTaskClosed: (taskId: String) -> Unit = {},
     onSessionClosed: (sessionId: String) -> Unit = {},
     onOpenSettings: () -> Unit,
-    /** 首页顶栏「更多」→「AI 团队」：纯穿透回调。 */
-    onOpenAiTeams: () -> Unit = {},
-    onOpenSiliconEmployees: () -> Unit = {},
+    /** 底部悬浮菜单「通讯录」：纯穿透回调。 */
+    onOpenContacts: () -> Unit = {},
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
-    showComposer: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     val contactContext = androidx.compose.ui.platform.LocalContext.current
     var newTaskOpen by remember { mutableStateOf(false) }
+    val recentConversations = remember(api) { mutableStateMapOf<String, RecentEmployeeConversation>() }
+    val recentTerminals = remember(api) { mutableStateMapOf<String, RecentTerminalConversation>() }
+    var terminalMenuKey by remember(api) { mutableStateOf<String?>(null) }
+    var recentConversationOpeningId by remember { mutableLongStateOf(0L) }
+    fun recentCreationBusy(): Boolean =
+        recentConversations.values.any { it.busy } || recentTerminals.values.any { it.busy }
+    fun invalidateRecentConversationOpening() {
+        recentConversationOpeningId += 1
+        terminalMenuKey = null
+    }
+    androidx.activity.compose.BackHandler(enabled = state.hasTemporaryExpansion && terminalMenuKey == null) {
+        state.clearTemporaryExpansions()
+    }
+    androidx.activity.compose.BackHandler(enabled = terminalMenuKey != null) {
+        terminalMenuKey = null
+    }
     var taskCwdDraft by remember { mutableStateOf("") }
     var newTaskWorkspaceId by remember { mutableStateOf<String?>(null) }
     var startFirstSession by remember { mutableStateOf(true) }
@@ -205,7 +189,6 @@ fun TaskListScreen(
     var newTaskModel by remember { mutableStateOf("default") }
     var newTaskThinkingEffort by remember { mutableStateOf("off") }
     var newTaskModels by remember { mutableStateOf<ModelsResponse?>(null) }
-    val homeComposerDraft = remember { HomeComposerDraftState() }
     var newTaskDraftRevision by remember { mutableLongStateOf(0L) }
     var newTaskOpeningId by remember { mutableLongStateOf(0L) }
     var newTaskSubmitting by remember { mutableStateOf(false) }
@@ -243,18 +226,78 @@ fun TaskListScreen(
     val reduceMotion = reduceMotionEnabled()
     val allGroups = directoryTreeGroups(state.groups)
     var attentionOnly by remember { mutableStateOf(false) }
+    // 三段式折叠档位来自 state（按服务端持久化）：第三档是一道筛选，只列在跑的会话。
+    // 两个小节各一个档位（控制长在各自表头文字的右边）：卡片与卡内所有层都跟随自己那一区。
+    val recentFold = state.recentFold
+    val workspaceFold = state.workspaceFold
+    val runningOnly = recentFold.filtersRunning || workspaceFold.filtersRunning
+    // 内容不由投影删减：一级行（员工、工作区）永远留着，卡片按区档位决定露哪几行。
     val visibleGroups = if (attentionOnly) attentionOnlyGroups(allGroups) else allGroups
-    val recentConversations = recentHomeConversations(visibleGroups)
+    val recentGroups = recentHomeGroups(
+        recentHomeConversations(visibleGroups, limit = Int.MAX_VALUE), contactsEmployees,
+    )
     val contactConversations = recentHomeConversations(allGroups, limit = Int.MAX_VALUE)
+
+    /** 某个区的档位：在跑档同时让开「只看等你」（两道筛选互斥），并清掉列表多选态。 */
+    fun selectSectionFold(section: String, mode: HomeFoldMode) {
+        invalidateRecentConversationOpening()
+        state.selectSectionFold(section, mode)
+        if (mode == HomeFoldMode.Running) attentionOnly = false
+        selecting = false
+        selectedTaskIds = emptySet()
+        selectedSessionIds = emptySet()
+    }
+
+    /** 切换首页视图的唯一入口：多选态、筛选态都随切换清干净，避免残留选中项。 */
+    fun selectHomeMode(mode: HomeListMode) {
+        state.clearTemporaryExpansions()
+        invalidateRecentConversationOpening()
+        selecting = false
+        selectedTaskIds = emptySet()
+        selectedSessionIds = emptySet()
+        if (mode == HomeListMode.Sessions) attentionOnly = false
+        onHomeListModeChange(mode)
+    }
+    fun createRecentTerminal(group: HomeGroup, target: WorkspaceSessionTarget) {
+        if (!interactionEnabled || selecting || newTaskOpen || recentCreationBusy() ||
+            !group.kind.isTerminal || recentTerminals[group.key]?.creationUnconfirmed == true) return
+        val binding = homeGroupConversationBinding(group)
+        val previous = recentTerminals[group.key]
+        val request = previous?.takeIf {
+            it.snapshot == null && it.target == target && it.binding == binding
+        } ?: RecentTerminalConversation(target, binding).also { recentTerminals[group.key] = it }
+        invalidateRecentConversationOpening()
+        val openingId = recentConversationOpeningId
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            val snapshot = request.create(api)
+            if (snapshot != null) {
+                if (openingId == recentConversationOpeningId) {
+                    onOpenSession(TaskSessionRoute(
+                        sessionId = snapshot.id,
+                        structured = false,
+                        workspaceId = snapshot.workspaceId,
+                        workspaceName = group.conversations.firstOrNull()?.group?.workspaceName,
+                    ))
+                }
+                state.refreshAfterMutation()
+            }
+        }
+    }
+
     val overview = homeOverview(allGroups)
     // 状态行的数字与列表使用同一批可见会话，分母仍是全量数。
     val activityStats = homeActivityStats(
         globalOverview = overview,
         finalOverview = homeOverview(visibleGroups),
         attentionOnly = attentionOnly,
+        runningOnly = runningOnly,
     )
     val sessionEmptyCopy = homeSessionEmptyCopy()
     val showingBoard = homeListMode == HomeListMode.Tasks
+    LaunchedEffect(homeListMode, attentionOnly, recentFold, selecting, interactionEnabled,
+        selectedTaskId, selectedSessionId) {
+        invalidateRecentConversationOpening()
+    }
     // 首页的时间是「几分钟前」这种相对说法，30 秒推一次就够，不必每秒重排整页。
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -315,12 +358,12 @@ fun TaskListScreen(
         initialCwd: String? = null,
         workspaceId: String? = null,
         initialPrompt: String = "",
-        fromHomeComposer: Boolean = false,
         initialEmployeeId: String? = null,
         initialTeamId: String? = null,
         initialTarget: WorkspaceSessionTarget? = null,
     ) {
         if (!interactionEnabled || newTaskOpen || newTaskSubmitting) return
+        invalidateRecentConversationOpening()
         state.clearMutationError()
         taskCwdDraft = initialCwd.orEmpty()
         newTaskWorkspaceId = workspaceId
@@ -347,7 +390,6 @@ fun TaskListScreen(
         newTaskOpeningId += 1
         val defaultsRevision = newTaskDraftRevision
         val openingId = newTaskOpeningId
-        if (fromHomeComposer) homeComposerDraft.beginHandoff(openingId)
         newTaskOpen = true
         loadParentTasks(openingId)
         scope.launch {
@@ -438,9 +480,6 @@ fun TaskListScreen(
             refreshContacts()
             SessionWatcher.employeeDefinitionChanges.collect { refreshContacts() }
         }
-    }
-    LaunchedEffect(selectedTaskId, selectedSessionId, visibleGroups) {
-        state.expandPathToSelection(selectedTaskId, selectedSessionId)
     }
 
     val directoryPickerContent: @Composable () -> Unit = {
@@ -542,8 +581,6 @@ fun TaskListScreen(
                 if (newTaskTeamRetryActive(submittedTeamId != null, teamRunRetry)) teamRunRetry else null
             val submittedParentId = pendingParentLink?.second
                 ?: newTaskParentId.takeIf { id -> id.isNotEmpty() && parentOptions.any { it.first == id } }
-            val submittedOpeningId = newTaskOpeningId
-            val submittedComposerRevision = homeComposerDraft.revisionFor(submittedOpeningId)
             newTaskDraftRevision += 1
             newTaskSubmitting = true
             scope.launch {
@@ -604,7 +641,6 @@ fun TaskListScreen(
                             val workspaceName = created?.workspace?.name
                                 ?: state.groups.firstOrNull { it.workspaceId == workspaceId }?.workspaceName.orEmpty()
                             newTaskOpen = false
-                            homeComposerDraft.finishHandoff(submittedOpeningId, submittedComposerRevision)
                             onOpenTask(
                                 workspaceId,
                                 navigationWorkspaceTaskId,
@@ -649,7 +685,6 @@ fun TaskListScreen(
                         }
                         pendingParentLink = null
                         newTaskOpen = false
-                        homeComposerDraft.finishHandoff(submittedOpeningId, submittedComposerRevision)
                         val snapshot = if (submittedStartSession) state.createTaskWindow(
                             result.task.id, submittedTarget, submittedKind, taskPrompt,
                             submittedModel, submittedEffort, submittedEmployeeId,
@@ -684,7 +719,6 @@ fun TaskListScreen(
             prompt = newTaskPrompt,
             onPromptChange = {
                 newTaskPrompt = it
-                homeComposerDraft.editInDialog(newTaskOpeningId, it)
                 state.clearMutationError()
             },
             cwd = cwd,
@@ -777,7 +811,6 @@ fun TaskListScreen(
             onDismiss = {
                 if (!state.mutationBusy && !newTaskSubmitting) {
                     newTaskOpen = false
-                    homeComposerDraft.finishHandoff(newTaskOpeningId)
                     teamRunRetry = null
                     teamRunError = null
                 }
@@ -1150,88 +1183,20 @@ fun TaskListScreen(
             // HomeActivity uses transparent edge-to-edge system bars. Consume the top inset
             // here so the dashboard chrome never sits underneath the clock/camera cutout.
             .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding(),
+            .navigationBarsPadding(),
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AmbientBackground(Modifier.fillMaxSize())
             Column(Modifier.fillMaxSize()) {
                 HomeTopBar(
                     serverDisplayName = serverDisplayName,
-                    homeListMode = homeListMode,
                     interactionEnabled = interactionEnabled,
-                    onHomeListModeChange = { mode ->
-                        selecting = false
-                        selectedTaskIds = emptySet()
-                        selectedSessionIds = emptySet()
-                        if (mode == HomeListMode.Sessions) attentionOnly = false
-                        onHomeListModeChange(mode)
+                    onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
+                    onSwitchServer = { invalidateRecentConversationOpening(); onSwitchServer() },
+                    onCollapseSidebar = onCollapseSidebar?.let { collapse ->
+                        { invalidateRecentConversationOpening(); collapse() }
                     },
-                    onOpenSettings = onOpenSettings,
-                    onSwitchServer = onSwitchServer,
-                    onOpenAiTeams = onOpenAiTeams,
-                    onOpenSiliconEmployees = onOpenSiliconEmployees,
-                    onCollapseSidebar = onCollapseSidebar,
                 )
-                if (homeListMode == HomeListMode.Sessions) {
-                    HomeContactsStrip(
-                        employees = contactsEmployees,
-                        teams = contactsTeams,
-                        enabled = interactionEnabled,
-                        onEmployee = { employee ->
-                            val existing = contactConversation(contactConversations,
-                                ExecutionSubject.employee(employee.id))
-                            if (existing != null) onOpenSession(taskSessionRoute(existing.session,
-                                existing.group, existing.task))
-                            else beginNewTask(initialEmployeeId = employee.id)
-                        },
-                        onTeam = { team ->
-                            val subject = ExecutionSubject.team(team.id)
-                            val knownRuns = contactsTeamRuns.filter { it.teamId == team.id }
-                            val existing = contactConversation(contactConversations, subject,
-                                knownRuns.map { it.id }.toSet())
-                            if (existing != null) {
-                                onOpenSession(taskSessionRoute(existing.session,
-                                    existing.group, existing.task))
-                            } else {
-                                scope.launch {
-                                    val freshRuns = runCatching {
-                                        boardApi.listAiTeamRuns(team.id, limit = 200)
-                                    }.getOrNull()
-                                    if (freshRuns == null) {
-                                        android.widget.Toast.makeText(
-                                            contactContext,
-                                            "无法加载团队最近对话，请重试。",
-                                            android.widget.Toast.LENGTH_LONG,
-                                        ).show()
-                                        return@launch
-                                    }
-                                    contactsTeamRuns = contactsTeamRuns.filterNot { it.teamId == team.id } + freshRuns
-                                    val refreshed = contactConversation(contactConversations, subject,
-                                        freshRuns.map { it.id }.toSet())
-                                    if (refreshed != null) onOpenSession(taskSessionRoute(refreshed.session,
-                                        refreshed.group, refreshed.task))
-                                    else {
-                                        val latestChat = freshRuns.firstOrNull { it.chatSessionId != null }
-                                        if (latestChat != null) onOpenSession(TaskSessionRoute(
-                                            sessionId = latestChat.chatSessionId!!,
-                                            structured = true,
-                                            teamChatRunId = latestChat.id,
-                                        )) else beginNewTask(initialTeamId = team.id)
-                                    }
-                                }
-                            }
-                        },
-                        onCli = { provider ->
-                            val existing = contactConversation(contactConversations,
-                                ExecutionSubject.cli(provider))
-                            if (existing != null) onOpenSession(taskSessionRoute(existing.session,
-                                existing.group, existing.task))
-                            else WorkspaceSessionTarget.fromRaw(provider)?.let { beginNewTask(initialTarget = it) }
-                        },
-                        onManageEmployees = onOpenSiliconEmployees,
-                    )
-                }
                 // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
                 // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
                 if (homeActivityStripVisible(showingBoard, activityStats)) {
@@ -1239,7 +1204,18 @@ fun TaskListScreen(
                         stats = activityStats,
                         enabled = interactionEnabled,
                         onToggleAttention = {
+                            state.clearTemporaryExpansions()
+                            invalidateRecentConversationOpening()
                             attentionOnly = !attentionOnly
+                            // 「等你」与「在跑」是两道互斥的筛选：开这一道就让两个区都离开「在跑」。
+                            if (attentionOnly) {
+                                if (recentFold.filtersRunning) {
+                                    selectSectionFold(FOLD_SECTION_RECENT, HomeFoldMode.Expand)
+                                }
+                                if (workspaceFold.filtersRunning) {
+                                    selectSectionFold(FOLD_SECTION_WORKSPACE, HomeFoldMode.Expand)
+                                }
+                            }
                             selecting = false
                             selectedTaskIds = emptySet()
                             selectedSessionIds = emptySet()
@@ -1271,12 +1247,16 @@ fun TaskListScreen(
                             onOpenTaskDetail = onOpenBoardTaskDetail,
                             embedded = true,
                             showSearchField = false,
+                            // 底部悬浮胶囊压在列表上，最后一张卡要能滑到胶囊上方。
+                            bottomClearance = 68.dp,
                         )
                     }
                 } else WandPullToRefresh(
                     isRefreshing = refreshingSessions,
                     onRefresh = {
                         if (interactionEnabled && !refreshingSessions) {
+                            state.clearTemporaryExpansions()
+                            invalidateRecentConversationOpening()
                             refreshingSessions = true
                             scope.launch {
                                 try {
@@ -1299,27 +1279,7 @@ fun TaskListScreen(
                         message = state.loadError ?: "无法加载任务列表",
                         onRetry = { scope.launch { state.load() } },
                     )
-                    // 筛选开着时即使一条数据都没有，也必须先给「已选等你」的关闭路径，
-                    // 不能被下面的初始空态抢先显示「开始第一个任务」。
-                    !hasAnyContent && attentionOnly -> EmptyState(
-                        modifier = Modifier.fillMaxSize(),
-                        icon = WandIcons.check,
-                        title = sessionEmptyCopy.title,
-                        subtitle = sessionEmptyCopy.subtitle,
-                    )
-                    !hasAnyContent -> EmptyState(
-                        modifier = Modifier.fillMaxSize(),
-                        icon = WandIcons.sparkle,
-                        title = "开始第一个任务",
-                        subtitle = "在底部写一句想做的事，或者用 ＋ 打开完整的新建面板。",
-                    )
-                    // 有数据但筛选结果为空时，保留「已选等你」关闭路径。
-                    !hasVisibleContent -> EmptyState(
-                        modifier = Modifier.fillMaxSize(),
-                        icon = WandIcons.check,
-                        title = sessionEmptyCopy.title,
-                        subtitle = sessionEmptyCopy.subtitle,
-                    )
+                    // 空列表与筛选空态也保留常驻终端入口，不能用整页空态吞掉快捷新增。
                     else -> Column(modifier = Modifier.fillMaxSize()) {
                         if (selecting) {
                             Box(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
@@ -1370,60 +1330,132 @@ fun TaskListScreen(
                                 start = 6.dp,
                                 end = 6.dp,
                                 top = 4.dp,
-                                bottom = 24.dp,
+                                // 底部悬浮胶囊压在列表上，最后一排卡片要能滑到胶囊上方。
+                                bottom = 88.dp,
                             ),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                    if (recentConversations.isNotEmpty()) {
                         item(key = "recent-conversation-header") {
-                            Text("最近对话", color = WandColors.textPrimary,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.fillMaxWidth().padding(
-                                    start = 10.dp, end = 10.dp, top = 6.dp, bottom = 2.dp))
+                            HomeSectionHeaderRow(
+                                title = "最近对话",
+                                emphasized = true,
+                                fold = recentFold,
+                                onSelectFold = { mode -> selectSectionFold(FOLD_SECTION_RECENT, mode) },
+                            )
                         }
-                        items(recentConversations, key = { "recent:${it.session.id}" }) { recent ->
-                            val session = recent.session
-                            val parentNames = listOfNotNull(recent.group.workspaceName,
-                                recent.task?.name)
-                            WandCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                    horizontal = 6.dp, vertical = 2.dp),
-                            ) {
-                                HomeSessionRow(
-                                    session = session,
-                                    employee = contactsEmployees.firstOrNull { it.id == session.employeeId },
-                                    label = listSessionLabel(session.withLiveTitle(), 0, parentNames),
-                                    nowMillis = nowMillis,
-                                    selected = session.id == selectedSessionId,
-                                    selecting = selecting,
-                                    managedSelected = session.id in selectedSessionIds,
-                                    onToggleManaged = { selectedSessionIds =
-                                        if (session.id in selectedSessionIds) selectedSessionIds - session.id
-                                        else selectedSessionIds + session.id },
-                                    onEnterSelection = {
-                                        selecting = true
-                                        selectedTaskIds = emptySet()
-                                        selectedSessionIds = setOf(session.id)
-                                    },
-                                    onClick = { onOpenSession(taskSessionRoute(session, recent.group,
-                                        recent.task)) },
-                                    onDelete = {
-                                        deleteSessionTarget = session
-                                        state.clearMutationError()
-                                    },
-                                    onMove = { moveSessionTarget = session },
+                        // 按一级归属（员工/团队/PTY 终端/空白终端）分组成卡片：
+                        // 员工单条直接显示；终端常驻，具体会话始终放在二级。
+                        items(recentGroups, key = { "recent:${it.key}" }) { group ->
+                            val employee = homeGroupAssignableEmployee(group, contactsEmployees)
+                            val conversation = group.employeeId?.let { recentConversations[it] }
+                            val terminal = recentTerminals[group.key]
+                            val binding = homeGroupConversationBinding(group)
+                            HomeGroupCard(
+                                group = group,
+                                employees = contactsEmployees,
+                                fold = state.groupFold(FOLD_SECTION_RECENT, group.key),
+                                onToggleFold = if (recentFold == HomeFoldMode.Expand) null else ({
+                                    invalidateRecentConversationOpening()
+                                    state.toggleTemporaryExpansion(FOLD_SECTION_RECENT, group.key)
+                                }),
+                                nowMillis = nowMillis,
+                                selectedSessionId = selectedSessionId,
+                                selecting = selecting,
+                                selectedSessionIds = selectedSessionIds,
+                                onToggleManaged = { sessionId -> selectedSessionIds =
+                                    if (sessionId in selectedSessionIds) selectedSessionIds - sessionId
+                                    else selectedSessionIds + sessionId },
+                                onEnterSelection = { sessionId ->
+                                    selecting = true
+                                    selectedTaskIds = emptySet()
+                                    selectedSessionIds = setOf(sessionId)
+                                },
+                                onOpenSession = { recent ->
+                                    invalidateRecentConversationOpening()
+                                    // 打开列表核对未知回执后，下一次加号才允许开始新的创建。
+                                    if (conversation?.creationUnconfirmed == true) {
+                                        recentConversations.remove(conversation.employeeId)
+                                    }
+                                    if (terminal?.creationUnconfirmed == true) {
+                                        recentTerminals.remove(group.key)
+                                    }
+                                    onOpenSession(taskSessionRoute(recent.session, recent.group,
+                                        recent.task))
+                                },
+                                onDelete = { session ->
+                                    invalidateRecentConversationOpening()
+                                    deleteSessionTarget = session
+                                    state.clearMutationError()
+                                },
+                                onMove = { invalidateRecentConversationOpening(); moveSessionTarget = it },
+                                conversationCreating = conversation?.busy == true || terminal?.busy == true,
+                                conversationCreated = conversation?.snapshot != null || terminal?.snapshot != null,
+                                conversationError = conversation?.error ?: terminal?.error,
+                                conversationEnabled = interactionEnabled && !newTaskOpen &&
+                                    (group.kind.isTerminal || (employee != null && binding != null)) &&
+                                    conversation?.creationUnconfirmed != true &&
+                                    terminal?.creationUnconfirmed != true && !recentCreationBusy(),
+                                terminalMenuOpen = terminalMenuKey == group.key,
+                                onToggleTerminalMenu = {
+                                    val opening = terminalMenuKey != group.key
+                                    invalidateRecentConversationOpening()
+                                    terminalMenuKey = group.key.takeIf { opening }
+                                },
+                                onDismissTerminalMenu = { terminalMenuKey = null },
+                                onSelectTerminalTarget = { createRecentTerminal(group, it) },
+                                menuResetKey = recentConversationOpeningId,
+                                onCreateConversation = create@{
+                                    if (group.kind == HomeGroupKind.BlankTerminal) {
+                                        createRecentTerminal(group, WorkspaceSessionTarget.Shell)
+                                        return@create
+                                    }
+                                    if (!interactionEnabled || selecting || newTaskOpen || employee == null ||
+                                        binding == null || recentCreationBusy()) return@create
+                                    val request = conversation?.takeIf { it.snapshot == null && it.binding == binding }
+                                        ?: RecentEmployeeConversation(employee.id, binding).also {
+                                            recentConversations[employee.id] = it
+                                        }
+                                    recentConversationOpeningId += 1
+                                    val openingId = recentConversationOpeningId
+                                    scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                                        val snapshot = request.create(api,
+                                            homeGroupAssignableEmployee(group, contactsEmployees))
+                                        if (snapshot != null) {
+                                            // 用户已经切换列表/会话时，只保留已创建结果，不抢回导航。
+                                            if (openingId == recentConversationOpeningId) {
+                                                onOpenSession(TaskSessionRoute(
+                                                    sessionId = snapshot.id,
+                                                    structured = snapshot.isStructured,
+                                                    workspaceId = snapshot.workspaceId,
+                                                    workspaceName = group.conversations.firstOrNull()?.group?.workspaceName,
+                                                ))
+                                            }
+                                            state.refreshAfterMutation()
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                        if (!hasVisibleContent) {
+                            item(key = "session-empty-note") {
+                                EmptyState(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    icon = if (attentionOnly) WandIcons.check else WandIcons.terminal,
+                                    title = if (attentionOnly) sessionEmptyCopy.title else "还没有对话",
+                                    subtitle = if (attentionOnly) sessionEmptyCopy.subtitle
+                                        else "点终端右侧的 ＋ 新建，或从通讯录发起对话。",
+                                )
+                            }
+                        } else {
+                            item(key = "workspace-tree-header") {
+                                HomeSectionHeaderRow(
+                                    title = "任务与工作区",
+                                    emphasized = false,
+                                    fold = workspaceFold,
+                                    onSelectFold = { mode -> selectSectionFold(FOLD_SECTION_WORKSPACE, mode) },
                                 )
                             }
                         }
-                        item(key = "workspace-tree-header") {
-                            Text("任务与工作区", color = WandColors.textSecondary,
-                                style = MaterialTheme.typography.titleSmall,
-                                modifier = Modifier.fillMaxWidth().padding(
-                                    start = 10.dp, end = 10.dp, top = 12.dp, bottom = 2.dp))
-                        }
-                    }
                     val canReorder = !selecting && !attentionOnly && visibleGroups.size > 1
                     itemsIndexed(visibleGroups, key = { _, group -> group.id }) { _, group ->
                         val dragging = dragState.isDragging(group.id)
@@ -1447,12 +1479,12 @@ fun TaskListScreen(
                                     )
                                 },
                             ),
-                            expanded = !dragging && isDirectoryExpanded(
-                                userCollapsed = state.isDirectoryCollapsed(group.id),
-                            ),
+                            fold = state.groupFold(FOLD_SECTION_WORKSPACE, group.id),
+                            onToggleFold = if (workspaceFold == HomeFoldMode.Expand) null else ({
+                                invalidateRecentConversationOpening()
+                                state.toggleTemporaryExpansion(FOLD_SECTION_WORKSPACE, group.id)
+                            }),
                             dragging = dragging,
-                            standaloneCollapsed = state.isStandaloneCollapsed(group.id),
-                            taskCollapsed = state::isTaskCollapsed,
                             nowMillis = nowMillis,
                             selectedTaskId = selectedTaskId,
                             selectedSessionId = selectedSessionId,
@@ -1470,13 +1502,12 @@ fun TaskListScreen(
                                 selectedTaskIds = setOfNotNull(taskId)
                                 selectedSessionIds = setOfNotNull(sessionId)
                             },
-                            onToggleGroup = { state.toggleDirectory(group.id) },
-                            onToggleTask = state::toggleTask,
-                            onToggleStandalone = { state.toggleStandalone(group.id) },
                             onOpenTask = { task ->
+                                invalidateRecentConversationOpening()
                                 onOpenTask(task.task.workspaceId, task.id, group.workspaceName, task.name)
                             },
                             onOpenSession = { session, task ->
+                                invalidateRecentConversationOpening()
                                 onOpenSession(taskSessionRoute(session, group, task))
                             },
                             onMoveSession = { moveSessionTarget = it },
@@ -1487,6 +1518,7 @@ fun TaskListScreen(
                                 state.clearMutationError()
                             },
                             onNewWindow = { task ->
+                                invalidateRecentConversationOpening()
                                 selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
                                     ?: WorkspaceSessionTarget.Claude
                                 selectedEmployeeId = null
@@ -1539,21 +1571,27 @@ fun TaskListScreen(
                 }
                 }
             }
-        }
-        // 多选是管理态，底部启动条先让位，避免和批量操作抢注意力。
-        if (!showingBoard && showComposer && !selecting) {
-            HomeComposerBar(
-                value = homeComposerDraft.text,
-                onValueChange = homeComposerDraft::edit,
-                enabled = interactionEnabled && !newTaskSubmitting,
-                onSubmit = { prompt ->
-                    // 提示词带进现有的新建任务面板：目录 / provider 这些真实选择仍在面板里确认。
-                    beginNewTask(initialPrompt = prompt, fromHomeComposer = true)
-                },
-                onOpenFullDialog = {
-                    beginNewTask(initialPrompt = homeComposerDraft.text, fromHomeComposer = true)
-                },
-            )
+            // 底部悬浮菜单胶囊：左右居中、浮在列表之上（对话 / 任务 / 通讯录）。
+            // 三枚入口一次到底；多选是管理态，胶囊先让位，避免和批量操作抢注意力。
+            if (!selecting) {
+                HomeMenuPill(
+                    mode = homeListMode,
+                    enabled = interactionEnabled,
+                    onSelect = { item ->
+                        when (item) {
+                            HomeMenuPillItem.Chats -> selectHomeMode(HomeListMode.Sessions)
+                            HomeMenuPillItem.Tasks -> selectHomeMode(HomeListMode.Tasks)
+                            HomeMenuPillItem.Contacts -> {
+                                invalidateRecentConversationOpening()
+                                onOpenContacts()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(top = 4.dp, bottom = 12.dp),
+                )
+            }
         }
     }
 }

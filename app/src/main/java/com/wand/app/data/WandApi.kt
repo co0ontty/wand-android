@@ -175,6 +175,12 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             ),
         )
 
+    suspend fun markSessionCompletionViewed(id: String, revision: Int): SessionCompletion =
+        SessionCompletion.parse(requestObject(
+            "POST", "/api/sessions/${encode(id)}/completion/view",
+            JSONObject().put("completionRevision", revision),
+        ))
+
     /** 历史消息分页：返回完整历史的 [offset, offset+limit) 段 + 总数。 */
     suspend fun fetchMessages(id: String, offset: Int, limit: Int): MessagesPage =
         MessagesPage.parse(requestObject("GET", "/api/sessions/$id/messages?offset=$offset&limit=$limit"))
@@ -221,17 +227,12 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         fetchToolDetail(id, toolUseId).result
             ?: throw WandApiException(null, "工具尚未返回结果")
 
-    suspend fun sendInput(
+    /** Receipt acknowledgement is independent of whether the server queues or starts this input. */
+    suspend fun sendStructuredInput(
         id: String,
         input: String,
-        view: String? = null,
-        shortcutKey: String? = null,
-        respondImmediately: Boolean = false,
     ): SessionSnapshot {
-        val body = JSONObject().put("input", input)
-        if (view != null) body.put("view", view)
-        if (shortcutKey != null) body.put("shortcutKey", shortcutKey)
-        if (respondImmediately) body.put("respondImmediately", true)
+        val body = JSONObject().put("input", input).put("respondImmediately", true)
         return SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/input", body))
     }
 
@@ -290,6 +291,11 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
 
     suspend fun models(): ModelsResponse =
         ModelsResponse.parse(requestObject("GET", "/api/models"))
+
+    /** 只改尚未发送消息的空白结构化对话，不创建替代会话或改变员工身份。 */
+    suspend fun setProvider(id: String, provider: String): SessionSnapshot =
+        SessionSnapshot.parse(requestObject("POST", "/api/sessions/${encode(id)}/provider",
+            JSONObject().put("provider", provider)))
 
     /** model 传 null 表示恢复默认（服务端收 JSON null）。 */
     suspend fun setModel(id: String, model: String?): SessionSnapshot {
@@ -618,8 +624,10 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
         SiliconEmployee.parse(requestObject("POST", "/api/silicon-employees", draft.toJson()))
             ?: throw WandApiException(500, "创建员工响应无效。")
 
-    suspend fun updateSiliconEmployee(id: String, draft: SiliconEmployeeDraft): SiliconEmployee =
-        SiliconEmployee.parse(requestObject("PUT", "/api/silicon-employees/${encode(id)}", draft.toJson()))
+    suspend fun updateSiliconEmployee(id: String, draft: SiliconEmployeeDraft,
+        agentsOnly: Boolean = false): SiliconEmployee =
+        SiliconEmployee.parse(requestObject("PUT", "/api/silicon-employees/${encode(id)}",
+            if (agentsOnly) JSONObject().put("agents", draft.agentsJson()) else draft.toJson()))
             ?: throw WandApiException(500, "保存员工响应无效。")
 
     suspend fun archiveSiliconEmployee(id: String, archived: Boolean) {

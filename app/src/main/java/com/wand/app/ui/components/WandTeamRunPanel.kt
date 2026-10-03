@@ -43,6 +43,7 @@ fun WandTeamRunPanel(
     /** 参数是团队运行 id（`run.id`），不是 chatSessionId。 */
     onOpenGroupChat: (String) -> Unit,
     modifier: Modifier = Modifier,
+    baseUrl: String = "",
 ) {
     val run = detail.run
     // 换一轮运行或进入新的等待态时清掉上一轮输入（同 Web TeamRunView 的 effect）。
@@ -108,6 +109,7 @@ fun WandTeamRunPanel(
         if (run.statusDetail.isNotBlank()) {
             Text(run.statusDetail, color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall)
         }
+        WandTeamDeliveryPanel(detail, baseUrl)
         if (needsYou) {
             WandTextField(
                 value = respondText,

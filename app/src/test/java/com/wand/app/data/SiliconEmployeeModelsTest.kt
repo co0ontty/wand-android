@@ -26,6 +26,51 @@ class SiliconEmployeeModelsTest {
     }
 
     @Test
+    fun builtinEmployeesAreLockedAndSystemEmployeeIsDistinguished() {
+        val system = SiliconEmployee.parse(JSONObject()
+            .put("id", "e_wand_ops").put("name", "勤劳的初二")
+            .put("systemKey", "wand-ops")
+            .put("agents", JSONArray().put(BoardTaskAgent.default("codex").toJson())))
+        assertNotNull(system)
+        assertTrue(system!!.builtin)
+        assertTrue(system.isSystemEmployee)
+        assertEquals(listOf("系统用户"), system.displayTags)
+
+        val partner = SiliconEmployee.parse(JSONObject()
+            .put("id", "e_wand_default").put("name", "赛博虎妞")
+            .put("systemKey", "wand-default")
+            .put("agents", JSONArray().put(BoardTaskAgent.default("codex").toJson())))
+        assertNotNull(partner)
+        assertTrue(partner!!.builtin)
+        assertFalse(partner.isSystemEmployee)
+        assertEquals(listOf("默认用户"), partner.displayTags)
+        assertEquals("默认用户", SiliconEmployeeDraft.from(partner).tagInput)
+        assertEquals(null, SiliconEmployeeDraft.from(partner).validationError(validateTags = false))
+
+        val user = SiliconEmployee.parse(JSONObject()
+            .put("id", "e_user").put("name", "架构师")
+            .put("agents", JSONArray().put(BoardTaskAgent.default("codex").toJson())))
+        assertNotNull(user)
+        assertFalse(user!!.builtin)
+        assertFalse(user.isSystemEmployee)
+    }
+
+    @Test
+    fun builtinEmployeeUpdateOnlySendsCandidates() {
+        val draft = SiliconEmployeeDraft(
+            name = "勤劳的初二", duty = "系统运维", prompt = "锁定设定",
+            agents = listOf(BoardTaskAgent.default("codex")),
+        )
+        val body = JSONObject().put("agents", draft.agentsJson())
+        assertFalse(body.has("name"))
+        assertFalse(body.has("duty"))
+        assertFalse(body.has("prompt"))
+        assertFalse(body.has("avatar"))
+        assertFalse(body.has("tags"))
+        assertTrue(body.has("agents"))
+    }
+
+    @Test
     fun employeeParsingRetainsArchiveAndDefinition() {
         val employee = SiliconEmployee.parse(JSONObject()
             .put("id", "emp-1").put("name", "架构师").put("duty", "设计")
@@ -36,6 +81,31 @@ class SiliconEmployeeModelsTest {
         assertTrue(employee!!.archived)
         assertEquals("设计", employee.duty)
         assertEquals("codex", employee.agents.single().provider)
+    }
+
+    @Test
+    fun customEmployeeTagsRoundTripAndValidate() {
+        val draft = SiliconEmployeeDraft(name = "架构师", tagInput = " 开发，测试、设计\n开发,Équipe")
+        assertEquals(null, draft.validationError())
+        assertEquals(listOf("开发", "测试", "设计", "Équipe"), draft.tags())
+        val json = draft.toJson().put("id", "e_user")
+        val parsed = SiliconEmployee.parse(json)!!
+        assertEquals(draft.tags(), parsed.tags)
+        assertEquals(draft.tags(), parsed.displayTags)
+        assertEquals("开发，测试，设计，Équipe", SiliconEmployeeDraft.from(parsed).tagInput)
+        assertEquals(0, draft.copy(tagInput = "").toJson().getJSONArray("tags").length())
+        assertEquals("最多 8 个员工标签。",
+            draft.copy(tagInput = (1..9).joinToString(",") { "标签$it" }).validationError())
+        assertEquals("每个员工标签不能超过 20 个字符。",
+            draft.copy(tagInput = "x".repeat(21)).validationError())
+        for (tag in listOf("系统用户", "默认用户")) {
+            assertEquals("「系统用户」「默认用户」是内置标签，不可自定义。",
+                draft.copy(tagInput = " $tag ").validationError())
+        }
+        assertEquals("员工标签不能包含控制字符。",
+            draft.copy(tagInput = "a\tb").validationError())
+        val builtin = parsed.copy(systemKey = "wand-ops", tags = listOf("被篡改"))
+        assertEquals(listOf("系统用户"), builtin.displayTags)
     }
 
     @Test

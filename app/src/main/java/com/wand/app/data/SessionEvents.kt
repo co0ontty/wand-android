@@ -91,6 +91,8 @@ data class SessionChanges(
     val mode: String? = null,
     val providerCliActive: Boolean? = null,
     val providerCliExitCode: Int? = null,
+    val completionRevision: Int? = null,
+    val viewedCompletionRevision: Int? = null,
 )
 
 /** transport packet → domain event。保持 internal，防止 WsData 超集重新泄漏给调用方。 */
@@ -192,4 +194,6 @@ private fun WsData.toChanges() = SessionChanges(
     mode = mode,
     providerCliActive = providerCliActive,
     providerCliExitCode = providerCliExitCode,
+    completionRevision = completionRevision,
+    viewedCompletionRevision = viewedCompletionRevision,
 )
