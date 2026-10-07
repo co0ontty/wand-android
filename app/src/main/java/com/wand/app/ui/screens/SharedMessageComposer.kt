@@ -1,7 +1,9 @@
 package com.wand.app.ui.screens
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -18,6 +20,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.platform.LocalDensity
 import com.wand.app.data.UploadedFile
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInlinePanelAction
@@ -27,6 +31,7 @@ import com.wand.app.ui.theme.GlassBackdrop
 @Composable
 internal fun SharedMessageComposer(
     backdrop: GlassBackdrop?,
+    sessionKey: Any? = null,
     draft: String,
     onDraftChange: (String) -> Unit,
     attachments: List<UploadedFile>,
@@ -44,18 +49,26 @@ internal fun SharedMessageComposer(
     onExpandedChange: (Boolean) -> Unit,
     trailingActions: @Composable RowScope.(requestFocus: () -> Unit, sendAndRefocus: () -> Unit) -> Unit,
     controls: @Composable RowScope.() -> Unit,
+    resourcePanel: @Composable () -> Unit = {},
+    resourcePanelOpen: Boolean = false,
+    menuActionModifier: Modifier = Modifier,
+    menuContent: @Composable () -> Unit = {},
+    menuPanelModifier: Modifier = Modifier,
+    onMenuDismissFocus: () -> Unit = {},
+    fixedViewport: Boolean = false,
+    inlineControls: Boolean = false,
 ) {
-    val focusRequester = remember { FocusRequester() }
-    var refocusAfterSend by remember { mutableStateOf(false) }
-    var isFocused by remember { mutableStateOf(false) }
-    var draftNeedsExpanded by remember { mutableStateOf(false) }
+    val focusRequester = remember(sessionKey) { FocusRequester() }
+    var refocusAfterSend by remember(sessionKey) { mutableStateOf(false) }
+    var isFocused by remember(sessionKey) { mutableStateOf(false) }
+    var draftNeedsExpanded by remember(sessionKey) { mutableStateOf(false) }
     LaunchedEffect(refocusAfterSend, allowRefocus) {
         if (refocusAfterSend && allowRefocus) {
             refocusAfterSend = false
             runCatching { focusRequester.requestFocus() }
         }
     }
-    val expanded = shouldComposerExpand(
+    val expanded = fixedViewport || shouldComposerExpand(
         isFocused = isFocused,
         voicePressed = voicePressed,
         draftNeedsExpanded = draftNeedsExpanded,
@@ -63,7 +76,7 @@ internal fun SharedMessageComposer(
     )
     LaunchedEffect(expanded) { onExpandedChange(expanded) }
     val requestFocus: () -> Unit = { runCatching { focusRequester.requestFocus() } }
-    BackHandler(enabled = attachOpen) { onAttachOpenChange(false) }
+    ConversationLayerBackHandler(attachOpen) { onAttachOpenChange(false); onMenuDismissFocus() }
     LaunchedEffect(voicePressed) {
         if (voicePressed) onAttachOpenChange(false)
     }
@@ -77,6 +90,11 @@ internal fun SharedMessageComposer(
     NativeComposerSurface(
         backdrop = backdrop,
         focused = isFocused,
+        inlineControls = inlineControls,
+        leadingControl = {
+            ComposerActionsMenu(backdrop = backdrop, uploading = uploading, allowDuringUpload = true,
+                attachOpen = attachOpen || resourcePanelOpen, onAttachOpenChange = onAttachOpenChange, modifier = menuActionModifier)
+        },
         inputContent = {
             Column(modifier = Modifier.weight(1f).heightIn(min = 34.dp)) {
                 if (expanded && attachments.isNotEmpty()) {
@@ -90,13 +108,17 @@ internal fun SharedMessageComposer(
                 ComposerInputField(
                     value = draft,
                     onValueChange = onDraftChange,
-                    placeholder = "输入消息",
+                    placeholder = "发送消息",
+                    framed = false,
+                    compact = inlineControls,
+                    showClearAction = !inlineControls,
                     isFocused = isFocused,
                     onFocusChanged = { isFocused = it },
                     focusRequester = focusRequester,
                     expanded = expanded,
-                    maxLines = if (expanded) 6 else 1,
-                    maxHeight = composerInputMaxHeight(expanded),
+                    minLines = if (fixedViewport) 3 else 1,
+                    maxLines = if (fixedViewport) 3 else if (expanded) 6 else 1,
+                    maxHeight = if (fixedViewport) with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() * 3 } else composerInputMaxHeight(expanded),
                     onTextLayout = { layout ->
                         draftNeedsExpanded = draft.isNotEmpty() &&
                             (layout.lineCount > 1 || layout.hasVisualOverflow)
@@ -109,31 +131,44 @@ internal fun SharedMessageComposer(
                 )
             }
         },
+        resourcePanel = resourcePanel,
         panelVisible = attachOpen,
+        panelModifier = menuPanelModifier,
         panelContent = {
-            WandInlinePanelAction(
-                icon = WandIcons.image,
-                label = "从相册选择",
-                onClick = {
-                    onAttachOpenChange(false)
-                    onPickPhoto()
-                },
-            )
-            WandInlinePanelAction(
-                icon = WandIcons.attach,
-                label = "从文件选择",
-                onClick = {
-                    onAttachOpenChange(false)
-                    onPickFile()
-                },
-            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WandInlinePanelAction(
+                        icon = WandIcons.image,
+                        label = "从相册选择",
+                        enabled = !uploading,
+                        modifier = Modifier.weight(1f).heightIn(min = ComposerActionTouchSize),
+                        onClick = {
+                            onAttachOpenChange(false)
+                            onPickPhoto()
+                        },
+                    )
+                    WandInlinePanelAction(
+                        icon = WandIcons.attach,
+                        label = "从文件选择",
+                        enabled = !uploading,
+                        modifier = Modifier.weight(1f).heightIn(min = ComposerActionTouchSize),
+                        onClick = {
+                            onAttachOpenChange(false)
+                            onPickFile()
+                        },
+                    )
+                }
+                menuContent()
+            }
         },
         controls = {
-            ComposerActionsMenu(
+            if (!inlineControls) ComposerActionsMenu(
                 backdrop = backdrop,
                 uploading = uploading,
-                attachOpen = attachOpen,
+                allowDuringUpload = true,
+                attachOpen = attachOpen || resourcePanelOpen,
                 onAttachOpenChange = onAttachOpenChange,
+                modifier = menuActionModifier,
             )
             controls()
             trailingActions(requestFocus, sendAndRefocus)

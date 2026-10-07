@@ -1,17 +1,13 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import com.wand.app.data.normalizeWorkspacePath
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamDirectRun
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskBoardPort
-import com.wand.app.data.WandApiException
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
-import kotlinx.coroutines.CancellationException
 
 /**
  * 通讯录落地页只展示在职员工名字。归档的人走头像进资料后处理，不占目录。
@@ -37,6 +33,79 @@ private fun contactMatchesQuery(query: String, fields: List<String>): Boolean =
         fields.any { it.contains(term, ignoreCase = true) }
     }
 
+/**
+ * 通讯录按创建时间先后排列（早的在上），不按拼音/字母分组。
+ * 旧服务不返回 [SiliconEmployee.createdAt] / [AiTeam.createdAt] 时排到最后，不挤掉有时间的项。
+ */
+internal fun contactOrderedEmployees(employees: List<SiliconEmployee>): List<SiliconEmployee> =
+    employees.sortedWith(compareBy({ contactTimeKey(it.createdAt) }, { it.id }))
+
+internal fun contactOrderedTeams(teams: List<AiTeam>): List<AiTeam> =
+    teams.sortedWith(compareBy({ contactTimeKey(it.createdAt) }, { it.id }))
+
+private fun contactTimeKey(createdAt: String): String =
+    createdAt.trim().ifEmpty { "\uFFFF" }
+
+/** 团队圆标用现有语义色轮换，不另建色板。 */
+internal fun contactAccentIndex(id: String): Int {
+    var hash = 0
+    for (ch in id) hash = 31 * hash + ch.code
+    val mod = hash % 4
+    return if (mod < 0) mod + 4 else mod
+}
+
+internal sealed class ContactSlot {
+    data object CreatePanel : ContactSlot()
+    data object Error : ContactSlot()
+    data object Loading : ContactSlot()
+    data object NoResults : ContactSlot()
+    data object ResultCount : ContactSlot()
+    data object TeamHeader : ContactSlot()
+    data object TeamEmpty : ContactSlot()
+    data class Team(val id: String) : ContactSlot()
+    data object GroupGap : ContactSlot()
+    data object EmployeeHeader : ContactSlot()
+    data object EmployeeEmpty : ContactSlot()
+    data class Employee(val id: String) : ContactSlot()
+}
+
+/**
+ * 通讯录列表的唯一顺序：创建面板、团队、员工，两段各自按时间先后。
+ * 搜索时只留命中的那一段（另一段为空就不画标题）。
+ */
+internal fun contactDirectoryLayout(
+    employeeIds: List<String>,
+    teamIds: List<String>,
+    queryBlank: Boolean,
+    hasError: Boolean,
+    loadingEmpty: Boolean,
+): List<ContactSlot> {
+    val slots = mutableListOf<ContactSlot>()
+    fun add(slot: ContactSlot) {
+        slots += slot
+    }
+    add(ContactSlot.CreatePanel)
+    if (hasError) add(ContactSlot.Error)
+    when {
+        loadingEmpty -> add(ContactSlot.Loading)
+        !queryBlank && employeeIds.isEmpty() && teamIds.isEmpty() -> add(ContactSlot.NoResults)
+        else -> {
+            if (!queryBlank) add(ContactSlot.ResultCount)
+            val showTeams = teamIds.isNotEmpty() || queryBlank
+            if (showTeams) {
+                add(ContactSlot.TeamHeader)
+                if (teamIds.isEmpty() && queryBlank && !hasError) add(ContactSlot.TeamEmpty)
+                teamIds.forEach { add(ContactSlot.Team(it)) }
+            }
+            if (showTeams && (employeeIds.isNotEmpty() || queryBlank)) add(ContactSlot.GroupGap)
+            if (queryBlank) add(ContactSlot.EmployeeHeader)
+            if (employeeIds.isEmpty() && queryBlank && !hasError) add(ContactSlot.EmployeeEmpty)
+            employeeIds.forEach { add(ContactSlot.Employee(it)) }
+        }
+    }
+    return slots
+}
+
 internal fun contactAssignableEmployee(
     employeeId: String,
     employees: List<SiliconEmployee>,
@@ -58,9 +127,9 @@ internal fun contactConversationBinding(
     val cwd = defaultCwd?.trim()?.takeIf { it.isNotEmpty() }
         ?: teamStartProjectCandidates(workspaces).firstOrNull()?.cwd?.trim()?.takeIf { it.isNotEmpty() }
         ?: return null
-    val normalized = normalizeContactPath(cwd)
+    val normalized = normalizeWorkspacePath(cwd)
     val workspaceId = workspaces.firstOrNull {
-        it.id != GLOBAL_WORKSPACE_ID && normalizeContactPath(it.cwd) == normalized
+        it.id != GLOBAL_WORKSPACE_ID && normalizeWorkspacePath(it.cwd) == normalized
     }?.id
     return WorkspaceBinding(workspaceId = workspaceId, cwd = cwd)
 }
@@ -74,25 +143,15 @@ internal fun contactTeamStartWorkspaceId(workspaces: List<Workspace>): String =
  */
 internal const val CONTACT_TEAM_NEW_CHAT_NOTE = "新对话"
 
-private fun normalizeContactPath(value: String): String =
-    value.trim().replace(Regex("/+$"), "").ifEmpty { "/" }
-
 /** 通讯录点团队：一次开工。未知回执不能靠重复点击盲目重建。 */
 internal class RecentTeamConversation(
     val teamId: String,
     val workspaceId: String,
-) {
-    var busy by mutableStateOf(false)
-        private set
-    var runId by mutableStateOf<String?>(null)
-        private set
-    var creationUnconfirmed by mutableStateOf(false)
-        private set
-    var error by mutableStateOf<String?>(null)
-        private set
+) : ConversationCreation<AiTeamDirectRun>("群聊") {
+    val runId: String? get() = created?.detail?.run?.id
 
     suspend fun create(api: TaskBoardPort, team: AiTeam?): AiTeamDirectRun? {
-        if (busy || runId != null || creationUnconfirmed) return null
+        if (!canCreate) return null
         if (team?.id != teamId) {
             error = "团队已不存在，请刷新后重试。"
             return null
@@ -101,26 +160,10 @@ internal class RecentTeamConversation(
             error = "AI 团队需要先选择一个已有项目"
             return null
         }
-        busy = true
-        error = null
-        try {
-            val created = api.startDirectTeamRun(teamId, workspaceId, CONTACT_TEAM_NEW_CHAT_NOTE)
-            val createdRunId = created.detail.run.id
-            check(createdRunId.isNotBlank()) { "未收到有效的群聊回执" }
-            runId = createdRunId
-            return created
-        } catch (failure: Exception) {
-            val status = (failure as? WandApiException)?.status
-            creationUnconfirmed = status == null || status >= 500 || status == 408 || status == 409
-            error = if (creationUnconfirmed) {
-                "创建结果未确认，请刷新列表并打开新群聊核对，勿重复新建。"
-            } else {
-                failure.message ?: "创建群聊失败，请稍后重试。"
+        return createOnce {
+            api.startDirectTeamRun(teamId, workspaceId, CONTACT_TEAM_NEW_CHAT_NOTE).also { created ->
+                check(created.detail.run.id.isNotBlank()) { "未收到有效的群聊回执" }
             }
-            if (failure is CancellationException) throw failure
-            return null
-        } finally {
-            busy = false
         }
     }
 }

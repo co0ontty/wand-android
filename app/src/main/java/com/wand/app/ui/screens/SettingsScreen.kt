@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ClipData
 import android.content.Intent
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.animateColorAsState
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,13 +50,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,8 +74,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import com.wand.app.ServerStore
 import com.wand.app.WandDiagnostics
 import com.wand.app.WandLog
+import com.wand.app.WebSettingsActivity
 import com.wand.app.data.WandApi
 import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SpeechNativeLibrary
@@ -78,6 +91,8 @@ import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandListItem
+import com.wand.app.ui.components.WandListItemIconSlot
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandSnackbarHost
@@ -116,11 +131,13 @@ fun SettingsScreen(
     var showRemoveServerConfirm by remember { mutableStateOf(false) }
 
     var hapticEnabled by remember { mutableStateOf(settings.isHapticEnabled()) }
+    var trafficTimelineMode by remember { mutableStateOf(settings.getTrafficTimelineMode()) }
     var keepAlive by remember { mutableStateOf(settings.isKeepAlive()) }
     var betaChannel by remember { mutableStateOf(settings.isBetaChannel()) }
     var appearanceMode by remember { mutableStateOf(settings.getAppearanceMode()) }
     var exportingLogs by remember { mutableStateOf(false) }
-    val appContext = LocalContext.current.applicationContext
+    val context = LocalContext.current
+    val appContext = context.applicationContext
     val logScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -162,6 +179,17 @@ fun SettingsScreen(
     }
 
     val glassBackdrop = rememberGlassBackdrop()
+    val page = rememberSaveable(saver = SettingsNavigation.Saver) { SettingsNavigation() }
+    val focusManager = LocalFocusManager.current
+    fun open(destination: SettingsDestination) {
+        focusManager.clearFocus(force = true)
+        page.open(destination)
+    }
+    fun back() {
+        focusManager.clearFocus(force = true)
+        if (!page.back()) onBack()
+    }
+    BackHandler(enabled = page.current != SettingsDestination.Index) { back() }
 
     if (showRemoveServerConfirm) {
         WandDialog(
@@ -193,12 +221,13 @@ fun SettingsScreen(
         snackbarHost = { WandSnackbarHost(snackbarHostState) },
         topBar = {
             WandDetailTopBar(
-                title = "设置",
+                title = page.current.title,
                 backdrop = glassBackdrop,
                 leading = {
                     WandDetailBackButton(
-                        onClick = onBack,
-                        contentDescription = "关闭设置",
+                        onClick = ::back,
+                        contentDescription = if (page.current == SettingsDestination.Index) "返回" else "返回设置",
+                        icon = WandIcons.back,
                     )
                 },
             )
@@ -210,188 +239,228 @@ fun SettingsScreen(
                 .glassBackdropSource(glassBackdrop),
         ) {
             AmbientBackground(Modifier.fillMaxSize())
-            SettingsContentLayout(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(padding)
-                    .imePadding(),
-            ) {
-                SettingsOverview(
-                    appVersion = settings.appVersion,
-                    connection = connection,
-                    betaChannel = betaChannel,
-                    appearanceMode = appearanceMode,
-                    compact = embedded,
-                )
-                SettingsSection(
-                    title = "外观与反馈",
-                    description = "调整这台设备上的主题、声音和触感。",
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        AppearanceModePicker(
-                            selected = appearanceMode,
-                            onSelected = { mode ->
-                                appearanceMode = mode
-                                settings.setAppearanceMode(mode)
-                            },
-                        )
-                        RowDivider()
-                        NotificationFeedbackContent(
-                            hapticEnabled = hapticEnabled,
-                            onHapticChange = {
-                                hapticEnabled = it
-                                settings.setHapticEnabled(it)
-                            },
-                        )
-                    }
-                }
-
-                SettingsSection(
-                    title = "语音输入",
-                    description = "选择离线识别模型；缺少的模型会在选中后下载。",
-                ) {
-                    SttModelSection()
-                }
-
-                SettingsSection(
-                    title = "服务器",
-                    description = "查看当前服务器，或管理此设备保存的 Wand 服务。",
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        ServerConnectionRow(
-                            displayName = connection.serverDisplayName,
-                            serverUrl = connection.serverUrl,
-                            hasConnectionCode = connection.hasToken,
-                        )
-                        RowDivider()
-                        ConnectionActionsRow(
-                            onSwitchServer = navigation.manageServers,
-                        )
-                        RowDivider()
-                        ActionRow(
-                            label = "移除当前服务器",
-                            icon = WandIcons.delete,
-                            danger = true,
+            page.visited.forEach { destination ->
+                key(destination) {
+                    RetainedSettingsPage(visible = page.current == destination) {
+                        SettingsContentLayout(
+                            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                                .padding(padding).imePadding(),
                         ) {
-                            showRemoveServerConfirm = true
+                            when (destination) {
+                                SettingsDestination.Index -> SettingsDirectory(
+                                    connection = connection,
+                                    appearance = appearanceMode.settingsLabel(),
+                                    appVersion = settings.appVersion,
+                                    onOpen = ::open,
+                                    onOpenWeb = {
+                                        context.startActivity(Intent(context, WebSettingsActivity::class.java)
+                                            .putExtra(WebSettingsActivity.EXTRA_SERVER_ID, connection.serverId))
+                                    },
+                                )
+                                SettingsDestination.Appearance -> {
+                                    SettingsSection(
+                                        title = "",
+                                    ) {
+                                        SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                                            AppearanceModePicker(
+                                                selected = appearanceMode,
+                                                onSelected = { mode ->
+                                                    appearanceMode = mode
+                                                    settings.setAppearanceMode(mode)
+                                                },
+                                            )
+                                            RowDivider()
+                                            NotificationFeedbackContent(
+                                                hapticEnabled = hapticEnabled,
+                                                onHapticChange = {
+                                                    hapticEnabled = it
+                                                    settings.setHapticEnabled(it)
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                                SettingsDestination.Traffic -> {
+                                    SettingsSection(
+                                        title = "",
+                                        description = "选择当前工具活动自动展开的网络范围。历史详情始终可点击查看。",
+                                    ) {
+                                        SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                                            TrafficTimelineModePicker(
+                                                selected = trafficTimelineMode,
+                                                onSelected = {
+                                                    trafficTimelineMode = it
+                                                    settings.setTrafficTimelineMode(it)
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                                SettingsDestination.Models -> {
+                                    SettingsSection(
+                                        title = "",
+                                        description = "为每个工具配置多个分组，使用时直接选组；组内按首选、候选顺序排列。",
+                                    ) {
+                                        ModelGroupsSettingsPanel(api, initiallyExpanded = true)
+                                    }
+                                }
+                                SettingsDestination.Voice -> {
+                                    SettingsSection(
+                                        title = "",
+                                        description = "选择离线识别模型；缺少的模型会在选中后下载。",
+                                    ) {
+                                        SttModelSection()
+                                    }
+                                }
+                                SettingsDestination.Server -> {
+                                    SettingsSection(
+                                        title = "",
+                                    ) {
+                                        SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                                            ServerConnectionRow(
+                                                displayName = connection.serverDisplayName,
+                                                serverUrl = connection.serverUrl,
+                                                hasConnectionCode = connection.hasToken,
+                                            )
+                                            RowDivider()
+                                            ConnectionActionsRow(
+                                                onSwitchServer = navigation.manageServers,
+                                            )
+                                            RowDivider()
+                                            ActionRow(
+                                                label = "移除当前服务器",
+                                                icon = WandIcons.delete,
+                                                danger = true,
+                                            ) {
+                                                showRemoveServerConfirm = true
+                                            }
+                                        }
+                                    }
+                                }
+                                SettingsDestination.Updates -> {
+                                    SettingsSection(
+                                        title = "",
+                                    ) {
+                                        UpdateControlDeck(
+                                            appVersion = settings.appVersion,
+                                            betaChannel = betaChannel,
+                                            keepAlive = keepAlive,
+                                            onCheckUpdate = settings.manualCheckUpdate,
+                                            onKeepAliveChange = { enabled ->
+                                                keepAlive = enabled
+                                                if (enabled) {
+                                                    notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                                }
+                                                settings.setKeepAlive(enabled)
+                                            },
+                                            onBetaChannelChange = {
+                                                betaChannel = it
+                                                settings.setBetaChannel(it)
+                                            },
+                                        )
+                                    }
+                                }
+                                SettingsDestination.Diagnostics -> {
+                                    SettingsSection(
+                                        title = "",
+                                        description = "导出运行与崩溃日志。",
+                                    ) {
+                                        SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                                            ActionRow(
+                                                label = "保存到「下载」",
+                                                busyLabel = "正在导出…",
+                                                busy = exportingLogs,
+                                                enabled = !exportingLogs,
+                                                icon = WandIcons.download,
+                                                iconTint = WandColors.info,
+                                                supportingText = remember(exportingLogs) { logSizeLabel() },
+                                                onClick = {
+                                                    if (exportingLogs) return@ActionRow
+                                                    exportingLogs = true
+                                                    logScope.launch {
+                                                        WandLog.i("ui", "用户保存运行日志到下载目录")
+                                                        val result = runCatching {
+                                                            withContext(Dispatchers.IO) {
+                                                                WandDiagnostics.saveToDownloads(appContext)
+                                                            }
+                                                        }
+                                                        exportingLogs = false
+                                                        result
+                                                            .onSuccess { location ->
+                                                                snackbarHostState.showWandNotice("已保存到 $location")
+                                                            }
+                                                            .onFailure { error ->
+                                                                snackbarHostState.showWandNotice(
+                                                                    "保存失败：${error.message ?: "未知错误"}",
+                                                                )
+                                                            }
+                                                    }
+                                                },
+                                            )
+                                            RowDivider()
+                                            ActionRow(
+                                                label = "另存到其他位置…",
+                                                busyLabel = "正在导出…",
+                                                busy = exportingLogs,
+                                                enabled = !exportingLogs,
+                                                icon = WandIcons.folder,
+                                                iconTint = WandColors.textSecondary,
+                                                onClick = {
+                                                    if (exportingLogs) return@ActionRow
+                                                    // 只在用户选完位置后再拼报表：拼一次 1MB 级文本，不必为没选中的弹窗付代价。
+                                                    saveLogLauncher.launch(WandDiagnostics.exportFileName())
+                                                },
+                                            )
+                                            RowDivider()
+                                            ActionRow(
+                                                label = "分享日志文件",
+                                                enabled = !exportingLogs,
+                                                icon = WandIcons.share,
+                                                iconTint = WandColors.textSecondary,
+                                                onClick = {
+                                                    if (exportingLogs) return@ActionRow
+                                                    exportingLogs = true
+                                                    logScope.launch {
+                                                        val result = runCatching {
+                                                            withContext(Dispatchers.IO) {
+                                                                WandDiagnostics.exportToFile(appContext)
+                                                            }
+                                                        }
+                                                        exportingLogs = false
+                                                        result
+                                                            .onSuccess { file ->
+                                                                // 先弹系统分享面板：showWandNotice 会挂起到气泡消失，
+                                                                // 放在前面会让面板延迟几秒才出现。
+                                                                shareLogFile(appContext, file)
+                                                            }
+                                                            .onFailure { error ->
+                                                                snackbarHostState.showWandNotice(
+                                                                    "导出失败：${error.message ?: "未知错误"}",
+                                                                )
+                                                            }
+                                                    }
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                                SettingsDestination.About -> {
+                                    SettingsSection(
+                                        title = "",
+                                    ) {
+                                        SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                                            SettingsAboutContent(
+                                                appVersion = settings.appVersion,
+                                                serverVersion = serverVersion,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(24.dp))
                         }
                     }
                 }
-
-                SettingsSection(
-                    title = "应用与更新",
-                    description = "检查新版本，并控制后台运行方式和更新通道。",
-                ) {
-                    UpdateControlDeck(
-                        appVersion = settings.appVersion,
-                        betaChannel = betaChannel,
-                        keepAlive = keepAlive,
-                        onCheckUpdate = settings.manualCheckUpdate,
-                        onKeepAliveChange = { enabled ->
-                            keepAlive = enabled
-                            if (enabled) {
-                                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                            settings.setKeepAlive(enabled)
-                        },
-                        onBetaChannelChange = {
-                            betaChannel = it
-                            settings.setBetaChannel(it)
-                        },
-                    )
-                }
-
-                SettingsSection(
-                    title = "诊断",
-                    description = "导出运行与崩溃日志，方便排查偶发问题。" +
-                        "「保存到下载」一次点击就出文件，不需要再选分享对象。",
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        ActionRow(
-                            label = if (exportingLogs) "正在导出…" else "保存到「下载」",
-                            icon = WandIcons.download,
-                            iconTint = WandColors.info,
-                            trailingText = remember(exportingLogs) { logSizeLabel() },
-                            onClick = {
-                                if (exportingLogs) return@ActionRow
-                                exportingLogs = true
-                                logScope.launch {
-                                    WandLog.i("ui", "用户保存运行日志到下载目录")
-                                    val result = runCatching {
-                                        withContext(Dispatchers.IO) {
-                                            WandDiagnostics.saveToDownloads(appContext)
-                                        }
-                                    }
-                                    exportingLogs = false
-                                    result
-                                        .onSuccess { location ->
-                                            snackbarHostState.showWandNotice("已保存到 $location")
-                                        }
-                                        .onFailure { error ->
-                                            snackbarHostState.showWandNotice(
-                                                "保存失败：${error.message ?: "未知错误"}",
-                                            )
-                                        }
-                                }
-                            },
-                        )
-                        RowDivider()
-                        ActionRow(
-                            label = if (exportingLogs) "正在导出…" else "另存到其他位置…",
-                            icon = WandIcons.folder,
-                            iconTint = WandColors.textSecondary,
-                            onClick = {
-                                if (exportingLogs) return@ActionRow
-                                // 只在用户选完位置后再拼报表：拼一次 1MB 级文本，不必为没选中的弹窗付代价。
-                                saveLogLauncher.launch(WandDiagnostics.exportFileName())
-                            },
-                        )
-                        RowDivider()
-                        ActionRow(
-                            label = "分享日志文件",
-                            icon = WandIcons.share,
-                            iconTint = WandColors.textSecondary,
-                            onClick = {
-                                if (exportingLogs) return@ActionRow
-                                exportingLogs = true
-                                logScope.launch {
-                                    val result = runCatching {
-                                        withContext(Dispatchers.IO) {
-                                            WandDiagnostics.exportToFile(appContext)
-                                        }
-                                    }
-                                    exportingLogs = false
-                                    result
-                                        .onSuccess { file ->
-                                            // 先弹系统分享面板：showWandNotice 会挂起到气泡消失，
-                                            // 放在前面会让面板延迟几秒才出现。
-                                            shareLogFile(appContext, file)
-                                        }
-                                        .onFailure { error ->
-                                            snackbarHostState.showWandNotice(
-                                                "导出失败：${error.message ?: "未知错误"}",
-                                            )
-                                        }
-                                }
-                            },
-                        )
-                    }
-                }
-
-                SettingsSection(
-                    title = "关于",
-                    description = "版本与运行环境信息。",
-                ) {
-                    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-                        SettingsAboutContent(
-                            appVersion = settings.appVersion,
-                            serverVersion = serverVersion,
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
             }
         }
     }
@@ -412,116 +481,100 @@ private fun SettingsContentLayout(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
                 .widthIn(max = maxContentWidth)
+                .fillMaxWidth()
                 .padding(horizontal = horizontalPadding)
-                .padding(top = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(top = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
             content = content,
         )
     }
 }
 
-/** 顶部概览把“系统设置”从普通列表提升为可快速判断当前设备状态的入口。 */
+/** Stable destinations preserve each visited editor and scroll position for this settings visit. */
+internal enum class SettingsDestination(val title: String) {
+    Index("设置"), Appearance("外观与反馈"), Traffic("流量与实时内容"),
+    Voice("语音输入"), Models("模型分组"), Server("服务器"),
+    Updates("应用与更新"), Diagnostics("诊断"), About("关于");
+}
+
+internal class SettingsNavigation(initial: SettingsDestination = SettingsDestination.Index) {
+    var current by mutableStateOf(initial)
+        private set
+    val visited = mutableStateListOf(SettingsDestination.Index).apply {
+        if (initial != SettingsDestination.Index) add(initial)
+    }
+    fun open(destination: SettingsDestination) {
+        if (destination !in visited) visited.add(destination)
+        current = destination
+    }
+    fun back(): Boolean {
+        if (current == SettingsDestination.Index) return false
+        current = SettingsDestination.Index
+        return true
+    }
+    companion object {
+        val Saver = listSaver<SettingsNavigation, String>(
+            save = { listOf(it.current.name) + it.visited.map(SettingsDestination::name) },
+            restore = { values -> SettingsNavigation(SettingsDestination.entries.firstOrNull { it.name == values.firstOrNull() }
+                ?: SettingsDestination.Index).apply {
+                visited.clear()
+                visited.add(SettingsDestination.Index)
+                values.drop(1).mapNotNull { name -> SettingsDestination.entries.firstOrNull { it.name == name } }
+                    .forEach { if (it !in visited) visited.add(it) }
+                if (current !in visited) visited.add(current)
+            } },
+        )
+    }
+}
+
+/** Hidden pages retain draft owners but have no measured surface, hit target or accessibility node. */
 @Composable
-private fun SettingsOverview(
-    appVersion: String,
-    connection: HomeConnectionInfo,
-    betaChannel: Boolean,
-    appearanceMode: WandAppearanceMode,
-    compact: Boolean = false,
-) {
-    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = if (compact) 13.dp else 15.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 14.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                WandBrandMark(size = if (compact) 40 else 48)
-                // 标题列优先获得空间；次要的版本胶囊是固定信息，空间不足时先收缩自己（§2.15 R2）。
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        connection.serverDisplayName.ifBlank { "这台设备" },
-                        style = if (compact) {
-                            MaterialTheme.typography.titleMedium
-                        } else {
-                            MaterialTheme.typography.titleLarge
-                        },
-                        color = WandColors.textPrimary,
-                        maxLines = 1,
-                        // 中段省略：端口是分辨当前服务器的关键信息，尾部省略会先把它吃掉。
-                        overflow = TextOverflow.MiddleEllipsis,
-                    )
-                    Text(
-                        if (compact) {
-                            "外观、通知和更新都在这里调整。"
-                        } else {
-                            "连接、设备和工作流偏好都在这里调整。"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = WandColors.textSecondary,
-                        // 大字体挤压下也不许竖排堆叠成多行。
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Text(
-                    "v$appVersion",
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.MiddleEllipsis,
-                    modifier = Modifier
-                        .widthIn(max = 112.dp)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(WandColors.surfaceSoft.copy(alpha = 0.70f))
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                SettingsStatePill(
-                    label = if (connection.hasToken) "已认证" else "直接连接",
-                    tint = WandColors.success,
-                    modifier = Modifier.weight(1f),
-                )
-                SettingsStatePill(
-                    label = if (betaChannel) "Beta 通道" else "Stable 通道",
-                    tint = if (betaChannel) WandColors.warning else WandColors.info,
-                    modifier = Modifier.weight(1f),
-                )
-                SettingsStatePill(
-                    label = appearanceMode.settingsLabel(),
-                    tint = WandColors.brand,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+private fun RetainedSettingsPage(visible: Boolean, content: @Composable () -> Unit) {
+    Layout(content = content, modifier = if (visible) Modifier.fillMaxSize() else Modifier.clearAndSetSemantics {}) { measurables, constraints ->
+        if (!visible) layout(0, 0) {} else {
+            val children = measurables.map { it.measure(constraints) }
+            layout(constraints.maxWidth, constraints.maxHeight) { children.forEach { it.placeRelative(0, 0) } }
         }
     }
 }
 
 @Composable
-private fun SettingsStatePill(label: String, tint: Color, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .clip(WandShapes.sm)
-            .background(tint.copy(alpha = 0.08f))
-            .padding(horizontal = 9.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(modifier = Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(tint))
-        Text(
-            label,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            color = WandColors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+private fun SettingsDirectory(
+    connection: HomeConnectionInfo,
+    appearance: String,
+    appVersion: String,
+    onOpen: (SettingsDestination) -> Unit,
+    onOpenWeb: () -> Unit,
+) {
+    SettingsCard {
+        ActionRow(connection.serverDisplayName.ifBlank { "当前服务器" }, WandIcons.server,
+            supportingText = connection.serverUrl.takeIf { it != connection.serverDisplayName }, inlineValue = false) { onOpen(SettingsDestination.Server) }
+    }
+    SettingsSection("此设备") {
+        SettingsCard {
+            ActionRow("外观与反馈", WandIcons.settings, appearance) { onOpen(SettingsDestination.Appearance) }
+            RowDivider()
+            ActionRow("流量与实时内容", WandIcons.web) { onOpen(SettingsDestination.Traffic) }
+            RowDivider()
+            ActionRow("语音输入", WandIcons.mic) { onOpen(SettingsDestination.Voice) }
+            RowDivider()
+            ActionRow("应用与更新", WandIcons.update, "v$appVersion") { onOpen(SettingsDestination.Updates) }
+        }
+    }
+    SettingsSection("服务配置") {
+        SettingsCard {
+            ActionRow("模型分组", WandIcons.tune) { onOpen(SettingsDestination.Models) }
+            RowDivider()
+            ActionRow("完整 Web 设置", WandIcons.web, onClick = onOpenWeb)
+        }
+    }
+    SettingsSection("帮助与关于") {
+        SettingsCard {
+            ActionRow("诊断", WandIcons.download) { onOpen(SettingsDestination.Diagnostics) }
+            RowDivider()
+            ActionRow("关于 Wand", WandIcons.question) { onOpen(SettingsDestination.About) }
+        }
     }
 }
 
@@ -575,6 +628,49 @@ private fun AppearanceModePicker(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TrafficTimelineModePicker(
+    selected: String,
+    onSelected: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SettingBlockHeader(
+            title = "实时内容范围",
+            supportingText = "关闭：所有网络显示；仅 Wi-Fi：移动网络隐藏实时输出。",
+            icon = WandIcons.usage,
+            tint = WandColors.info,
+        )
+        val options = listOf(
+            ServerStore.TRAFFIC_TIMELINE_MODE_ALL to "关闭",
+            ServerStore.TRAFFIC_TIMELINE_MODE_WIFI to "仅 Wi-Fi",
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, (mode, label) ->
+                SegmentedButton(
+                    selected = selected == mode,
+                    onClick = { onSelected(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = WandColors.selectedFill,
+                        activeContentColor = WandColors.brand,
+                        activeBorderColor = WandColors.brand,
+                        inactiveContainerColor = Color.Transparent,
+                        inactiveContentColor = WandColors.textSecondary,
+                        inactiveBorderColor = WandColors.border,
+                    ),
+                ) {
+                    Text(label, maxLines = 1)
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun SettingBlockHeader(
     title: String,
@@ -659,7 +755,7 @@ private fun SettingsSection(
             .fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SettingsChapterHeader(title = title, description = description)
+        if (title.isNotBlank() || !description.isNullOrBlank()) SettingsChapterHeader(title = title, description = description)
         content()
     }
 }
@@ -672,13 +768,13 @@ private fun SettingsChapterHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 14.dp, bottom = 8.dp, start = 2.dp),
+            .padding(start = 2.dp, bottom = 4.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Text(
+        if (title.isNotBlank()) Text(
             title,
-            style = MaterialTheme.typography.labelLarge,
-            color = WandColors.textPrimary,
+            style = MaterialTheme.typography.labelMedium,
+            color = WandColors.textMuted,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -708,10 +804,7 @@ private fun NotificationFeedbackContent(
     )
 }
 
-/**
- * 更新区把最常用的“检查更新”提升为主操作；开关仍保留在同一张液态卡片里，
- * 但不再与所有设置行竞争同一视觉权重。
- */
+/** 更新与后台行为共用连续设置行，不占据额外的宣传区。 */
 @Composable
 private fun UpdateControlDeck(
     appVersion: String,
@@ -722,62 +815,19 @@ private fun UpdateControlDeck(
     onBetaChannelChange: (Boolean) -> Unit,
 ) {
     SettingsCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(11.dp),
-            ) {
-                SettingsIconBadge(icon = WandIcons.update, tint = WandColors.success)
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        "保持在最新版本",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = WandColors.textPrimary,
-                    )
-                    Text(
-                        "当前 v$appVersion · ${if (betaChannel) "Beta 通道" else "Stable 通道"}",
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = WandColors.textSecondary,
-                    )
-                }
-            }
-            WandButton(
-                label = "检查更新",
-                onClick = onCheckUpdate,
-                icon = WandIcons.update,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
-            )
-            RowDivider()
-            SwitchRow(
-                label = "后台保活",
-                checked = keepAlive,
-                icon = WandIcons.keepAlive,
-                iconTint = WandColors.success,
-                description = "在通知栏保留前台服务，减少系统在后台回收连接。",
-                onChange = onKeepAliveChange,
-            )
-            RowDivider()
-            SwitchRow(
-                label = "Beta 通道",
-                checked = betaChannel,
-                icon = WandIcons.beta,
-                iconTint = WandColors.warning,
-                description = "接收带调试后缀的开发构建，版本号会高于正式版。",
-                onChange = onBetaChannelChange,
-            )
-        }
+        ActionRow("检查更新", WandIcons.update, "v$appVersion", onClick = onCheckUpdate)
+        RowDivider()
+        SwitchRow(
+            label = "后台保活", checked = keepAlive, icon = WandIcons.keepAlive,
+            description = "在通知栏保留服务，减少后台断连。", onChange = onKeepAliveChange,
+        )
+        RowDivider()
+        SwitchRow(
+            label = "Beta 通道", checked = betaChannel, icon = WandIcons.beta,
+            description = "接收测试版更新。", onChange = onBetaChannelChange,
+        )
     }
 }
-
 
 @Composable
 private fun SettingsAboutContent(
@@ -874,54 +924,8 @@ private fun ServerConnectionRow(
 }
 
 @Composable
-private fun ConnectionActionsRow(
-    onSwitchServer: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 54.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CompactConnectionAction(
-            label = "管理服务器",
-            icon = WandIcons.swapServer,
-            onClick = onSwitchServer,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun CompactConnectionAction(
-    label: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .heightIn(min = 54.dp)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = WandColors.info,
-            modifier = Modifier.size(17.dp),
-        )
-        Text(
-            label,
-            style = MaterialTheme.typography.bodySmall,
-            color = WandColors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 7.dp),
-        )
-    }
+private fun ConnectionActionsRow(onSwitchServer: () -> Unit) {
+    ActionRow("管理服务器", WandIcons.swapServer, onClick = onSwitchServer)
 }
 
 /**
@@ -944,7 +948,7 @@ private fun SttModelSection() {
     }
     SettingsCard(modifier = Modifier.fillMaxWidth()) {
         SttModelManager.MODELS.forEachIndexed { index, model ->
-            if (index > 0) RowDivider()
+            if (index > 0) RowDivider(leadingIcon = false)
             val ready = remember(sttState, downloadingId, model.id) {
                 SttModelManager.isReady(context, model)
             }
@@ -1075,35 +1079,19 @@ private fun SettingsCard(
 ) {
     WandCard(
         modifier = modifier,
-        shape = WandShapes.lg,
+        shape = WandShapes.md,
         content = content,
     )
 }
 
-/** 卡片内行间分割线：0.5dp border 色，左右与行内边距对齐。 */
+/** 分隔线从行文字起点开始，不切过左侧图标；无图标的模型行用正文边距。 */
 @Composable
-private fun RowDivider() {
+private fun RowDivider(leadingIcon: Boolean = true) {
     HorizontalDivider(
         thickness = 0.5.dp,
         color = WandColors.borderStrong.copy(alpha = 0.22f),
-        modifier = Modifier.padding(horizontal = 12.dp),
+        modifier = Modifier.padding(start = if (leadingIcon) 56.dp else 14.dp, end = 12.dp),
     )
-}
-
-@Composable
-private fun SettingsIconBadge(
-    icon: ImageVector,
-    tint: Color = WandColors.brand,
-) {
-    Box(
-        modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(tint.copy(alpha = 0.11f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
-    }
 }
 
 @Composable
@@ -1111,65 +1099,78 @@ private fun SettingsRowIcon(
     icon: ImageVector,
     tint: Color = WandColors.textMuted,
 ) {
-    val shape = RoundedCornerShape(9.dp)
-    Box(
-        modifier = Modifier
-            .size(30.dp)
-            .clip(shape)
-            .background(tint.copy(alpha = 0.08f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
+    Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
     }
 }
 
-/** 操作行：左侧场景图标 + 标签 + 行尾右箭头，行高 ≥52dp，danger 时图标与标签同色。 */
+/** Standard action row; reserve both labels without owning an export/result lifecycle. */
 @Composable
 private fun ActionRow(
     label: String,
     icon: ImageVector,
-    trailingText: String? = null,
+    supportingText: String? = null,
+    inlineValue: Boolean = true,
     iconTint: Color = WandColors.textSecondary,
     danger: Boolean = false,
+    enabled: Boolean = true,
+    busy: Boolean = false,
+    busyLabel: String? = null,
     onClick: () -> Unit,
 ) {
     val tint = if (danger) WandColors.danger else iconTint
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    WandListItem(
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable(role = Role.Button, onClick = onClick)
-            .heightIn(min = 54.dp)
-            .padding(horizontal = 12.dp),
-    ) {
-        SettingsRowIcon(icon = icon, tint = tint)
-        Text(
-            label,
-            style = MaterialTheme.typography.titleSmall,
-            color = if (danger) WandColors.danger else WandColors.textPrimary,
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 11.dp),
-        )
-        if (trailingText != null) {
-            Text(
-                trailingText,
-                style = MaterialTheme.typography.labelMedium,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.textSecondary,
-                modifier = Modifier.padding(end = 5.dp),
-            )
-        }
-        Icon(
-            WandIcons.chevronRight,
-            contentDescription = null,
-            tint = WandColors.textMuted,
-            modifier = Modifier.size(18.dp),
-        )
-    }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics {
+                if (busy) stateDescription = "正在导出"
+                else if (!enabled) stateDescription = "不可操作"
+            },
+        headlineColor = when {
+            !enabled -> WandColors.textMuted
+            danger -> WandColors.dangerText
+            else -> WandColors.textPrimary
+        },
+        headlineContent = {
+            Box {
+                Text(
+                    label,
+                    modifier = if (busy) Modifier.alpha(0f).clearAndSetSemantics {} else Modifier,
+                )
+                busyLabel?.let {
+                    Text(
+                        it,
+                        modifier = if (busy) Modifier else Modifier.alpha(0f).clearAndSetSemantics {},
+                    )
+                }
+            }
+        },
+        supportingColor = WandColors.textMuted,
+        supportingContent = supportingText?.takeUnless { inlineValue }?.let {
+            {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        },
+        leadingContent = {
+            SettingsRowIcon(icon = icon, tint = if (enabled) tint else WandColors.textMuted)
+        },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (inlineValue && supportingText != null) Text(supportingText,
+                    style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 144.dp))
+                WandListItemIconSlot(WandIcons.chevronRight)
+            }
+        },
+    )
 }
 
-/** 开关行：标签 + 行尾 brand 色 Switch，行高 ≥52dp。 */
+/** The row owns the only toggle action; the same controlled Switch remains decorative. */
 @Composable
 private fun SwitchRow(
     label: String,
@@ -1179,47 +1180,26 @@ private fun SwitchRow(
     description: String? = null,
     onChange: (Boolean) -> Unit,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .toggleable(
-                value = checked,
-                role = Role.Switch,
-                onValueChange = onChange,
+    WandListItem(
+        modifier = Modifier.toggleable(
+            value = checked,
+            role = Role.Switch,
+            onValueChange = onChange,
+        ),
+        headlineContent = { Text(label) },
+        supportingContent = description?.let { { Text(it) } },
+        leadingContent = { SettingsRowIcon(icon = icon, tint = iconTint) },
+        trailingContent = {
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = WandColors.brand,
+                    uncheckedThumbColor = WandColors.textMuted,
+                    uncheckedTrackColor = WandColors.surfaceSoft,
+                ),
             )
-            .heightIn(min = 54.dp)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        SettingsRowIcon(icon = icon, tint = iconTint)
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 11.dp, end = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                label,
-                style = MaterialTheme.typography.titleSmall,
-                color = WandColors.textPrimary,
-            )
-            if (description != null) {
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WandColors.textSecondary,
-                )
-            }
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = WandColors.brand,
-                uncheckedThumbColor = WandColors.textMuted,
-                uncheckedTrackColor = WandColors.surfaceSoft,
-            ),
-        )
-    }
+        },
+    )
 }

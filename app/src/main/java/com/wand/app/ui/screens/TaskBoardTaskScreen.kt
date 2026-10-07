@@ -44,6 +44,7 @@ import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandBreadcrumb
 import com.wand.app.ui.components.WandCrumb
 import com.wand.app.ui.components.WandDetailTopBar
+import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
@@ -75,6 +76,7 @@ fun TaskBoardTaskScreen(
     onOpenTeamChat: (runId: String, taskIdentifier: String) -> Unit = { _, _ -> },
     onTaskGone: () -> Unit = onBack,
     onTaskChanged: () -> Unit = {},
+    onOpenIm: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var task by remember(taskId) { mutableStateOf<BoardTask?>(null) }
@@ -264,6 +266,7 @@ fun TaskBoardTaskScreen(
                     enabled = !busy,
                     onClick = { scope.launch { refresh(showProgress = true) } },
                 )
+                onOpenIm?.let { WandButton("聊天", it, modifier = Modifier.size(48.dp), variant = WandButtonVariant.Text) }
             },
         )
         Box(
@@ -274,7 +277,7 @@ fun TaskBoardTaskScreen(
         ) {
             when {
                 current == null && loading -> CircularProgressIndicator(
-                    color = WandColors.success,
+                    color = WandColors.brand,
                     modifier = Modifier.align(Alignment.Center).size(26.dp),
                 )
                 current == null -> Column(

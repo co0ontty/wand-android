@@ -1,6 +1,5 @@
 package com.wand.app.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -11,6 +10,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +38,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -60,6 +63,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -71,6 +75,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.AiTeam
+import com.wand.app.data.AiTeamDispatchRun
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BOARD_TASK_PRIORITIES
 import com.wand.app.data.BOARD_TASK_DETAIL_STATUSES
@@ -83,6 +88,7 @@ import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
+import com.wand.app.data.dispatchStartBlockedReason
 import com.wand.app.data.boardAgentModelName
 import com.wand.app.data.boardParentTaskOptions
 import com.wand.app.data.groupBoardSessionsByAgent
@@ -97,7 +103,6 @@ import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.WandAgentFields
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
-import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandChoice
 import com.wand.app.ui.components.WandChoiceStrip
 import com.wand.app.ui.components.WandInlinePanel
@@ -261,11 +266,11 @@ fun TaskBoardScreen(
     val projectName = workspaces.firstOrNull { it.id == filterWorkspaceId }?.name ?: "全部任务"
 
     Scaffold(
-        containerColor = Color.Transparent,
+        containerColor = WandColors.bgPrimary,
         topBar = {
             if (!embedded) {
                 WandDetailTopBar(
-                    title = "工作台",
+                    title = "任务",
                     subtitle = "任务管理 · ${stats.remaining} 项未完成",
                     leading = { WandDetailBackButton(onClick = onBack) },
                 )
@@ -367,6 +372,14 @@ fun TaskBoardScreen(
                 }
             },
             teamRunRetry = teamRetryTaskId != null,
+            api = api,
+            onDispatchStarted = { started ->
+                // 派工由服务端建卡 + 起 run：关窗、刷新看板，直接落到那张卡的详情。
+                showCreate = false
+                teamRetryTaskId = null
+                scope.launch { refresh() }
+                onOpenTaskDetail(started.taskId)
+            },
             onCreate = create@{ title, description, status, priority, workspaceId, agent, parentTaskId, teamId, employeeId ->
                 if (busy) return@create
                 busy = true
@@ -492,8 +505,7 @@ private fun TaskBoardList(
         setSwipedTaskId(null)
         expandedTaskId = null
     }
-    // 展开的卡片先吃返回键：再按一次才轮到页面返回。
-    BackHandler(enabled = expandedTaskId != null) { expandedTaskId = null }
+    // 任务详情的展开只由卡片点击控制，不拦截页面返回。
     val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
     val doneOpen = boardDoneSectionOpen(doneCollapsed, query)
     val motionEnabled = !reduceMotionEnabled()
@@ -522,8 +534,8 @@ private fun TaskBoardList(
     LazyColumn(
         modifier = modifier,
         state = listState,
-        contentPadding = PaddingValues(6.dp, 8.dp, 6.dp, 24.dp + bottomClearance),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp + bottomClearance),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         item(key = "hero") {
             TaskBoardHero(
@@ -535,12 +547,12 @@ private fun TaskBoardList(
             )
         }
         item(key = "filters") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 WandChoice(
                     label = workspaces.firstOrNull { it.id == filterWorkspaceId }?.name ?: "所有项目",
                     options = listOf("" to "所有项目") + workspaces.map { it.id to it.name },
                     onSelect = onFilterWorkspace,
-                    chip = true,
+                    chip = false,
                 )
                 WandChoiceStrip(
                     options = listOf(
@@ -552,9 +564,9 @@ private fun TaskBoardList(
                     ),
                     selected = statusFilter,
                     onSelect = onStatusFilter,
-                    minHeight = 38.dp,
+                    minHeight = 48.dp,
                     labelFontSize = 12.sp,
-                    activeTextColor = WandColors.success,
+                    activeTextColor = WandColors.brand,
                 )
             }
         }
@@ -573,11 +585,11 @@ private fun TaskBoardList(
             item(key = "empty") {
                 EmptyState(
                     icon = WandIcons.todo,
-                    title = if (query.isNotBlank() || statusFilter.isNotBlank()) "没有匹配的任务" else "工作台还是空的",
+                    title = if (query.isNotBlank() || statusFilter.isNotBlank()) "没有匹配的任务" else "还没有任务",
                     subtitle = if (query.isNotBlank() || statusFilter.isNotBlank()) {
                         "换个筛选条件，或新建一条任务。"
                     } else {
-                        "先建一条任务，用绿色勾选把事情做完。"
+                        "写下要做的事，再选择由谁执行。"
                     },
                     actionText = "新建任务",
                     onAction = { onCreateForStatus("todo") },
@@ -674,76 +686,23 @@ private fun TaskBoardHero(
     onQueryChange: (String) -> Unit,
     showSearch: Boolean = true,
 ) {
-    WandCard(
-        containerColor = WandColors.successSoft,
-        shape = WandShapes.lg,
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        modifier = Modifier.fillMaxWidth(),
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                "任务概览 · $projectName",
-                color = WandColors.textSecondary,
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (showSearch) BoardSearchCapsule(value = query, onValueChange = onQueryChange)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(projectName, color = WandColors.textPrimary,
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text("${stats.remaining} 项未完成", color = WandColors.textSecondary,
+                style = MaterialTheme.typography.bodySmall)
         }
-        Row(
-            modifier = Modifier.padding(top = 4.dp),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                stats.remaining.toString(),
-                color = WandColors.success,
-                fontWeight = FontWeight.Bold,
-                fontSize = 34.sp,
-                lineHeight = 36.sp,
-            )
-            Text(
-                "未完成",
-                color = WandColors.textMuted,
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            BoardMetric("待办", stats.todo, boardStatusColor("todo"), Modifier.weight(1f))
+            BoardMetric("进行中", stats.doing, boardStatusColor("doing"), Modifier.weight(1f))
+            BoardMetric("已完成", stats.done, boardStatusColor("done"), Modifier.weight(1f))
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp)
-                .height(1.dp)
-                .background(WandColors.success.copy(alpha = 0.16f)),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            BoardMetric(
-                label = "待办",
-                value = stats.todo,
-                color = boardStatusColor("todo"),
-                modifier = Modifier.weight(1f),
-            )
-            BoardMetric(
-                label = "进行中",
-                value = stats.doing,
-                color = boardStatusColor("doing"),
-                modifier = Modifier.weight(1f),
-            )
-            BoardMetric(
-                label = "已完成",
-                value = stats.done,
-                color = boardStatusColor("done"),
-                modifier = Modifier.weight(1f),
-            )
-        }
+        if (showSearch) BoardSearchCapsule(value = query, onValueChange = onQueryChange)
     }
 }
 
@@ -754,12 +713,11 @@ private fun BoardSearchCapsule(
 ) {
     Row(
         modifier = Modifier
-            .width(148.dp)
-            .height(30.dp)
-            .clip(WandShapes.full)
-            .background(WandColors.surface.copy(alpha = 0.88f))
-            .border(0.5.dp, WandColors.border.copy(alpha = 0.72f), WandShapes.full)
-            .padding(horizontal = 10.dp),
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(WandShapes.sm)
+            .background(WandColors.surfaceSoft)
+            .padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -777,14 +735,14 @@ private fun BoardSearchCapsule(
                 color = WandColors.textPrimary,
                 fontSize = 12.sp,
             ),
-            cursorBrush = SolidColor(WandColors.success),
+            cursorBrush = SolidColor(WandColors.brand),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             modifier = Modifier.weight(1f),
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (value.isEmpty()) {
                         Text(
-                            "搜索",
+                            "搜索任务",
                             color = WandColors.textMuted,
                             style = MaterialTheme.typography.labelMedium,
                             fontSize = 12.sp,
@@ -796,14 +754,10 @@ private fun BoardSearchCapsule(
             },
         )
         if (value.isNotEmpty()) {
-            Icon(
-                WandIcons.close,
-                contentDescription = "清除搜索",
-                tint = WandColors.textMuted,
-                modifier = Modifier
-                    .size(12.dp)
-                    .clickable { onValueChange("") },
-            )
+            IconButton(onClick = { onValueChange("") }, modifier = Modifier.size(48.dp)) {
+                Icon(WandIcons.close, contentDescription = "清除搜索",
+                    tint = WandColors.textMuted, modifier = Modifier.size(18.dp))
+            }
         }
     }
 }
@@ -835,7 +789,7 @@ private fun BoardArchiveHeader(
 ) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxWidth().heightIn(min = 48.dp)
             .clip(WandShapes.sm)
             .clickable(onClick = onToggle)
             .padding(start = 10.dp, top = 8.dp, bottom = 4.dp, end = 4.dp),
@@ -877,7 +831,7 @@ private fun BoardSectionHeader(
         label = "doneSectionChevron",
     )
     Row(
-        modifier = Modifier
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
             .then(if (onToggle != null) Modifier.clickable(role = Role.Button, onClick = onToggle) else Modifier)
             .padding(top = 6.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -957,15 +911,7 @@ private val BoardCardBlockShape = RoundedCornerShape(8.dp)
 /** 任务卡上元信息芯片的统一几何：22dp 高、8dp 圆角、11sp 文本。 */
 private val BoardCardChipHeight = 22.dp
 
-/**
- * 任务卡：标题行 / 摘要 / 元信息 / 会话 / 状态五段纵向排列，段与段之间留 10dp。
- *
- * - 勾选圈、标题、任务编号一行：编号贴右，扫一眼就能对上号；
- * - 元信息统一成 8dp 细边框小芯片（弹丸只留给状态圆点，不再把每个属性都胶囊化）；
- * - 会话不再是一排同名胶囊：左侧一根分组细线 + 每行「工具徽标 + 会话标题 + 运行跳动点」，
- *   点得到具体那一个终端，超出的会话折成「+N 个会话」；
- * - 状态行（正在处理 / 等待验收）压到卡片底部当页脚，顺序对齐 Web 任务卡。
- */
+/** 连续任务行：先读标题与摘要；会话按需展开，风险保留语义色，普通元数据不重复加容器。 */
 @Composable
 private fun BoardTaskCard(
     task: BoardTask,
@@ -985,9 +931,10 @@ private fun BoardTaskCard(
         model.sessions
     }
     val extraSessionCount = (task.sessions.size - visibleSessions.size).coerceAtLeast(0)
-    WandCard(
-        onClick = onToggleExpanded,
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onToggleExpanded)
+            .padding(vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -997,7 +944,7 @@ private fun BoardTaskCard(
             BoardStatusCheck(
                 status = task.status,
                 onClick = onToggleComplete,
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier,
             )
             Text(
                 model.title,
@@ -1008,7 +955,7 @@ private fun BoardTaskCard(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 textDecoration = if (done) TextDecoration.LineThrough else TextDecoration.None,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).padding(top = 12.dp),
             )
             model.identifier?.let { identifier ->
                 Text(
@@ -1018,7 +965,7 @@ private fun BoardTaskCard(
                     fontSize = 10.sp,
                     letterSpacing = 0.4.sp,
                     maxLines = 1,
-                    modifier = Modifier.padding(top = 3.dp),
+                    modifier = Modifier.padding(top = 15.dp),
                 )
             }
         }
@@ -1053,7 +1000,6 @@ private fun BoardTaskCard(
                         icon = WandIcons.priority,
                         color = color,
                         containerColor = color.copy(alpha = 0.14f),
-                        borderColor = color.copy(alpha = 0.32f),
                     )
                 }
                 model.labels.forEach { label ->
@@ -1078,7 +1024,6 @@ private fun BoardTaskCard(
                         icon = WandIcons.due,
                         color = color,
                         containerColor = if (due.overdue) WandColors.dangerSoft else null,
-                        borderColor = if (due.overdue) WandColors.danger.copy(alpha = 0.32f) else null,
                     )
                 }
                 model.agentLabel?.let { label ->
@@ -1086,7 +1031,11 @@ private fun BoardTaskCard(
                 }
             }
         }
-        if (visibleSessions.isNotEmpty() || extraSessionCount > 0) {
+        if (!expanded && task.sessions.isNotEmpty()) {
+            Text("${task.sessions.size} 个会话 · 点按展开", color = WandColors.textSecondary,
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+        }
+        if (expanded && (visibleSessions.isNotEmpty() || extraSessionCount > 0)) {
             BoardTaskSessions(
                 sessions = visibleSessions,
                 extraCount = extraSessionCount,
@@ -1113,12 +1062,12 @@ private fun BoardTaskCard(
             ) {
                 Text(
                     "打开完整任务页",
-                    color = WandColors.success,
+                    color = WandColors.brand,
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier
-                        .clip(BoardCardBlockShape)
+                        .heightIn(min = 48.dp).clip(BoardCardBlockShape)
                         .clickable(onClick = onOpen)
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp).wrapContentHeight(Alignment.CenterVertically),
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
@@ -1126,12 +1075,13 @@ private fun BoardTaskCard(
                     color = WandColors.textMuted,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier
-                        .clip(BoardCardBlockShape)
+                        .heightIn(min = 48.dp).clip(BoardCardBlockShape)
                         .clickable(onClick = onToggleExpanded)
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp).wrapContentHeight(Alignment.CenterVertically),
                 )
             }
         }
+        HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f), modifier = Modifier.padding(top = 12.dp))
     }
 }
 
@@ -1168,7 +1118,7 @@ private fun BoardTaskSessions(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(26.dp)
+                        .heightIn(min = 48.dp)
                         .clip(BoardCardBlockShape)
                         .clickable { onOpenSession(session.id, session.isStructured) }
                         .padding(horizontal = 6.dp),
@@ -1201,7 +1151,7 @@ private fun BoardTaskSessions(
                     fontSize = 11.sp,
                     maxLines = 1,
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .fillMaxWidth().heightIn(min = 48.dp)
                         .clip(BoardCardBlockShape)
                         .clickable(onClick = onOpenTask)
                         .padding(horizontal = 6.dp, vertical = 5.dp),
@@ -1234,11 +1184,12 @@ private fun BoardStatusCheck(
     )
     Box(
         modifier = modifier
-            .size(18.dp)
-            .clip(CircleShape)
+            .size(48.dp).clip(CircleShape)
+            .toggleable(value = done, role = Role.Checkbox, onValueChange = { onClick() })
+            .semantics { contentDescription = if (done) "重新打开任务" else "完成任务" }
+            .padding(15.dp)
             .border(1.5.dp, stroke, CircleShape)
-            .background(fill)
-            .clickable(role = Role.Checkbox, onClick = onClick),
+            .background(fill),
         contentAlignment = Alignment.Center,
     ) {
         when {
@@ -1259,8 +1210,7 @@ private fun BoardStatusCheck(
 }
 
 /**
- * 元信息芯片：8dp 圆角细边框，不是胶囊——胶囊只有状态圆点和计数才用。
- * 语义色芯片（优先级 / 逾期）靠弱底色 + 同色文字区分，不额外造一套图标。
+ * 普通元信息平铺；仅优先级和逾期用弱语义底色，避免每个属性都成为独立卡片。
  */
 @Composable
 private fun BoardMetaChip(
@@ -1268,15 +1218,13 @@ private fun BoardMetaChip(
     icon: ImageVector? = null,
     color: Color = WandColors.textSecondary,
     containerColor: Color? = null,
-    borderColor: Color? = null,
 ) {
     Row(
         modifier = Modifier
             .height(BoardCardChipHeight)
             .clip(BoardCardChipShape)
-            .background(containerColor ?: WandColors.surfaceSoft.copy(alpha = 0.48f))
-            .then(if (borderColor != null) Modifier.border(0.5.dp, borderColor, BoardCardChipShape) else Modifier)
-            .padding(horizontal = 7.dp),
+            .background(containerColor ?: Color.Transparent)
+            .padding(horizontal = if (containerColor != null) 6.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -1412,6 +1360,7 @@ internal fun TaskBoardDetailPane(
     }
     val hasAgents = task.sessions.isNotEmpty()
     var composeOpen by remember(task.id) { mutableStateOf(!hasAgents) }
+    var executionSettingsOpen by remember(task.id) { mutableStateOf(false) }
     var composePrompt by remember(task.id) { mutableStateOf(if (hasAgents) "" else task.description) }
     LaunchedEffect(teams, employees, dispatchSubjectKey) {
         val subject = ExecutionSubject.fromKey(dispatchSubjectKey, agent.provider)
@@ -1454,7 +1403,7 @@ internal fun TaskBoardDetailPane(
                 onClick = {
                     onPatch(patchBoardTaskBody(title = title.trim().ifBlank { task.title }))
                 },
-                enabled = !busy && title.trim().isNotEmpty(),
+                enabled = !busy && title.trim().isNotEmpty() && title.trim() != task.title,
                 variant = WandButtonVariant.Secondary,
                 compact = true,
                 modifier = Modifier.weight(1f),
@@ -1463,28 +1412,23 @@ internal fun TaskBoardDetailPane(
                 label = if (done) "重新打开" else "完成任务",
                 onClick = { onPatch(patchBoardTaskBody(status = boardTaskToggledStatus(task.status))) },
                 enabled = !busy,
-                variant = if (done) WandButtonVariant.Secondary else WandButtonVariant.Success,
+                variant = WandButtonVariant.Secondary,
                 compact = true,
                 modifier = Modifier.weight(1f),
             )
         }
-        Text("状态", color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall)
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            BOARD_TASK_DETAIL_STATUSES.forEach { status ->
-                val selected = task.status == status
-                val color = boardStatusColor(status)
-                BoardFilterChip(
-                    label = boardTaskStatusLabel(status),
-                    selected = selected,
-                    color = color,
-                    onClick = { if (!busy && !selected) onPatch(patchBoardTaskBody(status = status)) },
-                )
-            }
+        if (task.description.isNotBlank()) {
+            Text(task.description, style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary, modifier = Modifier.padding(vertical = 8.dp))
         }
-        WandCard(contentPadding = PaddingValues(12.dp)) {
+        HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            WandChoice(
+                label = "状态 · ${boardTaskStatusLabel(task.status)}",
+                options = BOARD_TASK_DETAIL_STATUSES.map { it to boardTaskStatusLabel(it) },
+                onSelect = { if (!busy && it != task.status) onPatch(patchBoardTaskBody(status = it)) },
+                enabled = !busy,
+            )
             WandChoice(
                 label = "优先级 · ${boardTaskPriorityLabel(task.priority)}",
                 options = BOARD_TASK_PRIORITIES.map { it to boardTaskPriorityLabel(it) },
@@ -1526,10 +1470,9 @@ internal fun TaskBoardDetailPane(
                 } else {
                     group.sessions.forEach { session ->
                         val running = boardSessionRunning(session.status)
-                        WandCard(
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                            onClick = { onOpenSession(session.id, session.isStructured) },
-                        ) {
+                        Column(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                            .clickable { onOpenSession(session.id, session.isStructured) }
+                            .padding(vertical = 8.dp)) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1580,10 +1523,8 @@ internal fun TaskBoardDetailPane(
             val subject = ExecutionSubject.fromKey(dispatchSubjectKey, agent.provider)
             val teamTarget = teams.firstOrNull { subject.type == "team" && it.id == subject.id }
             val employeeTarget = employees.firstOrNull { subject.type == "employee" && it.id == subject.id }
-            WandCard(
-                containerColor = WandColors.successSoft,
-                contentPadding = PaddingValues(14.dp),
-            ) {
+            Column(Modifier.fillMaxWidth().padding(top = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     when {
                         teamTarget != null -> if (task.sessions.isEmpty()) "交给团队" else "再交给团队处理"
@@ -1632,6 +1573,14 @@ internal fun TaskBoardDetailPane(
                     )
                 }
                 if (teamTarget == null && employeeTarget == null) {
+                    WandButton(
+                        label = "执行设置 · ${boardTaskProviderLabel(agent.provider)} · ${boardTaskModeLabel(agent.mode)}",
+                        onClick = { executionSettingsOpen = !executionSettingsOpen }, enabled = !busy,
+                        variant = WandButtonVariant.Text, modifier = Modifier.fillMaxWidth().semantics {
+                            stateDescription = if (executionSettingsOpen) "已展开" else "已收起"
+                        },
+                    )
+                    WandInlinePanel(visible = executionSettingsOpen) {
                     WandAgentFields(
                         models = models,
                         agent = agent,
@@ -1642,6 +1591,7 @@ internal fun TaskBoardDetailPane(
                             onRemember(next)
                         },
                     )
+                    }
                 }
                 Spacer(Modifier.height(4.dp))
                 WandButton(
@@ -1663,7 +1613,7 @@ internal fun TaskBoardDetailPane(
                     },
                     enabled = !busy && (subject.type != "cli" || composePrompt.trim().isNotEmpty()),
                     loading = busy,
-                    variant = WandButtonVariant.Success,
+                    variant = WandButtonVariant.Primary,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -1719,8 +1669,10 @@ private fun CreateBoardTaskDialog(
     busy: Boolean,
     error: String?,
     teamRunRetry: Boolean = false,
+    api: TaskBoardPort,
     onDismiss: () -> Unit,
     onCreate: (title: String, description: String, status: String, priority: String, workspaceId: String?, agent: BoardTaskAgent, parentTaskId: String?, teamId: String?, employeeId: String?) -> Unit,
+    onDispatchStarted: (AiTeamDispatchRun) -> Unit,
 ) {
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
@@ -1730,7 +1682,12 @@ private fun CreateBoardTaskDialog(
     var parentTaskId by remember { mutableStateOf("") }
     var agent by remember { mutableStateOf(lastAgent) }
     var dispatchSubjectKey by remember { mutableStateOf("cli") }
-    var showAgentFields by remember { mutableStateOf(false) }
+    // 临时派工：不指派员工，由本机决策模型给建议名单；服务端自己建卡 + 建临时团队 + 起 run。
+    val dispatchFlow = remember { TeamDispatchFlowState() }
+    val dispatchScope = rememberCoroutineScope()
+    val dispatchMode = dispatchSubjectKey == "dispatch"
+    // 派工必须有真实项目（服务端拒 global 与无 cwd 的项目）。
+    val dispatchReason = dispatchWorkspaceBlockedReason(workspaceId)
     var showAdvanced by remember { mutableStateOf(false) }
     val parentOptions = boardParentTaskOptions(tasks, workspaceId.ifBlank { null })
     // 「进行中」列的新建代表已经决定要跑，所以创建后立刻派 Agent / 交给团队；其他列只落库。
@@ -1738,6 +1695,8 @@ private fun CreateBoardTaskDialog(
     // 闭环回落：状态切离「进行中」、或团队列表刷新后选中项消失时，不许带着失效 teamId 提交
     // （照 TaskBoardDetailPane 派发表单的 LaunchedEffect 写法）。
     LaunchedEffect(dispatches, teams, employees, dispatchSubjectKey) {
+        // 派工模式不是 ExecutionSubject，不能被下面的回落改写成 cli。
+        if (dispatchSubjectKey == "dispatch") return@LaunchedEffect
         val selected = ExecutionSubject.fromKey(dispatchSubjectKey, agent.provider)
         if (!dispatches ||
             (selected.type == "team" && teams.none { it.id == selected.id }) ||
@@ -1751,7 +1710,25 @@ private fun CreateBoardTaskDialog(
     WandDialog(
         title = "新建任务",
         onDismissRequest = onDismiss,
-        confirm = WandDialogAction(
+        confirm = if (dispatchMode) WandDialogAction(
+            label = dispatchPrimaryActionLabel(dispatchFlow.phase, dispatchFlow.hasPlan),
+            enabled = !busy && !dispatchFlow.busy &&
+                (if (dispatchFlow.hasPlan) {
+                    dispatchStartBlockedReason(dispatchFlow.selection, workspaceId, description, false).isEmpty()
+                } else {
+                    description.trim().isNotEmpty()
+                }),
+            onClick = {
+                // 同一个按钮依次承担：选人 → 开工；结果与失败都留在原位。
+                dispatchScope.launch {
+                    if (!dispatchFlow.hasPlan) {
+                        dispatchFlow.loadPlan(api, description)
+                    } else {
+                        dispatchFlow.submit(api, workspaceId, description)?.let(onDispatchStarted)
+                    }
+                }
+            },
+        ) else WandDialogAction(
             label = boardCreateActionLabel(
                 teamSelected = teamTarget != null,
                 dispatches = dispatches,
@@ -1771,21 +1748,11 @@ private fun CreateBoardTaskDialog(
     ) {
         error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall) }
         WandTextField(
-            value = title,
-            onValueChange = { title = it.replace("\n", "") },
-            label = "任务标题（可选）",
-            placeholder = "不填写则按描述自动生成",
-            singleLine = true,
-            enabled = !busy,
-            textStyle = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        WandTextField(
             value = description,
             onValueChange = { description = it },
             label = "描述",
             placeholder = when {
+                dispatchMode -> "将作为决策判断与团队执行的唯一目标"
                 teamTarget != null -> "将作为交给团队的开工内容"
                 employeeTarget != null -> "将作为交给员工的开工内容"
                 dispatches -> "将作为第一个 Agent 的指派内容"
@@ -1808,49 +1775,42 @@ private fun CreateBoardTaskDialog(
             onSelect = { workspaceId = it; parentTaskId = "" },
             enabled = !busy,
         )
-        if (dispatches && (teams.isNotEmpty() || employees.isNotEmpty())) {
+        if (dispatches) {
             WandChoice(
-                label = "指派对象 · ${employeeTarget?.name ?: teamTarget?.name ?: "CLI 工具"}",
+                label = "指派对象 · " + when {
+                    dispatchMode -> "临时派工（决策选人）"
+                    else -> employeeTarget?.name ?: teamTarget?.name ?: "CLI 工具"
+                },
                 options = buildList {
                     add("cli" to "CLI 工具")
                     employees.forEach { add("employee:${it.id}" to "员工 · ${it.name}") }
                     teams.forEach { add("team:${it.id}" to "团队 · ${it.name}（${it.members.size} 人）") }
+                    add("dispatch" to "临时派工 · 决策选人")
                 },
                 onSelect = { dispatchSubjectKey = it },
                 enabled = !busy,
             )
         }
-        if (dispatches && teamTarget == null && employeeTarget == null) {
-            WandButton(
-                label = "指派参数",
-                onClick = { showAgentFields = !showAgentFields },
-                enabled = !busy,
-                variant = WandButtonVariant.Text,
-                modifier = Modifier.fillMaxWidth().semantics {
-                    stateDescription = if (showAgentFields) "已展开" else "已收起"
-                },
-            )
-            Text(
-                "${boardTaskProviderLabel(agent.provider)} · " +
-                    "${boardTaskKindLabel(agent.kind)} · ${boardTaskModeLabel(agent.mode)}",
-                color = WandColors.textMuted,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            )
-            WandInlinePanel(visible = showAgentFields) {
-                Column {
-                    WandAgentFields(
-                        models = models,
-                        agent = agent,
-                        providerLabel = "CLI 工具",
-                        onChange = { agent = it },
-                        enabled = !busy,
-                    )
-                }
+        if (dispatchMode) {
+            if (dispatchReason != null) {
+                Text(dispatchReason, color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text(
+                    "不指派员工：写清描述，本机决策模型按职责与标签给出建议名单，确认后才开工。",
+                    color = WandColors.textMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
-        } else if (dispatches && (teamTarget != null || employeeTarget != null)) {
+            TeamDispatchRoster(dispatchFlow, maxRosterHeight = 220.dp)
+            dispatchFlow.message?.let { message ->
+                Text(
+                    message,
+                    color = if (dispatchFlow.phase == TeamDispatchPhase.Failed) WandColors.danger else WandColors.textMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        if (dispatches && (teamTarget != null || employeeTarget != null)) {
             // 团队分支的参数由团队定义决定，这里只留一条原位说明（对齐 Web 文案口径）。
             Text(
                 if (teamTarget != null) "有描述时会立刻交给团队，由负责人拆解分派"
@@ -1869,8 +1829,13 @@ private fun CreateBoardTaskDialog(
             },
         )
         Text(
-            "优先级：${boardTaskPriorityLabel(priority)} · " +
-                "父任务：${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联"}",
+            listOfNotNull(
+                title.trim().takeIf { it.isNotEmpty() } ?: "自动命名",
+                boardTaskPriorityLabel(priority),
+                parentOptions.firstOrNull { it.first == parentTaskId && it.first.isNotBlank() }?.second,
+                if (dispatches && teamTarget == null && employeeTarget == null && !dispatchMode)
+                    "${boardTaskProviderLabel(agent.provider)} · ${boardTaskKindLabel(agent.kind)} · ${boardTaskModeLabel(agent.mode)}" else null,
+            ).joinToString(" · "),
             color = WandColors.textMuted,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
@@ -1879,6 +1844,22 @@ private fun CreateBoardTaskDialog(
         )
         WandInlinePanel(visible = showAdvanced) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                WandTextField(
+                    value = title,
+                    onValueChange = { title = it.replace("\n", "") },
+                    label = "任务标题（可选）",
+                    placeholder = "不填写则按描述自动生成",
+                    singleLine = true,
+                    enabled = !busy,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                if (dispatches && teamTarget == null && employeeTarget == null && !dispatchMode) {
+                    WandAgentFields(models = models, agent = agent, providerLabel = "CLI 工具",
+                        onChange = { agent = it }, enabled = !busy)
+                }
+
                 WandChoice(
                     label = "归属父任务 · ${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联父任务"}",
                     options = parentOptions,
@@ -1909,28 +1890,6 @@ private fun boardSessionStatusLabel(status: String): String = when (status) {
     "exited" -> "已结束"
     "failed" -> "失败"
     else -> status.ifBlank { "会话" }
-}
-
-@Composable
-private fun BoardFilterChip(
-    label: String,
-    selected: Boolean,
-    color: Color,
-    onClick: () -> Unit,
-) {
-    val background = if (selected) color else color.copy(alpha = 0.14f)
-    val foreground = if (selected) Color.White else color
-    Text(
-        label,
-        color = foreground,
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier
-            .clip(WandShapes.full)
-            .background(background)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-    )
 }
 
 @Composable

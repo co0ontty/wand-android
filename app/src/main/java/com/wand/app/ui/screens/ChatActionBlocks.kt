@@ -21,10 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -62,6 +63,7 @@ import com.wand.app.data.int
 import com.wand.app.data.str
 import com.wand.app.ui.AskUserSelectionState
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.GlassBackdrop
@@ -242,9 +244,9 @@ fun AskUserQuestionCard(
                         if (question.question.isNotEmpty()) {
                             Text(
                                 question.question,
-                                fontSize = 14.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Medium,
-                                lineHeight = 20.sp,
+                                lineHeight = 22.sp,
                                 color = WandColors.textPrimary,
                             )
                         }
@@ -262,7 +264,7 @@ fun AskUserQuestionCard(
                                     } else {
                                         optIdx in (selection.selected[qIdx] ?: emptySet())
                                     },
-                                    enabled = !isAnswered && !selection.submitted,
+                                    enabled = !isAnswered && !selection.submitted && selection.unavailableReason == null,
                                     onClick = { onToggle(qIdx, optIdx, question.multiSelect) },
                                 )
                             }
@@ -270,8 +272,10 @@ fun AskUserQuestionCard(
                     }
                 }
                 if (!isAnswered) {
+                    selection.unavailableReason?.let { Text(it, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = WandColors.textSecondary) }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Button(
+                        WandButton(
+                            label = if (selection.submissionUnconfirmed) "送达未确认" else if (selection.submitted) "已提交…" else "确认提交",
                             onClick = {
                                 val lines = questions.mapIndexed { qIdx, question ->
                                     (selection.selected[qIdx] ?: emptySet())
@@ -280,19 +284,9 @@ fun AskUserQuestionCard(
                                 }
                                 onSubmit(lines.joinToString("\n"))
                             },
-                            enabled = allAnswered && !selection.submitted,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = WandColors.brand,
-                                contentColor = Color.White,
-                            ),
-                            contentPadding = ButtonDefaults.TextButtonContentPadding,
-                        ) {
-                            Text(
-                                if (selection.submitted) "已提交…" else "确认提交",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
+                            enabled = allAnswered && !selection.submitted && selection.unavailableReason == null,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        )
                     }
                 }
             }
@@ -344,9 +338,11 @@ private fun AskUserOptionRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(WandShapes.sm)
             .background(surfaceFill)
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (multiSelect) Modifier.toggleable(chosen, enabled = enabled, role = Role.Checkbox, onValueChange = { onClick() })
+                else Modifier.selectable(chosen, enabled = enabled, role = Role.RadioButton, onClick = onClick))
             .graphicsLayer { alpha = rowAlpha }
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
@@ -385,16 +381,16 @@ private fun AskUserOptionRow(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 option.label,
-                fontSize = 13.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                lineHeight = 18.sp,
+                lineHeight = 22.sp,
                 color = WandColors.textPrimary,
             )
             if (!option.description.isNullOrEmpty()) {
                 Text(
                     option.description,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
                     color = WandColors.textSecondary,
                 )
             }
@@ -466,6 +462,8 @@ fun DiffCard(
                 .then(if (hasBody) Modifier.clickableWithoutRipple {
                     foldOverride = foldToggleCode(foldOverride, expandDefault)
                 } else Modifier)
+                // 右侧不再画状态胶囊：状态色与运行动效由左侧图标槽承载。
+                .semantics { stateDescription = statusText }
                 .then(cardHeaderModifier(compact)),
         ) {
             WandStatusIconSlot(
@@ -512,7 +510,6 @@ fun DiffCard(
                 ToolPreviewText(toolResultCardPreview(result),
                     if (result?.isError == true) WandColors.danger else WandColors.textMuted)
             }
-            CardStatusPill(text = statusText, color = statusColor, compact = compact)
             if (hasBody) {
                 CardChevronSlot(
                     expanded = expanded,
@@ -732,6 +729,8 @@ fun TerminalCard(
                 .then(if (hasBody) Modifier.clickableWithoutRipple {
                     foldOverride = foldToggleCode(foldOverride, expandDefault)
                 } else Modifier)
+                // 右侧不再画状态胶囊：状态色与运行动效由左侧图标槽承载。
+                .semantics { stateDescription = statusText }
                 .then(cardHeaderModifier(compact)),
         ) {
             // 运行态不再自己写固定毫秒的自转动画：状态槽内部承载「转圈 ⇄ 终端图标」的连贯变形。
@@ -756,7 +755,6 @@ fun TerminalCard(
                 ToolPreviewText(toolResultCardPreview(result),
                     if (result?.isError == true) TermErrorText else TermText.copy(alpha = 0.7f))
             }
-            CardStatusPill(text = statusText, color = statusColor, compact = compact)
             if (hasBody) {
                 CardChevronSlot(
                     expanded = expanded,

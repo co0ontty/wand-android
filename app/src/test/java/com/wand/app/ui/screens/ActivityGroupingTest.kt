@@ -3,15 +3,25 @@ package com.wand.app.ui.screens
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.ToolActivity
+import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ActivityGroupingTest {
+    @Test
+    fun timelineModeAllowsAllNetworksOrOnlyWifi() {
+        assertTrue(activityTimelineEnabled("all", wifiConnected = false))
+        assertTrue(activityTimelineEnabled("all", wifiConnected = true))
+        assertFalse(activityTimelineEnabled("wifi", wifiConnected = false))
+        assertTrue(activityTimelineEnabled("wifi", wifiConnected = true))
+    }
+
     @Test
     fun cardsOnlyExpandWhenConfigured() {
         assertFalse(shouldExpandChatCard(isLastTurn = true, configured = false))
@@ -115,13 +125,30 @@ class ActivityGroupingTest {
     }
 
     @Test
-    fun completedFileActivityStaysStillWhileReplyRuns() {
-        val segments = collapseActivityItems(
+    fun completedFileActivityStaysStillOnceItsGroupLeavesTheTail() {
+        // 正文跟在后面时这一段不再是末尾运行段：已完成的活动不点灯、也没有运行中的调用。
+        val past = collapseActivityItems(
+            pairToolBlocks(listOf(tool("t1", "Edit", "edit_file", "file-a"), ContentBlock.Text("done", null))),
+            isLastTurn = true,
+            isResponding = true,
+        ).filterIsInstance<SegmentRenderItem.Activity>().single().group
+        assertFalse(past.running)
+        assertNull(toolActivityRunningCallId(past.items, past.running))
+        // 正在生成的末尾段才是活的：思考、命令、普通工具在跑期间都点灯，面板不一闪一灭。
+        val trailing = collapseActivityItems(
             pairToolBlocks(listOf(tool("t1", "Edit", "edit_file", "file-a"))),
             isLastTurn = true,
             isResponding = true,
-        )
-        assertFalse((segments.single() as SegmentRenderItem.Activity).group.running)
+        ).single() as SegmentRenderItem.Activity
+        assertTrue(trailing.group.running)
+        assertEquals("t1", toolActivityRunningCallId(trailing.group.items, trailing.group.running))
+        // 历史（非末尾 turn）永远不算运行中。
+        val history = collapseActivityItems(
+            pairToolBlocks(listOf(tool("t1", "Edit", "edit_file", "file-a"))),
+            isLastTurn = false,
+            isResponding = true,
+        ).single() as SegmentRenderItem.Activity
+        assertFalse(history.group.running)
     }
 
     @Test
@@ -172,14 +199,35 @@ class ActivityGroupingTest {
     }
 
     @Test
-    fun pendingCommandDoesNotMarkOtherEntriesAsRunning() {
+    fun runningCallIsTheLastCallWithoutAResultAndKeepsItsStatusInSemantics() {
         val edit = DisplayItem.Tool(tool("edit", "Edit", "edit_file", "file-a"), null)
         val command = DisplayItem.Tool(tool("run", "Bash", "run_command"), null)
-        assertEquals("未返回", toolActivityEntryStatus("edit_file", ToolActivityEntry(listOf(edit)), true))
-        assertFalse(toolActivityCallRunning("edit_file", edit, true))
-        assertEquals("运行中", toolActivityEntryStatus("run_command", ToolActivityEntry(listOf(command)), true))
-        assertTrue(toolActivityCallRunning("run_command", command, true))
-        assertEquals("未返回", toolActivityEntryStatus("run_command", ToolActivityEntry(listOf(command)), false))
+        val done = DisplayItem.Tool(
+            tool("read", "Read", "read_file", "file-a"),
+            ContentBlock.ToolResult("read", "ok", false, false, null),
+        )
+        // 段不在运行时（历史段）：缺回执只是「未返回」，没有运行中的调用。
+        assertNull(toolActivityRunningCallId(listOf(edit, command), groupRunning = false))
+        assertEquals("未返回", toolActivityEntryStatus(ToolActivityEntry(listOf(edit)), null))
+        // 运行中的段：最后一条还没有回执的普通调用就是正在执行的那一条。
+        val runningId = toolActivityRunningCallId(listOf(done, edit, command), groupRunning = true)
+        assertEquals("run", runningId)
+        assertFalse(toolActivityCallRunning(edit, runningId))
+        assertEquals("运行中", toolActivityEntryStatus(ToolActivityEntry(listOf(command)), runningId))
+        assertEquals("完成", toolActivityEntryStatus(ToolActivityEntry(listOf(done)), runningId))
+        // 普通工具（不只是命令）在跑时同样点灯与动效。
+        val editRunning = toolActivityRunningCallId(listOf(done, edit), groupRunning = true)
+        assertEquals("edit", editRunning)
+        assertTrue(toolActivityCallRunning(edit, editRunning))
+        assertEquals("运行中", toolActivityEntryStatus(ToolActivityEntry(listOf(edit)), editRunning))
+        // 待办更新本就不回结果，不算运行中。
+        val todo = DisplayItem.Tool(tool("todo", "TodoWrite"), null)
+        assertNull(toolActivityRunningCallId(listOf(todo), groupRunning = true))
+        assertEquals("完成", toolActivityEntryStatus(ToolActivityEntry(listOf(todo)), null))
+        // 右侧不再写字状态字样：结果状态留在语义里。
+        assertEquals("已收起，运行中", activityEntryStateDescription(open = false, status = "运行中", running = true))
+        assertEquals("已展开，失败", activityEntryStateDescription(open = true, status = "失败", running = false))
+        assertEquals("已收起", activityEntryStateDescription(open = false, status = null, running = false))
     }
 
     @Test
@@ -252,6 +300,203 @@ class ActivityGroupingTest {
     }
 
     @Test
+    fun latestActivityTimeIsAnyKindAndNeverInventsMissingHistory() {
+        val command = tool("run", "Bash", "run_command").copy(
+            activity = ToolActivity("run_command", "运行命令", occurredAt = "2026-09-30T12:36:02Z"),
+        )
+        val edit = tool("edit", "Edit", "edit_file", "file-a").copy(
+            activity = ToolActivity("edit_file", "修改 a", "file-a", occurredAt = "2026-09-30T12:42:40Z"),
+        )
+        val items = listOf(DisplayItem.Tool(command, null), DisplayItem.Tool(edit, null))
+        // 缩略栏的时间跟着最新一次真实活动走，不再只看最后一条命令。
+        assertEquals(Instant.parse("2026-09-30T12:42:40Z"), latestActivityOccurredAt(items))
+        assertEquals(Instant.parse("2026-09-30T12:36:02Z"), latestCommandOccurredAt(items))
+        val thinking = pairToolBlocks(listOf(ContentBlock.Thinking("planning", null))).single()
+        assertNull(latestActivityOccurredAt(listOf(thinking)))
+        assertNull(latestActivityOccurredAt(listOf(DisplayItem.Tool(tool("old", "Edit", "edit_file", "file-a"), null))))
+        val parts = toolActivitySummaryParts(
+            categories = toolActivityCategories(items),
+            roundCount = 2,
+            thinkingRunning = false,
+            thinkingPlaceholder = false,
+            leadClock = latestActivityOccurredAt(items)
+                ?.let { commandEventClock(it, ZoneId.of("Asia/Shanghai")) },
+            pendingCommand = false,
+            waitLabel = null,
+        )
+        assertEquals("20:42:40", parts.first().text)
+        assertEquals(ToolActivitySummaryTone.Clock, parts.first().tone)
+        assertEquals(
+            listOf("思考 2 次", "修改了 1 个文件", "运行了 1 条命令"),
+            parts.drop(1).map { it.text },
+        )
+    }
+
+    @Test
+    fun timelineRowsKeepTimesMonotonicAndStayUntimedWithoutARealEventTime() {
+        fun edit(id: String, at: String?) = DisplayItem.Tool(
+            tool(id, "Edit", "edit_file", "file-$id").copy(
+                activity = ToolActivity("edit_file", "修改 $id", "file-$id", occurredAt = at),
+            ),
+            null,
+        )
+        val thinking = pairToolBlocks(listOf(ContentBlock.Thinking("planning", null))).single()
+        // 真实时间与到达顺序矛盾时按时间排：屏幕上从上到下时间不往回跳。
+        val reordered = toolActivityTimelineRows(
+            listOf(edit("late", "2026-10-05T12:42:40Z"), edit("early", "2026-10-05T12:36:02Z")),
+        )
+        assertEquals(listOf("early", "late"), reordered.map { (it.item as DisplayItem.Tool).use.id })
+        // 缺时间的条目只补位：位置跟着相邻条目，自己仍然不显示时钟。
+        val rows = toolActivityTimelineRows(
+            listOf(edit("early", "2026-10-05T12:36:02Z"), thinking, edit("late", "2026-10-05T12:42:40Z")),
+        )
+        assertEquals(listOf("early", null, "late"), rows.map { (it.item as? DisplayItem.Tool)?.use?.id })
+        assertEquals(Instant.parse("2026-10-05T12:36:02Z"), rows[0].occurredAt)
+        assertNull(rows[1].occurredAt)
+        assertEquals(Instant.parse("2026-10-05T12:42:40Z"), rows[2].occurredAt)
+        // 旧历史完全没有真实时间：一个时钟都不补造。
+        val legacy = toolActivityTimelineRows(listOf(edit("a", null), thinking))
+        assertEquals(listOf("a", null), legacy.map { (it.item as? DisplayItem.Tool)?.use?.id })
+        assertTrue(legacy.all { it.occurredAt == null })
+    }
+
+    @Test
+    fun everyThinkingBlockIsARoundAndOnlyMultiRoundRunsCarryAPosition() {
+        val items = pairToolBlocks(listOf(
+            ContentBlock.Thinking("先想想", null, "2026-10-05T12:00:00Z", "2026-10-05T12:00:20Z"),
+            tool("todo", "Pi/todo"),
+            ContentBlock.Thinking("再想想", null, "2026-10-05T12:01:00Z", "2026-10-05T12:01:10Z"),
+            ContentBlock.Thinking("继续想", null),
+        ))
+        val rounds = thinkingRounds(items)
+        assertEquals(listOf("思考过程 1/3", "思考过程 2/3", "思考过程 3/3"), rounds.map { it.label })
+        assertEquals(listOf(1, 2, 3), rounds.map { it.ordinal })
+        assertEquals(
+            listOf(Instant.parse("2026-10-05T12:00:00Z"), Instant.parse("2026-10-05T12:01:00Z"), null),
+            rounds.map { it.occurredAt },
+        )
+        assertEquals(Instant.parse("2026-10-05T12:01:10Z"), rounds[1].lastActivityAt)
+        // 轮次按服务端真实时间进时间线，位置与行身份不随重排变化。
+        val rows = toolActivityTimelineRows(items)
+        assertEquals(4, rows.size)
+        assertEquals(listOf("thinking-0", "todo", "thinking-2", "thinking-3"), rows.map { it.key })
+        assertEquals(
+            listOf(Instant.parse("2026-10-05T12:00:00Z"), null, Instant.parse("2026-10-05T12:01:00Z"), null),
+            rows.map { it.occurredAt },
+        )
+        // 单轮不带 k/N：没有对照的数字只是噪音。
+        val single = thinkingRounds(pairToolBlocks(listOf(ContentBlock.Thinking("一轮", null))))
+        assertEquals(listOf("思考过程"), single.map { it.label })
+        assertEquals(Instant.parse("2026-10-05T12:01:00Z"), latestActivityOccurredAt(items))
+    }
+
+    @Test
+    fun aReasoningRoundWithoutTextIsNotARowNorARound() {
+        val empty = ContentBlock.Thinking("", null)
+        val blank = ContentBlock.Thinking("   ", null)
+        val real = ContentBlock.Thinking("有正文", null)
+        val history = listOf(
+            DisplayItem.Plain(empty),
+            DisplayItem.Tool(tool("cmd", "Bash", "run_command"), null),
+            DisplayItem.Plain(blank),
+        )
+        // 历史态里没有产出过正文的轮次：不占时间线，也不进轮次计数。
+        assertEquals(listOf("cmd"), toolActivityTimelineRows(history, running = false).map { it.key })
+        assertEquals(emptyList<Any>(), thinkingRounds(history, running = false))
+        val mixed = listOf(DisplayItem.Plain(empty), DisplayItem.Plain(real))
+        assertEquals(listOf("thinking-1"), toolActivityTimelineRows(mixed, running = false).map { it.key })
+        assertEquals(listOf(1), thinkingRounds(mixed, running = false).map { it.ordinal })
+        // 段尾那一块在这一段还在跑时是正在进行的一轮：保留占位，它就是唯一活跃条目。
+        val streaming = listOf(DisplayItem.Plain(real), DisplayItem.Plain(empty))
+        val live = activityLiveRow(streaming, groupRunning = true) as ActivityLiveRow.Thinking
+        assertTrue(thinkingBlock(live.round.item)?.thinking.isNullOrBlank())
+        assertTrue(activityNeedsThinkingPlaceholder(ActivityGroup("g", streaming, true)))
+        assertEquals(listOf("thinking-0", "thinking-1"), toolActivityTimelineRows(streaming).map { it.key })
+        // 同一段跑完之后，那块占位就不再是轮次。
+        assertEquals(listOf("thinking-0"), toolActivityTimelineRows(streaming, running = false).map { it.key })
+    }
+
+    @Test
+    fun atMostOneRowIsLiveSoTheLoadingEffectNeverRepeats() {
+        val todo = tool("todo", "Pi/todo")
+        val command = tool("run", "Bash", "run_command")
+        fun group(blocks: List<ContentBlock>, running: Boolean = true) = ActivityGroup(
+            "g", pairToolBlocks(blocks), running,
+        )
+        val runningRound = group(listOf(ContentBlock.Thinking("一", null), todo, ContentBlock.Thinking("二", null)))
+        // 待办永不回执也不能冒充活跃：现在轮到的是最后一轮思考。
+        val live = activityLiveRow(runningRound.items, runningRound.running) as ActivityLiveRow.Thinking
+        assertEquals(2, live.round.ordinal)
+        assertTrue(activityRowIsLive(live, toolActivityTimelineRows(runningRound.items).last()))
+        assertEquals(1, toolActivityTimelineRows(runningRound.items).count { activityRowIsLive(live, it) })
+        assertTrue(activityLiveRow(runningRound.items, runningRound.running) is ActivityLiveRow.Thinking)
+        // 命令还没回执时活跃的是命令，思考轮次不再同时转。
+        val pending = group(listOf(ContentBlock.Thinking("一", null), command, ContentBlock.Thinking("二", null)))
+        val pendingLive = activityLiveRow(pending.items, pending.running) as ActivityLiveRow.Call
+        assertEquals("run", pendingLive.toolId)
+        assertEquals(1, toolActivityTimelineRows(pending.items).count { activityRowIsLive(pendingLive, it) })
+        assertFalse(activityLiveRow(pending.items, pending.running) is ActivityLiveRow.Thinking)
+        // 历史段没有活跃条目，位置猜测也不该点亮最后一轮。
+        val history = group(listOf(ContentBlock.Thinking("一", null)), running = false)
+        assertNull(activityLiveRow(history.items, history.running))
+        assertFalse(activityNeedsThinkingPlaceholder(history))
+    }
+
+    @Test
+    fun liveRoundReportsItsOwnElapsedAndSilenceWithoutInventingTime() {
+        val started = Instant.parse("2026-10-05T12:00:00Z")
+        val items = pairToolBlocks(listOf(ContentBlock.Thinking("一", null, started.toString())))
+        val now = started.toEpochMilli() + 125_000
+        assertEquals("已思考 2 分 5 秒", thinkingElapsedLabel(started, now))
+        assertNull(thinkingSilentLabel(started, started.toEpochMilli() + 30_000))
+        assertEquals("无新进展 1 分 0 秒", thinkingSilentLabel(started, now - 65_000))
+        // 旧历史没有真实轮次时间：摘要里一个字都不加。
+        val legacy = pairToolBlocks(listOf(ContentBlock.Thinking("一", null)))
+        assertNull(thinkingRounds(legacy).single().occurredAt)
+        assertEquals(
+            listOf("思考 1 次", "思考中"),
+            toolActivitySummaryParts(
+                categories = toolActivityCategories(legacy),
+                roundCount = 1,
+                thinkingRunning = true,
+                thinkingPlaceholder = false,
+                leadClock = null,
+                pendingCommand = false,
+                waitLabel = null,
+                thinkingElapsed = null,
+                thinkingSilent = null,
+            ).map { it.text },
+        )
+        // 有真实时间才把这一轮的耗时与静默挂在摘要上。
+        assertEquals(
+            listOf("思考 1 次", "思考中", "已思考 2 分 5 秒", "无新进展 1 分 0 秒"),
+            toolActivitySummaryParts(
+                categories = toolActivityCategories(items),
+                roundCount = 1,
+                thinkingRunning = true,
+                thinkingPlaceholder = false,
+                leadClock = null,
+                pendingCommand = false,
+                waitLabel = null,
+                thinkingElapsed = thinkingElapsedLabel(started, now),
+                thinkingSilent = thinkingSilentLabel(started, now - 65_000),
+            ).map { it.text },
+        )
+    }
+
+    @Test
+    fun activityPanelNeverTakesMoreThanAThirdOfTheViewport() {
+        // 手机：视口的三分之一小于 240dp 上限，按三分之一收口。
+        assertEquals(200.dp, activityPanelMaxHeight(600.dp))
+        // 宽屏/平板：不超过 240dp 上限。
+        assertEquals(TOOL_ACTIVITY_TIMELINE_HEIGHT, activityPanelMaxHeight(1200.dp))
+        // 极矮视口（键盘弹起）兜底最小可用高度。
+        assertEquals(TOOL_ACTIVITY_PANEL_MIN_HEIGHT, activityPanelMaxHeight(300.dp))
+        assertEquals(240f, TOOL_ACTIVITY_TIMELINE_HEIGHT.value)
+        assertEquals(120f, TOOL_ACTIVITY_PANEL_MIN_HEIGHT.value)
+    }
+
+    @Test
     fun collapsedSummaryLeadsWithTheLatestCommandTime() {
         val running = tool("run", "Bash", "run_command").copy(
             activity = ToolActivity("run_command", "运行命令", occurredAt = "2026-09-30T12:03:04Z"),
@@ -262,7 +507,7 @@ class ActivityGroupingTest {
         )
         val parts = toolActivitySummaryParts(
             categories = toolActivityCategories(items),
-            hasThinking = false,
+            roundCount = 0,
             thinkingRunning = true,
             thinkingPlaceholder = false,
             leadClock = commandEventClock(Instant.parse("2026-09-30T12:03:04Z"), ZoneId.of("Asia/Shanghai")),
@@ -286,6 +531,7 @@ class ActivityGroupingTest {
         assertFalse(shouldFollowActivityTail(menuOpen = true, pinnedToLatest = false, itemCount = 3))
         // 展开且贴尾：追加新调用就继续跟到最新。
         assertTrue(shouldFollowActivityTail(menuOpen = true, pinnedToLatest = true, itemCount = 3))
+        assertFalse(shouldFollowActivityTail(menuOpen = true, pinnedToLatest = true, itemCount = 3, inspectingDetail = true))
     }
 
     @Test
@@ -299,11 +545,23 @@ class ActivityGroupingTest {
     fun collapsedSummaryKeepsThinkingFirstWithoutAnInventedTime() {
         val thinking = pairToolBlocks(listOf(ContentBlock.Thinking("working", null)))
         assertEquals(
-            listOf("深度思考", "中"),
+            listOf("思考 1 次", "思考中"),
             toolActivitySummaryParts(
                 categories = toolActivityCategories(thinking),
-                hasThinking = true,
+                roundCount = 1,
                 thinkingRunning = true,
+                thinkingPlaceholder = false,
+                leadClock = null,
+                pendingCommand = false,
+                waitLabel = null,
+            ).map { it.text },
+        )
+        assertEquals(
+            listOf("思考 2 次"),
+            toolActivitySummaryParts(
+                categories = emptyList(),
+                roundCount = 2,
+                thinkingRunning = false,
                 thinkingPlaceholder = false,
                 leadClock = null,
                 pendingCommand = false,
@@ -313,7 +571,7 @@ class ActivityGroupingTest {
         val placeholder = pairToolBlocks(listOf(ContentBlock.Thinking("  ", null)))
         val placeholderParts = toolActivitySummaryParts(
             categories = toolActivityCategories(placeholder),
-            hasThinking = false,
+            roundCount = 0,
             thinkingRunning = true,
             thinkingPlaceholder = true,
             leadClock = null,
@@ -328,7 +586,7 @@ class ActivityGroupingTest {
             listOf("运行了 1 条命令"),
             toolActivitySummaryParts(
                 categories = toolActivityCategories(finished),
-                hasThinking = false,
+                roundCount = 0,
                 thinkingRunning = false,
                 thinkingPlaceholder = false,
                 leadClock = null,
@@ -395,10 +653,30 @@ class ActivityGroupingTest {
         val nextEdit = DisplayItem.Tool(tool("next-edit", "Edit", "edit_file", "same-file"), null)
         val command = DisplayItem.Tool(tool("run", "Bash", "run_command"), null)
         val thinking = pairToolBlocks(listOf(ContentBlock.Thinking("planning", null))).single()
-        val timeline = toolActivityTimeline(listOf(read, thinking, command, edit, nextEdit, edit))
+        val timeline = toolActivityTimelineRows(listOf(read, thinking, command, edit, nextEdit, edit)).map { it.item }
         assertEquals(listOf(read, thinking, command, edit, nextEdit), timeline)
         assertEquals(1, toolActivityCategories(timeline).first { it.kind == "edit_file" }.count)
         assertEquals(240f, TOOL_ACTIVITY_TIMELINE_HEIGHT.value)
+    }
+
+    @Test
+    fun timelineRailConnectsDotCentersAndDoesNotExtendPastTheFirstOrLastEntry() {
+        assertEquals(17f to 64f, activityTimelineRailBounds(64f, 17f, isFirst = true, isLast = false))
+        assertEquals(0f to 64f, activityTimelineRailBounds(64f, 17f, isFirst = false, isLast = false))
+        assertEquals(0f to 17f, activityTimelineRailBounds(64f, 17f, isFirst = false, isLast = true))
+        // 单条及展开很长的最后一条都不会把竖线延长到详情底部。
+        assertEquals(17f to 17f, activityTimelineRailBounds(400f, 17f, isFirst = true, isLast = true))
+        assertEquals(0f to 17f, activityTimelineRailBounds(400f, 17f, isFirst = false, isLast = true))
+        assertEquals(0f to 0f, activityTimelineRailBounds(0f, 17f, isFirst = true, isLast = true))
+        assertEquals(5, THINKING_VISIBLE_LINES)
+    }
+
+    @Test
+    fun timelineRevisionChangesWhenLatestResultStreamsWithoutAddingAnItem() {
+        val use = tool("run", "Bash", "run_command")
+        val pending = listOf(DisplayItem.Tool(use, null))
+        val finished = listOf(DisplayItem.Tool(use, ContentBlock.ToolResult("run", "latest output", false, true, null)))
+        assertTrue(toolActivityTimelineRevision(pending) != toolActivityTimelineRevision(finished))
     }
 
     @Test

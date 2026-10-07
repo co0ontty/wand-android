@@ -43,13 +43,13 @@
         <item name="android:textColor">@color/primary</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textSize">14sp</item>
-        <item name="rippleColor">#33C5653D</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
     </style>
 
     <style name="Wand.Dialog.Button.Neutral" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
         <item name="android:textColor">@color/text_secondary</item>
         <item name="android:textSize">14sp</item>
-        <item name="rippleColor">#22C5653D</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
     </style>
 
     <style name="Theme.Wand.Scanner" parent="Theme.MaterialComponents.DayNight.NoActionBar">

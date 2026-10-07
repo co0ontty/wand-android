@@ -93,9 +93,14 @@ class ToolActivityEligibilityTest {
             assertFalse(isToolActivityOnly(listOf(tool(name))))
         }
         val meta = SubagentMeta("agent", "worker", null)
-        val dispatch = tool("custom_dispatch", "agent").copy(subagent = meta)
-        assertTrue(segments(listOf(dispatch)).single() is SegmentRenderItem.Item)
+        // 派发调用本身（块 id == taskId）：面板头已承接该语义，正文不再渲染、也不折叠进普通活动轨迹。
+        val dispatch = tool("Pi/subagent", "agent").copy(subagent = meta)
+        assertTrue(isSubagentDispatchBlock(id = dispatch.id, subagent = dispatch.subagent))
+        assertFalse(isCollapsibleActivityTool(dispatch))
+        assertTrue(segments(listOf(dispatch)).isEmpty())
+        // 子 Agent 内部普通调用共享同一份 meta、id 与 taskId 不同，仍按普通活动轨迹折叠。
         val childCall = tool("Read", "read").copy(subagent = meta)
+        assertFalse(isSubagentDispatchBlock(id = childCall.id, subagent = childCall.subagent))
         assertTrue(segments(listOf(childCall)).single() is SegmentRenderItem.Activity)
     }
 
@@ -132,9 +137,9 @@ class ToolActivityEligibilityTest {
         assertEquals("2026-10-01T01:02:03Z", todo.occurredAt)
         val group = (segments(listOf(todo)).single() as SegmentRenderItem.Activity).group
         assertEquals("tool:todo", group.key)
-        assertEquals("完成", toolActivityEntryStatus("other", ToolActivityEntry(
+        assertEquals("完成", toolActivityEntryStatus(ToolActivityEntry(
             group.items.filterIsInstance<DisplayItem.Tool>(),
-        ), true))
+        ), null))
         val command = tool("Bash").copy(occurredAt = todo.occurredAt)
         assertEquals(java.time.Instant.parse(todo.occurredAt), latestCommandOccurredAt(
             listOf(DisplayItem.Tool(command, null)),

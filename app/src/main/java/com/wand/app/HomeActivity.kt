@@ -283,7 +283,9 @@ class HomeActivity : AppCompatActivity() {
             }
         }
 
-        val api = WandApi(serverUrl, appToken)
+        val api = WandApi(serverUrl, appToken,
+            readConversationRequests = { serverStore.getConversationRequests(serverProfile.id) },
+            saveConversationRequests = { serverStore.setConversationRequests(serverProfile.id, it) })
         val serverConnections = serverStore.serverProfiles.map { profile ->
             HomeServerConnection(
                 serverId = profile.id,
@@ -323,6 +325,8 @@ class HomeActivity : AppCompatActivity() {
                 setBetaChannel = { serverStore.setBetaChannel(it) },
                 isHapticEnabled = { serverStore.isHapticEnabled },
                 setHapticEnabled = { serverStore.setHapticEnabled(it) },
+                getTrafficTimelineMode = { serverStore.getTrafficTimelineMode() },
+                setTrafficTimelineMode = { serverStore.setTrafficTimelineMode(it) },
                 isKeepAlive = { serverStore.isKeepAliveEnabled },
                 setKeepAlive = { enabled ->
                     serverStore.setKeepAliveEnabled(enabled)
@@ -336,6 +340,8 @@ class HomeActivity : AppCompatActivity() {
                 },
                 getHomeListMode = { serverStore.homeListMode },
                 setHomeListMode = { mode -> serverStore.homeListMode = mode },
+                getConversationUi = { serverStore.getConversationUi(serverProfile.id) },
+                setConversationUi = { serverStore.setConversationUi(serverProfile.id, it) },
             ),
         )
         homeActionsState = mutableStateOf(actions)

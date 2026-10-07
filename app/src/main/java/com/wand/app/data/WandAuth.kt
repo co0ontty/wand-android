@@ -1,6 +1,6 @@
 package com.wand.app.data
 
-import android.util.Base64
+import java.util.Base64
 import com.wand.app.WandLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -19,7 +19,8 @@ import java.io.IOException
  * appToken 走一次 POST /api/login，session cookie 由 WandHttp 的 CookieJar 承接，
  * 之后的 REST 请求与 /ws 升级请求自动携带。
  *
- * 原生终端与聊天都复用端点隔离的 WandHttp CookieJar，不再镜像 WebView cookie。
+ * 原生终端与聊天复用端点隔离的 WandHttp CookieJar。完整设置 WebView 只接收当前端点的
+ * cookie，网页管理员登录不会反向替换原生会话的认证。
  */
 object WandAuth {
 
@@ -112,10 +113,9 @@ object WandAuth {
         val cleaned = input.replace(Regex("\\s+"), "")
         if (cleaned.isEmpty()) return null
         val decoded = try {
-            String(
-                Base64.decode(cleaned, Base64.DEFAULT or Base64.NO_WRAP or Base64.URL_SAFE),
-                Charsets.UTF_8,
-            )
+            val bytes = runCatching { Base64.getDecoder().decode(cleaned) }
+                .getOrElse { Base64.getUrlDecoder().decode(cleaned) }
+            String(bytes, Charsets.UTF_8)
         } catch (_: Exception) {
             return null
         }

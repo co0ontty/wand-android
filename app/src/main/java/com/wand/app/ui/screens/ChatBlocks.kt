@@ -1,7 +1,7 @@
 package com.wand.app.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -47,6 +46,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.widthIn
@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,7 +85,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -124,6 +124,8 @@ import com.wand.app.ui.components.toolIcon
 import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.theme.GlassBackdrop
+import com.wand.app.ui.components.WandNoticeLine
+import com.wand.app.ui.components.WandBrandTag
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
@@ -152,13 +154,19 @@ import java.util.Locale
 internal val LocalChatApi = compositionLocalOf<WandApi?> { null }
 internal val LocalActivityFoldCompact = compositionLocalOf { false }
 internal val LocalChatSessionId = compositionLocalOf { "" }
+/** 思考块暂无独立事件时间：显示所属回复的开始时间，不以完成/重绘时间替代。 */
+internal val LocalChatTurnCreatedAt = compositionLocalOf<String?> { null }
+internal val LocalChatWorkingDirectory = compositionLocalOf<String?> { null }
 
 /**
- * 折叠块改变自身高度时，请求容器保持该列表 item 尾部（活动段摘要行）的屏幕位置。
- * 向上展开的面板会当场把 item 撑高，若不补偿，摘要行会连同后续内容一起被推走。
- * 容器按帧补偿滚动；找不到对应 item 时静默忽略。
+ * 向下展开的工具时间线改变自身高度时，请求容器把这段 item 的底边留在视口里。
+ * 容器只在面板越过视口底部时才补最小滚动；放得下就一点不动，收起时按同一份账对称退回。
+ * 找不到对应 item 时静默忽略。
  */
-internal val LocalActivityAnchorKeeper = compositionLocalOf<(String) -> Unit> { {} }
+internal val LocalActivityPanelReveal = compositionLocalOf<(String) -> Unit> { {} }
+
+/** 所在聊天列表的视口高度（px）；工具时间线按它的三分之一收口，0 表示容器未提供。 */
+internal val LocalChatViewportHeightPx = staticCompositionLocalOf { 0 }
 
 /**
  * 当前卡片所属容器的结构性 fold scope（消息 → 段 → 活动摘要逐层拼）。
@@ -241,6 +249,7 @@ fun TurnView(
     }
     val collapsed = currentReplyExpandedOverride?.let { !it } ?: localCollapsed
     val nonSubagentContent = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
+    val resourceOnly = turn.resourceSelection != null && nonSubagentContent.isEmpty()
     val activityOnly = remember(nonSubagentContent, toolResultsById) {
         isToolActivityOnly(nonSubagentContent, toolResultsById)
     }
@@ -261,7 +270,7 @@ fun TurnView(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        if (showHeader && !activityOnly) {
+        if (showHeader && !activityOnly && !resourceOnly) {
             ChatMessageTime(conversationTurnClock(turn), alignEnd = false)
             // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
             // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
@@ -283,21 +292,27 @@ fun TurnView(
                 },
             )
         }
+        if (showContent) turn.resourceSelection?.let { selection ->
+            Text(selection.label, color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth())
+        }
         if (showContent && (!showHeader || !collapsed || activityOnly)) {
             if (parentBlocks.isNotEmpty()) {
-                SegmentBlocks(
-                    blocks = parentBlocks,
-                    isLastTurn = isLastTurn,
-                    isResponding = isResponding,
-                    activeCommandIds = activeCommandIds,
-                    toolResultsById = toolResultsById,
-                    askSelections = askSelections,
-                    onAskToggle = onAskToggle,
-                    onAskSubmit = onAskSubmit,
-                    segmentScope = messageScope,
-                    // 列表 item key：活动段向上展开时容器靠它把摘要行留在原位。
-                    listItemKey = foldScope,
-                )
+                CompositionLocalProvider(LocalChatTurnCreatedAt provides turn.createdAt) {
+                    SegmentBlocks(
+                        blocks = parentBlocks,
+                        isLastTurn = isLastTurn,
+                        isResponding = isResponding,
+                        activeCommandIds = activeCommandIds,
+                        toolResultsById = toolResultsById,
+                        askSelections = askSelections,
+                        onAskToggle = onAskToggle,
+                        onAskSubmit = onAskSubmit,
+                        segmentScope = messageScope,
+                        // 列表 item key：活动段向上展开时容器靠它把摘要行留在原位。
+                        listItemKey = foldScope,
+                    )
+                }
             }
         }
         val usageIsLive = isLastTurn && isResponding
@@ -428,17 +443,7 @@ private fun AssistantReplyHeader(
 /** 群聊署名里的小标签（目前只有「负责人」）。 */
 @Composable
 private fun ChatAuthorBadge(text: String) {
-    Text(
-        text,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = WandColors.brand,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(WandShapes.xs)
-            .background(WandColors.brandSoft.copy(alpha = 0.5f))
-            .padding(horizontal = 5.dp, vertical = 1.dp),
-    )
+    WandBrandTag(text, fontWeight = FontWeight.SemiBold)
 }
 
 /** 团队 relay 的系统事件：一行居中文字，长文本视觉省略、无障碍保留全文。 */
@@ -448,19 +453,7 @@ private fun ChatNoticeView(turn: ConversationTurn) {
     if (text.isBlank()) return
     val clock = conversationTurnClock(turn)
     val line = if (clock.isBlank()) text else "$text · $clock"
-    Text(
-        line,
-        fontSize = 12.sp,
-        lineHeight = 18.sp,
-        color = WandColors.textSecondary,
-        textAlign = TextAlign.Center,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .semantics { contentDescription = line },
-    )
+    WandNoticeLine(line)
 }
 
 /** 折叠态下名字后的一行正文预览：优先取文本，纯工具调用时给「N 个工具调用」线索。 */
@@ -529,7 +522,6 @@ internal fun SubagentActivityDock(
     backdrop: GlassBackdrop?,
     activities: List<SubagentActivity>,
     usage: TurnUsage?,
-    taskTitle: String?,
     sessionRunning: Boolean,
     modifier: Modifier = Modifier,
     onExpandedChange: (Boolean) -> Unit = {},
@@ -570,7 +562,6 @@ internal fun SubagentActivityDock(
         }
     }
     LaunchedEffect(expanded) { onExpandedChange(expanded) }
-    BackHandler(enabled = expanded) { expanded = false }
 
     val selectAgent: (Int) -> Unit = { rawIndex ->
         activities.getOrNull(rawIndex)?.let { activity ->
@@ -665,8 +656,7 @@ internal fun SubagentActivityDock(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp).padding(horizontal = 3.dp),
             ) {
-                UsageStatusCompact(usage, Modifier.weight(1f))
-                ReplyStatusCompact(taskTitle, Modifier.weight(1f))
+                UsageStatusCompact(usage, Modifier.fillMaxWidth())
             }
         }
         if (activities.isNotEmpty()) {
@@ -1413,27 +1403,6 @@ private fun UsageStatusCompact(usage: TurnUsage?, modifier: Modifier = Modifier)
     )
 }
 
-@Composable
-private fun ReplyStatusCompact(
-    taskTitle: String?,
-    modifier: Modifier = Modifier,
-) {
-    val text = taskTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: "正在思考…"
-    Text(
-        text,
-        fontSize = 10.sp,
-        lineHeight = 14.sp,
-        color = WandColors.textMuted,
-        textAlign = TextAlign.End,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier.semantics {
-            liveRegion = LiveRegionMode.Polite
-            stateDescription = text
-        },
-    )
-}
-
 private fun formatTokenCount(value: Int): String = when {
     value < 1_000 -> NumberFormat.getIntegerInstance().format(value)
     value < 1_000_000 -> String.format(Locale.US, "%.1fk", value / 1_000.0).replace(".0k", "k")
@@ -1865,6 +1834,7 @@ private fun SegmentBlocks(
         collapseActivityItems(items, isLastTurn, isResponding, activeCommandIds)
     }
 
+    val latestActivityIndex = renderItems.indexOfLast { it is SegmentRenderItem.Activity }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         renderItems.forEachIndexed { renderIndex, renderItem ->
             // 段 scope 只拼结构性的下标：`renderItems` 只追加不重排 ⇒ 稳定。
@@ -1883,6 +1853,7 @@ private fun SegmentBlocks(
                         onAskToggle = onAskToggle,
                         onAskSubmit = onAskSubmit,
                         showSubagentTags = showSubagentTags,
+                        isLatestActivity = isLastTurn,
                     )
                 }
                 is SegmentRenderItem.Activity -> key(renderItem.group.key) {
@@ -1894,6 +1865,7 @@ private fun SegmentBlocks(
                             group = renderItem.group,
                             scope = activityScope,
                             listItemKey = listItemKey,
+                            isLatestActivity = isLastTurn && renderIndex == latestActivityIndex,
                         )
                     }
                 }
@@ -1913,6 +1885,7 @@ private fun RenderDisplayItem(
     onAskToggle: (String, Int, Int, Boolean) -> Unit,
     onAskSubmit: (String, String) -> Unit,
     showSubagentTags: Boolean,
+    isLatestActivity: Boolean,
 ) {
     val cardDefaults = LocalCardExpandDefaults.current
     val sessionId = LocalChatSessionId.current
@@ -1924,7 +1897,8 @@ private fun RenderDisplayItem(
     when (item) {
         is DisplayItem.Tool -> {
             val use = item.use
-            // Task/Agent 自身只表达派遣关系，面板头已经承接该语义。
+            // 派发调用本身只表达派遣关系，面板头已经承接该语义（Claude Task/Agent
+            // 与 pi subagent/workflow 走同一判据，不再按工具名区分）。
             if (isHiddenDispatchTool(use)) return
             // 稳定 id 优先，缺 id 回落到容器内绝对下标（两者都不含内容）。
             val toolFoldKey = cardFoldKey(
@@ -2031,6 +2005,7 @@ private fun RenderDisplayItem(
                     cardFoldId(scope, cardPositionId("text", "", itemIndex)),
                 )
             },
+            isLatestActivity = isLatestActivity,
         )
     }
 }
@@ -2630,9 +2605,6 @@ internal fun collapseActivityItems(
     if (isResponding) {
         renderItems.indices.forEach { index ->
             val activity = renderItems[index] as? SegmentRenderItem.Activity ?: return@forEach
-            // 旧思考/已完成工具段不再误亮；未返回命令即使后面已有正文仍保持运行态。
-            val latestThinking = isLastTurn && index == renderItems.lastIndex &&
-                (activity.group.items.lastOrNull() as? DisplayItem.Plain)?.block is ContentBlock.Thinking
             val pendingCommand = if (activeCommandIds == null) {
                 isLastTurn && activityHasPendingCommand(activity.group.items)
             } else {
@@ -2640,7 +2612,11 @@ internal fun collapseActivityItems(
                     item is DisplayItem.Tool && item.use.id in activeCommandIds && item.result == null
                 }
             }
-            val running = latestThinking || pendingCommand
+            // 末尾这一段只要还在生成就算活的（思考、命令、普通工具在跑都一样）：
+            // 点灯不再一闪一灭，面板也在这个过程中持续跟到最新；旧段/旧 turn 仍不误亮。
+            // 非末尾段仍以「未返回命令」判定（可能是跨 turn 的待回执调用）。
+            val trailing = isLastTurn && index == renderItems.lastIndex
+            val running = trailing || pendingCommand
             if (running) renderItems[index] = activity.copy(group = activity.group.copy(running = true))
         }
     }
@@ -2660,7 +2636,19 @@ private fun shouldSkipDisplayItem(item: DisplayItem): Boolean =
     item is DisplayItem.Tool && isHiddenDispatchTool(item.use)
 
 private fun isHiddenDispatchTool(use: ContentBlock.ToolUse): Boolean =
-    use.subagent?.taskId == use.id && use.name in setOf("Task", "Agent")
+    isSubagentDispatchBlock(id = use.id, subagent = use.subagent)
+
+/**
+ * 派发块判据：与 iOS/macOS `isSubagentDispatchBlock` 同一份语义——服务端 `__subagent`
+ * 盖章是唯一来源，块 id 与 `taskId` 相同即派发调用本身（Claude 的 Task/Agent 与 pi 的
+ * `subagent`/workflow 各形态都由服务端盖章）。旧代码另外按工具名判 `Task`/`Agent`，pi 的
+ * workflow 派发名字是 `Pi/subagent`，于是漏判：同一块既进面板头、又进正文活动轨迹。
+ * 子 Agent 内部的普通调用共享同一份 meta 但 id 不同，仍按普通活动轨迹处理。
+ */
+internal fun isSubagentDispatchBlock(id: String, subagent: SubagentMeta?): Boolean {
+    val taskId = subagent?.taskId ?: return false
+    return taskId.isNotEmpty() && id.isNotEmpty() && taskId == id
+}
 
 /**
  * 待办更新承载当前任务的主进度，不应和文件编辑、命令等执行活动一起折叠。
@@ -2941,6 +2929,7 @@ fun BlockView(
     showSubagentTag: Boolean = true,
     expandDefault: Boolean = false,
     foldKey: String = "",
+    isLatestActivity: Boolean = false,
 ) {
     when (block) {
         is ContentBlock.Text -> {
@@ -2953,12 +2942,8 @@ fun BlockView(
         }
         is ContentBlock.Thinking -> {
             if (block.thinking.isNotBlank()) {
-                ThinkingBlock(
-                    block.thinking,
-                    streaming = streaming,
-                    expandDefault = expandDefault,
-                    foldKey = foldKey,
-                )
+                StandaloneThinkingBlock(block.thinking, streaming = streaming, foldKey = foldKey,
+                    occurredAt = block.occurredAt)
             }
         }
         is ContentBlock.ToolUse -> {
@@ -2971,6 +2956,7 @@ fun BlockView(
                     ToolActivitySummary(
                         group = ActivityGroup("orphan", listOf(DisplayItem.Tool(block, null)), streaming),
                         scope = foldKey,
+                        isLatestActivity = isLatestActivity,
                     )
                 }
             }
@@ -3285,9 +3271,14 @@ fun ToolCard(
                 .then(if (hasBody) Modifier.clickableWithoutRipple {
                     foldOverride = foldToggleCode(foldOverride, if (decision) false else expandDefault)
                 } else Modifier)
-                .then(if (decision) Modifier.semantics {
-                    stateDescription = if (expanded) "详情已展开" else "详情已收起"
-                } else Modifier)
+                .then(
+                    if (decision) Modifier.semantics {
+                        stateDescription = if (expanded) "详情已展开" else "详情已收起"
+                    } else Modifier.semantics {
+                        // 右侧不再写字状态字样：状态色与运行动效由左侧图标槽承载。
+                        stateDescription = statusText
+                    },
+                )
                 .then(cardHeaderModifier(compact)),
         ) {
             WandStatusIconSlot(
@@ -3344,7 +3335,6 @@ fun ToolCard(
                 if (!decision) ToolPreviewText(toolResultCardPreview(result),
                     if (isError) WandColors.danger else WandColors.textMuted)
             }
-            CardStatusPill(text = statusText, color = statusColor, compact = compact)
             if (hasBody) {
                 CardChevronSlot(
                     expanded = expanded,
@@ -3394,6 +3384,7 @@ fun ExplorationGroupCard(
     running: Boolean,
     /** 消息级 fold scope（列表 item key）；空串时用首张工具卡的稳定 id 兜底。 */
     foldScope: String = "",
+    isLatestActivity: Boolean = true,
 ) {
     val items = remember(tools) { tools.map { DisplayItem.Tool(it.use, it.result) } }
     val group = remember(items, running) {
@@ -3406,7 +3397,12 @@ fun ExplorationGroupCard(
     }
     val messageScope = foldScope.takeIf { it.isNotBlank() }
         ?: "explore:${items.firstOrNull()?.use?.id.orEmpty()}"
-    ToolActivitySummary(group = group, scope = cardFoldId(messageScope, "explore"), listItemKey = foldScope)
+    ToolActivitySummary(
+        group = group,
+        scope = cardFoldId(messageScope, "explore"),
+        listItemKey = foldScope,
+        isLatestActivity = isLatestActivity,
+    )
 }
 
 private data class ToolInputEntry(val key: String, val value: String)
@@ -3434,7 +3430,7 @@ private fun prettyStructuredText(raw: String): String {
 }
 
 @Composable
-private fun ToolInputBody(input: JSONObject) {
+internal fun ToolInputBody(input: JSONObject) {
     val entries = remember(input.toString()) {
         input.keys().asSequence().toList().sorted().take(24).map { key ->
             ToolInputEntry(key, structuredDisplayText(input.opt(key)))
@@ -3487,7 +3483,7 @@ private fun ToolInputBody(input: JSONObject) {
 
 /** 工具结果正文：结构化 JSON 格式化、移动端自动换行，并可按需加载完整内容。 */
 @Composable
-private fun ToolResultBody(
+internal fun ToolResultBody(
     result: ContentBlock.ToolResult,
     modifier: Modifier = Modifier,
     showSectionLabel: Boolean = false,
@@ -3644,91 +3640,62 @@ private fun OrphanResultBlock(
 
 // MARK: - 思考块
 
-/** Thinking 块：收起态一行（紫灰，流式时图标呼吸），展开态弱紫底 + 左侧 2dp 竖线 + 斜体。 */
+internal const val THINKING_VISIBLE_LINES = 5
+
+internal fun thinkingTextMaxLines(expanded: Boolean): Int =
+    if (expanded) Int.MAX_VALUE else THINKING_VISIBLE_LINES
+
+/** 保留时间行，正文默认五行；展开只取消显示行数限制，不改写或截断原文。 */
 @Composable
 internal fun ThinkingBlock(
     text: String,
     streaming: Boolean = false,
-    expandDefault: Boolean = false,
-    foldKey: String = "",
+    expanded: Boolean = false,
+    /** 本轮的服务端观察时间；旧历史没有，回落到所属回复的开始时间。 */
+    occurredAt: String? = null,
+    modifier: Modifier = Modifier,
 ) {
-    // fold key 只描述「这段思考是谁」：内容每个流式 delta 都变，不能当 key（否则每段思考都会把
-    // 用户展开的历史思考块收回）。
-    var foldOverride by rememberFoldOverrideCode(foldKey)
-    val expanded = foldExpanded(foldOverride, expandDefault)
-    val iconAlpha: Float
-    if (streaming && !reduceMotionEnabled()) {
-        val breath = rememberInfiniteTransition(label = "thinkBreath")
-        val animated by breath.animateFloat(
-            initialValue = 1f,
-            targetValue = WandMotion.breathAlphaMin,
-            animationSpec = WandMotion.breath(),
-            label = "thinkBreathAlpha",
+    val body = text.trim().ifBlank { if (streaming) "思考内容生成中…" else "" }
+    if (body.isEmpty()) return
+    val clock = thinkingEventClock(occurredAt ?: LocalChatTurnCreatedAt.current)
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (clock != null) Text(
+            clock, fontSize = 10.sp, lineHeight = 18.sp,
+            fontFamily = FontFamily.Monospace, color = WandColors.textMuted,
         )
-        iconAlpha = animated
-    } else {
-        iconAlpha = 1f
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ChatCardMetrics.iconToText),
-            modifier = Modifier
-                .clickableWithoutRipple {
-                    foldOverride = foldToggleCode(foldOverride, expandDefault)
-                }
-                .then(cardHeaderModifier(LocalActivityFoldCompact.current)),
-        ) {
-            val foldCompact = LocalActivityFoldCompact.current
-            WandStatusIconSlot(
-                indicatorColor = WandColors.thinking,
-                containerColor = WandColors.thinkingSoft,
-                running = false,
-                icon = WandIcons.thinking,
-                boxSize = if (foldCompact) ChatCardMetrics.iconBoxCompact else ChatCardMetrics.iconBoxRegular,
-                iconSize = if (foldCompact) ChatCardMetrics.iconSizeCompact else ChatCardMetrics.iconSizeRegular,
-                cornerRadius = if (foldCompact) ChatCardMetrics.iconCornerCompact else ChatCardMetrics.iconCornerRegular,
-                iconAlpha = iconAlpha,
-            )
+        SelectionContainer {
             Text(
-                "深度思考",
-                fontSize = if (foldCompact) ChatCardMetrics.titleCompact else ChatCardMetrics.titleRegular,
-                fontWeight = FontWeight.Medium,
-                color = if (foldCompact) WandColors.textMuted else WandColors.thinking,
-                modifier = Modifier.weight(1f),
-            )
-            CardChevronSlot(
-                expanded = expanded,
-                tint = WandColors.thinking.copy(alpha = 0.7f),
-                compact = foldCompact,
-                containerColor = Color.Transparent,
+                body,
+                fontSize = 11.5.sp,
+                lineHeight = 18.sp,
+                color = WandColors.textSecondary,
+                maxLines = thinkingTextMaxLines(expanded),
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        FoldableCardBody(visible = expanded) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min)
-                    .clip(WandShapes.sm)
-                    .background(WandColors.thinkingSoft),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(2.dp)
-                        .fillMaxHeight()
-                        .background(WandColors.thinking),
-                )
-                SelectionContainer(modifier = Modifier.padding(10.dp)) {
-                    Text(
-                        text,
-                        fontSize = if (LocalActivityFoldCompact.current) 11.sp else 13.sp,
-                        lineHeight = if (LocalActivityFoldCompact.current) 16.sp else 20.sp,
-                        fontStyle = FontStyle.Italic,
-                        color = if (LocalActivityFoldCompact.current) WandColors.textMuted else WandColors.textSecondary,
-                    )
-                }
+    }
+}
+
+/** 未合入时间线的思考也沿用同一预览/全文交互；折叠身份不含流式内容。 */
+@Composable
+private fun StandaloneThinkingBlock(text: String, streaming: Boolean, foldKey: String, occurredAt: String? = null) {
+    var foldOverride by rememberFoldOverrideCode(foldKey)
+    val expanded = foldExpanded(foldOverride, derivedDefault = false)
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+            .animateContentSize(WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenNormal()))
+            .heightIn(min = 48.dp)
+            .clickable(role = Role.Button, onClickLabel = if (expanded) "收起思考全文" else "展开思考全文") {
+                foldOverride = foldToggleCode(foldOverride, derivedDefault = false)
             }
-        }
+            .semantics { stateDescription = if (expanded) "已展开" else "已收起" },
+    ) {
+        ThinkingBlock(text, streaming = streaming, expanded = expanded, occurredAt = occurredAt,
+            modifier = Modifier.weight(1f))
+        ExpandChevron(expanded = expanded, tint = WandColors.textMuted, size = 14.dp,
+            modifier = Modifier.padding(top = 2.dp), contentDescription = null)
     }
 }
 

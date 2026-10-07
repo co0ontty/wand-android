@@ -17,6 +17,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -41,6 +42,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -110,6 +112,8 @@ import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.TeamMessageAvatar
 import com.wand.app.ui.components.TeamMessageDocSheet
+import com.wand.app.ui.components.WandNoticeLine
+import com.wand.app.ui.components.WandBrandTag
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
@@ -837,14 +841,15 @@ private fun TeamRunActionBar(
 
 /** 完整行高从第一帧保留，alpha/+4dp 只动绘制层；回收时消费资格不补播。 */
 @Composable
-private fun TeamTurnArrival(
+internal fun TeamTurnArrival(
     playing: Boolean,
+    own: Boolean = false,
     onConsumed: () -> Unit,
     content: @Composable () -> Unit,
 ) {
     val motion = !reduceMotionEnabled()
     val progress = remember(playing) { Animatable(if (playing && motion) 0f else 1f) }
-    val travelPx = with(LocalDensity.current) { 4.dp.toPx() }
+    val travelPx = with(LocalDensity.current) { (if (own) 8.dp else 4.dp).toPx() }
     DisposableEffect(playing) {
         onDispose { if (playing) onConsumed() }
     }
@@ -860,6 +865,90 @@ private fun TeamTurnArrival(
         translationY = frame.translationY
     }) { content() }
 }
+
+@Composable
+internal fun ConversationInstanceTurn(turn: ConversationTurn, baseUrl: String, onOpenSession: (String) -> Unit,
+    group: Boolean = true, joined: Boolean = false, tail: Boolean = true, onAvatarClick: (() -> Unit)? = null,
+    fallbackAuthor: TurnAuthor? = null,
+    protocol: com.wand.app.ui.ChatStore? = null,
+    toolResults: Map<String, com.wand.app.data.ContentBlock.ToolResult> = conversationToolResults(listOf(turn)),
+    expanded: Boolean = false, onExpandedChange: (Boolean) -> Unit = {},
+    expandRequester: FocusRequester = remember { FocusRequester() }) {
+    if (turn.notice) { TeamNoticeRow(turn); return }
+    val own = turn.role == "user"
+    val visibleAuthor = turn.author ?: fallbackAuthor
+    val parsed = remember(turn.content) { parseUserAttachmentText(chatTurnText(turn)) }
+    val text = if (own) parsed.body else chatTurnText(turn)
+    val truncated = conversationNeedsCollapse(text)
+    val nativeBlocks = turn.content.any { it !is com.wand.app.data.ContentBlock.Text }
+    val askSelections = turn.content.filterIsInstance<com.wand.app.data.ContentBlock.ToolUse>().associate { use ->
+        val selection = protocol?.askUserSelections?.get(use.id) ?: com.wand.app.ui.AskUserSelectionState()
+        val unavailable = when {
+            protocol == null -> "无法确认提问来源，请打开执行窗口核对。"
+            protocol.loading -> "正在核对当前提问…"
+            protocol.canAnswerAskUser(use.id) || selection.submitted -> null
+            else -> "此提问当前不可回答，请查看最新执行状态。"
+        }
+        use.id to selection.copy(unavailableReason = unavailable)
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val bubbleWidth = minOf(560.dp, if (own) maxWidth * .86f else maxWidth)
+    TeamMessageRow(own, if (own) ChatAvatarSpec.Brand else chatAvatarSpec(visibleAuthor),
+        showAvatar = !own && !joined, reserveAvatar = !own, onAvatarClick = onAvatarClick, alignAvatarTop = true) {
+        val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp,
+            bottomStart = if (!own && tail) 4.dp else 16.dp, bottomEnd = if (own && tail) 4.dp else 16.dp)
+        Column(Modifier.widthIn(max = bubbleWidth)
+            .then(if (own) Modifier.clip(shape).background(WandColors.brandSoft) else Modifier)
+            .padding(horizontal = if (own) 12.dp else 0.dp, vertical = if (own) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (!own && !joined) {
+                val name = visibleAuthor?.name ?: "助手"
+                val sessionId = turn.author?.sessionId
+                Row(Modifier.heightIn(min = if (sessionId != null) 48.dp else 24.dp).then(if (sessionId != null) Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "查看${name}的执行过程") { onOpenSession(sessionId) } else Modifier),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(name, fontSize = 14.sp, fontWeight = FontWeight.Normal, color = WandColors.textSecondary)
+                    if (turn.author?.leader == true) Text("负责人", fontSize = 11.sp, color = WandColors.brandText)
+                    if (sessionId != null) Icon(WandIcons.expand, null, Modifier.size(14.dp), tint = WandColors.textMuted)
+                }
+            }
+            when {
+                turn.reportFile != null -> WandTeamReportFileCard(turn.reportFile, baseUrl)
+                nativeBlocks && !own -> TurnView(turn, showHeader = false, foldScope = conversationMessageKey(turn), toolResultsById = toolResults,
+                    isLastTurn = protocol?.messages?.lastOrNull()?.createdAt == turn.createdAt && turn.createdAt != null,
+                    isResponding = protocol?.isResponding == true,
+                    askSelections = askSelections,
+                    onAskToggle = { tool, question, option, multi -> protocol?.toggleAskOption(tool, question, option, multi) },
+                    onAskSubmit = { tool, answer -> protocol?.submitAskUser(tool, answer) })
+                else -> {
+                    if (own) parsed.paths.forEach { path ->
+                        if (WandImage.isImagePath(path)) WandAsyncImage(path, baseUrl) else WandFileChip(path)
+                    }
+                    if (own) turn.content.filterNot { it is com.wand.app.data.ContentBlock.Text }.forEach { BlockView(it, foldKey = conversationMessageKey(turn)) }
+                    if (text.isNotBlank()) {
+                        if (truncated) {
+                            if (!expanded) Text(conversationCollapsedPreview(text), fontSize = 15.sp, lineHeight = 22.sp, color = WandColors.textPrimary)
+                            WandInlinePanel(expanded, growFrom = Alignment.Top) { MarkdownText(text) }
+                            TextButton(onClick = { onExpandedChange(!expanded) }, modifier = Modifier.heightIn(min = 48.dp).focusRequester(expandRequester), contentPadding = PaddingValues(0.dp)) {
+                                Text(if (expanded) "收起全文" else "展开全文", fontSize = 13.sp, fontWeight = FontWeight.Normal, color = WandColors.brand)
+                            }
+                        } else if (own) androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text(text, fontSize = 15.sp, lineHeight = 22.sp, color = WandColors.textPrimary)
+                        } else MarkdownText(text)
+                    }
+                }
+            }
+            Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                val clock = conversationBubbleClock(turn)
+                if (clock.isNotBlank()) Text(clock, fontSize = 12.sp, lineHeight = 16.sp, color = WandColors.textSecondary)
+                if (own) Icon(WandIcons.check, "已发送到服务端", Modifier.size(14.dp), tint = WandColors.textSecondary)
+            }
+        }
+    }
+    }
+}
+
+/** Stable DTO identity, never derived from changing content or its hash. */
+internal fun conversationMessageKey(turn: ConversationTurn): String = turn.messageId
+    ?: listOf(turn.requestId.orEmpty(), turn.role, turn.createdAt.orEmpty(), turn.author?.sessionId.orEmpty()).joinToString(":")
 
 @Composable
 private fun TeamTurnRow(
@@ -893,13 +982,20 @@ private fun TeamMessageRow(
     own: Boolean,
     avatar: ChatAvatarSpec,
     modifier: Modifier = Modifier,
+    showAvatar: Boolean = true,
+    reserveAvatar: Boolean = false,
+    onAvatarClick: (() -> Unit)? = null,
+    alignAvatarTop: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val avatarSlot: @Composable () -> Unit = { TeamMessageAvatar(avatar) }
+    val avatarSlot: @Composable () -> Unit = {
+        if (showAvatar) Box((if (reserveAvatar) Modifier.size(48.dp) else Modifier).then(if (onAvatarClick != null) Modifier.size(48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "查看员工资料", onClick = onAvatarClick) else Modifier), contentAlignment = Alignment.TopCenter) { TeamMessageAvatar(avatar, size = if (alignAvatarTop) 34.dp else 32.dp) }
+        else if (reserveAvatar) Spacer(Modifier.size(48.dp))
+    }
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = if (reserveAvatar && !alignAvatarTop) Alignment.Bottom else Alignment.Top,
     ) {
         if (!own) avatarSlot()
         Column(
@@ -1443,21 +1539,7 @@ private fun TeamStepChip(title: String, ok: Boolean, status: String?) {
 /** 系统事件与时间分隔条各占一行；提示本身不重复时刻，也不占消息卡片。 */
 @Composable
 private fun TeamNoticeRow(turn: ConversationTurn) {
-    val line = teamNoticeLine(turn)
-    if (line.isBlank()) return
-    Text(
-        line,
-        fontSize = 12.sp,
-        lineHeight = 18.sp,
-        color = WandColors.textSecondary,
-        textAlign = TextAlign.Center,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .semantics { contentDescription = line },
-    )
+    WandNoticeLine(teamNoticeLine(turn))
 }
 
 /**
@@ -1507,16 +1589,7 @@ private fun TeamCollapsibleBody(text: String) {
 
 @Composable
 private fun TeamChatBadge(text: String) {
-    Text(
-        text,
-        fontSize = 10.sp,
-        color = WandColors.brand,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(WandShapes.xs)
-            .background(WandColors.brandSoft.copy(alpha = 0.5f))
-            .padding(horizontal = 5.dp, vertical = 1.dp),
-    )
+    WandBrandTag(text)
 }
 
 @Composable
@@ -1588,6 +1661,7 @@ private fun TeamChatComposer(
             )
             SharedMessageComposer(
                 backdrop = null,
+                sessionKey = chatSessionId,
                 draft = draft,
                 onDraftChange = onDraftChange,
                 attachments = attachments,
@@ -1603,6 +1677,17 @@ private fun TeamChatComposer(
                 allowRefocus = true,
                 voicePressed = voice.pressed,
                 onExpandedChange = {},
+                menuContent = {
+                    if (composerMenuHasStop(active, visual)) {
+                        com.wand.app.ui.components.WandInlinePanelAction(
+                            icon = WandIcons.stop,
+                            label = "停止当前团队",
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = ComposerActionTouchSize),
+                            onClick = { attachOpen = false; onStop() },
+                        )
+                    }
+                },
                 trailingActions = { requestFocus, sendAndRefocus ->
                     TeamChatSendStop(
                         voiceAction = {
@@ -1618,7 +1703,7 @@ private fun TeamChatComposer(
                         busy = busy,
                         canSubmit = canSubmit,
                         onSend = sendAndRefocus,
-                        onStop = onStop,
+                        onStop = { attachOpen = false; onStop() },
                     )
                 },
                 controls = { Spacer(modifier = Modifier.weight(1f)) },
@@ -1636,7 +1721,7 @@ private fun TeamChatComposer(
 }
 
 /**
- * 发送 ⇄ 停止：空草稿且团队还在跑时，同一枚按钮变成停止；有草稿时左侧再放一枚停止。
+ * 发送 ⇄ 停止：空草稿且团队还在跑时，同一枚按钮变成停止；有草稿时停止入口收进加号面板。
  * 形态与 `ChatScreen.TrailingSendStop` 同一套 `sendActionVisual` / `SubmitMorphButton`。
  */
 @Composable
@@ -1649,40 +1734,14 @@ private fun TeamChatSendStop(
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
-    if (active && visual != SendActionVisual.Stop) {
-        SubmitMorphButton(
-            visual = SendActionVisual.Stop,
-            contentDescription = "停止团队",
-            onClick = onStop,
-            enabled = !busy,
-            fillColor = WandColors.dangerSoft,
-            contentTint = WandColors.danger,
-        )
-    }
-    voiceAction()
-    SubmitMorphButton(
+    ComposerSendStopActions(
+        voiceAction = voiceAction,
         visual = visual,
-        contentDescription = when (visual) {
-            SendActionVisual.Sending -> "发送中"
-            SendActionVisual.Sent -> "已发送"
-            SendActionVisual.Failed -> "发送失败，可重试"
-            SendActionVisual.Blocked -> "当前没有可发送内容"
-            SendActionVisual.Stop -> "停止团队"
-            else -> "发送消息"
-        },
-        onClick = if (visual == SendActionVisual.Stop) onStop else onSend,
-        enabled = !busy && (visual == SendActionVisual.Stop || (visual == SendActionVisual.Send && canSubmit)),
-        fillColor = when (visual) {
-            SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
-            SendActionVisual.Failed -> WandColors.dangerSoft
-            SendActionVisual.Stop -> WandColors.textPrimary
-            else -> WandColors.textSecondary.copy(alpha = 0.16f)
-        },
-        contentTint = when (visual) {
-            SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> Color.White
-            SendActionVisual.Failed -> WandColors.danger
-            SendActionVisual.Stop -> WandColors.surface
-            else -> WandColors.textSecondary
-        },
+        stopDescription = "停止团队",
+        sendDescription = if (active) "排队发送消息" else "发送消息",
+        busy = busy,
+        canSubmit = canSubmit,
+        onSend = onSend,
+        onStop = onStop,
     )
 }

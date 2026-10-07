@@ -3,6 +3,8 @@ package com.wand.app.ui.screens
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import com.wand.app.ByteSizeFormatter
+import com.wand.app.ByteSizeUnit
 import com.wand.app.data.AiTeamMember
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.AiTeamRun
@@ -12,13 +14,14 @@ import com.wand.app.data.TurnAuthor
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.WorkspaceSessionSummary
-import com.wand.app.data.WandApiException
+import com.wand.app.data.isDefiniteRequestRejection
 import com.wand.app.data.aiTeamRunActive
 import com.wand.app.data.boardAgentModelName
 import com.wand.app.data.boardTaskProviderLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -83,11 +86,8 @@ fun parseStepReport(text: String): TeamStepReport? {
     )
 }
 
-fun teamReportFileSize(size: Long): String = when {
-    size < 1024 -> "$size B"
-    size < 1024 * 1024 -> String.format(java.util.Locale.ROOT, "%.1f KB", size / 1024.0)
-    else -> String.format(java.util.Locale.ROOT, "%.1f MB", size / (1024.0 * 1024.0))
-}
+fun teamReportFileSize(size: Long): String =
+    ByteSizeFormatter.format(size, java.util.Locale.ROOT, ByteSizeUnit.Megabytes)
 
 /** 负责人派工那几行：`1. **@实现者** T1 类型与存储迁移（依据：第 1 步「设计规格」的产物）`。 */
 private val ASSIGN_LINE = Regex("^\\d+\\.\\s*\\*\\*@(.+?)\\*\\*\\s*(.+)$")
@@ -528,10 +528,7 @@ fun settleLocalTurns(local: List<LocalChatTurn>, turns: List<ConversationTurn>?)
     }
 
 /** 只有输入被接收前的明确 4xx 拒收可自动回到草稿；其余情况留未确认行。 */
-fun chatSendDefinitelyRejected(error: Throwable): Boolean {
-    val status = (error as? WandApiException)?.status ?: return false
-    return status in 400..499 && status != 408 && status != 409
-}
+fun chatSendDefinitelyRejected(error: Throwable): Boolean = isDefiniteRequestRejection(error)
 
 enum class TeamOfficeState { Working, Attention, Queued, Done, Failed, Idle }
 
@@ -583,7 +580,7 @@ fun newestRunOnSameChat(current: AiTeamRun, runs: List<AiTeamRun>): String? {
 fun groupChatRunId(session: WorkspaceSessionSummary): String? =
     session.teamChat?.runId?.takeIf { it.isNotBlank() }
 
-// ---------- 头像：谁的脸（设计 §5，纯函数与 Web chatAvatarSpec / memberCoatIndex 同名同算法） ----------
+// ---------- 头像：谁的脸（设计 §5，纯函数与 Web avatarFace / chatAvatarSpec / memberCoatIndex 同名同算法） ----------
 
 /**
  * 像素猫毛色（逐字照拄 Web `cat-coats.ts`）。`light` / `eye` 缺省时用 base / 瞳色默认值，
@@ -679,22 +676,70 @@ fun memberCoatIndex(authorId: String?, name: String?, avatar: String?): Int {
     return (coatHashAbs(coatHash(seed)) % CAT_COATS.size).toInt()
 }
 
-/** 一条发言的头像来源（设计 §5.2）：上传图 > 显式毛色 > 派生毛色 > 默认 APP logo。 */
+/**
+ * 生成头像配色（逐字照拄 Web `generated-avatar.ts` 的 `GENERATED_AVATAR_COATS`）。
+ * 两端与中点对白字都不低于 4.5:1；顺序固定，改顺序会换掉所有人的底色。
+ */
+data class GeneratedAvatarCoat(val name: String, val from: Int, val to: Int)
+
+val GENERATED_AVATAR_TEXT: Int = 0xFFFFFFFF.toInt()
+
+val GENERATED_AVATAR_COATS: List<GeneratedAvatarCoat> = listOf(
+    GeneratedAvatarCoat("赭橙", 0xFFA8471F.toInt(), 0xFF7E3214.toInt()),
+    GeneratedAvatarCoat("湖蓝", 0xFF2F6DB5.toInt(), 0xFF1F4E8A.toInt()),
+    GeneratedAvatarCoat("松绿", 0xFF2E7D5B.toInt(), 0xFF1C5B41.toInt()),
+    GeneratedAvatarCoat("紫棠", 0xFF6B4EA8.toInt(), 0xFF4F3883.toInt()),
+    GeneratedAvatarCoat("靛青", 0xFF2C6E7F.toInt(), 0xFF1B4F5E.toInt()),
+    GeneratedAvatarCoat("绛红", 0xFFB03A48.toInt(), 0xFF872633.toInt()),
+    GeneratedAvatarCoat("芥黄", 0xFF8A6A16.toInt(), 0xFF674D0D.toInt()),
+    GeneratedAvatarCoat("石青", 0xFF4A5B8C.toInt(), 0xFF34426A.toInt()),
+)
+
+/** 一张生成头像的脸：渐变两端色 + 白字色 + 字形。 */
+data class GeneratedAvatar(val from: Int, val to: Int, val text: Int, val glyph: String)
+
+/** 配色种子：稳定 id 优先，最后才落到同一张 "member" 底，空身份不会随机漂。 */
+fun generatedAvatarSeed(id: String?, name: String?): String =
+    id?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() } ?: "member"
+
+/**
+ * 字形：名字首字（拉丁字母大写），没名字就用 id 首字，都没有给 `?`。
+ * 按码点取首字符，与 Web 的 `Array.from(source)[0]` 一致（含代理对的 emoji 不被切半）。
+ */
+fun generatedAvatarGlyph(id: String?, name: String?): String {
+    val source = name?.takeIf { it.isNotBlank() } ?: id?.takeIf { it.isNotBlank() } ?: ""
+    if (source.isEmpty()) return "?"
+    val glyph = String(Character.toChars(source.codePointAt(0)))
+    return if (glyph.length == 1 && glyph[0] in 'a'..'z') glyph.uppercase(Locale.ROOT) else glyph
+}
+
+/** 生成头像：与 Web `generatedAvatarFace` 同种子、同哈希，涂一样的底、一样的字。 */
+fun generatedAvatarFace(id: String?, name: String?): GeneratedAvatar {
+    val seed = generatedAvatarSeed(id, name)
+    val coat = GENERATED_AVATAR_COATS[(coatHashAbs(coatHash(seed)) % GENERATED_AVATAR_COATS.size).toInt()]
+    return GeneratedAvatar(coat.from, coat.to, GENERATED_AVATAR_TEXT, generatedAvatarGlyph(id, name))
+}
+
+/** 一条发言的头像来源（设计 §5.2）：上传图 > 显式毛色 > 按身份生成 > 默认 APP logo。 */
 sealed interface ChatAvatarSpec {
     data class Upload(val src: String) : ChatAvatarSpec
     data class Cat(val coat: Int) : ChatAvatarSpec
+    data class Generated(val face: GeneratedAvatar) : ChatAvatarSpec
     data object Brand : ChatAvatarSpec
 }
 
-fun chatAvatarSpec(author: TurnAuthor?): ChatAvatarSpec {
-    val avatar = author?.avatar.orEmpty()
-    if (avatar.startsWith("data:image/")) return ChatAvatarSpec.Upload(avatar)
-    // 能定位到成员身份才给猫脸（显式毛色与派生毛色都由 memberCoatIndex 裁决）；
-    // 「我」和没有署名的发言才回落成默认 APP logo。
-    if (author != null && (!author.id.isNullOrBlank() || author.name.isNotBlank())) {
-        return ChatAvatarSpec.Cat(memberCoatIndex(author.id, author.name, avatar))
+fun chatAvatarSpec(author: TurnAuthor?): ChatAvatarSpec =
+    author?.let { chatAvatarSpec(it.id, it.name, it.avatar) } ?: ChatAvatarSpec.Brand
+
+/** 能定位到成员身份才给脸（`cat:<n>` 是用户挑过的毛色，仍然是猫）；「我」才回落成默认 APP logo。 */
+fun chatAvatarSpec(id: String?, name: String?, avatar: String?): ChatAvatarSpec {
+    val value = avatar.orEmpty()
+    if (value.startsWith("data:image/")) return ChatAvatarSpec.Upload(value)
+    if (id.isNullOrBlank() && name.isNullOrBlank()) return ChatAvatarSpec.Brand
+    if (CAT_AVATAR_MARK.matches(value)) {
+        return ChatAvatarSpec.Cat(memberCoatIndex(id, name, value))
     }
-    return ChatAvatarSpec.Brand
+    return ChatAvatarSpec.Generated(generatedAvatarFace(id, name))
 }
 
 /** 全文快照：列表 key/owner 共用 scoped 本地句柄；关闭期间正文/名单保持原值。 */

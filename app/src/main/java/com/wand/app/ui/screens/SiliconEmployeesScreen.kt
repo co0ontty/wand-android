@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -19,6 +20,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.key
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,12 +32,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.horizontalScroll
+import com.wand.app.ui.components.EmployeeAvatarPicker
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -61,7 +71,6 @@ import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandInPlaceSwap
-import com.wand.app.ui.components.WandMorphIconButton
 import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
@@ -75,7 +84,9 @@ fun SiliconEmployeeEditorScreen(
     api: WandApi,
     employeeId: String?,
     onBack: () -> Unit,
+    onMessage: ((String) -> Unit)? = null,
 ) {
+    var editingProfile by rememberSaveable(employeeId) { mutableStateOf(employeeId == null) }
     val scope = rememberCoroutineScope()
     var editingId by remember(employeeId) { mutableStateOf(employeeId) }
     var draft by remember(employeeId) { mutableStateOf(SiliconEmployeeDraft()) }
@@ -94,9 +105,11 @@ fun SiliconEmployeeEditorScreen(
     var confirmArchive by remember(employeeId) { mutableStateOf(false) }
     var confirmDelete by remember(employeeId) { mutableStateOf(false) }
     var confirmDiscard by remember(employeeId) { mutableStateOf(false) }
+    var configurationExpanded by rememberSaveable(employeeId) { mutableStateOf(false) }
     var promptExpanded by remember(employeeId) { mutableStateOf(employeeId == null) }
     var expandedCandidate by remember(employeeId) { mutableStateOf(0) }
-    val busy = operation != null
+    var avatarProcessing by remember { mutableStateOf(false) }
+    val busy = operation != null || avatarProcessing
 
     LaunchedEffect(api, employeeId, reload) {
         loading = true
@@ -141,12 +154,13 @@ fun SiliconEmployeeEditorScreen(
     }
 
     fun leave() {
-        if (operation != null) return
-        if (savedDraft != null && draft != savedDraft) confirmDiscard = true else onBack()
+        if (busy) return
+        if (savedDraft != null && draft != savedDraft) confirmDiscard = true
+        else if (editingProfile && editingId != null) editingProfile = false else onBack()
     }
 
     fun save() {
-        if (operation != null || loading || savedDraft == null || loadError != null) return
+        if (busy || loading || savedDraft == null || loadError != null) return
         val submitted = draft
         val problem = submitted.validationError(validateTags = !builtin)
         status = ""
@@ -163,6 +177,7 @@ fun SiliconEmployeeEditorScreen(
                 archived = saved.archived
                 builtin = saved.builtin
                 status = "员工资料已保存。"
+                editingProfile = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -179,9 +194,15 @@ fun SiliconEmployeeEditorScreen(
         containerColor = Color.Transparent,
         topBar = {
             WandDetailTopBar(
-                title = if (editingId == null) "创建硅基员工" else "员工资料",
-                subtitle = if (builtin) "内置角色 · 可调整执行工具" else "角色设定与执行工具",
-                leading = { WandDetailBackButton(onClick = ::leave, enabled = !busy) },
+                title = if (editingId == null) "创建员工" else if (editingProfile) "编辑员工资料" else "员工资料",
+                leading = { WandDetailBackButton(onClick = ::leave, enabled = !busy, icon = WandIcons.back) },
+                actions = {
+                    if (!loading && savedDraft != null && loadError == null) {
+                        if (editingProfile) WandButton("保存", onClick = ::save, enabled = !busy,
+                            loading = operation == EmployeeOperation.Save, variant = WandButtonVariant.Text)
+                        else WandButton("编辑", onClick = { editingProfile = true }, variant = WandButtonVariant.Text)
+                    }
+                },
             )
         },
     ) { padding ->
@@ -203,14 +224,76 @@ fun SiliconEmployeeEditorScreen(
                         style = MaterialTheme.typography.bodyMedium)
                     WandButton("重新加载", onClick = { reload += 1 }, variant = WandButtonVariant.Secondary)
                 }
+                !editingProfile -> LazyColumn(
+                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
+                    contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    item {
+                        WandCard(contentPadding = PaddingValues(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                EmployeeAvatar(editingId, draft.name, draft.avatar, size = 48.dp,
+                                    modifier = Modifier.clip(CircleShape))
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(draft.name, style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(if (archived) "已归档 · 历史对话保留" else if (builtin) "Wand 内置员工" else "员工",
+                                        style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
+                                    if (draft.tagInput.isNotBlank()) Text(draft.tagInput,
+                                        style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+                                }
+                            }
+                            if (onMessage != null && editingId != null) {
+                                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+                                    WandButton("发送消息", { onMessage(editingId!!) })
+                                }
+                            }
+                            EmployeeResultText(status, error = false, success = status.isNotBlank())
+                        }
+                    }
+                    item {
+                        WandCard {
+                            Column(Modifier.padding(16.dp)) {
+                                Text("职责", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
+                                Text(draft.duty.ifBlank { "暂无职责说明" }, modifier = Modifier.padding(top = 6.dp),
+                                    style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary)
+                            }
+                            HorizontalDivider(color = WandColors.border, modifier = Modifier.padding(start = 16.dp))
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                                EmployeeDisclosureHeader("角色设定", "", promptExpanded, true) { promptExpanded = !promptExpanded }
+                                WandInlinePanel(promptExpanded, growFrom = Alignment.Top) {
+                                    Text(draft.prompt.ifBlank { "暂无角色设定" }, modifier = Modifier.padding(bottom = 12.dp),
+                                        style = MaterialTheme.typography.bodyMedium, color = WandColors.textSecondary)
+                                }
+                            }
+                            HorizontalDivider(color = WandColors.border, modifier = Modifier.padding(start = 16.dp))
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                                EmployeeDisclosureHeader("执行配置", "${draft.agents.size} 个候选", configurationExpanded, true) {
+                                    configurationExpanded = !configurationExpanded
+                                }
+                                WandInlinePanel(configurationExpanded, growFrom = Alignment.Top) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 12.dp)) {
+                                        draft.agents.forEachIndexed { index, agent ->
+                                            Text("${if (index == 0) "首选" else "备用 $index"} · ${boardTaskProviderLabel(agent.provider)} · ${agent.model.ifBlank { "默认模型" }}",
+                                                style = MaterialTheme.typography.bodyMedium, color = WandColors.textSecondary)
+                                        }
+                                        Text("员工 ID · ${editingId.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                }
                 else -> LazyColumn(
                     modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
-                    contentPadding = PaddingValues(14.dp, 14.dp, 14.dp, 30.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     item(key = "employee-profile") {
-                        WandCard(contentPadding = PaddingValues(14.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically,
+                        WandCard(contentPadding = PaddingValues(16.dp)) {
+                            if (builtin) Row(verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 EmployeeAvatar(editingId, draft.name, draft.avatar, size = 44.dp,
                                     provider = draft.agents.firstOrNull()?.provider)
@@ -222,7 +305,7 @@ fun SiliconEmployeeEditorScreen(
                                     Text(when {
                                         archived -> "已归档 · 历史对话保留"
                                         builtin -> draft.tagInput.ifBlank { "Wand 内置员工" }
-                                        else -> "硅基员工 · ${draft.agents.size} 个执行候选"
+                                        else -> "员工 · ${draft.agents.size} 个执行候选"
                                     }, color = if (builtin) WandColors.brand else WandColors.textMuted,
                                         style = MaterialTheme.typography.bodySmall)
                                 }
@@ -235,6 +318,7 @@ fun SiliconEmployeeEditorScreen(
                                     color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.padding(top = 8.dp))
                             } else {
+                                EmployeeAvatarPicker(draft.avatar, draft.name, enabled = !busy, onChange = { edit(draft.copy(avatar = it)) }, onBusyChange = { avatarProcessing = it })
                                 WandTextField(draft.name, { edit(draft.copy(name = it)) },
                                     label = "名字", placeholder = "例如：产品经理", singleLine = true,
                                     enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
@@ -252,10 +336,10 @@ fun SiliconEmployeeEditorScreen(
                         }
                     }
                     item(key = "employee-prompt") {
-                        WandCard(contentPadding = PaddingValues(14.dp)) {
+                        WandCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
                             EmployeeDisclosureHeader(
                                 title = "角色设定",
-                                summary = if (builtin) "内置设定 · 只读" else "工作方式、边界与交付要求",
+                                summary = if (builtin) "内置 · 只读" else "",
                                 expanded = promptExpanded,
                                 enabled = !busy,
                                 onToggle = { promptExpanded = !promptExpanded },
@@ -266,27 +350,32 @@ fun SiliconEmployeeEditorScreen(
                                     modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)
                                         .verticalScroll(rememberScrollState()).padding(top = 10.dp))
                                 else WandTextField(draft.prompt, { edit(draft.copy(prompt = it)) },
-                                    label = "角色设定", placeholder = "说明工作方式、边界和交付要求",
+                                    placeholder = "说明工作方式、边界和交付要求",
                                     minLines = 4, maxLines = 10, enabled = !busy,
-                                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                                        .semantics { contentDescription = "角色设定" })
                             }
                         }
                     }
                     item(key = "employee-candidates-heading") {
                         Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("执行工具", color = WandColors.textPrimary,
-                                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("执行工具", color = WandColors.textMuted,
+                                style = MaterialTheme.typography.labelMedium)
                             Text("首选无法启动时，按顺序尝试后续候选。", color = WandColors.textMuted,
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    items(draft.agents.size, key = { "employee-candidate-$it" }) { index ->
+                    item(key = "employee-candidates") {
+                        WandCard {
+                        draft.agents.forEachIndexed { index, _ ->
+                        key(index) {
+                        if (index > 0) HorizontalDivider(color = WandColors.border, modifier = Modifier.padding(horizontal = 16.dp))
                         val agent = draft.agents[index]
                         val expanded = expandedCandidate == index
                         val model = boardAgentModelOptions(models, agent.provider)
                             .firstOrNull { it.id == agent.model }?.label
                             ?: agent.model.ifBlank { "跟随默认模型" }
-                        WandCard(contentPadding = PaddingValues(12.dp)) {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                             EmployeeDisclosureHeader(
                                 title = "${if (index == 0) "首选" else "候选 ${index + 1}"} · ${boardTaskProviderLabel(agent.provider)}",
                                 summary = model,
@@ -327,6 +416,9 @@ fun SiliconEmployeeEditorScreen(
                             }
                         }
                     }
+                        }
+                        }
+                    }
                     item(key = "employee-add-candidate") {
                         WandButton("添加候选", onClick = {
                             if (operation == null) {
@@ -334,41 +426,22 @@ fun SiliconEmployeeEditorScreen(
                                 expandedCandidate = draft.agents.lastIndex
                             }
                         }, enabled = !busy && draft.agents.size < 4,
-                            modifier = Modifier.fillMaxWidth(), variant = WandButtonVariant.Secondary,
+                            modifier = Modifier.fillMaxWidth(), variant = WandButtonVariant.Text,
                             icon = WandIcons.add)
                     }
                     item(key = "employee-save") {
-                        WandCard(contentPadding = PaddingValues(14.dp)) {
-                            WandButton(
-                                label = when {
-                                    operation == EmployeeOperation.Save -> "保存中…"
-                                    error != null -> "重试保存"
-                                    status.isNotBlank() -> "已保存"
-                                    else -> "保存员工"
-                                },
-                                onClick = ::save,
-                                enabled = !busy,
-                                loading = operation == EmployeeOperation.Save,
-                                modifier = Modifier.fillMaxWidth(),
-                                icon = when {
-                                    error != null -> WandIcons.refresh
-                                    status.isNotBlank() -> WandIcons.check
-                                    else -> WandIcons.edit
-                                },
-                            )
-                            EmployeeResultText(
-                                text = when {
-                                    operation == EmployeeOperation.Save -> "正在保存员工资料…"
-                                    error != null -> error.orEmpty()
-                                    else -> status
-                                },
-                                error = error != null,
-                                success = status.isNotBlank(),
-                            )
-                        }
+                        EmployeeResultText(
+                            text = when {
+                                operation == EmployeeOperation.Save -> "正在保存员工资料…"
+                                error != null -> error.orEmpty()
+                                else -> status
+                            },
+                            error = error != null,
+                            success = status.isNotBlank(),
+                        )
                     }
                     if (editingId != null && !builtin) item(key = "employee-management") {
-                        WandCard(contentPadding = PaddingValues(14.dp)) {
+                        WandCard(contentPadding = PaddingValues(16.dp)) {
                             Text("员工管理", color = WandColors.textSecondary,
                                 style = MaterialTheme.typography.titleSmall)
                             WandButton(
@@ -470,7 +543,11 @@ fun SiliconEmployeeEditorScreen(
         WandDialog(
             title = "放弃未保存的员工改动？",
             onDismissRequest = { confirmDiscard = false },
-            confirm = WandDialogAction("放弃改动", destructive = true, enabled = !busy, onClick = onBack),
+            confirm = WandDialogAction("放弃改动", destructive = true, enabled = !busy, onClick = {
+                confirmDiscard = false
+                savedDraft?.let { draft = it }
+                if (editingId != null) editingProfile = false else onBack()
+            }),
             dismiss = WandDialogAction("继续编辑", onClick = { confirmDiscard = false }),
         ) { Text("名字、标签、职责、角色设定和工具顺序会恢复到上次保存的内容。") }
     }
@@ -491,26 +568,26 @@ private fun EmployeeDisclosureHeader(
         keyboard?.hide()
         onToggle()
     }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).semantics { stateDescription = if (expanded) "已展开" else "已收起" }
-            .clickable(enabled = enabled, role = Role.Button, onClick = ::toggle)
-            .padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, color = WandColors.textPrimary, style = MaterialTheme.typography.titleSmall,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(summary, color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-        WandMorphIconButton(expanded = expanded, collapsedIcon = WandIcons.expand,
-            expandedIcon = WandIcons.arrowUp,
-            contentDescription = if (expanded) "收起$title" else "展开$title",
-            onClick = ::toggle, enabled = enabled)
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+        .clickable(enabled = enabled, role = Role.Button, onClick = ::toggle),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, color = WandColors.textPrimary, style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (summary.isNotBlank()) Text(summary, color = WandColors.textMuted,
+            style = MaterialTheme.typography.bodySmall, modifier = Modifier.widthIn(max = 144.dp),
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(if (expanded) WandIcons.expand else WandIcons.chevronRight,
+            contentDescription = null, tint = WandColors.textMuted,
+            modifier = Modifier.size(20.dp))
     }
 }
 
-/** 按钮下方保留同一个反馈槽，长错误可滚动阅读，不推动操作按钮。 */
+/** 仅在有真实反馈时显示；长错误保留滚动阅读。 */
 @Composable
 private fun EmployeeResultText(text: String, error: Boolean, success: Boolean) {
-    Box(Modifier.fillMaxWidth().height(48.dp).padding(top = 8.dp)
+    if (text.isBlank()) return
+    Box(Modifier.fillMaxWidth().heightIn(max = 96.dp).padding(top = 8.dp)
         .semantics { liveRegion = LiveRegionMode.Polite }) {
         WandInPlaceSwap(contentKey = Triple(text, error, success), enterScale = 1f, exitScale = 1f) { key ->
             @Suppress("UNCHECKED_CAST")

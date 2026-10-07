@@ -177,4 +177,68 @@ class NewTaskComposerPresentationTest {
             newTaskTargetChangeResetsCliParams(WorkspaceSessionTarget.Codex, WorkspaceSessionTarget.Qoder))
         assertTrue(newTaskTargetChangeResetsCliParams(null, WorkspaceSessionTarget.Claude))
     }
+
+    @Test
+    fun blankTaskNameWithSessionStartsUngroupedWithoutCard() {
+        // 「没有指定任务的会话」= 名字留空 + 这一轮要起会话：先进「未分组任务」，不建卡。
+        assertTrue(newTaskStartsUngroupedSession("", startFirstSession = true, linkedToParent = false))
+        assertTrue(newTaskStartsUngroupedSession("   ", startFirstSession = true, linkedToParent = false))
+        // 起了任务名 = 用户指定了任务，照旧建卡。
+        assertFalse(newTaskStartsUngroupedSession("修复恢复流程", true, false))
+        // 只建分组没有会话可落；挂父任务的会话必须属于那张卡才能被关联。
+        assertFalse("仅建分组仍然建卡", newTaskStartsUngroupedSession("", startFirstSession = false, linkedToParent = false))
+        assertFalse("挂父任务不能没有任务卡", newTaskStartsUngroupedSession("", true, linkedToParent = true))
+    }
+
+    @Test
+    fun ungroupedStartCopyNeverImpliesCardCreation() {
+        val lines = listOf(
+            newTaskUngroupedStartLabel(),
+            newTaskUngroupedStartDescription(),
+            newTaskUngroupedStatusLine(),
+            newTaskUngroupedActionLabel(busy = false),
+            newTaskUngroupedActionLabel(busy = true),
+        )
+        lines.forEach { line ->
+            assertFalse("未分组开工的文案不能说建卡：$line", line.contains("建卡后") || line.contains("创建任务"))
+        }
+        assertTrue("要说清会话落点", lines.any { it.contains("未分组任务") })
+        assertEquals("开始会话", newTaskUngroupedActionLabel(busy = false))
+    }
+    private fun settingsSummary(
+        name: String = "修复登录",
+        ungrouped: Boolean = false,
+        tree: Boolean = true,
+        start: Boolean = true,
+        namedSubject: Boolean = false,
+        shell: Boolean = false,
+        parent: String? = null,
+    ) = newTaskMoreSettingsSummary(name, ungrouped, tree, start, namedSubject,
+        "结构化", "已选模型", "高", shell, parent)
+
+    @Test
+    fun collapsedSettingsShowTheSelectedCliConfigurationAndParent() {
+        assertEquals("修复登录 · 独立工作树 · 结构化 · 已选模型 · 思考 · 高 · 归属 · 发布准备",
+            settingsSummary(parent = "发布准备"))
+    }
+
+    @Test
+    fun ungroupedSummaryDoesNotClaimACardOrWorktreeWillBeCreated() {
+        val summary = settingsSummary(name = "", ungrouped = true, tree = true)
+        assertTrue(summary.startsWith("直接开始会话，不建卡"))
+        assertFalse(summary.contains("独立工作树"))
+        assertFalse(summary.contains("自动命名"))
+    }
+
+    @Test
+    fun namedSubjectsDoNotExposeInactiveCliSettings() {
+        assertEquals("修复登录 · 共用目录", settingsSummary(tree = false, namedSubject = true))
+    }
+
+    @Test
+    fun groupOnlyAndShellSummariesDoNotClaimUnusedModelSettings() {
+        assertEquals("修复登录 · 独立工作树 · 仅建分组", settingsSummary(start = false))
+        assertEquals("修复登录 · 独立工作树 · 结构化", settingsSummary(shell = true))
+    }
+
 }

@@ -45,6 +45,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wand.app.ByteSizeFormatter
+import com.wand.app.ByteSizeUnit
 import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
@@ -851,8 +853,5 @@ private fun UpdatePresentation.updateOrNull(): AppUpdateInfo? = when (this) {
     UpdatePresentation.Hidden, UpdatePresentation.Checking, is UpdatePresentation.UpToDate -> null
 }
 
-private fun formatByteSize(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> String.format(java.util.Locale.getDefault(), "%.1f KB", bytes / 1024.0)
-    else -> String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / (1024.0 * 1024.0))
-}
+private fun formatByteSize(bytes: Long): String =
+    ByteSizeFormatter.format(bytes, maximumUnit = ByteSizeUnit.Megabytes)

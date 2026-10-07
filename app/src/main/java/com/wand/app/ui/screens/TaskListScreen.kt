@@ -1,5 +1,7 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.runtime.saveable.rememberSaveable
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -9,6 +11,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,14 +21,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,7 +42,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.repeatOnLifecycle
 import com.wand.app.SessionWatcher
 import kotlinx.coroutines.flow.collect
+import com.wand.app.data.normalizeWorkspacePath
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamRun
 import com.wand.app.data.ExecutionSubject
@@ -79,12 +86,15 @@ import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandListItem
+import com.wand.app.ui.components.WandListItemIconSlot
 import com.wand.app.ui.components.rememberWandDragReorderState
 import com.wand.app.ui.components.wandLongPressDrag
 import com.wand.app.ui.components.itemLiftModifier
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.WandPullToRefresh
 import com.wand.app.ui.theme.AmbientBackground
+import com.wand.app.ui.theme.WandSpacing
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
@@ -119,6 +129,7 @@ fun TaskListScreen(
     modifier: Modifier = Modifier,
     homeListMode: HomeListMode = HomeListMode.Sessions,
     onHomeListModeChange: (HomeListMode) -> Unit = {},
+    conversationList: (@Composable (androidx.compose.ui.unit.Dp) -> Unit)? = null,
     selectedTaskId: String? = null,
     selectedSessionId: String? = null,
     interactionEnabled: Boolean = true,
@@ -141,9 +152,13 @@ fun TaskListScreen(
     onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
+    val menuDensity = androidx.compose.ui.platform.LocalDensity.current
+    var menuHeight by remember { mutableStateOf(HomeMenuPillHeight) }
+    val menuClearance = maxOf(68.dp, menuHeight + 12.dp)
     val contactContext = androidx.compose.ui.platform.LocalContext.current
     var newTaskOpen by remember { mutableStateOf(false) }
     val recentConversations = remember(api) { mutableStateMapOf<String, RecentEmployeeConversation>() }
+    val homeViewState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val recentTerminals = remember(api) { mutableStateMapOf<String, RecentTerminalConversation>() }
     var terminalMenuKey by remember(api) { mutableStateOf<String?>(null) }
     var recentConversationOpeningId by remember { mutableLongStateOf(0L) }
@@ -152,9 +167,6 @@ fun TaskListScreen(
     fun invalidateRecentConversationOpening() {
         recentConversationOpeningId += 1
         terminalMenuKey = null
-    }
-    androidx.activity.compose.BackHandler(enabled = state.hasTemporaryExpansion && terminalMenuKey == null) {
-        state.clearTemporaryExpansions()
     }
     androidx.activity.compose.BackHandler(enabled = terminalMenuKey != null) {
         terminalMenuKey = null
@@ -255,7 +267,6 @@ fun TaskListScreen(
         selecting = false
         selectedTaskIds = emptySet()
         selectedSessionIds = emptySet()
-        if (mode == HomeListMode.Sessions) attentionOnly = false
         onHomeListModeChange(mode)
     }
     fun createRecentTerminal(group: HomeGroup, target: WorkspaceSessionTarget) {
@@ -312,13 +323,11 @@ fun TaskListScreen(
     val hasAnyContent = allGroups.isNotEmpty()
     var refreshingSessions by remember { mutableStateOf(false) }
 
-    fun normalizedPath(value: String): String = value.trim().replace(Regex("/+$"), "").ifEmpty { "/" }
-
     fun workspaceForPath(value: String): String? {
-        val normalized = normalizedPath(value)
+        val normalized = normalizeWorkspacePath(value)
         return state.groups.asSequence()
             .filter { !it.synthetic }
-            .firstOrNull { normalizedPath(it.workspaceCwd) == normalized }
+            .firstOrNull { normalizeWorkspacePath(it.workspaceCwd) == normalized }
             ?.workspaceId
     }
 
@@ -550,6 +559,11 @@ fun TaskListScreen(
         val teamSelected = newTaskTeamId != null && newTaskTeams.any { it.id == newTaskTeamId }
         val teamSubmitError =
             newTaskTeamSubmitError(newTaskPrompt, teamSelected, isTeamPickAllowed(newTaskWorkspaceId))
+        // 表单摘要按当前选择判一次；提交时同一式子拿快照再判一次。
+        val gateParentId = pendingParentLink?.second
+            ?: newTaskParentId.takeIf { id -> id.isNotEmpty() && parentOptions.any { it.first == id } }
+        val ungroupedStart = !teamSelected &&
+            newTaskStartsUngroupedSession(groupedName, startFirstSession, gateParentId != null)
         val canCreateTask = (pendingParentLink != null && newTaskTeamId == null) ||
             (cwd.isNotEmpty() &&
                 TaskListState.isValidOptionalTaskName(groupedName) &&
@@ -660,6 +674,34 @@ fun TaskListScreen(
                         defaultProvider = submittedTarget.raw.takeUnless { submittedTarget.isShell },
                         defaultSessionKind = submittedKind,
                     )
+                    if (newTaskStartsUngroupedSession(
+                            groupedName,
+                            submittedStartSession,
+                            pendingParentLink != null || submittedParentId != null,
+                        )
+                    ) {
+                        // 没指定任务就不建卡：会话只带目录归属起在「未分组任务」里，
+                        // 要成卡由用户在那一行「归纳为新任务」。
+                        val session = state.createUngroupedSession(
+                            // 全局暂存区由 state 剔除：会话只认目录，不认隐藏项目。
+                            workspaceId = submittedWorkspaceId,
+                            cwd = cwd,
+                            target = submittedTarget,
+                            kind = submittedKind,
+                            prompt = taskPrompt,
+                            model = submittedModel,
+                            thinkingEffort = submittedEffort,
+                            employeeId = submittedEmployeeId,
+                        )
+                        if (session != null) {
+                            newTaskOpen = false
+                            onOpenSession(TaskSessionRoute(
+                                sessionId = session.id,
+                                structured = session.isStructured,
+                            ))
+                        }
+                        return@launch
+                    }
                     val result = pendingParentLink?.first ?: state.createTask(
                         name = groupedName,
                         cwd = cwd,
@@ -730,6 +772,14 @@ fun TaskListScreen(
             parentsLoading = parentsLoading,
             parentError = parentError,
             onReloadParents = { loadParentTasks(newTaskOpeningId) },
+            api = boardApi,
+            dispatchWorkspaceId = newTaskWorkspaceId.orEmpty(),
+            dispatchWorkspaceName = state.groups.firstOrNull { it.workspaceId == newTaskWorkspaceId }?.workspaceName,
+            onDispatchStarted = { started ->
+                // 派工由服务端建卡 + 起 run：关窗后直接落到那张卡的详情（它有群聊与步骤）。
+                newTaskOpen = false
+                onOpenBoardTaskDetail(started.taskId)
+            },
             target = newTaskTarget,
             teams = newTaskTeams,
             employees = newTaskEmployees,
@@ -800,6 +850,7 @@ fun TaskListScreen(
             models = newTaskModels,
             startFirstSession = startFirstSession,
             onStartFirstSessionChange = { startFirstSession = it },
+            ungroupedStart = ungroupedStart,
             worktree = newTaskWorktree,
             onWorktreeChange = { newTaskWorktree = it },
             busy = state.mutationBusy || parentLinkBusy || newTaskSubmitting,
@@ -819,7 +870,12 @@ fun TaskListScreen(
     }
 
     moveSessionTarget?.let { session ->
+        // 还挂在某个目录组的未分组列表里 = 这条会话没有任务归属，才给「归纳为新任务」。
+        val ungrouped = state.groups.firstOrNull { group ->
+            group.standaloneSessions.any { it.id == session.id }
+        }
         SessionMoveSheet(api, session.id, session.title ?: "CLI 会话",
+            intoNewTask = ungrouped,
             onDismiss = { moveSessionTarget = null },
             onMoved = { scope.launch { state.refreshAfterMutation() } })
     }
@@ -1183,12 +1239,13 @@ fun TaskListScreen(
             // HomeActivity uses transparent edge-to-edge system bars. Consume the top inset
             // here so the dashboard chrome never sits underneath the clock/camera cutout.
             .statusBarsPadding()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .then(if (homeListMode == HomeListMode.Im) Modifier.imePadding() else Modifier),
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            AmbientBackground(Modifier.fillMaxSize())
             Column(Modifier.fillMaxSize()) {
-                HomeTopBar(
+                if (homeListMode != HomeListMode.Im || conversationList == null) HomeTopBar(
+                    title = if (homeListMode == HomeListMode.Tasks) "任务" else "工作区",
                     serverDisplayName = serverDisplayName,
                     interactionEnabled = interactionEnabled,
                     onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
@@ -1199,7 +1256,7 @@ fun TaskListScreen(
                 )
                 // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
                 // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
-                if (homeActivityStripVisible(showingBoard, activityStats)) {
+                if (homeListMode != HomeListMode.Im && homeActivityStripVisible(showingBoard, activityStats)) {
                     HomeActivityStrip(
                         stats = activityStats,
                         enabled = interactionEnabled,
@@ -1224,20 +1281,14 @@ fun TaskListScreen(
                 }
                 // 会话 ↔ 任务 是同一张列表的两种视图，切换时交叉淡入淡出，
                 // 不做整屏硬切、也不重新入场（对齐「列表切换不闪跳」）。
-                AnimatedContent(
-                    targetState = showingBoard,
+                com.wand.app.ui.components.WandInPlaceSwap(
+                    contentKey = homeListMode.storageValue,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    transitionSpec = {
-                        if (!reduceMotion) {
-                            // 退场比进场快：两层内容不会同时全亮。
-                            fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
-                        } else {
-                            EnterTransition.None togetherWith ExitTransition.None
-                        }
-                    },
-                    label = "homeListSwitch",
-                ) { boardVisible ->
-                if (boardVisible) {
+                    durationMillis = WandMotion.normal, enterScale = 1f, exitScale = 1f,
+                ) { displayed ->
+                val projection = displayed as String
+                homeViewState.SaveableStateProvider(projection) {
+                if (projection == HomeListMode.Tasks.storageValue) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         TaskBoardScreen(
                             api = boardApi,
@@ -1248,9 +1299,11 @@ fun TaskListScreen(
                             embedded = true,
                             showSearchField = false,
                             // 底部悬浮胶囊压在列表上，最后一张卡要能滑到胶囊上方。
-                            bottomClearance = 68.dp,
+                            bottomClearance = menuClearance,
                         )
                     }
+                } else if (projection == HomeListMode.Im.storageValue && conversationList != null) {
+                    conversationList(menuClearance)
                 } else WandPullToRefresh(
                     isRefreshing = refreshingSessions,
                     onRefresh = {
@@ -1282,7 +1335,7 @@ fun TaskListScreen(
                     // 空列表与筛选空态也保留常驻终端入口，不能用整页空态吞掉快捷新增。
                     else -> Column(modifier = Modifier.fillMaxSize()) {
                         if (selecting) {
-                            Box(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+                            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             SidebarManageBar(
                                 count = managedSelection.count,
                                 allSelected = managedSelection.count > 0 &&
@@ -1327,13 +1380,14 @@ fun TaskListScreen(
                             modifier = Modifier.weight(1f),
                             state = homeListState,
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                start = 6.dp,
-                                end = 6.dp,
-                                top = 4.dp,
+                                start = 16.dp,
+                                end = 16.dp,
+                                top = 8.dp,
                                 // 底部悬浮胶囊压在列表上，最后一排卡片要能滑到胶囊上方。
-                                bottom = 88.dp,
+                                bottom = maxOf(88.dp, menuClearance),
                             ),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            // 独立圆角表面之间留出背景缝隙；卡片内部仍由各自的行布局管理。
+                            verticalArrangement = Arrangement.spacedBy(WandSpacing.xs),
                         ) {
                         item(key = "recent-conversation-header") {
                             HomeSectionHeaderRow(
@@ -1571,8 +1625,9 @@ fun TaskListScreen(
                 }
                 }
             }
-            // 底部悬浮菜单胶囊：左右居中、浮在列表之上（对话 / 任务 / 通讯录）。
-            // 三枚入口一次到底；多选是管理态，胶囊先让位，避免和批量操作抢注意力。
+            }
+            // 按参考图保留悬浮胶囊；按枚举映射目的地，列表余量包含外围留白。
+            // 管理态让位给批量操作；列表余量继续由实测导航高度决定。
             if (!selecting) {
                 HomeMenuPill(
                     mode = homeListMode,
@@ -1581,6 +1636,7 @@ fun TaskListScreen(
                         when (item) {
                             HomeMenuPillItem.Chats -> selectHomeMode(HomeListMode.Sessions)
                             HomeMenuPillItem.Tasks -> selectHomeMode(HomeListMode.Tasks)
+                            HomeMenuPillItem.Im -> selectHomeMode(HomeListMode.Im)
                             HomeMenuPillItem.Contacts -> {
                                 invalidateRecentConversationOpening()
                                 onOpenContacts()
@@ -1589,7 +1645,10 @@ fun TaskListScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(top = 4.dp, bottom = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .widthIn(max = 440.dp)
+                        .fillMaxWidth()
+                        .onSizeChanged { menuHeight = with(menuDensity) { it.height.toDp() } },
                 )
             }
         }
@@ -1700,28 +1759,25 @@ private fun DirectoryPickerRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
 ) {
-    Row(
+    WandListItem(
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = WandColors.brand, modifier = Modifier.size(20.dp))
-        Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary)
-            if (path != title) {
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = if (path == title) title else "$title $path" },
+        headlineContent = { Text(title) },
+        supportingColor = WandColors.textMuted,
+        supportingContent = path.takeIf { it != title }?.let {
+            {
                 Text(
-                    path,
-                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                    color = WandColors.textMuted,
+                    it,
+                    fontFamily = FontFamily.Monospace,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-        }
-        Icon(WandIcons.chevronRight, contentDescription = null, tint = WandColors.textMuted)
-    }
+        },
+        leadingContent = { WandListItemIconSlot(icon, tint = WandColors.brand, iconSize = 20.dp) },
+        trailingContent = { WandListItemIconSlot(WandIcons.chevronRight, iconSize = 24.dp) },
+    )
 }
 
 /**

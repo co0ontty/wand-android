@@ -38,12 +38,15 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Palette
@@ -81,6 +84,10 @@ import androidx.compose.ui.unit.dp
  * 屏幕代码统一从 WandIcons.* 取场景图标、用 toolIcon(name) 取工具图标。
  */
 object WandIcons {
+    /** IM 主入口与工作区使用场景图标，不借用工具结果/历史符号。 */
+    val chat: ImageVector = Icons.Outlined.Forum
+    val workspace: ImageVector = Icons.Outlined.GridView
+
     // —— 工具图标 ——
     /** bash / command / shell。 */
     val terminal: ImageVector = Icons.Outlined.Terminal
@@ -132,6 +139,7 @@ object WandIcons {
 
     /** 权限审批。 */
     val permission: ImageVector = Icons.Outlined.Lock
+    val unlock: ImageVector = Icons.Outlined.LockOpen
 
     /** 工具结果。 */
     val toolResult: ImageVector = Icons.AutoMirrored.Outlined.Notes

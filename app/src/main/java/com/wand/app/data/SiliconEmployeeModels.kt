@@ -14,6 +14,8 @@ data class SiliconEmployee(
     val systemKey: String? = null,
     val archivedAt: String? = null,
     val tags: List<String> = emptyList(),
+    /** 创建时间（ISO-8601）。通讯录按它做时间先后排序；旧服务不返回时为空串。 */
+    val createdAt: String = "",
 ) {
     val archived: Boolean get() = !archivedAt.isNullOrBlank()
 
@@ -55,6 +57,7 @@ data class SiliconEmployee(
                 tags = value.arr("tags")?.let { array ->
                     (0 until array.length()).mapNotNull { array.opt(it) as? String }
                 } ?: emptyList(),
+                createdAt = value.str("createdAt") ?: "",
             )
         }
 

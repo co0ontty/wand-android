@@ -4,11 +4,22 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -60,6 +72,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -67,6 +80,8 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -96,8 +111,10 @@ import com.wand.app.ui.components.WandProviderMarkVariant
 import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.WandStatusPresentation
+import com.wand.app.ui.components.statusColor
 import com.wand.app.ui.components.WandStatusTone
 import com.wand.app.ui.components.wandStatusPresentation
+import com.wand.app.ui.components.WandBrandTag
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
@@ -109,11 +126,11 @@ import com.wand.app.ui.withLiveTitle
 /**
  * 首页（工作台）的成品级外壳。
  *
- * 设计取舍（对齐 Cursor for iOS / Claude Code mobile / Codex mobile 的首页共识）：
- * - 顶部是品牌 + 服务器 + 唯一溢出菜单，不再把「会话模式」做成一个像下拉的胶囊；
- * - 状态优先：先告诉你「几个在跑、几个等你」，再给列表；列表是卡片不是文件树；
+ * 手机按 APP 参考图控制层级与密度：
+ * - 一层标题栏，服务器切换收在品牌图标，消息页使用自己的标题栏；
+ * - 灰白底面、克制的蓝色动作、细描边悬浮底栏；
  * - 需要动手的会话有明确的状态胶囊，而不是只有一个小圆点；
- * - 手机首页与平板展开侧栏共用底部悬浮胶囊：「对话 / 任务 / 通讯录」直接可达，
+ * - 手机首页与平板展开侧栏共用底部导航：「聊天 / 通讯录 / 工作区 / 任务」直接可达，
  *   溢出菜单不重复这些入口。
  * 这里只做展示，所有状态计算走 HomePresentation 的纯函数。
  */
@@ -122,6 +139,7 @@ import com.wand.app.ui.withLiveTitle
 
 @Composable
 internal fun HomeTopBar(
+    title: String,
     serverDisplayName: String,
     interactionEnabled: Boolean,
     onOpenSettings: () -> Unit,
@@ -138,56 +156,20 @@ internal fun HomeTopBar(
         }
     }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 2.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 品牌标是身份，也是「这是一款客户端」而不是「一个后台工具」的第一眼信号。
-        WandBrandMark(size = 30)
-        Spacer(Modifier.width(10.dp))
-        Row(
-            modifier = Modifier
-                .widthIn(max = 160.dp)
-                .clip(WandShapes.full)
-                .background(WandColors.surfaceSoft.copy(alpha = 0.55f))
-                .border(0.5.dp, WandColors.border.copy(alpha = 0.6f), WandShapes.full)
-                .clickable(
-                    enabled = interactionEnabled,
-                    role = Role.Button,
-                    onClickLabel = "切换服务器",
-                    onClick = onSwitchServer,
-                )
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            modifier = Modifier.size(WandSizes.minTouchTarget).clip(WandShapes.full)
+                .clickable(enabled = interactionEnabled, role = Role.Button,
+                    onClickLabel = "切换服务器", onClick = onSwitchServer)
+                .semantics { contentDescription = "当前服务器：${serverDisplayName.ifBlank { "未命名" }}，切换服务器" },
+            contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                WandIcons.server,
-                contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(13.dp),
-            )
-            Text(
-                serverDisplayName.ifBlank { "当前服务器" },
-                style = MaterialTheme.typography.labelLarge,
-                color = WandColors.textPrimary,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .padding(start = 6.dp),
-            )
-            Icon(
-                WandIcons.expand,
-                contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier
-                    .padding(start = 4.dp)
-                    .size(14.dp),
-            )
+            WandBrandMark(size = 26)
         }
-        Spacer(Modifier.weight(1f))
+        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
+            textAlign = TextAlign.Center, color = WandColors.textPrimary, maxLines = 1)
         if (onCollapseSidebar != null) {
             WandIconButton(
                 icon = WandIcons.panelCollapse,
@@ -535,13 +517,7 @@ private fun HomeStatPill(
     ellipsizedContentDescription: String? = null,
     slotWidth: Dp? = null,
 ) {
-    val color = when (tone) {
-        WandStatusTone.Success -> WandColors.success
-        WandStatusTone.Permission -> WandColors.permission
-        WandStatusTone.Danger -> WandColors.danger
-        WandStatusTone.Warning -> WandColors.warning
-        WandStatusTone.Neutral -> WandColors.textMuted
-    }
+    val color = tone.statusColor()
     val motionEnabled = !reduceMotionEnabled()
     val fill by animateColorAsState(
         targetValue = if (selected) color.copy(alpha = 0.18f) else WandColors.surfaceSoft.copy(alpha = 0.5f),
@@ -866,7 +842,7 @@ internal fun HomeWorkspaceCard(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "${group.standaloneSessions.size} 个未分组终端",
+                                    "${group.standaloneSessions.size} 个未分组任务",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = WandColors.textMuted,
                                     modifier = Modifier.weight(1f),
@@ -1554,7 +1530,8 @@ internal fun HomeSessionRow(
                             if (teamChat != null) Modifier.clip(WandShapes.sm)
                                 .background(WandColors.brandSoft.copy(alpha = 0.55f))
                             else Modifier,
-                        ),
+                        )
+                        .logoBreathingGlow(presentation, cornerRadius = 8.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (session.employeeId != null) {
@@ -1570,15 +1547,14 @@ internal fun HomeSessionRow(
                             modifier = Modifier.size(18.dp),
                         )
                     } else {
-                        WandProviderMark(
-                            provider = session.provider,
+                        WandProviderMark(provider = session.provider,
                             variant = WandProviderMarkVariant.Tinted,
                         )
                     }
                 }
             }
             if (secondary) {
-                // 二级行只有一行：标题（是什么东西）+ 团队来源 + 指示灯，状态不再单独占一行。
+                // 二级行只有一行：标题（是什么东西）+ 团队来源，状态由左侧 logo 呼吸灯表达，取消文字标签。
                 Row(
                     modifier = Modifier.weight(1f).padding(start = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1586,7 +1562,8 @@ internal fun HomeSessionRow(
                 ) {
                     if (session.employeeId != null) {
                         WandProviderMark(provider = session.provider,
-                            variant = WandProviderMarkVariant.Tinted)
+                            variant = WandProviderMarkVariant.Tinted,
+                            modifier = Modifier.logoBreathingGlow(presentation, cornerRadius = 6.dp))
                     }
                     Text(
                         label,
@@ -1599,7 +1576,6 @@ internal fun HomeSessionRow(
                     )
                     session.teamStep?.teamName?.takeIf { it.isNotBlank() }
                         ?.let { TeamSourceTag(it) }
-                    SessionStatusPill(presentation = presentation)
                 }
             } else {
                 Column(
@@ -1647,7 +1623,6 @@ internal fun HomeSessionRow(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        SessionStatusPill(presentation = presentation)
                         Text(
                             sessionMetaLine(live, nowMillis),
                             style = MaterialTheme.typography.labelMedium,
@@ -1693,20 +1668,62 @@ internal fun HomeSessionRow(
     }
 }
 
+/**
+ * 列表页 Logo 状态呼吸灯：运行中带一圈绿色呼吸灯，其他状态带对应语义色光圈。
+ * 取消列表中的文字标签，由外层光圈表达状态。
+ */
+@Composable
+fun Modifier.logoBreathingGlow(
+    presentation: WandStatusPresentation,
+    cornerRadius: Dp = 8.dp,
+): Modifier {
+    if (presentation.normalized in listOf("idle", "exited", "stopped", "archived", "none")) {
+        return this
+    }
+    val glowColor = presentation.tone.statusColor()
+    val reduceMotion = reduceMotionEnabled()
+
+    val alpha = if (presentation.breathing && !reduceMotion) {
+        val infiniteTransition = rememberInfiniteTransition(label = "logo-breathing")
+        val animatedAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.4f,
+            targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1100, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "logo-breathing-alpha",
+        )
+        animatedAlpha
+    } else {
+        0.8f
+    }
+
+    return this.drawBehind {
+        val crPx = cornerRadius.toPx()
+        val cr = CornerRadius(crPx, crPx)
+        // 外层柔和呼吸光晕
+        drawRoundRect(
+            color = glowColor.copy(alpha = alpha * 0.38f),
+            topLeft = Offset(-3.dp.toPx(), -3.dp.toPx()),
+            size = Size(size.width + 6.dp.toPx(), size.height + 6.dp.toPx()),
+            cornerRadius = CornerRadius(crPx + 2.dp.toPx(), crPx + 2.dp.toPx()),
+        )
+        // 核心呼吸光圈
+        drawRoundRect(
+            color = glowColor.copy(alpha = alpha),
+            topLeft = Offset(-1.dp.toPx(), -1.dp.toPx()),
+            size = Size(size.width + 2.dp.toPx(), size.height + 2.dp.toPx()),
+            cornerRadius = cr,
+            style = Stroke(width = 1.8.dp.toPx()),
+        )
+    }
+}
+
 /** 团队派发来源的小标签：`来自 前端组`。 */
 @Composable
 private fun TeamSourceTag(teamName: String) {
-    Text(
-        "来自 $teamName",
-        style = MaterialTheme.typography.labelMedium,
-        color = WandColors.brand,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .clip(WandShapes.xs)
-            .background(WandColors.brandSoft.copy(alpha = 0.5f))
-            .padding(horizontal = 5.dp, vertical = 1.dp),
-    )
+    WandBrandTag("来自 $teamName", style = MaterialTheme.typography.labelMedium, overflow = TextOverflow.Ellipsis)
 }
 
 /**
@@ -1715,13 +1732,7 @@ private fun TeamSourceTag(teamName: String) {
  */
 @Composable
 private fun SessionStatusPill(presentation: WandStatusPresentation) {
-    val color = when (presentation.tone) {
-        WandStatusTone.Success -> WandColors.success
-        WandStatusTone.Permission -> WandColors.permission
-        WandStatusTone.Danger -> WandColors.danger
-        WandStatusTone.Warning -> WandColors.warning
-        WandStatusTone.Neutral -> WandColors.textMuted
-    }
+    val color = presentation.tone.statusColor()
     // 「空闲」是绝大多数会话的常态：它只留一个安静的灰点，
     // 不写文字、不占胶囊，让真正需要看的「运行中 / 等待授权」跳出来。
     if (presentation.normalized == "idle") {
@@ -1755,63 +1766,33 @@ private fun SessionStatusPill(presentation: WandStatusPresentation) {
 
 // MARK: - 底部悬浮菜单胶囊
 
-/** 胶囊高；内层指示条高 = 高减去两个边距，两层因此同心（有单测钉住）。 */
-internal val HomeMenuPillHeight = 48.dp
-
-/** 胶囊四周同一条边距：指示条与外层弧线之间的距离（左右也一样）。 */
+/** 根导航保留既有枚举与持久化模式，用户只看到明确的产品概念。 */
+internal val HomeMenuPillHeight = 60.dp
 internal val HomeMenuPillInset = 4.dp
 
-/** 胶囊最宽值：三段各留约 90dp，再宽只是空档。 */
-internal val HomeMenuPillMaxWidth = 280.dp
-
-private val HomeMenuPillIconSize = 15.dp
-private val HomeMenuPillLabelGap = 6.dp
-private val HomeMenuPillButtonInset = 8.dp
-
-/**
- * 悬浮胶囊里的三枚入口，声明顺序就是从左到右的顺序：对话 / 任务 / 通讯录。
- * 图标走 getter：枚举初始化只带文案，JVM 单测可以直接读顺序与标签。
- */
 internal enum class HomeMenuPillItem(val label: String, val description: String) {
-    Chats("对话", "切到对话列表"),
-    Tasks("任务", "切到任务面板"),
-    Contacts("通讯录", "打开通讯录");
+    Im("聊天", "打开聊天"),
+    Contacts("通讯录", "打开通讯录"),
+    Chats("工作区", "打开工作区"),
+    Tasks("任务", "打开任务面板");
 
     val icon: ImageVector
         get() = when (this) {
-            Chats -> WandIcons.history
-            Tasks -> WandIcons.todo
+            Im -> WandIcons.chat
             Contacts -> WandIcons.contacts
+            Chats -> WandIcons.workspace
+            Tasks -> WandIcons.todo
         }
 }
 
-/**
- * 指示条只标「对话 / 任务」这两个视图态：通讯录是去往另一个页面，不是当前视图。
- */
-internal fun homeMenuPillSelection(mode: HomeListMode): Int =
-    if (mode == HomeListMode.Tasks) HomeMenuPillItem.Tasks.ordinal else HomeMenuPillItem.Chats.ordinal
-
-/** 窄侧栏优先保留完整文案；按实际字号量宽，空间足够才加图标。 */
-internal fun homeMenuPillShowsIcons(availableWidth: Dp, widestLabelWidth: Dp): Boolean {
-    val segmentWidth = (availableWidth - HomeMenuPillInset * 2) / HomeMenuPillItem.entries.size
-    return segmentWidth >= widestLabelWidth + HomeMenuPillButtonInset * 2 +
-        HomeMenuPillIconSize + HomeMenuPillLabelGap
+/** 通讯录保留现有返回来源；其余三项切换各自保存的工作路径。 */
+internal fun homeMenuPillSelection(mode: HomeListMode): Int = when (mode) {
+    HomeListMode.Sessions -> HomeMenuPillItem.Chats.ordinal
+    HomeListMode.Tasks -> HomeMenuPillItem.Tasks.ordinal
+    HomeListMode.Im -> HomeMenuPillItem.Im.ordinal
 }
 
-/**
- * 首页底部左右居中悬浮的菜单胶囊：对话 / 任务 / 通讯录。
- *
- * 形状：外层胶囊与选中段都是整圆端（左右两端同一条弧），四周共用 [HomeMenuPillInset]，
- * 所以内层半径 = 外层半径 − 边距，两层同心；选中段落在最左/最右也不会顶到弧线。
- *
- * 材质用页面里最多的一种面——不透明的卡片配方（[wandCardSurface]）：胶囊浮在列表/看板上，
- * 背后就是任务卡正文，半透明或玻璃采样都会让文字透进来、把圆角轮廓一起糊掉；实心卡片底 +
- * 发丝描边 + 一层略高于卡片的投影，在米色底和卡片上都始终看得清边界，也和页面里其它浮起的
- * 面（卡片、提示条）同一种语言。
- *
- * 动效：三枚入口一次到底，不做「先展开再选」；切换时指示条滑动（前缘先走、后缘晚一拍），
- * 图标与文案颜色交叉过渡，`reduceMotion` 下指示条与颜色都退化为瞬时。
- */
+/** 参考 APP 的细描边悬浮胶囊；字体放大时以实际测量扩高，不压缩文字或触控区域。 */
 @Composable
 internal fun HomeMenuPill(
     mode: HomeListMode,
@@ -1821,93 +1802,62 @@ internal fun HomeMenuPill(
 ) {
     val selectedIndex = homeMenuPillSelection(mode)
     val textMeasurer = rememberTextMeasurer()
-    val labelStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+    val labelStyle = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp, lineHeight = 14.sp)
     val density = LocalDensity.current
-    val widestLabelWidth = with(density) {
-        HomeMenuPillItem.entries.maxOf { item ->
-            textMeasurer.measure(item.label, style = labelStyle, maxLines = 1).size.width
-        }.toDp()
-    }
-    BoxWithConstraints(modifier = modifier.widthIn(max = HomeMenuPillMaxWidth)) {
-        val showIcons = homeMenuPillShowsIcons(maxWidth, widestLabelWidth)
-        WandSegmentedTrack(
-            itemCount = HomeMenuPillItem.entries.size,
-            selectedIndex = selectedIndex,
-            modifier = Modifier
-                // tint 传 surface 是为了拿「不透明」的卡片底：胶囊压在正文上，
-                // 半透明会让背后的文字透成一串可读的噪点（没有玻璃模糊时尤其明显）。
-                .wandCardSurface(shape = WandShapes.full, tint = WandColors.surface, elevation = 3.dp)
-                .border(0.8.dp, WandColors.border.copy(alpha = 0.7f), WandShapes.full),
-            containerShape = WandShapes.full,
-            indicatorShape = WandShapes.full,
-            containerColor = Color.Transparent,
-            // 选中段是弱陶色胶囊：不抢品牌动作色，也不会在卡片底上再压一块高亮白。
-            indicatorColor = WandColors.selectedFill.compositeOver(WandColors.bgPrimary),
-            indicatorBorder = null,
-            padding = HomeMenuPillInset,
-            minHeight = HomeMenuPillHeight,
-        ) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()
+        .shadow(6.dp, WandShapes.full, ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.08f))
+        .clip(WandShapes.full)
+        .background(WandColors.bgElevated.copy(alpha = 0.98f))
+        .border(0.5.dp, WandColors.border, WandShapes.full)) {
+        val labelWidth = ((maxWidth - HomeMenuPillInset * 2) / HomeMenuPillItem.entries.size - 8.dp).coerceAtLeast(1.dp)
+        val labels = HomeMenuPillItem.entries.map {
+            textMeasurer.measure(it.label, style = labelStyle, maxLines = 3,
+                constraints = Constraints(maxWidth = with(density) { labelWidth.roundToPx().coerceAtLeast(1) }))
+        }
+        val labelLines = labels.maxOf { it.lineCount }
+        val labelHeight = with(density) { labels.maxOf { it.size.height }.toDp() }
+        val height = maxOf(HomeMenuPillHeight, 20.dp + 3.dp + labelHeight + 20.dp)
+        Row(Modifier.fillMaxWidth().heightIn(min = height).padding(HomeMenuPillInset)) {
             HomeMenuPillItem.entries.forEach { item ->
-                HomeMenuPillButton(
-                    item = item,
-                    selected = item.ordinal == selectedIndex,
-                    showIcon = showIcons,
-                    enabled = enabled,
-                    onClick = { onSelect(item) },
-                )
+                HomeMenuPillButton(item, item.ordinal == selectedIndex, labelLines, height - HomeMenuPillInset * 2, enabled) { onSelect(item) }
             }
         }
     }
 }
 
-/** 胶囊里的一段：图标 + 文案，选中只换颜色，指示条由 [WandSegmentedTrack] 负责。 */
 @Composable
 private fun RowScope.HomeMenuPillButton(
     item: HomeMenuPillItem,
     selected: Boolean,
-    showIcon: Boolean,
+    labelLines: Int,
+    height: Dp,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val color by animateColorAsState(
-        targetValue = if (selected) WandColors.brand else WandColors.textSecondary,
+        targetValue = if (selected) WandColors.brandText else WandColors.textSecondary,
         animationSpec = WandMotion.respectMotion(reduceMotionEnabled().not(), WandMotion.tweenFast()),
-        label = "menuPillItemColor",
+        label = "homeNavigationColor",
     )
-    Row(
-        modifier = Modifier
-            .weight(1f)
-            .heightIn(min = HomeMenuPillHeight - HomeMenuPillInset * 2)
+    Column(
+        modifier = Modifier.weight(1f).heightIn(min = height)
             .clip(WandShapes.full)
-            .clickable(
-                enabled = enabled && !selected,
-                role = if (item == HomeMenuPillItem.Contacts) Role.Button else Role.Tab,
-                onClickLabel = item.description,
-                onClick = onClick,
-            )
+            .background(if (selected) WandColors.surfaceSoft else Color.Transparent)
+            .clickable(enabled = enabled, role = if (item == HomeMenuPillItem.Contacts) Role.Button else Role.Tab,
+                onClickLabel = item.description, onClick = onClick)
             .semantics {
                 contentDescription = if (selected) "当前${item.label}" else item.description
+                if (item != HomeMenuPillItem.Contacts) this.selected = selected
             }
-            .padding(horizontal = HomeMenuPillButtonInset, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        if (showIcon) {
-            Icon(
-                item.icon,
-                contentDescription = null,
-                tint = color,
-                modifier = Modifier.size(HomeMenuPillIconSize),
-            )
-        }
-        Text(
-            item.label,
-            style = MaterialTheme.typography.labelLarge,
-            color = color,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-            modifier = Modifier.padding(start = if (showIcon) HomeMenuPillLabelGap else 0.dp),
-        )
+        Icon(item.icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.height(3.dp))
+        Text(item.label, style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp, lineHeight = 14.sp),
+            color = color, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = labelLines, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
     }
 }
 

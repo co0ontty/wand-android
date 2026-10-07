@@ -111,7 +111,7 @@ private fun TeamMessageDocBottomSheet(
                 TeamMessageDocIdentity(doc, withName = true, modifier = Modifier.weight(1f))
                 // 只留一个关闭入口（不并排两个 ✕），下拉手势与返回键由 sheet 原生承担。
                 TextButton(onClick = onRequestClose) {
-                    Text("关闭", style = MaterialTheme.typography.labelLarge, color = WandColors.brand)
+                    Text("关闭", style = MaterialTheme.typography.labelLarge, color = WandColors.brandText)
                 }
             }
             HorizontalDivider(color = WandColors.border.copy(alpha = 0.6f))

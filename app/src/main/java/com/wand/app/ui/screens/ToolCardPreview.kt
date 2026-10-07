@@ -21,8 +21,8 @@ internal fun toolResultCardPreview(result: ContentBlock.ToolResult?): String =
         ?.filter(String::isNotBlank)?.take(2)?.joinToString(" · ")?.take(180).orEmpty()
 
 @Composable
-internal fun ToolPreviewText(text: String, color: Color = WandColors.textSecondary) {
+internal fun ToolPreviewText(text: String, color: Color = WandColors.textSecondary, maxLines: Int = 2) {
     if (text.isBlank()) return
     Text(text, fontSize = 11.sp, lineHeight = 16.sp, fontFamily = FontFamily.Monospace,
-        color = color, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }

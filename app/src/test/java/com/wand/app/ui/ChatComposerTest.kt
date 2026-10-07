@@ -28,6 +28,53 @@ class ChatComposerTest {
     private fun file(path: String) = UploadedFile(path.substringAfterLast('/'), path, 3, "text/plain")
 
     @Test
+    fun explicitReceiptClearsOnlyUnknownCaptureAndNeverNewInput() = runTest {
+        val drafts = SessionDraftStore(mapOf("conversation-a" to "first"))
+        val composer = composer(drafts, id = "conversation-a", send = { throw com.wand.app.data.ConversationUnconfirmedException("request-a") })
+        assertTrue(composer.submit())
+        runCurrent()
+        assertFalse(composer.canSubmit)
+        assertTrue(drafts.savedDrafts().isEmpty())
+        composer.editDraft("new input")
+        composer.reconcileSubmission(accepted = true)
+        assertEquals("new input", composer.draft)
+        assertEquals(mapOf("conversation-a" to "new input"), drafts.savedDrafts())
+    }
+
+    @Test
+    fun uploadStartedBeforeRevisionChangeDoesNotAttachToNewDraft() = runTest {
+        val drafts = SessionDraftStore(mapOf("chat-a" to "old"))
+        val composer = composer(drafts)
+        val upload = CompletableDeferred<List<UploadedFile>>()
+        assertTrue(composer.upload { upload.await() })
+        runCurrent()
+        composer.editDraft("new")
+        upload.complete(listOf(file("/uploads/old.txt")))
+        runCurrent()
+        assertEquals("new", composer.draft)
+        assertTrue(composer.attachments.isEmpty())
+    }
+
+    @Test
+    fun explicitDispatchUsesSameOwnerAndFeedbackWithoutSendingTwice() = runTest {
+        val drafts = SessionDraftStore(mapOf("chat-a" to "task"))
+        var ordinary = 0
+        var dispatch = 0
+        var navigations = 0
+        val composer = composer(drafts, send = { ordinary++ })
+        assertTrue(composer.submit(deliver = { dispatch++ }, afterAccepted = { navigations++ }))
+        assertFalse(composer.submit())
+        runCurrent()
+        assertEquals(0, ordinary)
+        assertEquals(1, dispatch)
+        assertEquals(SendPhase.Sent, composer.sendPhase)
+        assertEquals(0, navigations)
+        advanceTimeBy(SEND_SENT_DWELL_MS)
+        runCurrent()
+        assertEquals(1, navigations)
+    }
+
+    @Test
     fun keepsTextAndAttachmentUntilAckThenClearsOnlyTheSubmittedContent() = runTest {
         val drafts = SessionDraftStore(mapOf("chat-a" to "first"))
         val ack = CompletableDeferred<Unit>()
@@ -97,6 +144,26 @@ class ChatComposerTest {
         assertEquals("terminal input", composer.draft)
         assertTrue(drafts.savedDrafts().isEmpty())
         assertEquals(SendPhase.Failed, composer.sendPhase)
+    }
+
+    @Test
+    fun reopeningComposerAndEditingBackCannotResendUnknownInput() = runTest {
+        val drafts = SessionDraftStore(mapOf("chat-a" to "uncertain"))
+        var calls = 0
+        val first = composer(drafts, send = { calls++; throw WandApiException(500, "unknown") })
+        first.submit()
+        runCurrent()
+        first.shutdown()
+        val reopened = composer(drafts, send = { calls++ })
+        assertFalse(reopened.canSubmit)
+        assertFalse(reopened.submit())
+        reopened.editDraft("new input")
+        assertTrue(reopened.canSubmit)
+        reopened.editDraft("uncertain")
+        assertFalse(reopened.canSubmit)
+        assertFalse(reopened.submit())
+        runCurrent()
+        assertEquals(1, calls)
     }
 
     @Test

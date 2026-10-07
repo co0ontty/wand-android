@@ -15,6 +15,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspacePort
+import com.wand.app.data.WorkspaceTaskCreation
 import com.wand.app.ui.components.*
 import com.wand.app.ui.theme.WandColors
 import kotlinx.coroutines.CancellationException
@@ -29,6 +30,29 @@ internal fun sessionMoveTargets(groups: List<TaskDirectoryGroup>, sessionId: Str
         query.isBlank() || "${it.workspace} ${it.name}".contains(query.trim(), ignoreCase = true)
     }
 
+/**
+ * 未分组会话「归纳为新任务」：建一张没起名的卡，再把这条会话装进去。
+ * 合成目录和隐藏的全局空间没有可建卡的项目实体，改建挂同一目录的独立任务。
+ * 名字留空 —— 服务端先按会话内容写临时标题，之后交给模型改写，和 Web 端同一条链路。
+ */
+internal suspend fun summarizeSessionIntoNewTask(
+    api: WorkspacePort,
+    group: TaskDirectoryGroup,
+    sessionId: String,
+): WorkspaceTaskCreation {
+    val card = if (group.synthetic || group.isGlobal) {
+        api.createStandaloneTask(
+            name = "",
+            cwd = group.workspaceCwd.takeIf { it.isNotBlank() },
+            worktree = false,
+        )
+    } else {
+        api.createWorkspaceTask(workspaceId = group.workspaceId, name = "", worktree = false)
+    }
+    api.moveWorkspaceSession(card.id, sessionId)
+    return card
+}
+
 /** Touch/keyboard equivalent of desktop drag-and-drop, with an explicit destination confirmation. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +62,8 @@ fun SessionMoveSheet(
     sessionTitle: String,
     onDismiss: () -> Unit,
     onMoved: () -> Unit,
+    /** 非空 = 这条会话还没有任务归属，可以就地归纳成新任务。 */
+    intoNewTask: TaskDirectoryGroup? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -83,8 +109,40 @@ fun SessionMoveSheet(
                 TextButton(onClick = { retry++ }, enabled = !busy) { Text("重新加载任务") }
             }
             LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth(), contentPadding = PaddingValues(vertical = 8.dp)) {
+                if (!loading && error == null && intoNewTask != null) item(key = "summarize-into-new-task") {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                        .clickable(enabled = !busy) {
+                            val group = intoNewTask ?: return@clickable
+                            busy = true
+                            error = null
+                            scope.launch {
+                                try {
+                                    summarizeSessionIntoNewTask(api, group, sessionId)
+                                    Toast.makeText(context, "已归纳为新任务，稍后按会话内容自动命名",
+                                        Toast.LENGTH_SHORT).show()
+                                    onMoved()
+                                    onDismiss()
+                                } catch (cause: Exception) {
+                                    if (cause is CancellationException) throw cause
+                                    error = cause.message ?: "归纳失败，原会话不受影响"
+                                } finally { busy = false }
+                            }
+                        }
+                        .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(WandIcons.add, contentDescription = null, modifier = Modifier.size(22.dp),
+                            tint = WandColors.textSecondary)
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text("归纳为新任务", fontWeight = FontWeight.Medium, color = WandColors.textPrimary)
+                            Text("新建一张任务卡把这条会话装进去，标题稍后按会话内容自动生成",
+                                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                        }
+                    }
+                }
                 if (!loading && error == null && targets.none { !it.current }) item {
-                    Text(if (query.isBlank()) "还没有其他任务，请先创建一个任务分组。" else "没有匹配的目标任务。",
+                    Text(if (query.isNotBlank()) "没有匹配的目标任务。"
+                        else if (intoNewTask != null) "还没有其他任务，可以直接归纳为新任务。"
+                        else "还没有其他任务，请先创建一个任务分组。",
                         color = WandColors.textMuted, modifier = Modifier.padding(vertical = 16.dp))
                 }
                 items(targets, key = { it.id }) { target ->

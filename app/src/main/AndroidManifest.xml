@@ -65,6 +65,12 @@
             android:windowSoftInputMode="adjustResize"
             android:label="@string/app_name" />
 
+        <activity
+            android:name=".WebSettingsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:label="完整 Web 设置" />
+
         <service
             android:name=".WandForegroundService"
             android:exported="false"

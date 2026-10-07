@@ -314,8 +314,8 @@ class TeamChatPresentationTest {
     @Test
     fun chatAvatarSpecFollowsWebRuleOrder() {
         assertEquals(
-            "没选毛色的成员用派生毛色（与团队页同一张脸）",
-            ChatAvatarSpec.Cat(6),
+            "没自定义头像的成员按身份生成（不再是像素猫）",
+            ChatAvatarSpec.Generated(generatedAvatarFace("m_impl", "实现者")),
             chatAvatarSpec(TurnAuthor(id = "m_impl", name = "实现者")),
         )
         assertEquals(
@@ -337,10 +337,78 @@ class TeamChatPresentationTest {
             chatAvatarSpec(TurnAuthor(id = "", name = "", avatar = "说不清的取值")),
         )
         assertEquals(
-            "非法 avatar 但能定位身份 → 派生毛色",
-            ChatAvatarSpec.Cat(memberCoatIndex("", "实现者", "说不清的取值")),
+            "非法 avatar 但能定位身份 → 按身份生成",
+            ChatAvatarSpec.Generated(generatedAvatarFace("", "实现者")),
             chatAvatarSpec(TurnAuthor(id = "", name = "实现者", avatar = "说不清的取值")),
         )
+    }
+
+    @Test
+    fun generatedAvatarGlyphAndSeedMatchWeb() {
+        assertEquals("A", generatedAvatarGlyph(null, "Ada"))
+        assertEquals("实", generatedAvatarGlyph("m_impl", "实现者"))
+        assertEquals("E", generatedAvatarGlyph("emp-7", ""))
+        assertEquals("?", generatedAvatarGlyph(null, null))
+        assertEquals("?", generatedAvatarGlyph("", "  "))
+        // 按码点取首字符：emoji 代理对不被切半，与 Web Array.from(source)[0] 一致。
+        assertEquals("😀", generatedAvatarGlyph(null, "😀猫"))
+
+        assertEquals("m1", generatedAvatarSeed("m1", "Ada"))
+        assertEquals("Ada", generatedAvatarSeed("  ", "Ada"))
+        assertEquals("member", generatedAvatarSeed(null, null))
+        // 换名字不换底色（配色种子只认稳定 id），字形才跟着名字走。
+        assertEquals(generatedAvatarFace("m1", "Ada").from, generatedAvatarFace("m1", "鲍勃").from)
+        assertEquals(generatedAvatarFace("m1", "Ada").to, generatedAvatarFace("m1", "鲍勃").to)
+        assertEquals("A", generatedAvatarFace("m1", "Ada").glyph)
+        assertEquals("鲍", generatedAvatarFace("m1", "鲍勃").glyph)
+        assertEquals(
+            8,
+            GENERATED_AVATAR_COATS.size,
+        )
+        assertEquals(
+            "白字固定",
+            0xFFFFFFFF.toInt(),
+            GENERATED_AVATAR_TEXT,
+        )
+    }
+
+    @Test
+    fun generatedAvatarCoatsKeepWhiteTextReadable() {
+        // 与 Web tests/web-ui-ai-teams.test.ts 同一组断言：两端与中点对白字都得 ≥4.5:1。
+        fun channel(value: Int): Double {
+            val c = value / 255.0
+            return if (c <= 0.03928) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4)
+        }
+
+        fun luminance(argb: Int): Double {
+            val r = (argb shr 16) and 0xFF
+            val g = (argb shr 8) and 0xFF
+            val b = argb and 0xFF
+            return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+        }
+
+        fun contrast(a: Int, b: Int): Double {
+            val la = luminance(a)
+            val lb = luminance(b)
+            val hi = maxOf(la, lb)
+            val lo = minOf(la, lb)
+            return (hi + 0.05) / (lo + 0.05)
+        }
+
+        fun mix(a: Int, b: Int): Int {
+            fun ch(shift: Int): Int = (((a shr shift) and 0xFF) + ((b shr shift) and 0xFF)) / 2
+            return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+        }
+
+        for (coat in GENERATED_AVATAR_COATS) {
+            for (stop in listOf(coat.from, mix(coat.from, coat.to), coat.to)) {
+                val ratio = contrast(GENERATED_AVATAR_TEXT, stop)
+                assertTrue(
+                    "${coat.name} #$stop 对白字只有 %.2f:1".format(ratio),
+                    ratio >= 4.5,
+                )
+            }
+        }
     }
 
     @Test

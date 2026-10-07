@@ -26,6 +26,8 @@ import com.wand.app.ui.theme.ThemeKt;
 import com.wand.app.data.ServerProfile;
 import com.wand.app.data.WandAuth;
 import com.wand.app.data.WandHttp;
+import com.wand.app.data.PasswordConnection;
+import com.wand.app.data.LanDiscovery;
 
 import org.json.JSONObject;
 
@@ -48,6 +50,7 @@ public class ConnectActivity extends AppCompatActivity {
 
     private ConnectComposeView connectView;
     private ServerStore serverStore;
+    private LanDiscovery lanDiscovery;
     // 跟踪当前是否处于自动连接阶段。后台连接探测线程跑完之后会
     // runOnUiThread 决定下一步 (进入原生首页 / 报错回表单), 我们在那里
     // 检查这面旗 — 用户如果已经点了"取消"/"管理服务器", autoConnecting
@@ -79,19 +82,21 @@ public class ConnectActivity extends AppCompatActivity {
         final boolean retryable;
         /** 这次探测实际连通的 endpoint（可能因 http→https 回退而改写）。 */
         final String baseUrl;
+        final boolean needsPassword;
 
         ProbeResult(String error, boolean retryable) {
             this(error, retryable, null);
         }
 
         ProbeResult(String error, boolean retryable, String baseUrl) {
+            this(error, retryable, baseUrl, false);
+        }
+
+        ProbeResult(String error, boolean retryable, String baseUrl, boolean needsPassword) {
             this.error = error;
             this.retryable = retryable;
             this.baseUrl = baseUrl;
-        }
-
-        static ProbeResult success() {
-            return new ProbeResult(null, false);
+            this.needsPassword = needsPassword;
         }
 
         static ProbeResult success(String baseUrl) {
@@ -105,6 +110,7 @@ public class ConnectActivity extends AppCompatActivity {
         final String error;
         final boolean authenticated;
         final boolean retryable;
+        final boolean needsPassword;
 
         ConnectionResult(
                 String serverUrl,
@@ -113,11 +119,17 @@ public class ConnectActivity extends AppCompatActivity {
                 boolean authenticated,
                 boolean retryable
         ) {
+            this(serverUrl, appToken, error, authenticated, retryable, false);
+        }
+
+        ConnectionResult(String serverUrl, String appToken, String error,
+                boolean authenticated, boolean retryable, boolean needsPassword) {
             this.serverUrl = serverUrl;
             this.appToken = appToken;
             this.error = error;
             this.authenticated = authenticated;
             this.retryable = retryable;
+            this.needsPassword = needsPassword;
         }
 
         boolean isSuccess() {
@@ -161,6 +173,17 @@ public class ConnectActivity extends AppCompatActivity {
             }
             @Override public void onConnect() {
                 attemptConnect();
+            }
+            @Override public void onConnectWithPassword(String baseUrl, String password, String serverId) {
+                attemptPasswordConnect(baseUrl, password, serverId);
+            }
+            @Override public void onPickLanServer(String baseUrl, String serverId) {
+                ServerProfile saved = serverStore.getServerProfileByUrl(baseUrl);
+                attemptConnect(saved != null ? saved : new ServerProfile(serverId, baseUrl, null, null));
+            }
+            @Override public void onDiscoverServers() {
+                connectView.clearPasswordRequest();
+                startLanDiscovery();
             }
             @Override public void onScanQr() {
                 requestQrScan();
@@ -228,6 +251,7 @@ public class ConnectActivity extends AppCompatActivity {
         applyLightSystemBars();
 
         networkExecutor = Executors.newSingleThreadExecutor();
+        lanDiscovery = new LanDiscovery(this);
         if (managementMode) {
             getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
                 @Override public void handleOnBackPressed() { handleManagementBack(); }
@@ -437,8 +461,14 @@ public class ConnectActivity extends AppCompatActivity {
             }
         }
 
+        ServerProfile failedProfile = autoConnectProfile;
         autoConnecting = false;
         autoConnectProfile = null;
+        if (result.needsPassword) {
+            showForm();
+            connectView.requestPassword(result.serverUrl, failedProfile == null ? null : failedProfile.getId());
+            return;
+        }
         String message = result.authenticated
                 ? result.error
                 : getString(R.string.auto_connect_failed);
@@ -478,6 +508,7 @@ public class ConnectActivity extends AppCompatActivity {
     private void showForm() {
         connectView.showForm();
         refreshServerList();
+        startLanDiscovery();
     }
 
     private void showFormWithMessage(String errorMessage) {
@@ -495,27 +526,50 @@ public class ConnectActivity extends AppCompatActivity {
             return;
         }
 
+        String password = connectView.getPasswordValue();
         connectView.setConnecting(true);
-
         cancelCurrentTask();
         final long requestGeneration = connectionGeneration;
         currentTask = networkExecutor.submit(() -> {
-            ConnectionResult result = verifyConnectionInput(rawInput, 8000);
-            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result, requestedAlias));
+            ConnectionResult result = verifyConnectionInput(rawInput, password, 8000);
+            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result, requestedAlias, null));
         });
     }
 
     private void attemptConnect(ServerProfile profile) {
+        connectView.clearPasswordRequest();
         connectView.setConnectingServer(profile.getId());
         cancelCurrentTask();
         final long requestGeneration = connectionGeneration;
         currentTask = networkExecutor.submit(() -> {
             ConnectionResult result = verifyServerProfile(profile, 8000);
-            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result, null));
+            runOnUiThread(() -> handleManualConnectResult(requestGeneration, result, null, profile.getId()));
         });
     }
 
-    private ConnectionResult verifyConnectionInput(String rawInput, int timeout) {
+    private void attemptPasswordConnect(String baseUrl, String password, String serverId) {
+        String alias = serverId == null ? connectView.getServerAlias().trim() : null;
+        if (serverId == null) connectView.setConnecting(true);
+        else connectView.setConnectingServer(serverId);
+        cancelCurrentTask();
+        final long generation = connectionGeneration;
+        currentTask = networkExecutor.submit(() -> {
+            ConnectionResult result = verifyPassword(baseUrl, password, 8000);
+            runOnUiThread(() -> handleManualConnectResult(generation, result, alias, serverId));
+        });
+    }
+
+    private ConnectionResult verifyPassword(String baseUrl, String password, int timeout) {
+        try {
+            PasswordConnection.Result result = PasswordConnection.connect(baseUrl, password, timeout);
+            return new ConnectionResult(result.getBaseUrl(), result.getToken(), result.getError(),
+                    false, result.getRetryable(), result.getNeedsPassword());
+        } catch (IllegalArgumentException invalidAddress) {
+            return new ConnectionResult(baseUrl, null, "服务器地址不正确，请重新输入", false, false);
+        }
+    }
+
+    private ConnectionResult verifyConnectionInput(String rawInput, String password, int timeout) {
         Pair<String, String> decoded = WandAuth.decodeConnectCode(rawInput);
         if (decoded != null) {
             setAutoStatus("正在验证连接码…");
@@ -523,20 +577,18 @@ public class ConnectActivity extends AppCompatActivity {
             String appToken = decoded.getSecond();
             ProbeResult probe = testConnectionWithToken(serverUrl, appToken, timeout);
             String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
-            return new ConnectionResult(resolvedUrl, appToken, probe.error, true, probe.retryable);
+            return new ConnectionResult(resolvedUrl, appToken, probe.error, true, probe.retryable, probe.needsPassword);
         }
 
         String serverUrl = WandHttp.normalizeBaseUrl(rawInput);
         ServerProfile savedProfile = serverStore.getServerProfileByUrl(serverUrl);
-        if (savedProfile != null && savedProfile.getHasToken()) {
+        if (password.isEmpty() && savedProfile != null && savedProfile.getHasToken()) {
             String savedToken = savedProfile.getToken();
             ProbeResult probe = testConnectionWithToken(serverUrl, savedToken, timeout);
             String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
-            return new ConnectionResult(resolvedUrl, savedToken, probe.error, true, probe.retryable);
+            return new ConnectionResult(resolvedUrl, savedToken, probe.error, true, probe.retryable, probe.needsPassword);
         }
-        ProbeResult probe = testConnection(serverUrl, timeout);
-        String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
-        return new ConnectionResult(resolvedUrl, null, probe.error, false, probe.retryable);
+        return verifyPassword(serverUrl, password, timeout);
     }
 
     private ConnectionResult verifyServerProfile(ServerProfile profile, int timeout) {
@@ -545,24 +597,25 @@ public class ConnectActivity extends AppCompatActivity {
             String token = profile.getToken();
             ProbeResult probe = testConnectionWithToken(serverUrl, token, timeout);
             String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
-            return new ConnectionResult(resolvedUrl, token, probe.error, true, probe.retryable);
+            return new ConnectionResult(resolvedUrl, token, probe.error, true, probe.retryable, probe.needsPassword);
         }
-        ProbeResult probe = testConnection(serverUrl, timeout);
-        String resolvedUrl = probe.baseUrl != null ? probe.baseUrl : serverUrl;
-        return new ConnectionResult(resolvedUrl, null, probe.error, false, probe.retryable);
+        return verifyPassword(serverUrl, "", timeout);
     }
 
     private void handleManualConnectResult(
             long requestGeneration,
             ConnectionResult result,
-            String requestedAlias
+            String requestedAlias,
+            String serverId
     ) {
-        if (isDestroyed() || requestGeneration != connectionGeneration) return;
+        if (isDestroyed() || isFinishing() || requestGeneration != connectionGeneration) return;
         connectView.setConnecting(false);
         if (!result.isSuccess()) {
-            showStatus(result.error);
+            if (result.needsPassword) connectView.requestPassword(result.serverUrl, serverId);
+            showStatus(result.error, !result.needsPassword || !"请输入服务器密码".equals(result.error));
             return;
         }
+        connectView.clearPasswordRequest();
         saveActivateAndLaunch(result, requestedAlias);
     }
 
@@ -599,6 +652,7 @@ public class ConnectActivity extends AppCompatActivity {
         autoConnecting = false;
         autoConnectProfile = null;
         cancelAutoConnectRetry();
+        if (lanDiscovery != null) lanDiscovery.stop();
         super.onDestroy();
         cancelCurrentTask();
         if (networkExecutor != null) {
@@ -656,30 +710,9 @@ public class ConnectActivity extends AppCompatActivity {
             return loginProbe(baseUrl, appToken, timeout, attempt + 1);
         }
         WandLog.w("connect", "登录探测失败 " + failure, null);
-        return new ProbeResult(WandAuth.loginFailureMessage(failure, code), failure.getRetryable());
-    }
-
-    private ProbeResult testConnection(String baseUrl, int timeout) {
-        WandLog.i("connect", "探测连接（无凭据）");
-        try {
-            WandHttp.SimpleResponse response = WandHttp.get(baseUrl + "/api/config", timeout, baseUrl);
-            int code = response.getCode();
-            if (code == 200 || code == 401) {
-                return ProbeResult.success(baseUrl);
-            }
-            if (code == 429 || code >= 500) {
-                return new ProbeResult("服务器暂时不可用，请稍后再试", true);
-            }
-            return new ProbeResult("服务器返回了异常状态码: " + code, false);
-        } catch (Exception e) {
-            WandLog.w("connect", "探测连接失败", null);
-            ProbeResult upgraded = retryWithHttpsIfPlaintextHitTlsPort(baseUrl, null, timeout, e);
-            if (upgraded != null) return upgraded;
-            WandAuth.AuthFailure failure =
-                    WandAuth.classifyLoginFailure(null, WandAuth.localErrorOf(e), 1);
-            return new ProbeResult(
-                    WandAuth.loginFailureMessage(failure, null), failure.getRetryable());
-        }
+        boolean needsPassword = failure == WandAuth.AuthFailure.CredentialRejected;
+        return new ProbeResult(needsPassword ? "请输入服务器密码" : WandAuth.loginFailureMessage(failure, code),
+                failure.getRetryable(), baseUrl, needsPassword);
     }
 
     /**
@@ -699,18 +732,7 @@ public class ConnectActivity extends AppCompatActivity {
         if (httpsUrl == null) return null;
         WandLog.i("connect", "明文打到 TLS 端口，改用 https 重试");
         // httpsUrl 已是 https，preferHttpsUrl 会返回 null，所以这里不会再套一层，递归有界。
-        if (appToken != null) return loginProbe(httpsUrl, appToken, timeout, 1);
-        try {
-            WandHttp.SimpleResponse response = WandHttp.get(httpsUrl + "/api/config", timeout, httpsUrl);
-            int code = response.getCode();
-            if (code == 200 || code == 401) return ProbeResult.success(httpsUrl);
-            return new ProbeResult(
-                    "服务器返回了异常状态码: " + code,
-                    code == 429 || code >= 500
-            );
-        } catch (Exception stillFailing) {
-            return null;
-        }
+        return loginProbe(httpsUrl, appToken, timeout, 1);
     }
 
     /** 连接成功后进入原生主界面（HomeActivity）。 */
@@ -822,7 +844,27 @@ public class ConnectActivity extends AppCompatActivity {
         super.onResume();
         if (!autoConnecting) {
             refreshServerList();
+            startLanDiscovery();
+        } else if (currentTask == null) {
+            startAutoConnectAttempt();
         }
+    }
+
+    @Override
+    protected void onStop() {
+        if (lanDiscovery != null) lanDiscovery.stop();
+        connectView.setDiscoveryStatus("点按重新发现内网服务", false);
+        cancelAutoConnectRetry();
+        cancelCurrentTask();
+        connectView.setConnecting(false);
+        super.onStop();
+    }
+
+    private void startLanDiscovery() {
+        if (lanDiscovery == null) return;
+        lanDiscovery.start(serverStore.getServerProfiles(),
+                profiles -> { connectView.setLanServers(profiles); return kotlin.Unit.INSTANCE; },
+                (status, scanning) -> { connectView.setDiscoveryStatus(status, scanning); return kotlin.Unit.INSTANCE; });
     }
 
     private void refreshServerList() {

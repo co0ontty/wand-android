@@ -69,6 +69,8 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -208,11 +210,7 @@ fun WandMorphIconButton(
                 interactionSource = interaction,
                 indication = null,
                 onClick = onClick,
-            )
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         WandMorphingIcon(
@@ -222,6 +220,7 @@ fun WandMorphIconButton(
             tint = if (enabled) color else WandColors.textMuted.copy(alpha = 0.48f),
             iconSize = iconSize,
             rotationDegrees = rotationDegrees,
+            modifier = Modifier.graphicsLayer { scaleX = pressScale; scaleY = pressScale },
         )
     }
 }
@@ -249,15 +248,15 @@ fun WandInPlaceSwap(
         modifier = modifier,
         transitionSpec = {
             val enter = if (motionEnabled) {
-                fadeIn(WandMotion.tweenFast()) + scaleIn(
+                fadeIn(tween(durationMillis, easing = WandMotion.enterEasing)) + scaleIn(
                     initialScale = enterScale,
-                    animationSpec = WandMotion.tweenFast(),
+                    animationSpec = tween(durationMillis, easing = WandMotion.enterEasing),
                 )
             } else {
                 EnterTransition.None
             }
             val exit = if (motionEnabled) {
-                fadeOut(tween(durationMillis = WandMotion.quickExit)) + scaleOut(
+                fadeOut(tween(durationMillis = WandMotion.quickExit, easing = WandMotion.exitEasing)) + scaleOut(
                     targetScale = exitScale,
                     animationSpec = WandMotion.tweenExit(),
                 )
@@ -266,12 +265,23 @@ fun WandInPlaceSwap(
             }
             // togetherWith 的顺序是「进场内容 → 退场内容」，写反了会看到两层内容对调错位。
             (enter togetherWith exit).using(
-                if (motionEnabled) SizeTransform { _, _ -> WandMotion.tweenNormal() } else null,
+                SizeTransform(clip = false) { _, _ -> androidx.compose.animation.core.snap() },
             )
         },
         label = "inPlaceSwap",
     ) { key ->
-        content(key)
+        val active = key == contentKey
+        Box(Modifier
+            .then(if (active) Modifier else Modifier.clearAndSetSemantics { })
+            .focusProperties { canFocus = active }
+            .pointerInput(active) {
+                if (!active) awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        event.changes.forEach { it.consume() }
+                    }
+                }
+            }) { content(key) }
     }
 }
 
@@ -514,6 +524,8 @@ fun WandInlineSearchField(
     modifier: Modifier = Modifier,
     autoFocus: Boolean = true,
     focusRequester: FocusRequester = remember { FocusRequester() },
+    /** 常驻搜索框（不收起）用：有内容时在行尾给一个清空按钮，槽位固定所以输入区不位移。 */
+    onClear: (() -> Unit)? = null,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -524,18 +536,17 @@ fun WandInlineSearchField(
             return@LaunchedEffect
         }
         if (!autoFocus) return@LaunchedEffect
-        // 展开动画起步后再要焦点：立刻 requestFocus 会在测量前抢焦点，键盘有时不弹。
-        kotlinx.coroutines.delay(if (motionEnabled) 60L else 0L)
+        // Wait for layout, not a page-defined animation timer.
+        androidx.compose.runtime.withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
         keyboard?.show()
     }
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 40.dp)
+            .heightIn(min = 44.dp)
             .clip(WandShapes.full)
-            .background(WandColors.surface.copy(alpha = 0.92f))
-            .border(0.8.dp, WandColors.border.copy(alpha = 0.7f), WandShapes.full)
+            .background(WandColors.surfaceSoft)
             .padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -543,7 +554,7 @@ fun WandInlineSearchField(
             WandIcons.search,
             contentDescription = null,
             tint = WandColors.textMuted,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(18.dp),
         )
         BasicTextField(
             value = query,
@@ -594,6 +605,20 @@ fun WandInlineSearchField(
                     }
                 },
             )
+        }
+        // 常驻搜索框：按钮出现/消失都占同一个 36dp 槽位，输入区宽度不变。
+        if (onClear != null) {
+            Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                if (query.isNotEmpty()) {
+                    WandIconButton(
+                        WandIcons.close,
+                        "清空搜索",
+                        onClick = onClear,
+                        variant = WandIconButtonVariant.Compact,
+                        tint = WandColors.textMuted,
+                    )
+                }
+            }
         }
     }
 }

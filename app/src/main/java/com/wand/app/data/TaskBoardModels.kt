@@ -207,7 +207,7 @@ fun boardTaskPriorityLabel(priority: String): String = when (priority) {
 val BOARD_TASK_STATUSES = listOf("todo", "doing", "done")
 val BOARD_TASK_DETAIL_STATUSES = listOf("todo", "doing", "done", "archived")
 val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
-val BOARD_TASK_PROVIDERS = listOf("claude", "codex", "opencode", "grok", "qoder", "pi", "gemini")
+val BOARD_TASK_PROVIDERS = WandProvider.entries.map { it.id }
 val BOARD_TASK_EFFORTS = listOf("off", "standard", "deep", "max")
 
 /** 任务派发允许的执行模式；顺序即下拉顺序。Codex 只有 full-access 一个有效值。 */
@@ -276,11 +276,11 @@ private val GENERIC_DEFAULT_MODEL_LABEL = Regex("""^跟随.*默认$""")
  */
 fun boardAgentModelName(models: ModelsResponse?, provider: String, model: String?): String {
     val id = model?.trim().orEmpty()
-    if (id.isNotEmpty() && id != BOARD_AGENT_DEFAULT_MODEL) return id
+    if (id.isNotEmpty() && id != BOARD_AGENT_DEFAULT_MODEL) return modelSelectionName(models, provider, id)
     // 认不出的 provider（`session` / `shell` = 终端）不猜默认模型，否则会把 Claude 的默认值安到别人头上。
     if (WandProvider.fromId(provider) == null) return ""
     val configured = models?.defaultModelFor(provider)?.trim().orEmpty()
-    if (configured.isNotEmpty() && configured != BOARD_AGENT_DEFAULT_MODEL) return configured
+    if (configured.isNotEmpty() && configured != BOARD_AGENT_DEFAULT_MODEL) return modelSelectionName(models, provider, configured)
     val label = models?.modelsFor(provider)?.firstOrNull { it.id == BOARD_AGENT_DEFAULT_MODEL }?.label.orEmpty()
     val stripped = DEFAULT_MODEL_LABEL_TAIL.replace(label, "").trim()
     return if (GENERIC_DEFAULT_MODEL_LABEL.matches(stripped)) "" else stripped
@@ -542,4 +542,21 @@ interface TaskBoardPort : TaskChangeSource {
 
     suspend fun actOnTeamRun(runId: String, action: TeamRunAction): AiTeamRunDetail =
         throw UnsupportedOperationException("当前客户端不支持 AI 团队。")
+
+    /**
+     * 无指派派工第一步（POST /api/team-dispatch/plan）：不指定员工，
+     * 由本机决策模型按开工说明给出建议名单。只读，不建任何东西。
+     */
+    suspend fun planTeamDispatch(note: String, maxMembers: Int? = null): TeamDispatchPlan =
+        throw UnsupportedOperationException("当前服务不支持无指派派工。")
+
+    /**
+     * 无指派派工第二步：确认名单后才建临时团队、建卡、起 run。
+     * 名单由调用方回传（服务端会重新校验员工身份）。
+     */
+    suspend fun startTeamDispatch(
+        workspaceId: String,
+        note: String,
+        members: List<TeamDispatchPick>,
+    ): AiTeamDispatchRun = throw UnsupportedOperationException("当前服务不支持无指派派工。")
 }

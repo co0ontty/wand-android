@@ -3,8 +3,12 @@ package com.wand.app.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -13,17 +17,22 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -31,9 +40,10 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.reduceMotionEnabled
-import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /**
  * 共享文本工具函数。
@@ -178,3 +188,43 @@ fun TailMarqueePathText(
     }
 }
 
+/** 聊天署名与列表来源共用的品牌标签；字体差异由使用处提供。 */
+@Composable
+internal fun WandBrandTag(
+    text: String,
+    style: TextStyle = LocalTextStyle.current.copy(fontSize = 10.sp),
+    fontWeight: FontWeight? = null,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    Text(
+        text,
+        style = style,
+        fontWeight = fontWeight,
+        color = WandColors.brandText,
+        maxLines = 1,
+        overflow = overflow,
+        modifier = Modifier
+            .clip(WandShapes.xs)
+            .background(WandColors.brandSoft.copy(alpha = 0.5f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
+/** 单行系统提示：视觉省略，读屏保留全文。调用方决定是否包含时刻。 */
+@Composable
+internal fun WandNoticeLine(text: String) {
+    if (text.isBlank()) return
+    Text(
+        text,
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
+        color = WandColors.textSecondary,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .semantics { contentDescription = text },
+    )
+}

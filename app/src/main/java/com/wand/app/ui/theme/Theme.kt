@@ -21,6 +21,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -46,28 +47,29 @@ import androidx.compose.ui.unit.sp
  * - WandColors：亮/暗两套完整色板 + 语义色（屏幕代码统一从这里取色，禁止硬编码 Color(0x...)）
  * - WandMotion：统一动效时长 / 缓动 / 弹簧 / 呼吸动画规格
  * - WandShapes：统一圆角
- * 暖米色体系与 Web 端品牌对齐；旧字段（brand/textSecondary/textHint/border/danger/
+ * 手机灰白蓝体系以 APP 参考图为准；旧字段（brand/textSecondary/textHint/border/danger/
  * running/permission）保留兼容，指向新 token。
  */
 
 // —— 亮色 Token ——
 private object LightTokens {
-    // 羊皮纸浅黄色层级：避免纯白大面积铺底，保持文字与控件的对比度。
-    val bgPrimary = Color(0xFFF3E9D2)
-    val bgElevated = Color(0xFFFBF2DE)
-    val surface = Color(0xFFFFF7E6)
-    val surfaceSoft = Color(0xFFE9DDBF)
-    val textPrimary = Color(0xFF28231F)
-    val textSecondary = Color(0xFF625A53)
-    val textMuted = Color(0xFF8B8279)
-    val brand = Color(0xFFC5653D)
-    val brandSoft = Color(0xFFC5653D).copy(alpha = 0.14f)
-    // 选中软底略浓于 brandSoft：单独 14% 叠在米色上几乎等于 surfaceSoft。
-    val selectedFill = Color(0xFFC5653D).copy(alpha = 0.16f)
-    // 对齐 Web --border-default / --border-strong：旧 7% 描边在米色底上几乎看不见。
-    val border = Color(0xFFD8C9A9)
-    val borderStrong = Color(0xFF6D5848).copy(alpha = 0.28f)
-    val focusRing = Color(0xFFC5653D).copy(alpha = 0.50f)
+    // 对齐 APP 参考图的灰白层级；蓝色只强调动作和选中项。
+    val bgPrimary = Color(0xFFF2F3F7)
+    val bgElevated = Color(0xFFFFFFFF)
+    val surface = Color(0xFFFFFFFF)
+    val surfaceSoft = Color(0xFFEDEEF2)
+    val textPrimary = Color(0xFF1C1D21)
+    val textSecondary = Color(0xFF60636B)
+    // 弱文本与占位也保持正文级可读性，浅深主题由同一组对比度测试覆盖。
+    val textMuted = Color(0xFF6A6D75)
+    val brand = Color(0xFF0076D6)
+    val brandSoft = Color(0xFF0076D6).copy(alpha = 0.08f)
+    // 选中背景保持轻薄，让会话正文保持最高视觉优先级。
+    val selectedFill = Color(0xFF0076D6).copy(alpha = 0.09f)
+    // 列表与分组使用细浅分隔线，焦点和表单轮廓使用独立强边界。
+    val border = Color(0xFFE3E5EB)
+    val borderStrong = Color(0xFF707581).copy(alpha = 0.28f)
+    val focusRing = Color(0xFF0076D6).copy(alpha = 0.50f)
 
     // 语义色
     val success = Color(0xFF4F7A58)
@@ -76,28 +78,61 @@ private object LightTokens {
     val warningSoft = Color(0xFFA96A2F).copy(alpha = 0.14f)
     val danger = Color(0xFFB24F45)
     val dangerSoft = Color(0xFFB24F45).copy(alpha = 0.14f)
-    val permission = Color(0xFFC28A20)
+    val permission = Color(0xFFA87317)
     val info = Color(0xFF4A6FA5)
     val infoSoft = Color(0xFF4A6FA5).copy(alpha = 0.14f)
     val thinking = Color(0xFF6F6DA3)
     val thinkingSoft = Color(0xFF6F6DA3).copy(alpha = 0.10f)
+
+    // —— 实心容器上的前景色 ——
+    // 实心品牌/语义容器从两套墨色派生至少 4.5:1 的前景，不能假设所有强调色都配白字。
+    val onBrand = wandSolidInkFor(brand, surface, textPrimary)
+    val onDanger = wandSolidInkFor(danger, surface, textPrimary)
+    val onSuccess = wandSolidInkFor(success, surface, textPrimary)
+    val onSecondary = wandSolidInkFor(textSecondary, surface, textPrimary)
+
+    /**
+     * 文字可能落到的全部底色：页面、浮层、卡片、次级卡片、品牌软底胶囊、选中行。
+     * 派生墨色按其中最差的一种算，不按最容易的一种邀功。
+     */
+    val textSurfaces = listOf(
+        bgPrimary,
+        bgElevated,
+        surface,
+        surfaceSoft,
+        wandComposite(brandSoft, surface),
+        wandComposite(selectedFill, bgPrimary),
+    )
+
+    /**
+     * 强调色用作小号文字（按钮正文、状态标签、链接式操作）时的专用墨色。
+     * 原色作背景 / 圆点 / 描边仍然用上面那套 accent，只有文字这条通道压深：
+     * 浅色主题里 #C5653D / #C28A20 直接当 11–14sp 小字写在米色底上只有 2.4–3.3:1。
+     */
+    val brandText = wandTextColorFor(brand, textSurfaces, dark = false)
+    val successText = wandTextColorFor(success, textSurfaces, dark = false)
+    val warningText = wandTextColorFor(warning, textSurfaces, dark = false)
+    val dangerText = wandTextColorFor(danger, textSurfaces, dark = false)
+    val permissionText = wandTextColorFor(permission, textSurfaces, dark = false)
+    val infoText = wandTextColorFor(info, textSurfaces, dark = false)
+    val thinkingText = wandTextColorFor(thinking, textSurfaces, dark = false)
 }
 
 // —— 暗色 Token ——
 private object DarkTokens {
-    val bgPrimary = Color(0xFF13110F)
-    val bgElevated = Color(0xFF1D1A17)
-    val surface = Color(0xFF211E1A)
-    val surfaceSoft = Color(0xFF2A2621)
-    val textPrimary = Color(0xFFF3EEE7)
-    val textSecondary = Color(0xFFC7BEB4)
-    val textMuted = Color(0xFF958B81)
-    val brand = Color(0xFFD47550)
-    val brandSoft = Color(0xFFD47550).copy(alpha = 0.18f)
-    val selectedFill = Color(0xFFD47550).copy(alpha = 0.24f)
-    val border = Color(0xFF3D3730)
-    val borderStrong = Color(0xFF5C534A)
-    val focusRing = Color(0xFFD47550).copy(alpha = 0.50f)
+    val bgPrimary = Color(0xFF101114)
+    val bgElevated = Color(0xFF17181C)
+    val surface = Color(0xFF1C1D21)
+    val surfaceSoft = Color(0xFF27282D)
+    val textPrimary = Color(0xFFF4F5F7)
+    val textSecondary = Color(0xFFC4C7CF)
+    val textMuted = Color(0xFF989BA5)
+    val brand = Color(0xFF63B4FF)
+    val brandSoft = Color(0xFF63B4FF).copy(alpha = 0.18f)
+    val selectedFill = Color(0xFF63B4FF).copy(alpha = 0.24f)
+    val border = Color(0xFF34363D)
+    val borderStrong = Color(0xFF50535C)
+    val focusRing = Color(0xFF63B4FF).copy(alpha = 0.50f)
 
     // 语义色
     val success = Color(0xFF8BBA94)
@@ -111,15 +146,45 @@ private object DarkTokens {
     val infoSoft = Color(0xFF8FB0DC).copy(alpha = 0.14f)
     val thinking = Color(0xFFA8A5D4)
     val thinkingSoft = Color(0xFFA8A5D4).copy(alpha = 0.12f)
+
+    // —— 实心容器上的前景色 ——
+    // 暗色主题的强调色本身是提亮版本（brand #D47550、danger #E4887E），白字压在上面只有
+    // 2.2–3.3:1，必须反过来用深色字；这里按实测对比度逐色派生，而不是「暗色模式一律白字」。
+    val onBrand = wandSolidInkFor(brand, textPrimary, bgPrimary)
+    val onDanger = wandSolidInkFor(danger, textPrimary, bgPrimary)
+    val onSuccess = wandSolidInkFor(success, textPrimary, bgPrimary)
+    val onSecondary = wandSolidInkFor(textSecondary, textPrimary, bgPrimary)
+
+    /** 与浅色主题同一组「文字可能落到的底」，按最差的那种派生。 */
+    val textSurfaces = listOf(
+        bgPrimary,
+        bgElevated,
+        surface,
+        surfaceSoft,
+        wandComposite(brandSoft, surface),
+        wandComposite(selectedFill, bgPrimary),
+    )
+
+    /**
+     * 小号文字专用的强调色。暗色里除了品牌橙叠在自己的软底胶囊上（3.95:1）之外，
+     * 其余六个 accent 本来就在 4.5:1 之上，[wandTextColorFor] 会原样返回、不改动外观。
+     */
+    val brandText = wandTextColorFor(brand, textSurfaces, dark = true)
+    val successText = wandTextColorFor(success, textSurfaces, dark = true)
+    val warningText = wandTextColorFor(warning, textSurfaces, dark = true)
+    val dangerText = wandTextColorFor(danger, textSurfaces, dark = true)
+    val permissionText = wandTextColorFor(permission, textSurfaces, dark = true)
+    val infoText = wandTextColorFor(info, textSurfaces, dark = true)
+    val thinkingText = wandTextColorFor(thinking, textSurfaces, dark = true)
 }
 
 private val LightScheme: ColorScheme = lightColorScheme(
     primary = LightTokens.brand,
-    onPrimary = Color.White,
+    onPrimary = LightTokens.onBrand,
     primaryContainer = LightTokens.brandSoft,
-    onPrimaryContainer = LightTokens.brand,
+    onPrimaryContainer = LightTokens.brandText,
     secondary = LightTokens.textSecondary,
-    onSecondary = Color.White,
+    onSecondary = LightTokens.onSecondary,
     background = LightTokens.bgPrimary,
     onBackground = LightTokens.textPrimary,
     surface = LightTokens.surface,
@@ -129,7 +194,7 @@ private val LightScheme: ColorScheme = lightColorScheme(
     outline = LightTokens.border,
     outlineVariant = LightTokens.border,
     error = LightTokens.danger,
-    onError = Color.White,
+    onError = LightTokens.onDanger,
     surfaceContainerHighest = LightTokens.bgElevated,
     surfaceContainerHigh = LightTokens.bgElevated,
     surfaceContainer = LightTokens.bgElevated,
@@ -139,11 +204,11 @@ private val LightScheme: ColorScheme = lightColorScheme(
 
 private val DarkScheme: ColorScheme = darkColorScheme(
     primary = DarkTokens.brand,
-    onPrimary = Color.White,
+    onPrimary = DarkTokens.onBrand,
     primaryContainer = DarkTokens.brandSoft,
-    onPrimaryContainer = DarkTokens.brand,
+    onPrimaryContainer = DarkTokens.brandText,
     secondary = DarkTokens.textSecondary,
-    onSecondary = DarkTokens.bgPrimary,
+    onSecondary = DarkTokens.onSecondary,
     background = DarkTokens.bgPrimary,
     onBackground = DarkTokens.textPrimary,
     surface = DarkTokens.surface,
@@ -153,13 +218,65 @@ private val DarkScheme: ColorScheme = darkColorScheme(
     outline = DarkTokens.border,
     outlineVariant = DarkTokens.border,
     error = DarkTokens.danger,
-    onError = Color.White,
+    onError = DarkTokens.onDanger,
     surfaceContainerHighest = DarkTokens.bgElevated,
     surfaceContainerHigh = DarkTokens.bgElevated,
     surfaceContainer = DarkTokens.bgElevated,
     surfaceContainerLow = DarkTokens.bgPrimary,
     surfaceContainerLowest = DarkTokens.surface,
 )
+
+/** 两套 ColorScheme 的只读入口：主题内部与单测都从这里取，不再各留一份颜色表。 */
+fun wandColorScheme(dark: Boolean): ColorScheme = if (dark) DarkScheme else LightScheme
+
+/**
+ * 语义强调色。同一个 accent 在界面上有两条通道：
+ * 背景 / 状态点 / 图标 / 描边按图形 3:1 用 [wandAccentColor]，小号文字按正文 4.5:1 用
+ * [wandAccentTextInk]。把两条通道分开，是因为把 accent 原值直接当 11–14sp 的字写在主题底上，
+ * 浅色主题里会掉到 2.4–4.2:1（「等待授权」金色最糟），而压深 accent 又会改掉整套配色外观。
+ */
+enum class WandAccent {
+    Brand,
+    Success,
+    Warning,
+    Danger,
+    Permission,
+    Info,
+    Thinking,
+}
+
+/** 原 accent：背景、圆点、图标着色、描边（图形 3:1 那档）。 */
+fun wandAccentColor(accent: WandAccent, dark: Boolean): Color = when (accent) {
+    WandAccent.Brand -> if (dark) DarkTokens.brand else LightTokens.brand
+    WandAccent.Success -> if (dark) DarkTokens.success else LightTokens.success
+    WandAccent.Warning -> if (dark) DarkTokens.warning else LightTokens.warning
+    WandAccent.Danger -> if (dark) DarkTokens.danger else LightTokens.danger
+    WandAccent.Permission -> if (dark) DarkTokens.permission else LightTokens.permission
+    WandAccent.Info -> if (dark) DarkTokens.info else LightTokens.info
+    WandAccent.Thinking -> if (dark) DarkTokens.thinking else LightTokens.thinking
+}
+
+/** 文字专用墨色：同色相、只朝本主题的墨极推进到正文 4.5:1。单测按它遍历七色 × 六种底。 */
+fun wandAccentTextInk(accent: WandAccent, dark: Boolean): Color = when (accent) {
+    WandAccent.Brand -> if (dark) DarkTokens.brandText else LightTokens.brandText
+    WandAccent.Success -> if (dark) DarkTokens.successText else LightTokens.successText
+    WandAccent.Warning -> if (dark) DarkTokens.warningText else LightTokens.warningText
+    WandAccent.Danger -> if (dark) DarkTokens.dangerText else LightTokens.dangerText
+    WandAccent.Permission -> if (dark) DarkTokens.permissionText else LightTokens.permissionText
+    WandAccent.Info -> if (dark) DarkTokens.infoText else LightTokens.infoText
+    WandAccent.Thinking -> if (dark) DarkTokens.thinkingText else LightTokens.thinkingText
+}
+
+/** 文字可能落到的全部底色（派生墨色与单测共用同一份，不各写一张表）。 */
+fun wandTextSurfaces(dark: Boolean): List<Color> =
+    if (dark) DarkTokens.textSurfaces else LightTokens.textSurfaces
+
+/**
+ * WandTheme 往 LocalContentColor 里给的默认前景色 = 本次生效 scheme 的 onBackground。
+ * 抽成纯函数是因为裸 Text / Icon 的实际颜色就由这一个值决定，单测可以直接钉住它，
+ * 不必等设备上跑组合。
+ */
+fun wandDefaultContentColor(dark: Boolean): Color = wandColorScheme(dark).onBackground
 
 enum class WandAppearanceMode(val storageValue: String) {
     Light("light"),
@@ -232,6 +349,19 @@ object WandColors {
     val selectedFill: Color
         @Composable @ReadOnlyComposable get() = pick(LightTokens.selectedFill, DarkTokens.selectedFill)
 
+    // —— 实心容器上的前景色（按实际底色对比度派生，不是「暗色=白字」）——
+    /** 品牌实心按钮上的文字 / 图标色。 */
+    val onBrand: Color
+        @Composable @ReadOnlyComposable get() = pick(LightTokens.onBrand, DarkTokens.onBrand)
+
+    /** 危险实心按钮上的文字 / 图标色。 */
+    val onDanger: Color
+        @Composable @ReadOnlyComposable get() = pick(LightTokens.onDanger, DarkTokens.onDanger)
+
+    /** 成功实心按钮上的文字 / 图标色。 */
+    val onSuccess: Color
+        @Composable @ReadOnlyComposable get() = pick(LightTokens.onSuccess, DarkTokens.onSuccess)
+
     // —— 边框 / 聚焦 ——
     val border: Color
         @Composable @ReadOnlyComposable get() = pick(LightTokens.border, DarkTokens.border)
@@ -281,6 +411,32 @@ object WandColors {
 
     val thinkingSoft: Color
         @Composable @ReadOnlyComposable get() = pick(LightTokens.thinkingSoft, DarkTokens.thinkingSoft)
+
+    // —— 强调色用作小号文字时的专用墨色 ——
+    // 上面那组 accent 是给背景、圆点、描边、图标用的（图形门槛 3:1）；把它们直接当 11–14sp
+    // 的文字写在米色/深色底上会掉到 2.4–4.2:1。文字一律用下面这组同色相派生墨色（正文 4.5:1）。
+    /** 品牌橙用作按钮正文 / 链接式操作文字。 */
+    val brandText: Color
+        @Composable @ReadOnlyComposable get() = wandAccentTextInk(WandAccent.Brand, LocalWandDark.current)
+
+    val successText: Color
+        @Composable @ReadOnlyComposable get() = wandAccentTextInk(WandAccent.Success, LocalWandDark.current)
+
+    val warningText: Color
+        @Composable @ReadOnlyComposable get() = wandAccentTextInk(WandAccent.Warning, LocalWandDark.current)
+
+    val dangerText: Color
+        @Composable @ReadOnlyComposable get() = wandAccentTextInk(WandAccent.Danger, LocalWandDark.current)
+
+    /** 「等待授权」这类小号状态标签文字（对应 [permission] 圆点的文字版）。 */
+    val permissionText: Color
+        @Composable @ReadOnlyComposable get() = wandAccentTextInk(WandAccent.Permission, LocalWandDark.current)
+
+    val infoText: Color
+        @Composable @ReadOnlyComposable get() = wandAccentTextInk(WandAccent.Info, LocalWandDark.current)
+
+    val thinkingText: Color
+        @Composable @ReadOnlyComposable get() = wandAccentTextInk(WandAccent.Thinking, LocalWandDark.current)
 
     // —— 兼容旧字段 ——
     /** 兼容旧字段：运行中（绿），等同 success。 */
@@ -353,6 +509,18 @@ object WandAppearance {
 }
 
 /**
+ * 外观设置 + 系统当前深浅 → 本次要用的暗色标记。
+ * 强制 Light / Dark 只看自己的设置，系统开关不能把它翻过去；只有 System 才跟随 [systemDark]。
+ * 抽成纯函数是为了让三种模式 × 系统两种状态能在 JVM 单测里逐个断言。
+ */
+fun wandResolveDark(appearanceMode: WandAppearanceMode, systemDark: Boolean): Boolean =
+    when (appearanceMode) {
+        WandAppearanceMode.Light -> false
+        WandAppearanceMode.Dark -> true
+        WandAppearanceMode.System -> systemDark
+    }
+
+/**
  * 统一动效规格（规范 1.5）。
  * 用法：tween(WandMotion.normal, easing = WandMotion.easing)，或直接用 tweenNormal() 等快捷函数。
  */
@@ -375,9 +543,6 @@ object WandMotion {
 
     /** 呼吸动画 alpha 低点。过低会闪成空心点。 */
     const val breathAlphaMin = 0.55f
-
-    /** 活动摘要的正文呼吸低点；小字在浅色背景上仍需保持可读。 */
-    const val activityTextAlphaMin = 0.90f
 
     /** 呼吸动画 scale 高点。过大看起来像在跳。 */
     const val breathScaleMax = 1.12f
@@ -486,12 +651,12 @@ val WandTypography = Typography(
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 18.sp,
+        fontSize = 17.sp,
         lineHeight = 24.sp,
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 22.sp,
     ),
@@ -534,8 +699,8 @@ val WandTypography = Typography(
     labelSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
     ),
 )
 
@@ -562,7 +727,7 @@ object WandSpacing {
 object WandSizes {
     val minTouchTarget = 48.dp
     val toolbarIcon = 21.dp
-    val controlHeight = 50.dp
+    val controlHeight = 48.dp
 }
 
 @Composable
@@ -570,22 +735,30 @@ fun WandTheme(
     appearanceMode: WandAppearanceMode = WandAppearanceMode.System,
     content: @Composable () -> Unit,
 ) {
-    val systemDark = isSystemInDarkTheme()
-    val dark = when (appearanceMode) {
-        WandAppearanceMode.Light -> false
-        WandAppearanceMode.Dark -> true
-        WandAppearanceMode.System -> systemDark
-    }
+    val dark = wandResolveDark(appearanceMode, isSystemInDarkTheme())
     val reduceMotion = rememberReduceMotion()
+    // 先算出本次真正生效的 scheme，再在 MaterialTheme 之内取色：
+    // 在套入新主题之前从外层旧 MaterialTheme 读默认色会拿到上一套配色。
+    val scheme = wandColorScheme(dark)
     CompositionLocalProvider(
         LocalWandDark provides dark,
         LocalReduceMotion provides reduceMotion,
     ) {
         MaterialTheme(
-            colorScheme = if (dark) DarkScheme else LightScheme,
+            colorScheme = scheme,
             typography = WandTypography,
             shapes = WandMaterialShapes,
-            content = content,
-        )
+        ) {
+            // MaterialTheme 只提供 colors / typography / shapes。裸 Text / Icon 的默认前景来自
+            // LocalContentColor，它的默认值是 Color.Black；页面根容器又普遍是 Modifier.background()
+            // 的 Box / Column，不像 Surface 那样自带 contentColor。缺这一行时，暗色主题下未显式
+            // 着色的标题、会话名、页签和空态主标题会留在纯黑（实测对比度 1.11–1.56:1）。
+            // Material 容器（Surface / Button / ListItem / TopAppBar / Menu）在自己的子树里
+            // 继续提供 onSurface / onPrimary / onError，不被这里的默认值覆盖。
+            CompositionLocalProvider(
+                LocalContentColor provides wandDefaultContentColor(dark),
+                content = content,
+            )
+        }
     }
 }

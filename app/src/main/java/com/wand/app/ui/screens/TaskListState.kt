@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.wand.app.data.normalizeWorkspacePath
+import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
@@ -351,6 +353,32 @@ class TaskListState(
         session
     }
 
+    /**
+     * 没有指定任务的开工：会话只带目录（和可选的项目）归属，不为它建任务卡，
+     * 落进侧栏该目录的「未分组任务」。要成卡时由用户在那一行「归纳为新任务」。
+     * 未分组会话没有任务布局可改，所以不碰 layout。
+     */
+    suspend fun createUngroupedSession(
+        workspaceId: String?,
+        cwd: String,
+        target: WorkspaceSessionTarget,
+        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+        prompt: String? = null,
+        model: String? = null,
+        thinkingEffort: String? = null,
+        employeeId: String? = null,
+    ): SessionSnapshot? = mutate("启动会话失败") {
+        val binding = WorkspaceBinding(
+            // 隐藏的全局暂存区不是项目，不写进会话归属。
+            workspaceId = workspaceId?.takeIf { it.isNotBlank() && it != GLOBAL_WORKSPACE_ID },
+            cwd = cwd.trim(),
+        )
+        val session = if (employeeId != null) port.createEmployeeWorkspaceTaskWindow(employeeId, binding, prompt)
+        else port.createWorkspaceTaskWindow(target, binding, kind, prompt, model, thinkingEffort)
+        load(silent = true)
+        session
+    }
+
     suspend fun clearTaskSessions(taskId: String): Int? = mutate("清空任务会话失败") {
         val deleted = port.clearWorkspaceTaskSessions(taskId)
         load(silent = true)
@@ -468,12 +496,6 @@ class TaskListState(
 
     companion object {
         const val MAX_TASK_NAME_LENGTH = 80
-
-        internal fun normalizeWorkspacePath(path: String): String {
-            val trimmed = path.trim()
-            if (trimmed == "/") return trimmed
-            return trimmed.trimEnd('/').ifEmpty { "/" }
-        }
 
         internal fun isValidTaskName(name: String): Boolean {
             val count = name.codePointCount(0, name.length)

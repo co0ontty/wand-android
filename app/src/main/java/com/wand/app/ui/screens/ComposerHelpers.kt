@@ -8,7 +8,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -349,12 +350,8 @@ internal fun <T> prioritizeSelectedItem(
 }
 
 /**
- * 高质感输入槽（Field Capsule）：
- * - 紧凑外形配合微圆角（WandShapes.md 14dp）；
- * - 聚焦时背景提亮、边框过渡为品牌色微光聚焦环（Focus Ring）；
- * - 占位符与输入文字垂直居中严丝合缝；
- * - 输入内容且聚焦时右上角浮现微型快速清空按钮，单手一键重置草稿；
- * - 展开态与折叠态平滑适应，高度上限内自然滚动。
+ * 书写区保持固定的文字宽度与清空触控槽，焦点变化只改变颜色。
+ * 聊天使用外层统一描边；独立 PTY 输入保留自身表面。
  */
 @Composable
 internal fun ComposerInputField(
@@ -366,6 +363,10 @@ internal fun ComposerInputField(
     focusRequester: FocusRequester,
     expanded: Boolean,
     modifier: Modifier = Modifier,
+    framed: Boolean = true,
+    compact: Boolean = false,
+    showClearAction: Boolean = true,
+    minLines: Int = 1,
     maxLines: Int = if (expanded) 6 else 1,
     maxHeight: Dp = composerInputMaxHeight(expanded),
     keyboardOptions: KeyboardOptions = KeyboardOptions(
@@ -390,26 +391,19 @@ internal fun ComposerInputField(
     )
     val animatedBorderColor by animateColorAsState(
         targetValue = if (isFocused) {
-            WandColors.brand.copy(alpha = 0.72f)
+            WandColors.focusRing
         } else {
-            WandColors.border.copy(alpha = if (dark) 0.45f else 0.58f)
+            WandColors.border
         },
         animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
         label = "composerFieldBorder",
     )
-    val animatedBorderWidth by animateDpAsState(
-        targetValue = if (isFocused) 1.2.dp else 0.8.dp,
-        animationSpec = WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
-        label = "composerFieldBorderWidth",
-    )
-
     Box(
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(animatedBg)
-            .border(animatedBorderWidth, animatedBorderColor, shape)
-            .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            .then(if (framed) Modifier.background(animatedBg).border(1.dp, animatedBorderColor, shape) else Modifier)
+            .padding(start = if (compact) 0.dp else 10.dp, end = if (compact) 0.dp else 2.dp, top = if (compact) 0.dp else 4.dp, bottom = if (compact) 0.dp else 4.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(
@@ -419,19 +413,19 @@ internal fun ComposerInputField(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = 22.dp),
+                    .heightIn(min = ComposerActionTouchSize),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
                     textStyle = TextStyle(
-                        fontSize = 15.sp,
-                        lineHeight = 21.sp,
+                        fontSize = 16.sp,
+                        lineHeight = 24.sp,
                         color = WandColors.textPrimary,
                     ),
                     cursorBrush = SolidColor(WandColors.brand),
-                    minLines = 1,
+                    minLines = minLines,
                     maxLines = maxLines,
                     onTextLayout = onTextLayout,
                     keyboardOptions = keyboardOptions,
@@ -444,10 +438,10 @@ internal fun ComposerInputField(
                             if (value.isEmpty()) {
                                 Text(
                                     placeholder,
-                                    fontSize = 15.sp,
-                                    lineHeight = 21.sp,
+                                    fontSize = 16.sp,
+                                    lineHeight = 24.sp,
                                     fontWeight = FontWeight.Normal,
-                                    color = WandColors.textMuted,
+                                    color = WandColors.textSecondary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -457,32 +451,39 @@ internal fun ComposerInputField(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 22.dp, max = maxHeight)
+                        .heightIn(min = if (minLines > 1) maxHeight else 22.dp, max = maxHeight)
                         .focusRequester(focusRequester)
                         .onFocusChanged { onFocusChanged(it.isFocused) },
                 )
             }
-            if (value.isNotEmpty() && isFocused) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .padding(start = 4.dp, end = 2.dp)
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .background(WandColors.textSecondary.copy(alpha = 0.12f))
-                        .clickable(
-                            role = Role.Button,
-                            onClickLabel = "清空输入",
-                        ) {
-                            onValueChange("")
-                        },
+            // 始终预留触控槽，清空按钮显隐不改变换行或光标位置。
+            if (showClearAction) Box(modifier = Modifier.size(ComposerActionTouchSize), contentAlignment = Alignment.Center) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = value.isNotEmpty() && isFocused,
+                    enter = fadeIn(WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast())),
+                    exit = fadeOut(WandMotion.respectMotion(motionEnabled, WandMotion.tweenExit())),
                 ) {
-                    Icon(
-                        WandIcons.close,
-                        contentDescription = "清空",
-                        tint = WandColors.textSecondary,
-                        modifier = Modifier.size(13.dp),
-                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(ComposerActionTouchSize)
+                            .clip(CircleShape)
+                            .clickable(
+                                enabled = value.isNotEmpty() && isFocused,
+                                role = Role.Button,
+                                onClickLabel = "清空输入",
+                            ) { onValueChange("") },
+                    ) {
+                        Icon(
+                            WandIcons.close,
+                            contentDescription = "清空输入",
+                            tint = WandColors.textSecondary,
+                            modifier = Modifier
+                                .size(24.dp)
+                                .background(WandColors.textSecondary.copy(alpha = 0.10f), CircleShape)
+                                .padding(5.dp),
+                        )
+                    }
                 }
             }
         }

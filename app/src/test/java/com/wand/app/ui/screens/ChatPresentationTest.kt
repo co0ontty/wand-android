@@ -106,18 +106,19 @@ class ChatPresentationTest {
     }
 
     @Test
-    fun firstChatLayoutDoesNotAnimateListItems() {
-        assertEquals(false, shouldAnimateChatListItems(listSettled = false))
-        assertEquals(true, shouldAnimateChatListItems(listSettled = true))
+    fun programmaticStickYieldsWhileUserIsScrolling() {
+        assertEquals(true, shouldApplyProgrammaticStick(isUserScrolling = false, followPaused = false))
+        // 抬手后的惯性段同样是「用户在滚」：这时落位就是把列表拽回底部。
+        assertEquals(false, shouldApplyProgrammaticStick(isUserScrolling = true, followPaused = false))
+        assertEquals(false, shouldApplyProgrammaticStick(isUserScrolling = false, followPaused = true))
+        assertEquals(false, shouldApplyProgrammaticStick(isUserScrolling = true, followPaused = true))
     }
 
     @Test
-    fun firstChatPaintUsesASingleStickToBottomRetry() {
-        assertEquals(listOf(80L), chatStickToBottomRetryDelaysMs(listSettled = false))
-        assertEquals(
-            listOf(50L, 150L, 350L, 700L),
-            chatStickToBottomRetryDelaysMs(listSettled = true),
-        )
+    fun settledChatLayoutReassertsBottomTwiceOnly() {
+        // 首屏只落一次：补落位链不能在定稿时被重新点着，否则初始化反复弹回底部。
+        assertEquals(emptyList<Long>(), chatStickToBottomRetryDelaysMs(listSettled = false))
+        assertEquals(listOf(180L, 420L), chatStickToBottomRetryDelaysMs(listSettled = true))
     }
 
     @Test

@@ -241,7 +241,7 @@ fun WandAsyncToolImage(
 }
 
 /** 解析 data:image/…;base64,…. 失败返回 null（不崩溃）。 */
-private fun decodeDataUriImage(source: String): ImageBitmap? {
+internal fun decodeDataUriImage(source: String): ImageBitmap? {
     val comma = source.indexOf(',')
     if (comma < 0) return null
     return try {

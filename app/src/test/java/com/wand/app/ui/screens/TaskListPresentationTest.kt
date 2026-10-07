@@ -507,8 +507,10 @@ class TaskListPresentationTest {
 
     @Test
     fun homeListModeParsesBoardAsTasksAndKeepsTreeAsDefault() {
-        assertEquals(HomeListMode.Sessions, HomeListMode.fromStorage(null))
-        assertEquals(HomeListMode.Sessions, HomeListMode.fromStorage("tasks"))
+        assertEquals(HomeListMode.Im, HomeListMode.fromStorage(null))
+        assertEquals(HomeListMode.Im, HomeListMode.fromStorage("tasks"))
+        assertEquals(HomeListMode.Im, HomeListMode.fromStorage(""))
+        assertEquals(HomeListMode.Im, HomeListMode.fromStorage("im"))
         assertEquals(HomeListMode.Sessions, HomeListMode.fromStorage("sessions"))
         assertEquals(HomeListMode.Tasks, HomeListMode.fromStorage("board"))
         assertEquals("board", HomeListMode.Tasks.storageValue)

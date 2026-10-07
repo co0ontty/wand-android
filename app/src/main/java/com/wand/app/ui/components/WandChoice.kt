@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.DropdownMenu
@@ -14,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,6 +43,7 @@ import com.wand.app.data.normalizeBoardTaskAgentMode
 import com.wand.app.data.supportedBoardTaskModes
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandShapes
+import com.wand.app.ui.theme.WandSizes
 
 /**
  * 一行下拉选择：任务看板（优先级 / 工作区 / 指派参数）与团队编辑器的成员候选共用同一份实现。
@@ -54,23 +60,16 @@ fun WandChoice(
     chip: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(enabled) { if (!enabled) expanded = false }
     Box(modifier = modifier) {
         Row(
             modifier = Modifier
-                .then(
-                    if (chip) {
-                        Modifier
-                            .clip(WandShapes.full)
-                            .background(WandColors.surfaceSoft.copy(alpha = 0.8f))
-                            .padding(horizontal = 10.dp, vertical = 7.dp)
-                    } else {
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(WandShapes.sm)
-                            .padding(horizontal = 4.dp, vertical = 6.dp)
-                    },
-                )
-                .clickable(enabled = enabled) { expanded = true },
+                .then(if (chip) Modifier.widthIn(min = WandSizes.minTouchTarget) else Modifier.fillMaxWidth())
+                .heightIn(min = WandSizes.minTouchTarget)
+                .clip(WandShapes.sm)
+                .background(if (chip) WandColors.surfaceSoft else Color.Transparent)
+                .clickable(enabled = enabled, role = Role.Button) { expanded = true }
+                .padding(horizontal = if (chip) 12.dp else 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -78,7 +77,7 @@ fun WandChoice(
                 Icon(
                     leadingIcon,
                     contentDescription = null,
-                    tint = WandColors.success,
+                    tint = WandColors.textSecondary,
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -105,6 +104,7 @@ fun WandChoice(
             options.forEach { (value, optionLabel) ->
                 DropdownMenuItem(
                     text = { Text(optionLabel) },
+                    enabled = enabled,
                     onClick = {
                         expanded = false
                         onSelect(value)

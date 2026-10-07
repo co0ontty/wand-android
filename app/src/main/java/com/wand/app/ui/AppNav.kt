@@ -1,6 +1,10 @@
 package com.wand.app.ui
 
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import com.wand.app.ui.screens.HomeListMode
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import com.wand.app.data.WandApi
@@ -9,6 +13,7 @@ import com.wand.app.ui.theme.WandAppearanceMode
 /** 原生界面的页面栈。结构化对话与 PTY 终端均原生承载。 */
 sealed class Screen {
     data object SessionList : Screen()
+    data class Conversation(val conversationId: String) : Screen()
     data class Chat(
         val sessionId: String,
         val workspaceName: String? = null,
@@ -84,7 +89,7 @@ enum class ContactsTab(val storageValue: String) {
 
 /** Chat / PTY 首帧很重，手机栈用交叉淡入淡出，避免和滑动转场抢同一帧。 */
 internal fun usesHeavyDetailTransition(screen: Screen): Boolean =
-    screen is Screen.Chat || screen is Screen.PtyTerminal || screen is Screen.AiTeamChat
+    screen is Screen.Chat || screen is Screen.PtyTerminal || screen is Screen.AiTeamChat || screen is Screen.Conversation
 
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
 sealed class QuickAction {
@@ -99,12 +104,59 @@ class NavState {
     val stack = mutableStateListOf<Screen>(Screen.SessionList)
 
     val current: Screen get() = stack.last()
+    var homeMode by mutableStateOf<HomeListMode?>(null)
+    private val workPaths = mutableMapOf<HomeListMode, List<Screen>>()
+    private var contactsMode: HomeListMode? = null
+    private var conversationOriginMode: HomeListMode? = null
+
+    fun initializeHomeMode(preference: String): HomeListMode {
+        val explicitConversation = stack.lastOrNull { it is Screen.Conversation } as? Screen.Conversation
+        val mode = when {
+            explicitConversation != null -> HomeListMode.Im
+            homeMode != null -> homeMode!!
+            stack.any { it is Screen.TaskBoard } -> HomeListMode.Tasks
+            stack.any { it is Screen.Chat || it is Screen.PtyTerminal || it is Screen.WorkspaceTask || it is Screen.Missions } ->
+                HomeListMode.fromStorage(preference).takeUnless { it == HomeListMode.Im && preference != "im" } ?: HomeListMode.Sessions
+            else -> HomeListMode.fromStorage(preference)
+        }
+        homeMode = mode
+        return mode
+    }
+
+    /** UI-only paths: switching roots never creates, sends or stops an execution. */
+    fun selectHomeMode(mode: HomeListMode) {
+        val previous = homeMode
+        if (previous != null && previous != HomeListMode.Im) {
+            val path = stack.drop(1).takeWhile { it is Screen.Chat || it is Screen.PtyTerminal || it is Screen.WorkspaceTask || it is Screen.TaskBoard || it is Screen.Missions }
+            if (path.isNotEmpty()) workPaths[previous] = path
+        }
+        popToRoot()
+        if (mode != previous && mode != HomeListMode.Im) stack.addAll(workPaths[mode].orEmpty())
+        homeMode = mode
+    }
+
+    fun syncConversation(id: String) {
+        if (current is Screen.Conversation && id.isNotBlank()) replaceTop(Screen.Conversation(id))
+    }
 
     fun push(screen: Screen) {
+        if (screen is Screen.Contacts) contactsMode = homeMode
+        if (screen is Screen.Conversation) adoptConversation()
         stack.add(screen)
     }
 
+    private fun adoptConversation() {
+        val mode = homeMode
+        if (mode != null && mode != HomeListMode.Im) {
+            conversationOriginMode = mode
+            val path = stack.drop(1).takeWhile { it is Screen.Chat || it is Screen.PtyTerminal || it is Screen.WorkspaceTask || it is Screen.TaskBoard || it is Screen.Missions }
+            if (path.isNotEmpty()) workPaths[mode] = path
+        }
+        homeMode = HomeListMode.Im
+    }
+
     fun setDetail(screen: Screen) {
+        if (screen is Screen.Conversation) adoptConversation()
         if (stack.size <= 1) {
             stack.add(screen)
             return
@@ -121,6 +173,7 @@ class NavState {
     }
 
     fun replaceTop(screen: Screen) {
+        if (screen is Screen.Conversation) adoptConversation()
         if (stack.size <= 1) {
             stack.add(screen)
         } else {
@@ -129,7 +182,11 @@ class NavState {
     }
 
     fun pop() {
-        if (stack.size > 1) stack.removeAt(stack.size - 1)
+        if (stack.size <= 1) return
+        val leaving = current
+        stack.removeAt(stack.lastIndex)
+        if (leaving is Screen.Contacts || current is Screen.Contacts) contactsMode?.let { homeMode = it }
+        else if (leaving is Screen.Conversation && current != Screen.SessionList) conversationOriginMode?.let { homeMode = it }
     }
 
     fun popToRoot() {
@@ -209,7 +266,10 @@ class NavState {
 
     companion object {
         val Saver: Saver<NavState, Any> = listSaver(
-            save = { nav -> nav.stack.map { screen -> screen.saveKey() } },
+            save = { nav ->
+                nav.stack.map { it.saveKey() } + listOfNotNull(nav.homeMode?.let { "home-mode:" + it.storageValue }, nav.contactsMode?.let { "contacts-mode:" + it.storageValue }, nav.conversationOriginMode?.let { "conversation-origin:" + it.storageValue }) +
+                    nav.workPaths.flatMap { (mode, path) -> path.map { "home-path:" + mode.storageValue + FIELD_SEP + it.saveKey() } }
+            },
             restore = { savedStack ->
                 try {
                     val restoredScreens = savedStack.mapNotNull { savedScreen ->
@@ -219,6 +279,16 @@ class NavState {
                         if (restoredScreens.firstOrNull() == Screen.SessionList) {
                             stack.clear()
                             stack.addAll(restoredScreens)
+                        }
+                        savedStack.filterIsInstance<String>().forEach { record ->
+                            if (record.startsWith("home-mode:")) homeMode = HomeListMode.fromStorage(record.removePrefix("home-mode:"))
+                            if (record.startsWith("contacts-mode:")) contactsMode = HomeListMode.fromStorage(record.removePrefix("contacts-mode:"))
+                            if (record.startsWith("conversation-origin:")) conversationOriginMode = HomeListMode.fromStorage(record.removePrefix("conversation-origin:"))
+                            if (record.startsWith("home-path:")) {
+                                val parts = record.removePrefix("home-path:").split(FIELD_SEP, limit = 2)
+                                val mode = HomeListMode.fromStorage(parts.first())
+                                parts.getOrNull(1)?.restoreScreen()?.let { workPaths[mode] = workPaths[mode].orEmpty() + it }
+                            }
                         }
                     }
                 } catch (_: Exception) {
@@ -249,6 +319,7 @@ class NavState {
 
         private fun Screen.saveKey(): String = when (this) {
             Screen.SessionList -> SESSION_LIST_KEY
+            is Screen.Conversation -> "conversation" + FIELD_SEP + conversationId
             is Screen.Chat -> buildSessionDetailKey(
                 CHAT_PREFIX,
                 sessionId,
@@ -292,6 +363,7 @@ class NavState {
 
         private fun String.restoreScreen(): Screen? = when {
             this == SESSION_LIST_KEY -> Screen.SessionList
+            startsWith("conversation" + FIELD_SEP) -> removePrefix("conversation" + FIELD_SEP).takeIf { it.isNotBlank() }?.let { Screen.Conversation(it) }
             startsWith(CHAT_PREFIX) -> restoreSessionDetail(
                 prefix = CHAT_PREFIX,
                 create = { sessionId, workspaceName, taskName, workspaceId, taskId ->
@@ -447,12 +519,16 @@ class HomeSettingsActions(
     val setBetaChannel: (Boolean) -> Unit,
     val isHapticEnabled: () -> Boolean,
     val setHapticEnabled: (Boolean) -> Unit,
+    val getTrafficTimelineMode: () -> String,
+    val setTrafficTimelineMode: (String) -> Unit,
     val isKeepAlive: () -> Boolean,
     val setKeepAlive: (Boolean) -> Unit,
     val getAppearanceMode: () -> WandAppearanceMode,
     val setAppearanceMode: (WandAppearanceMode) -> Unit,
     val getHomeListMode: () -> String,
     val setHomeListMode: (String) -> Unit,
+    val getConversationUi: () -> String = { "" },
+    val setConversationUi: (String) -> Unit = {},
 )
 
 /** 宿主能力按连接信息、导航和设备设置分组，页面只向下传递实际需要的能力。 */

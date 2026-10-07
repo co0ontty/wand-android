@@ -3,6 +3,8 @@ package com.wand.app.ui.screens
 import android.widget.Toast
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +27,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
@@ -69,7 +72,6 @@ import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIconButton
 import com.wand.app.ui.components.WandIconButtonVariant
 import com.wand.app.ui.theme.WandColors
-import com.wand.app.ui.theme.wandSelectedSurface
 import com.wand.app.ui.workspaces.WorkspaceTargetState
 import com.wand.app.ui.workspaces.WorkspaceTaskState
 import com.wand.app.ui.workspaces.WorkspaceWorkflow
@@ -96,6 +98,7 @@ fun WorkspaceTaskScreen(
     onOpenMissions: (String?) -> Unit = {},
     onOpenTaskBoard: () -> Unit = {},
     onTaskChanged: () -> Unit = {},
+    onOpenIm: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val workflow = remember(api, taskId) { WorkspaceWorkflow(api, scope) }
@@ -232,7 +235,7 @@ fun WorkspaceTaskScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().background(WandColors.bgPrimary),
     ) {
         WandDetailTopBar(
             title = taskName.ifEmpty { "任务" },
@@ -248,12 +251,14 @@ fun WorkspaceTaskScreen(
                 null
             },
             actions = {
-                ToolbarIconButton(
-                    icon = WandIcons.add,
-                    contentDescription = "新建工作窗口",
-                    enabled = missionCwd != null && targetState is WorkspaceTargetState.Closed,
-                    onClick = { openSheet() },
-                )
+                if (taskState is WorkspaceTaskState.Content) {
+                    ToolbarIconButton(
+                        icon = WandIcons.add,
+                        contentDescription = "新建工作窗口",
+                        enabled = missionCwd != null && targetState is WorkspaceTargetState.Closed,
+                        onClick = { openSheet() },
+                    )
+                }
                 Box {
                     ToolbarIconButton(
                         icon = WandIcons.more,
@@ -265,6 +270,11 @@ fun WorkspaceTaskScreen(
                         onDismissRequest = { taskMenuOpen = false },
                         containerColor = WandColors.bgElevated,
                     ) {
+                        if (onOpenIm != null) {
+                            DropdownMenuItem(text = { Text("打开聊天") },
+                                leadingIcon = { Icon(WandIcons.toolResult, contentDescription = null) },
+                                onClick = { taskMenuOpen = false; onOpenIm() })
+                        }
                         DropdownMenuItem(
                             text = { Text("并行任务") },
                             leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },
@@ -325,25 +335,9 @@ fun WorkspaceTaskScreen(
             }
             is WorkspaceTaskState.EmptySessions -> {
                 EmptyTaskWelcome(
-                    workspaceName = workspaceName,
-                    taskName = taskName,
                     cwd = state.cwd,
-                    selectedTarget = selectedTarget,
-                    selectedKind = selectedKind,
-                    creating = targetState is WorkspaceTargetState.Creating,
-                    error = (targetState as? WorkspaceTargetState.Error)?.message,
                     onCopyCwd = ::copyTaskCwd,
-                    onSelectTarget = {
-                        selectedTarget = it
-                        if (!it.isShell) {
-                            scope.launch { runCatching { api.updateCreationDefaults(defaultProvider = it.raw) } }
-                        }
-                    },
-                    onSelectKind = {
-                        selectedKind = it
-                        scope.launch { runCatching { api.updateCreationDefaults(defaultSessionKind = it.raw) } }
-                    },
-                    onConfirm = { confirmCreate() },
+                    onChooseTarget = { openSheet() },
                 )
             }
             is WorkspaceTaskState.Content -> {
@@ -359,7 +353,6 @@ fun WorkspaceTaskScreen(
                     },
                     onDeleteSession = { deleteSessionError = null; deleteSessionTarget = it },
                     onMoveSession = { movingSession = it },
-                    onAddWindow = { openSheet() },
                 )
             }
         }
@@ -409,89 +402,40 @@ fun WorkspaceTaskScreen(
 
 @Composable
 private fun EmptyTaskWelcome(
-    workspaceName: String,
-    taskName: String,
     cwd: String,
-    selectedTarget: WorkspaceSessionTarget,
-    selectedKind: WorkspaceSessionKind,
-    creating: Boolean,
-    error: String?,
     onCopyCwd: () -> Unit,
-    onSelectTarget: (WorkspaceSessionTarget) -> Unit,
-    onSelectKind: (WorkspaceSessionKind) -> Unit,
-    onConfirm: () -> Unit,
+    onChooseTarget: () -> Unit,
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .navigationBarsPadding()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center,
+        modifier = Modifier.fillMaxSize().navigationBarsPadding()
+            .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
+        contentAlignment = Alignment.TopCenter,
     ) {
         Column(
-            modifier = Modifier
-                .widthIn(max = 420.dp)
-                .fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                workspaceName.ifEmpty { "任务目录" },
-                style = MaterialTheme.typography.labelMedium,
-                color = WandColors.textSecondary,
-            )
-            Text(
-                taskName.ifEmpty { "任务" },
-                style = MaterialTheme.typography.headlineSmall,
-                color = WandColors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            )
-            Text(
-                "选择 CLI 工具，以及结构化或 PTY，开始这个任务。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textSecondary,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            WorkspaceTargetSheet(
-                selected = selectedTarget,
-                selectedKind = selectedKind,
-                creating = creating,
-                error = error,
-                onSelect = onSelectTarget,
-                onSelectKind = onSelectKind,
-                onConfirm = onConfirm,
-                onDismiss = {},
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            // 任务实际 cwd：单行省略，可长按复制。
+            Text("开始这个任务", style = MaterialTheme.typography.titleLarge,
+                color = WandColors.textPrimary, fontWeight = FontWeight.SemiBold)
+            Text("选择员工或执行工具，创建第一个工作窗口。",
+                style = MaterialTheme.typography.bodyMedium, color = WandColors.textSecondary)
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(WandColors.surfaceSoft.copy(alpha = 0.5f))
-                    .clickable(onClick = onCopyCwd)
-                    .padding(horizontal = 12.dp, vertical = 12.dp)
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .clickable(onClick = onCopyCwd).padding(vertical = 12.dp)
                     .semantics { contentDescription = "任务目录 $cwd，点击复制" },
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Icon(
-                    WandIcons.folder,
-                    contentDescription = null,
-                    tint = WandColors.textMuted,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    cwd,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WandColors.textSecondary,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Icon(WandIcons.folder, contentDescription = null,
+                    tint = WandColors.textMuted, modifier = Modifier.size(20.dp))
+                Text(cwd, style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary,
+                    fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f))
+                Icon(WandIcons.copy, contentDescription = null,
+                    tint = WandColors.textMuted, modifier = Modifier.size(18.dp))
             }
+            WandButton(label = "选择执行对象", onClick = onChooseTarget,
+                icon = WandIcons.add, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -504,7 +448,6 @@ private fun TaskSessionList(
     onSelectSession: (WorkspaceSessionSummary) -> Unit,
     onDeleteSession: (WorkspaceSessionSummary) -> Unit,
     onMoveSession: (WorkspaceSessionSummary) -> Unit,
-    onAddWindow: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -516,18 +459,18 @@ private fun TaskSessionList(
         modifier = Modifier
             .widthIn(max = 640.dp)
             .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            "工作窗口",
+            "${state.orderedSessions.size} 个工作窗口",
             style = MaterialTheme.typography.labelMedium,
             color = WandColors.textSecondary,
             modifier = Modifier.padding(start = 4.dp),
         )
         LazyColumn(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             items(
                 items = state.orderedSessions,
@@ -545,12 +488,7 @@ private fun TaskSessionList(
                 )
             }
         }
-        WandButton(
-            label = "新建工作窗口",
-            onClick = onAddWindow,
-            modifier = Modifier.fillMaxWidth(),
-            variant = WandButtonVariant.Secondary,
-        )
+
     }
     }
 }
@@ -574,13 +512,9 @@ private fun SessionSummaryRow(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .wandSelectedSurface(
-                selected = isSelected,
-                shape = RoundedCornerShape(14.dp),
-                unselectedFill = WandColors.bgElevated.copy(alpha = 0.5f),
-            )
+            .background(if (isSelected) WandColors.selectedFill else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 8.dp, vertical = 12.dp)
             .semantics { contentDescription = label },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -634,6 +568,7 @@ private fun SessionSummaryRow(
             }
         }
     }
+    HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
 }
 
 @Composable

@@ -20,6 +20,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.BottomSheetDefaults
@@ -47,6 +48,9 @@ import androidx.compose.ui.unit.dp
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandShapes
 import com.wand.app.ui.theme.WandSizes
+import com.wand.app.ui.theme.wandComposite
+import com.wand.app.ui.theme.wandContrast
+import com.wand.app.ui.theme.wandDisabledInk
 import com.wand.app.data.providerDisplayName
 
 enum class WandButtonVariant {
@@ -66,6 +70,19 @@ private fun WandButtonVariant.solidColor(): Color = when (this) {
     else -> WandColors.brand
 }
 
+/**
+ * 实心变体上的前景色。
+ * 两套主题的强调色亮度不同，不能一律白字：暗色主题的 brand/danger 本身是提亮版本，
+ * 白字压上去只有 2.2–3.3:1，必须换成深色墨；浅色主题的危险/成功底偏暗才用近白墨。
+ * 具体取值由 Theme.kt 的 token 按实测对比度派生。
+ */
+@Composable
+private fun WandButtonVariant.onSolidColor(): Color = when (this) {
+    WandButtonVariant.Danger -> WandColors.onDanger
+    WandButtonVariant.Success -> WandColors.onSuccess
+    else -> WandColors.onBrand
+}
+
 /** 标准操作按钮。加载、禁用、图标和危险态的视觉都在此模块内部收口。 */
 @Composable
 fun WandButton(
@@ -82,11 +99,14 @@ fun WandButton(
     val content: @Composable RowScope.() -> Unit = {
         if (loading || icon != null) {
             WandStatusIconSlot(
-                indicatorColor = if (loading) when (variant) {
-                    WandButtonVariant.Primary, WandButtonVariant.Danger, WandButtonVariant.Success -> Color.White
+                indicatorColor = when (variant) {
+                    // 描边 / 文字变体的加载圈用品牌或危险色，按钮正文是另一套颜色。
                     WandButtonVariant.Secondary, WandButtonVariant.Text -> WandColors.brand
                     WandButtonVariant.DangerText -> WandColors.danger
-                } else LocalContentColor.current,
+                    // 实心变体跟着 Button 当前的正文色：加载中按钮处于禁用态，
+                    // 那里的色值是按禁用软底重新派生的，写死白字会在暗色主题下消失。
+                    else -> LocalContentColor.current
+                },
                 containerColor = Color.Transparent,
                 running = loading,
                 icon = icon ?: WandIcons.refresh,
@@ -100,24 +120,35 @@ fun WandButton(
         }
     }
     val resolvedModifier = modifier
-        .heightIn(min = if (compact) 40.dp else WandSizes.controlHeight)
+        .minimumInteractiveComponentSize()
+        .heightIn(min = if (compact) 36.dp else 44.dp)
         .defaultMinSize(minWidth = if (compact) 0.dp else 64.dp)
 
     when (variant) {
         WandButtonVariant.Primary, WandButtonVariant.Danger, WandButtonVariant.Success -> {
             val accent = variant.solidColor()
+            val disabledContainer = accent.copy(alpha = 0.34f)
+            val enabledInk = variant.onSolidColor()
+            // 禁用底只有 34% 不透明度，屏幕上实际是「强调色 + 页面底色」的合成色，
+            // 所以顺序是：先合成出真底，再在次级墨的基础上淡出到「不抢可用态」。
+            // 这里刻意不取最高对比：禁用字比启用字还醒目，等于把 inactive 信号反着画。
+            val disabledInk = wandDisabledInk(
+                mutedInk = WandColors.textSecondary,
+                disabledContainer = wandComposite(disabledContainer, WandColors.bgPrimary),
+                enabledContrast = wandContrast(enabledInk, accent),
+            )
             Button(
                 onClick = onClick,
                 enabled = enabled && !loading,
                 modifier = resolvedModifier,
-                shape = MaterialTheme.shapes.medium,
+                shape = WandShapes.full,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = accent,
-                    contentColor = Color.White,
-                    disabledContainerColor = accent.copy(alpha = 0.34f),
-                    disabledContentColor = Color.White.copy(alpha = 0.82f),
+                    contentColor = enabledInk,
+                    disabledContainerColor = disabledContainer,
+                    disabledContentColor = disabledInk,
                 ),
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 6.dp else 10.dp),
                 content = content,
             )
         }
@@ -125,7 +156,7 @@ fun WandButton(
             onClick = onClick,
             enabled = enabled && !loading,
             modifier = resolvedModifier,
-            shape = MaterialTheme.shapes.medium,
+            shape = WandShapes.full,
             colors = ButtonDefaults.outlinedButtonColors(
                 contentColor = WandColors.textPrimary,
                 disabledContentColor = WandColors.textMuted,
@@ -133,7 +164,7 @@ fun WandButton(
             border = ButtonDefaults.outlinedButtonBorder(enabled && !loading).copy(
                 brush = androidx.compose.ui.graphics.SolidColor(WandColors.borderStrong),
             ),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+            contentPadding = PaddingValues(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 6.dp else 10.dp),
             content = content,
         )
         WandButtonVariant.Text, WandButtonVariant.DangerText -> TextButton(
@@ -141,7 +172,12 @@ fun WandButton(
             enabled = enabled && !loading,
             modifier = resolvedModifier,
             colors = ButtonDefaults.textButtonColors(
-                contentColor = if (variant == WandButtonVariant.DangerText) WandColors.danger else WandColors.brand,
+                // 文字按钮的正文就是文字：按 4.5:1 的专用墨色取，不直接用给图形准备的 accent。
+                contentColor = if (variant == WandButtonVariant.DangerText) {
+                    WandColors.dangerText
+                } else {
+                    WandColors.brandText
+                },
                 disabledContentColor = WandColors.textMuted,
             ),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
@@ -177,7 +213,7 @@ fun WandIconButton(
     },
 ) {
     val touchSize = when (variant) {
-        WandIconButtonVariant.Chrome, WandIconButtonVariant.Quiet -> 44.dp
+        WandIconButtonVariant.Chrome, WandIconButtonVariant.Quiet -> WandSizes.minTouchTarget
         WandIconButtonVariant.Toolbar, WandIconButtonVariant.Accent -> WandSizes.minTouchTarget
         WandIconButtonVariant.Compact -> 32.dp
     }
@@ -192,9 +228,10 @@ fun WandIconButton(
                 .size(touchSize)
                 .clip(WandShapes.sm)
             WandIconButtonVariant.Chrome -> Modifier
-                .size(touchSize)
+                .size(42.dp)
                 .clip(CircleShape)
-                .background(WandColors.surface.copy(alpha = 0.62f))
+                .background(WandColors.surface)
+                .border(0.5.dp, WandColors.border, CircleShape)
             WandIconButtonVariant.Accent -> Modifier
                 .size(36.dp)
                 .clip(CircleShape)

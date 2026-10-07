@@ -381,8 +381,15 @@ internal fun mergeConversationTurnTimes(
 ): ConversationTurn {
     val createdAt = incoming.createdAt ?: previous?.createdAt
     val completedAt = incoming.completedAt ?: previous?.completedAt
-    if (createdAt == incoming.createdAt && completedAt == incoming.completedAt) return incoming
-    return incoming.copy(createdAt = createdAt, completedAt = completedAt)
+    val sameTurn = previous != null && previous.role == incoming.role &&
+        (previous.createdAt == null || incoming.createdAt == null || previous.createdAt == incoming.createdAt)
+    val previousSelection = previous?.resourceSelection.takeIf { sameTurn }
+    val incomingSelection = incoming.resourceSelection
+    val previousSettled = previousSelection?.status == "selected" || previousSelection?.status == "fallback" ||
+        previousSelection?.status == "cancelled"
+    val selection = if (incomingSelection?.status == "selecting" && previousSettled) previousSelection else incomingSelection ?: previousSelection
+    if (createdAt == incoming.createdAt && completedAt == incoming.completedAt && selection == incomingSelection) return incoming
+    return incoming.copy(createdAt = createdAt, completedAt = completedAt, resourceSelection = selection)
 }
 
 /** 内容体积：块级合并时用「哪一版更完整」决定重叠块取谁。 */

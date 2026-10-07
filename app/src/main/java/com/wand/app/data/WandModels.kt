@@ -298,7 +298,14 @@ sealed class ContentBlock {
     data class Text(val text: String, val subagent: SubagentMeta?) : ContentBlock()
 
     @Immutable
-    data class Thinking(val thinking: String, val subagent: SubagentMeta?) : ContentBlock()
+    data class Thinking(
+        val thinking: String,
+        val subagent: SubagentMeta?,
+        /** 服务端首次观察到的轮次时间；旧历史没有，绝不补造。 */
+        val occurredAt: String? = null,
+        /** 本轮最近一次收到思考事件的时间，用于「无新进展」判定。 */
+        val lastActivityAt: String? = null,
+    ) : ContentBlock()
 
     @Immutable
     data class ToolUse(
@@ -340,7 +347,12 @@ sealed class ContentBlock {
             val subagent = SubagentMeta.parse(o.obj("__subagent"))
             return when (o.str("type") ?: "") {
                 "text" -> Text(o.str("text") ?: "", subagent)
-                "thinking" -> Thinking(o.str("thinking") ?: "", subagent)
+                "thinking" -> Thinking(
+                    o.str("thinking") ?: "",
+                    subagent,
+                    o.str("occurredAt"),
+                    o.str("lastActivityAt"),
+                )
                 "tool_use" -> ToolUse(
                     id = o.str("id") ?: "",
                     name = o.str("name") ?: "tool",
@@ -489,6 +501,15 @@ data class ConversationTurn(
     val author: TurnAuthor? = null,
     /** 报告正文不在群聊中铺开；点文件卡片再按需读取。 */
     val reportFile: TeamReportFile? = null,
+    /** Server-owned per-round automatic configuration label, rendered as small text. */
+    val resourceSelection: PiResourceSelectionNotice? = null,
+    val messageId: String? = null,
+    val requestId: String? = null,
+    val conversationTarget: ConversationTarget? = null,
+    val conversationLink: ConversationLink? = null,
+    val taskPreview: ConversationTaskPreview? = null,
+    val sessionLink: ConversationSessionLink? = null,
+    val sessionPreview: ConversationSessionPreview? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): ConversationTurn {
@@ -503,6 +524,13 @@ data class ConversationTurn(
                 notice = o.bool("notice") == true,
                 author = TurnAuthor.parse(o.obj("author")),
                 reportFile = TeamReportFile.parse(o.obj("reportFile")),
+                resourceSelection = PiResourceSelectionNotice.parse(o.obj("resourceSelection")),
+                messageId = o.str("messageId"), requestId = o.str("requestId"),
+                conversationTarget = ConversationTarget.parse(o.obj("conversationTarget")),
+                conversationLink = ConversationLink.parse(o.obj("conversationLink")),
+                taskPreview = ConversationTaskPreview.parse(o.obj("taskPreview")),
+                sessionLink = ConversationSessionLink.parse(o.obj("sessionLink")),
+                sessionPreview = ConversationSessionPreview.parse(o.obj("sessionPreview")),
             )
         }
 
@@ -746,6 +774,7 @@ data class ModelInfo(
     val alias: Boolean?,
     val reasoningEfforts: List<ReasoningEffortInfo>,
     val defaultReasoningEffort: String?,
+    val group: String? = null,
 ) {
     companion object {
         fun parseList(arr: JSONArray?): List<ModelInfo> =
@@ -761,6 +790,7 @@ data class ModelInfo(
                             }
                         } ?: emptyList(),
                         defaultReasoningEffort = o.str("defaultReasoningEffort"),
+                        group = o.str("group"),
                     )
                 }
             } ?: emptyList()
@@ -781,15 +811,8 @@ private fun legacyDefaultModelFor(
     grok: String? = null,
     pi: String? = null,
     gemini: String? = null,
-): String = when (WandProvider.fromId(provider)) {
-    WandProvider.Codex -> codex.orEmpty()
-    WandProvider.OpenCode -> opencode.orEmpty()
-    WandProvider.Grok -> grok.orEmpty()
-    WandProvider.Qoder -> qoder.orEmpty()
-    WandProvider.Pi -> pi.orEmpty()
-    WandProvider.Gemini -> gemini.orEmpty()
-    else -> claude.orEmpty()
-}
+): String = ProviderDefaultModels(claude, codex, opencode, qoder, grok, pi, gemini)
+    .defaultFor(provider).orEmpty()
 
 data class ModelsResponse(
     val models: List<ModelInfo>,
@@ -807,6 +830,9 @@ data class ModelsResponse(
     val defaultPiModel: String? = null,
     val geminiModels: List<ModelInfo> = emptyList(),
     val defaultGeminiModel: String? = null,
+    val modelGroups: List<ModelGroup> = emptyList(),
+    val freeModels: List<ModelInfo> = emptyList(),
+    val modelGroupsSupported: Boolean = false,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -849,6 +875,9 @@ data class ModelsResponse(
             defaultPiModel = o.str("defaultPiModel"),
             geminiModels = ModelInfo.parseList(o.arr("geminiModels")),
             defaultGeminiModel = o.str("defaultGeminiModel"),
+            modelGroups = ModelGroup.parseList(o.arr("modelGroups")),
+            freeModels = ModelInfo.parseList(o.arr("freeModels")),
+            modelGroupsSupported = o.arr("modelGroups") != null,
         )
     }
 }

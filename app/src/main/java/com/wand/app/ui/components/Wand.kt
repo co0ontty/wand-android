@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
@@ -96,13 +97,26 @@ fun Modifier.clickableWithoutRipple(
         )
 }
 
-/** 状态色调 → 品牌语义色。 */
+/**
+ * 状态色调 → 品牌语义色。只给**图形**用（8dp 状态点、图标着色、描边）：门槛 3:1。
+ * 状态文字必须走 [statusTextColor]，这些 accent 直接当小号字写在主题底上不够 4.5:1。
+ */
 @Composable
-private fun WandStatusTone.statusColor(): Color = when (this) {
+internal fun WandStatusTone.statusColor(): Color = when (this) {
     WandStatusTone.Success -> WandColors.success
     WandStatusTone.Permission -> WandColors.permission
     WandStatusTone.Danger -> WandColors.danger
     WandStatusTone.Warning -> WandColors.warning
+    WandStatusTone.Neutral -> WandColors.textMuted
+}
+
+/** 状态色调 → 文字专用墨色（同色相、按正文 4.5:1 派生）：状态标签、计数文案都从这里取。 */
+@Composable
+internal fun WandStatusTone.statusTextColor(): Color = when (this) {
+    WandStatusTone.Success -> WandColors.successText
+    WandStatusTone.Permission -> WandColors.permissionText
+    WandStatusTone.Danger -> WandColors.dangerText
+    WandStatusTone.Warning -> WandColors.warningText
     WandStatusTone.Neutral -> WandColors.textMuted
 }
 
@@ -256,12 +270,12 @@ fun <T> WandChoiceStrip(
     selected: T,
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
-    minHeight: Dp = 42.dp,
+    minHeight: Dp = 48.dp,
     labelFontSize: TextUnit = 13.sp,
     activeTextColor: Color? = null,
     flat: Boolean = false,
 ) {
-    val resolvedActiveTextColor = activeTextColor ?: WandColors.brand
+    val resolvedActiveTextColor = activeTextColor ?: WandColors.brandText
     val shape = if (flat) WandShapes.sm else WandShapes.full
     val selectedIndex = options.indexOfFirst { it.first == selected }.coerceAtLeast(0)
     WandSegmentedTrack(
@@ -309,7 +323,7 @@ fun <T> WandChoiceStrip(
 }
 
 /**
- * 统一卡片容器：平面色底 + 极轻软阴影。
+ * 统一内容分组容器：稳定实色平面；只有选中态增加语义描边。
  * - onClick 非空时整卡可点（带 ripple）。
  * - selected = true 时用品牌软底 + 品牌描边，避免只靠弱底分不清选中。
  * - containerColor 可覆盖底色（语义弱底卡片走纯色平面路径）。
@@ -325,53 +339,22 @@ fun WandCard(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    // 按压反馈：轻微下沉（缩放 + 阴影回落），给卡片一个"被按下去"的实体触感。
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val pressDepth by animateFloatAsState(
-        if (pressed && onClick != null) 1f else 0f,
-        WandMotion.tweenFast(),
-        label = "cardPress",
+    val background by animateColorAsState(
+        targetValue = if (selected) WandColors.selectedFill.compositeOver(WandColors.surface)
+            else (containerColor ?: WandColors.surface).compositeOver(WandColors.bgPrimary),
+        animationSpec = WandMotion.tweenFast(),
+        label = "cardSurface",
     )
-    val scale = 1f - 0.012f * pressDepth
-    val (keyShadow, ambientShadow) = cardShadowColors()
-    val cardClick = onClick
-    val pressModifier = if (cardClick != null) {
-        Modifier.clickable(interactionSource = interaction, indication = ripple(), onClick = cardClick)
-    } else {
-        Modifier
-    }
-
-    if (containerColor != null) {
-        // 语义色覆盖：保留纯色底配方（semantic soft 底依赖确定底色，不叠表面微光以免冲淡语义色），
-        // 但补一层轻投影，让语义弱底卡也微微浮起、不再贴平。
-        val bg by animateColorAsState(containerColor, WandMotion.tweenFast(), label = "cardBg")
-        Column(
-            modifier = modifier
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .layeredShadow(shape, 1.dp * (1f - 0.5f * pressDepth), keyShadow, ambientShadow)
-                .clip(shape)
-                .background(bg)
-                .then(if (onClick != null) pressModifier else Modifier)
-                .padding(contentPadding),
-            content = content,
-        )
-        return
-    }
-    val style = WandGlass.card
-    val brand = WandColors.brand
-    val t by animateFloatAsState(if (selected) 1f else 0f, WandMotion.tweenFast(), label = "cardSel")
-    val elevation = lerpDp(style.shadowElevation, style.shadowElevation * 1.2f, t) * (1f - 0.5f * pressDepth)
-    val bg = lerp(style.tint.copy(alpha = style.fallbackAlpha), WandColors.selectedFill, t)
-    val stroke = lerp(Color.Transparent, brand, t)
+    // 分组由内容和留白建立层级，普通卡片不悬浮、不随按压改变几何。
     Column(
         modifier = modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .layeredShadow(shape, elevation, keyShadow, ambientShadow)
             .clip(shape)
-            .background(bg)
-            .then(if (selected) Modifier.border(1.5.dp, stroke, shape) else Modifier)
-            .then(if (onClick != null) pressModifier else Modifier)
+            .background(background)
+            .then(if (selected) Modifier.border(1.dp, WandColors.brand, shape) else Modifier)
+            .then(if (onClick != null) Modifier.clickable(
+                interactionSource = interaction, indication = ripple(), role = Role.Button, onClick = onClick,
+            ) else Modifier)
             .padding(contentPadding),
         content = content,
     )

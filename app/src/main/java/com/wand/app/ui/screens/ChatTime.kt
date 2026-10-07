@@ -21,3 +21,10 @@ fun formatChatClock(iso: String?, zone: ZoneId = ZoneId.systemDefault()): String
 
 fun conversationTurnClock(turn: ConversationTurn): String =
     formatChatClock(turn.completedAt ?: turn.createdAt)
+
+/** 思考没有独立时间戳时只读所属回复的开始时间；缺失/非法时不伪造时钟。 */
+internal fun thinkingEventClock(createdAt: String?, zone: ZoneId = ZoneId.systemDefault()): String? {
+    val raw = createdAt?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val instant = runCatching { Instant.parse(raw) }.getOrNull() ?: return null
+    return clockFormatter.format(instant.atZone(zone))
+}

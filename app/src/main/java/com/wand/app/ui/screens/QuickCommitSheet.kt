@@ -609,7 +609,7 @@ private fun FormPanel(
     val hint = when {
         qc.submitting -> ""
         !hasChanges -> "工作区干净，无可提交"
-        else -> "拖动磁吸组合 · 丢进提交区执行 · 点归档球切换本次归档" +
+        else -> "拖动磁吸组合 · 丢进提交区执行 · 点归档球，提交后把当前任务移出列表" +
             (if (hasSubmodule) "\nSub 球可选，纳入后递归处理 submodule" else "")
     }
     if (hint.isNotEmpty()) {

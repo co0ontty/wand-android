@@ -12,16 +12,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.wand.app.ui.screens.ChatAvatarSpec
-import com.wand.app.ui.screens.memberCoatIndex
+import com.wand.app.data.WandProvider
+import com.wand.app.ui.screens.chatAvatarSpec
 import com.wand.app.ui.theme.WandColors
 import java.util.Locale
 
 /** 不认识的 CLI 不冒充 Claude；员工列表传首选候选，会话传实际 provider。 */
 fun employeeAvatarProvider(provider: String?): String? =
-    provider?.trim()?.lowercase(Locale.ROOT)?.takeIf {
-        it in setOf("claude", "codex", "opencode", "grok", "qoder", "pi", "gemini")
-    }
+    WandProvider.fromId(provider?.trim()?.lowercase(Locale.ROOT))?.id
 
 fun employeeCliBadgeSize(avatarSize: Dp): Dp = (avatarSize * 0.5f).coerceIn(13.dp, 20.dp)
 
@@ -34,11 +32,8 @@ fun EmployeeAvatar(
     size: Dp = 32.dp,
     provider: String? = null,
 ) {
-    val spec = if (avatar?.startsWith("data:image/") == true) {
-        ChatAvatarSpec.Upload(avatar)
-    } else {
-        ChatAvatarSpec.Cat(memberCoatIndex(id, name, avatar))
-    }
+    // 同一套优先级（上传图 > 显式毛色 > 按身份生成），不在这儿另写一份口径。
+    val spec = chatAvatarSpec(id, name, avatar)
     val cli = employeeAvatarProvider(provider)
     Box(modifier = modifier.size(size)) {
         TeamMessageAvatar(spec = spec, size = size)

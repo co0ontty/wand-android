@@ -10,7 +10,7 @@ import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.Workspace
-import com.wand.app.data.WandApiException
+import com.wand.app.data.isRequestOutcomeUnconfirmed
 
 /**
  * AI 团队页面的纯函数（可单测，不含 Compose 状态）。
@@ -50,10 +50,7 @@ fun teamDirectNoteError(note: String): String? = when {
 }
 
 /** 请求已发出后仅明确的 HTTP 拒收可重试；网络/解析错误及服务端结果未知不能重复派工。 */
-internal fun teamDirectFailureUnconfirmed(failure: Throwable): Boolean {
-    val status = (failure as? WandApiException)?.status
-    return status == null || status >= 500 || status == 408 || status == 409
-}
+internal fun teamDirectFailureUnconfirmed(failure: Throwable): Boolean = isRequestOutcomeUnconfirmed(failure)
 
 internal const val TEAM_DIRECT_UNCONFIRMED_MESSAGE =
     "开工结果尚未确认。请刷新上方协作动态或任务列表核对；此处已暂停再次开工，避免重复执行。"

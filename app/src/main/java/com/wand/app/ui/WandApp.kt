@@ -68,6 +68,7 @@ import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandAuth
 import com.wand.app.data.WandApiException
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.WandBrandMark
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandButton
@@ -80,11 +81,18 @@ import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
 import com.wand.app.ui.screens.AiTeamChatScreen
+import com.wand.app.ui.screens.ConversationChatScreen
+import com.wand.app.ui.screens.ConversationList
 import com.wand.app.ui.screens.AiTeamDetailScreen
 import com.wand.app.ui.screens.AiTeamEditorScreen
 import com.wand.app.ui.screens.ContactsScreen
 import com.wand.app.ui.screens.SiliconEmployeeEditorScreen
 import com.wand.app.ui.screens.HomeListMode
+import com.wand.app.ui.screens.PadLandingScreen
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalConfiguration
 import com.wand.app.ui.screens.MissionsScreen
 import com.wand.app.ui.screens.TaskBoardScreen
 import com.wand.app.ui.screens.TaskBoardTaskScreen
@@ -151,7 +159,7 @@ fun WandApp(
                     message = if (actions.connection.hasToken) {
                         msg
                     } else {
-                        "无法访问服务器：$msg\n如果服务器设有密码，请用「连接码」重新连接。"
+                        "无法访问服务器：$msg\n请重新选择服务器地址并输入密码。"
                     },
                     retrying = shouldRetry,
                 )
@@ -314,7 +322,7 @@ private fun AuthFailed(
                 )
                 Text(
                     if (retrying) "连接失败，正在自动重试…"
-                    else "登录已失效，请用新的连接码重新连接。",
+                    else "登录已失效，请重新连接并输入服务器密码。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -342,6 +350,10 @@ private fun ReadyContent(
     val sessionDrafts = rememberSaveable(api.baseUrl, saver = SessionDraftStore.Saver) {
         SessionDraftStore()
     }
+    val shellState = rememberSaveableStateHolder()
+    val conversationScope = rememberCoroutineScope()
+    val conversations = remember(api, sessionDrafts) { ConversationStore(api, sessionDrafts, conversationScope, actions.settings.getConversationUi, actions.settings.setConversationUi) }
+    DisposableEffect(conversations) { conversations.start(); onDispose { conversations.shutdown() } }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     // 任务聚合是根导航的数据真源。通知走 SessionWatcher，快捷方式用当前任务树。
@@ -349,13 +361,27 @@ private fun ReadyContent(
         TaskListState(api, SharedTaskListExpansionStore(context, api.baseUrl))
     }
     var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
-    var homeListMode by remember {
-        mutableStateOf(HomeListMode.fromStorage(actions.settings.getHomeListMode()))
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val homeListMode = nav.homeMode ?: nav.initializeHomeMode(actions.settings.getHomeListMode())
+    LaunchedEffect(Unit) {
+        (nav.stack.lastOrNull { it is Screen.Conversation } as? Screen.Conversation)?.let { conversations.select(it.conversationId) }
+        actions.settings.setHomeListMode(homeListMode.storageValue)
     }
     val changeHomeListMode: (HomeListMode) -> Unit = { mode ->
-        homeListMode = mode
+        keyboard?.hide()
+        focusManager.clearFocus()
+        conversations.persist()
+        conversations.closeLayers()
+        taskState.clearTemporaryExpansions()
+        nav.selectHomeMode(mode)
         actions.settings.setHomeListMode(mode.storageValue)
     }
+    DisposableEffect(conversations, nav) {
+        conversations.onSelection = nav::syncConversation
+        onDispose { conversations.onSelection = {} }
+    }
+    LaunchedEffect(nav.homeMode) { nav.homeMode?.let { actions.settings.setHomeListMode(it.storageValue) } }
 
     DisposableEffect(taskState) {
         taskState.startSync()
@@ -381,10 +407,11 @@ private fun ReadyContent(
             initialQuickActionConsumed = true
             when (val action = initialQuickAction) {
                 is QuickAction.NewSession -> {
-                    nav.popToRoot()
+                    changeHomeListMode(HomeListMode.Sessions)
                     taskState.requestNewTask()
                 }
                 is QuickAction.OpenSession -> {
+                    if (homeListMode == HomeListMode.Im) changeHomeListMode(HomeListMode.Sessions)
                     val snapshot = runCatching { api.getSession(action.sessionId) }.getOrNull()
                     nav.push(
                         snapshot?.detailScreen() ?: if (action.isStructured == false) {
@@ -402,7 +429,8 @@ private fun ReadyContent(
     BackHandler(enabled = nav.stack.size > 1) { nav.pop() }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val wideLayout = usesWideListDetail(maxWidth, maxHeight)
+        val configuration = LocalConfiguration.current
+        val wideLayout = usesWideListDetail(maxWidth, configuration.screenHeightDp.dp)
         val listPaneWidth = wideListPaneWidth(maxWidth)
         val showDetailBack = !wideLayout || nav.stack.size > 2
         val openDetail: (Screen) -> Unit = { screen ->
@@ -433,6 +461,8 @@ private fun ReadyContent(
 
         if (wideLayout) {
             WideReadyContent(
+                shellState = shellState,
+                conversationState = conversations,
                 nav = nav,
                 api = api,
                 actions = actions,
@@ -455,6 +485,8 @@ private fun ReadyContent(
             )
         } else {
             SinglePaneContent(
+                shellState = shellState,
+                conversationState = conversations,
                 nav = nav,
                 api = api,
                 actions = actions,
@@ -475,6 +507,8 @@ private fun ReadyContent(
 
 @Composable
 private fun SessionDetailScreen(
+    shellState: androidx.compose.runtime.saveable.SaveableStateHolder,
+    conversationState: ConversationStore,
     screen: Screen,
     nav: NavState,
     api: WandApi,
@@ -484,10 +518,26 @@ private fun SessionDetailScreen(
     showBack: Boolean,
     embedded: Boolean,
     onOpenMissionSession: (sessionId: String, screen: Screen.Missions) -> Unit,
+    onOpenIm: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    LaunchedEffect(screen) {
+        if (screen is Screen.AiTeamChat) {
+            val groupId = runCatching { api.aiTeamRunDetail(screen.runId).run.conversationId }.getOrNull()
+            if (groupId != null && nav.current == screen) { conversationState.select(groupId); nav.replaceTop(Screen.Conversation(groupId)) }
+        }
+    }
     when (screen) {
         is Screen.SessionList -> Unit
+        is Screen.Conversation -> {
+            // 详情打开的是这条导航记录自己的对象；后台恢复/重建时 selectedId 可能已被异步默认选择改写。
+            // provider key 带会话 id：同一会话「详情→列表→再打开」草稿、项目/目标和派发意图继续留着；
+            // 另一条会话是新 key，不继承上一个对象的派发状态。
+            shellState.SaveableStateProvider("im-detail-${screen.conversationId}") {
+                ConversationChatScreen(conversationState, screen.conversationId, actions.settings.isHapticEnabled,
+                    onContacts = { nav.push(Screen.Contacts()) }, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSession = { id -> conversationState.openSession(id) { nav.push(it.detailScreen()) } }, showBack = showBack, onBack = { nav.pop() })
+            }
+        }
         is Screen.Chat -> ChatScreen(
             api = api,
             sessionId = screen.sessionId,
@@ -495,6 +545,7 @@ private fun SessionDetailScreen(
             workspaceName = screen.workspaceName,
             taskName = screen.taskName,
             isHapticEnabled = actions.settings.isHapticEnabled,
+            trafficTimelineMode = actions.settings.getTrafficTimelineMode,
             drafts = sessionDrafts,
             showBack = showBack,
             onBack = { nav.pop() },
@@ -527,6 +578,7 @@ private fun SessionDetailScreen(
                 taskId = screen.taskId,
                 showBack = showBack,
                 onBack = { nav.pop() },
+                onOpenIm = onOpenIm,
                 // 面包屑首段与 Web 同口径：永远落到「任务看板列表」。落点由 taskBoardLanding
                 // 这个纯函数决定（pop / 换栈顶），两个分支都有单测，见 TaskBoardLandingTest。
                 onBackToBoard = {
@@ -569,6 +621,8 @@ private fun SessionDetailScreen(
         )
         is Screen.Contacts -> ContactsScreen(
             api = api,
+            conversationState = conversationState,
+            onOpenConversation = { id -> conversationState.select(id); nav.push(Screen.Conversation(id)) },
             // 通讯录这一支刻意不走 openDetail：宽屏左栏是会话/任务列表，没有通讯录列表，
             // setDetail 会把栈里的通讯录覆盖掉，用户就回不去了。push 保留「可回上一层」，
             // 于是员工资料/新对话/群聊的首段面包屑恒有真实落点。
@@ -583,6 +637,7 @@ private fun SessionDetailScreen(
         is Screen.SiliconEmployeeEditor -> SiliconEmployeeEditorScreen(
             api = api,
             employeeId = screen.employeeId,
+            onMessage = { id -> val conversationId = com.wand.app.data.employeeConversationId(id); conversationState.select(conversationId); nav.replaceTop(Screen.Conversation(conversationId)) },
             onBack = { nav.pop() },
         )
         is Screen.AiTeamDetail -> AiTeamDetailScreen(
@@ -653,12 +708,15 @@ private fun SessionDetailScreen(
             },
             onOpenTaskBoard = { nav.push(Screen.TaskBoard(screen.workspaceId)) },
             onTaskChanged = { scope.launch { taskState.refreshAfterMutation() } },
+            onOpenIm = onOpenIm,
         )
     }
 }
 
 @Composable
 private fun SinglePaneContent(
+    shellState: androidx.compose.runtime.saveable.SaveableStateHolder,
+    conversationState: ConversationStore,
     nav: NavState,
     api: WandApi,
     actions: HomeActions,
@@ -703,13 +761,18 @@ private fun SinglePaneContent(
     ) { currentFrame ->
         val screen = currentFrame.screen
         if (screen is Screen.SessionList) {
+            // IM 根屏和其余模式共用同一张列表壳：这里只投影近期对话，
+            // 聊天详情是它之上的导航记录，selectedId 只负责列表高亮。
+            val list: @Composable ((String) -> Unit) -> Unit = { openConversation ->
+            shellState.SaveableStateProvider("home-list") {
             TaskListScreen(
+                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer) { id -> conversationState.select(id); openConversation(id) } },
                 state = taskState,
                 api = api,
                 boardApi = api,
                 serverDisplayName = actions.connection.serverDisplayName,
                 homeListMode = homeListMode,
-                onHomeListModeChange = onHomeListModeChange,
+                onHomeListModeChange = { onHomeListModeChange(it) },
                 onOpenTask = onOpenWorkspaceTask,
                 onOpenSession = onOpenSession,
                 onOpenBoardSession = onOpenBoardSession,
@@ -719,11 +782,17 @@ private fun SinglePaneContent(
                 onTaskClosed = nav::closeWorkspaceTask,
                 onSessionClosed = nav::closeSession,
                 onOpenSettings = onOpenSettings,
-                onOpenContacts = { nav.push(Screen.Contacts()) },
+                onOpenContacts = { if (nav.current !is Screen.Contacts) nav.push(Screen.Contacts()) },
                 onSwitchServer = actions.navigation.switchServer,
             )
+            }
+            }
+            // 手机 IM 根屏 = 近期对话列表；只有用户在列表里点了一项（或通知/任务卡/联系人指定目标）才推详情。
+            list { id -> nav.push(Screen.Conversation(id)) }
         } else {
             SessionDetailScreen(
+                shellState = shellState,
+                conversationState = conversationState,
                 screen = screen,
                 nav = nav,
                 api = api,
@@ -732,6 +801,7 @@ private fun SinglePaneContent(
                 taskState = taskState,
                 showBack = true,
                 embedded = false,
+                onOpenIm = { onHomeListModeChange(HomeListMode.Im) },
                 onOpenMissionSession = { sessionId, missions ->
                     nav.push(
                         Screen.Chat(
@@ -748,6 +818,8 @@ private fun SinglePaneContent(
 
 @Composable
 private fun WideReadyContent(
+    shellState: androidx.compose.runtime.saveable.SaveableStateHolder,
+    conversationState: ConversationStore,
     nav: NavState,
     api: WandApi,
     actions: HomeActions,
@@ -783,7 +855,10 @@ private fun WideReadyContent(
     val maxSidebarWidth = (windowWidth - 360.dp)
         .coerceAtLeast(minSidebarWidth)
         .coerceAtMost(420.dp)
-    val sidebarContentWidth = if (sidebarCollapsed) {
+    val collapsedForMode = sidebarCollapsed && homeListMode != HomeListMode.Im
+    val sidebarContentWidth = if (homeListMode == HomeListMode.Im) {
+        listPaneWidth.coerceIn(280.dp, minOf(400.dp, windowWidth - 360.dp))
+    } else if (collapsedForMode) {
         56.dp
     } else {
         (listPaneWidth + sidebarDragDeltaDp.dp).coerceIn(minSidebarWidth, maxSidebarWidth)
@@ -801,7 +876,7 @@ private fun WideReadyContent(
         .firstOrNull { it.group.workspaceId == peekDirectoryId }
     LaunchedEffect(sidebarCollapsed, peekDirectoryId, taskState.groups) {
         val missing = peekDirectoryId != null && peeked == null
-        if (!sidebarCollapsed || missing) peekDirectoryId = null
+        if (!collapsedForMode || missing) peekDirectoryId = null
     }
     Box(
         modifier = Modifier
@@ -820,7 +895,7 @@ private fun WideReadyContent(
         ) {
             val reduceMotion = reduceMotionEnabled()
             AnimatedContent(
-                targetState = sidebarCollapsed,
+                targetState = collapsedForMode,
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
                     if (reduceMotion) {
@@ -862,6 +937,7 @@ private fun WideReadyContent(
                                 peekDirectoryId = null
                                 onToggleSidebarCollapsed()
                             },
+                            onOpenIm = { peekDirectoryId = null; onHomeListModeChange(HomeListMode.Im) },
                         )
                     } else {
                         // 宽屏时这里是侧栏：内容留出与中缝等宽的呼吸位，
@@ -871,7 +947,10 @@ private fun WideReadyContent(
                                 .fillMaxSize()
                                 .padding(horizontal = 12.dp),
                         ) {
+                            shellState.SaveableStateProvider("home-list") {
                             TaskListScreen(
+                                // 侧栏点一条 = 显式打开意图：详情落右栏，而不是靠 selectedId 投影出一个输入框。
+                                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, onCollapseSidebar = onToggleSidebarCollapsed) { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) } },
                                 state = taskState,
                                 api = api,
                                 boardApi = api,
@@ -894,9 +973,9 @@ private fun WideReadyContent(
                                     if (nav.current !is Screen.Contacts) nav.push(Screen.Contacts())
                                 },
                                 onSwitchServer = actions.navigation.switchServer,
-                                onCollapseSidebar = onToggleSidebarCollapsed,
-                                // 与手机首页共用底部悬浮菜单；视图切换只影响左栏，详情仍留在右侧。
+                                onCollapseSidebar = onToggleSidebarCollapsed.takeUnless { homeListMode == HomeListMode.Im },
                             )
+                            }
                         }
                     }
                 }
@@ -932,16 +1011,18 @@ private fun WideReadyContent(
                 label = "wideDetailNav",
             ) { screen ->
                 if (screen is Screen.SessionList) {
-                    PadLandingScreen(
-                        groups = taskState.groups,
-                        onOpenSession = onOpenSession,
-                        onNewTask = {
-                            taskState.requestNewTask()
-                            if (sidebarCollapsed) onToggleSidebarCollapsed()
-                        },
-                    )
+                    // 根屏上没有显式打开意图，右栏就只是占位：selectedId 可能来自冷启动/后台轮询的默认伙伴自动选中，
+                    // 不能替用户把右栏变成当前聊天输入框。侧栏点一条走 nav.setDetail(Screen.Conversation(id))。
+                    if (homeListMode == HomeListMode.Im) EmptyState(
+                        icon = WandIcons.toolResult,
+                        title = "选择一条对话",
+                        modifier = Modifier.fillMaxSize(),
+                        subtitle = "在左侧「近期对话」里点一条继续，或从通讯录发起",
+                    ) else PadLandingScreen(taskState.groups, onOpenSession, taskState::requestNewTask)
                 } else {
                     SessionDetailScreen(
+                        shellState = shellState,
+                        conversationState = conversationState,
                         screen = screen,
                         nav = nav,
                         api = api,
@@ -950,6 +1031,7 @@ private fun WideReadyContent(
                         taskState = taskState,
                         showBack = showDetailBack,
                         embedded = true,
+                        onOpenIm = { onHomeListModeChange(HomeListMode.Im) },
                         onOpenMissionSession = { sessionId, missions ->
                             nav.setDetail(
                                 Screen.Chat(
@@ -962,7 +1044,7 @@ private fun WideReadyContent(
                     )
                 }
             }
-            if (!sidebarCollapsed) {
+            if (!collapsedForMode && homeListMode != HomeListMode.Im) {
                 SidebarResizeHandle(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
@@ -973,7 +1055,7 @@ private fun WideReadyContent(
                     },
                 )
             }
-            if (sidebarCollapsed && peeked != null) {
+            if (collapsedForMode && peeked != null) {
                 val directory = peeked.group
                 // 目录预览跟随首页三段式档位：在跑档下列在跑、失败和待处理的会话，
                 // 整条被筛空时保留目录身份、由 peek 自己的空态说明原因。
@@ -1077,6 +1159,7 @@ private data class SinglePaneFrame(val screen: Screen, val depth: Int)
 
 private fun Screen.transitionKey(): String = when (this) {
     Screen.SessionList -> "session-list"
+    is Screen.Conversation -> "conversation:$conversationId"
     is Screen.Chat -> "chat:$sessionId"
     is Screen.PtyTerminal -> "pty:$sessionId"
     is Screen.Missions -> "missions:${taskId.orEmpty()}"
@@ -1130,6 +1213,7 @@ private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
     // 群聊页的运行 id 不是任务/会话 id：会话 id 由服务端 run 详情给出，不在导航里。
+    is Screen.Conversation,
     is Screen.AiTeamChat,
     // 团队编辑器只认团队 / 模板参数，不携带任务与会话。
     is Screen.AiTeamEditor -> null
@@ -1145,6 +1229,7 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Contacts,
     is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
+    is Screen.Conversation,
     is Screen.AiTeamChat,
     is Screen.AiTeamEditor,
     is Screen.WorkspaceTask -> null

@@ -71,6 +71,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -125,6 +126,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Velocity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -178,6 +180,8 @@ import com.wand.app.ui.sendActionVisual
 import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandInlinePanelAction
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandListItem
+import com.wand.app.ui.components.WandListItemIconSlot
 import com.wand.app.ui.components.WandSnackbarHost
 import com.wand.app.ui.components.showWandNotice
 import com.wand.app.ui.components.WandDialog
@@ -202,6 +206,8 @@ import com.wand.app.ui.components.wandCardSurface
 import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import com.wand.app.data.WandApiException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -286,12 +292,23 @@ internal fun shouldRefreshQuickCommitStatus(isLoading: Boolean, isResponding: Bo
     return !isLoading && !isResponding
 }
 
-/** 首屏消息不要跑 item 入场动画，避免和打开会话抢同一帧。 */
-internal fun shouldAnimateChatListItems(listSettled: Boolean): Boolean = listSettled
+/** 视口/键盘逐帧变化时，贴底先等这一段再落位，不每次都立刻拽一次列表。 */
+private const val STICK_TO_BOTTOM_SETTLE_MS = 80L
 
-/** 首屏只补一次贴底，后续流式/视口变化再走完整重试链。 */
+/**
+ * 落位之后的补落位节奏：变高卡片（markdown、工具卡）逐帧测得真实高度时把底边重新贴住。
+ * 首屏只补一次，避免和打开会话的入场布局抢帧。
+ */
 internal fun chatStickToBottomRetryDelaysMs(listSettled: Boolean): List<Long> =
-    if (listSettled) listOf(50L, 150L, 350L, 700L) else listOf(80L)
+    if (listSettled) listOf(180L, 420L) else emptyList()
+
+/**
+ * 程序化落位只在用户没有自己滚（含抬手后的惯性段）时执行：
+ * 用户正在滚的时候抢来的那一下就是「不规律跳动」。
+ * scrollToItem/scrollBy 不会置 isScrollInProgress，所以这个判据只反映用户手势。
+ */
+internal fun shouldApplyProgrammaticStick(isUserScrolling: Boolean, followPaused: Boolean): Boolean =
+    !isUserScrolling && !followPaused
 
 /**
  * 原生聊天视图 —— 对称 iOS ChatView.swift：
@@ -308,18 +325,21 @@ fun ChatScreen(
     workspaceName: String? = null,
     taskName: String? = null,
     isHapticEnabled: () -> Boolean,
+    trafficTimelineMode: () -> String = { "wifi" },
     drafts: SessionDraftStore,
     showBack: Boolean = true,
     onBack: () -> Unit,
 ) {
     val store = remember(sessionId, api) { ChatStore(sessionId, api) }
     val composerScope = rememberCoroutineScope()
+    val resources = remember(sessionId, api) { com.wand.app.ui.PiResourcesController(sessionId, api, composerScope) }
+    DisposableEffect(resources) { onDispose { resources.dismiss() } }
     val composer = remember(sessionId, api, drafts, store) {
         ChatComposer(
             sessionId = sessionId,
             drafts = drafts,
             parentScope = composerScope,
-            ready = { !store.loading && !store.providerSwitching && store.snapshot != null },
+            ready = { !store.loading && !store.providerSwitching && store.snapshot != null && resources.phase != "saving" },
             send = store::submitInput,
             notice = { store.toast = it },
         )
@@ -346,8 +366,15 @@ fun ChatScreen(
         if (employeeId == null) { liveEmployee = null; return@LaunchedEffect }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             suspend fun refreshEmployee() {
-                liveEmployee = runCatching { api.siliconEmployee(employeeId) }.getOrNull()
-                    ?.takeUnless { it.archived }
+                try {
+                    liveEmployee = api.siliconEmployee(employeeId).takeUnless { it.archived }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: WandApiException) {
+                    if (e.status == 404) liveEmployee = null
+                } catch (_: Exception) {
+                    // Keep the current identity/avatar during transient refresh failures.
+                }
             }
             refreshEmployee()
             SessionWatcher.employeeDefinitionChanges.collect { changedId ->
@@ -411,16 +438,22 @@ fun ChatScreen(
     }
     var listViewportHeightPx by remember(sessionId) { mutableIntStateOf(0) }
     val scrollScope = rememberCoroutineScope()
-    // 活动段向上展开会撑高所在 item；容器按帧补偿滚动，让摘要行停在原屏幕位置。
-    // 同一个 item 只保留最后一次补偿：连点开合时旧循环立即让位，避免互相打架。
-    val anchorJobs = remember { mutableMapOf<String, Job>() }
-    val keepActivityAnchor: (String) -> Unit = remember(listState, scrollScope) {
+    // 向下展开的工具时间线长在摘要行下面：只有面板底边越过视口底部时才补最小滚动，
+    // 放得下就一点不动（摘要行与上一屏内容都不位移），收起时按同一份账对称退回。
+    // 同一个 item 只保留最后一次补偿：连点开合时旧循环立即让位。
+    val panelRevealJobs = remember { mutableMapOf<String, Job>() }
+    val panelRevealApplied = remember { mutableMapOf<String, Int>() }
+    val revealActivityPanel: (String) -> Unit = remember(listState, scrollScope) {
         { key ->
             if (key.isNotBlank()) {
-                anchorJobs.remove(key)?.cancel()
-                // 点击这一帧同步读位置：此时列表还是展开前的布局，读到的就是摘要行原位。
-                listState.itemTailOffset(key)?.let { target ->
-                    anchorJobs[key] = scrollScope.launch { listState.keepItemTailAnchor(key, target) }
+                panelRevealJobs.remove(key)?.cancel()
+                panelRevealJobs[key] = scrollScope.launch {
+                    listState.revealActivityPanelTail(
+                        key,
+                        panelRevealApplied,
+                        // 手势/惯性还在走就不补这一段：两个写者同帧抢落点就是跳动。
+                        isCancelled = { listState.isScrollInProgress },
+                    )
                 }
             }
         }
@@ -572,54 +605,115 @@ fun ChatScreen(
 
     // 用户一开始向上浏览旧内容就立即暂停贴底跟随。流式消息刷新很频繁，若等拖动
     // 累计超过某个阈值才暂停，阈值内的新 token 会先把列表重新拽回底部。
+    // 抬手后的惯性段同样要暂停：那时已经没有 UserInput 回调，只有 Fling，
+    // 不暂停的话下一条补落位会在用户滑到一半时把列表拽回底部。
     // Manual 模式不会因用户自己滚回底部而退出；只有“回到底部”按钮或主动发送才恢复。
     val followPauseConnection = remember(focusManager, listState, store) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput) {
                     if (available.y != 0f) focusManager.clearFocus()
-                    if (shouldPauseBottomFollow(available.y)) {
-                        scrollMode = ChatScrollMode.Manual
-                    }
+                    if (shouldPauseBottomFollow(available.y)) scrollMode = ChatScrollMode.Manual
                 }
                 return Offset.Zero
             }
+
+            // 只有真实手势 fling 才进 onPreFling，程序化 scrollToItem/scrollBy 不会，
+            // 所以这里不会把补落位自己判成用户接管。
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (shouldPauseBottomFollow(available.y)) scrollMode = ChatScrollMode.Manual
+                return Velocity.Zero
+            }
         }
     }
+
+    // 书签轨的居中条目每帧都在变，但只有换成另一个条目才需要重组。组合期直接读
+    // layoutInfo 会让整个 ChatScreen（含全部可见卡片与输入栏）跟着滚动逐帧重组，
+    // 卡片逐帧重测高——掉帧和「跳动」都从这里来。派生成只按结果变化的状态。
+    val currentScrubberItem by remember(listState, scrubberTargets, displayItems) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            conversationScrubberIndexForDisplayItem(
+                scrubberTargets,
+                info.visibleItemsInfo
+                    .filter { it.index >= headerOffset && it.index < headerOffset + displayItems.size }
+                    .minByOrNull { item ->
+                        kotlin.math.abs(
+                            item.offset + item.size / 2 -
+                                (info.viewportStartOffset + info.viewportEndOffset) / 2,
+                        )
+                    }
+                    ?.index
+                    ?.minus(headerOffset)
+                    ?.coerceIn(0, (displayItems.size - 1).coerceAtLeast(0))
+                    ?: 0,
+            )
+        }
+    }
+    // 「回到底部」按钮的可见性只关心能不能再往前滚，不关心每帧滚了多少：
+    // 同样不能在组合期直接读 layoutInfo。
+    val canScrollForwardToTail by remember(listState) {
+        derivedStateOf { listState.canScrollForward }
+    }
+    // 贴底的唯一程序化写者：新请求取消上一条链。多个写者各拽各的落点，
+    // 就是「不规律跳动」里最容易被看到的那一段。
+    // firstWaitMs 用于尺寸/视口这类逐帧变化的触发源——只在变化停下来之后落一次；
+    // 内容变化用 0，流式输出才跟得上。animate 只作用在首落位，补落位保持瞬时。
+    val latestScrollMode = rememberUpdatedState(scrollMode)
+    val latestBottomIndex = rememberUpdatedState(bottomIndex)
+    var stickJob by remember(sessionId) { mutableStateOf<Job?>(null) }
+    val stickToBottom: (firstWaitMs: Long, extraWaitsMs: List<Long>, animate: Boolean) -> Unit =
+        { firstWaitMs, extraWaitsMs, animate ->
+            stickJob?.cancel()
+            stickJob = scrollScope.launch {
+                var step = 0
+                for (waitMs in listOf(firstWaitMs) + extraWaitsMs) {
+                    if (waitMs > 0) delay(waitMs)
+                    if (!shouldApplyProgrammaticStick(
+                            isUserScrolling = listState.isScrollInProgress,
+                            followPaused = latestScrollMode.value == ChatScrollMode.Manual,
+                        )
+                    ) break
+                    val target = maxOf(
+                        latestBottomIndex.value,
+                        listState.layoutInfo.totalItemsCount - 1,
+                        0,
+                    )
+                    if (step == 0 && animate) {
+                        listState.animateScrollToItem(target)
+                    } else {
+                        listState.scrollToItem(target)
+                    }
+                    step += 1
+                }
+            }
+        }
     // 输入栏聚焦后会从单行胶囊变成双行卡片，IME 弹出/收起也会改变列表视口。
     // 贴底模式必须把这些尺寸变化视作一次新的定位请求，否则最后一行会落到
     // 变高的输入栏之后；手动浏览模式则保持用户当前阅读位置，不主动跳转。
     //
-    // 拆成两个 effect：流式期间 messages 每个事件都换新引用，若把「等布局稳定的
-    // 重试链」也挂在它上面，链会在每个 chunk 到来时被取消重启、永远走不完，
-    // 还会每个 chunk 触发多次 scrollToItem。内容变化只做一次即时贴底；
-    // 重试链只挂在模式/视口/回合切换这类低频 key 上。
+    // 内容变化和尺寸变化分开：流式期间 messages 每个事件都换新引用，只配一次即时落位；
+    // 视口在键盘动画里是逐帧改值的，挂上去会每帧重启落位链，改成延后落位之后
+    // 只有停下来那次真正落一次。
+    // scrollMode 与 listSettled 都不再是触发键：scrollMode 恢复贴底的三个入口
+    // （发送、「回到底部」、展开当前回复）自己会请求落位；listSettled 在首屏定稿时
+    // 会 false→true 翻转一次，那次翻转会重新点着整条补落位链，看起来像初始化反复弹回底部。
     LaunchedEffect(store.messages, store.loading) {
         if (!store.loading && scrollMode != ChatScrollMode.Manual) {
-            listState.scrollToItem(
-                maxOf(bottomIndex, listState.layoutInfo.totalItemsCount - 1, 0)
-            )
+            stickToBottom(0L, emptyList(), false)
         }
     }
     LaunchedEffect(
         store.isResponding,
         bottomIndex,
-        scrollMode,
         listViewportHeightPx,
-        listSettled,
     ) {
         if (!store.loading && scrollMode != ChatScrollMode.Manual) {
-            fun targetIndex(): Int = when (scrollMode) {
-                ChatScrollMode.StickToBottom ->
-                    maxOf(bottomIndex, listState.layoutInfo.totalItemsCount - 1, 0)
-                ChatScrollMode.Manual -> bottomIndex
-            }
-            listState.scrollToItem(targetIndex())
-            for (waitMs in chatStickToBottomRetryDelaysMs(listSettled)) {
-                delay(waitMs)
-                if (scrollMode == ChatScrollMode.Manual) break
-                listState.scrollToItem(targetIndex())
-            }
+            stickToBottom(
+                STICK_TO_BOTTOM_SETTLE_MS,
+                chatStickToBottomRetryDelaysMs(listSettled),
+                false,
+            )
         }
     }
     // 展开某条历史回复时，把它的标题行滚到顶部区域来读；
@@ -636,18 +730,7 @@ fun ChatScreen(
     }
     val expandCurrentReplyToBottom: () -> Unit = {
         scrollMode = ChatScrollMode.StickToBottom
-        scrollScope.launch {
-            for (waitMs in listOf(50L, 150L, 350L, 700L)) {
-                delay(waitMs)
-                if (scrollMode == ChatScrollMode.Manual) break
-                val target = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                if (waitMs == 50L) {
-                    listState.animateScrollToItem(target)
-                } else {
-                    listState.scrollToItem(target)
-                }
-            }
-        }
+        stickToBottom(0L, chatStickToBottomRetryDelaysMs(listSettled), true)
     }
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(store, store.toast) {
@@ -663,12 +746,18 @@ fun ChatScreen(
     // ＋ 展开的动作面板：就地展开，返回键/发送/换会话时收起（规则 2）。
     var attachOpen by remember(sessionId) { mutableStateOf(false) }
     BackHandler(enabled = attachOpen) { attachOpen = false }
+    LaunchedEffect(voice.pressed, store.snapshot?.provider, store.isStructured, store.pendingEscalation) {
+        if (voice.pressed || store.snapshot?.provider != "pi" || !store.isStructured || store.pendingEscalation != null) resources.dismiss()
+    }
     CompositionLocalProvider(
         LocalServerBaseUrl provides api.baseUrl,
         LocalChatApi provides api,
         LocalChatSessionId provides sessionId,
+        LocalChatWorkingDirectory provides store.snapshot?.cwd,
         LocalCardExpandDefaults provides store.cardDefaults,
-        LocalActivityAnchorKeeper provides keepActivityAnchor,
+        LocalActivityPanelReveal provides revealActivityPanel,
+        LocalActivityTrafficTimelineMode provides trafficTimelineMode(),
+        LocalChatViewportHeightPx provides listViewportHeightPx,
     ) {
     Scaffold(
         containerColor = Color.Transparent,
@@ -743,13 +832,14 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    GitChangesButton(quickCommit, compact = true) { quickCommit.openPanel() }
+                    GitChangesButton(quickCommit, compact = true) { resources.dismiss(); quickCommit.openPanel() }
                 },
             )
         },
         bottomBar = { BottomBar(
             backdrop = activeBackdrop,
             store = store,
+            resources = resources,
             composer = composer,
             voice = voice,
             onMicDown = onMicDown,
@@ -761,12 +851,13 @@ fun ChatScreen(
             onPickFile = attachmentPickers.pickFile,
             onExpandedChange = { composerExpanded = it },
             attachOpen = attachOpen,
-            onAttachOpenChange = { attachOpen = it },
+            onAttachOpenChange = { attachOpen = it; if (it) resources.dismiss() },
             activityDockVisible = showActivityDock,
             subagentActivities = subagentActivities,
             lastAssistantUsage = lastAssistantUsage,
             onActivityDockExpandedChange = { activityDockExpanded = it },
         ) {
+            resources.dismiss()
             if (composer.submit()) {
                 attachOpen = false
                 if (isHapticEnabled()) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -782,6 +873,8 @@ fun ChatScreen(
                 .pointerInput(focusManager) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
+                        attachOpen = false
+                        resources.dismiss()
                         focusManager.clearFocus()
                     }
                 }
@@ -846,55 +939,51 @@ fun ChatScreen(
                             contentType = { _, item -> item::class },
                         ) { _, item ->
                             val foldScope = itemFoldScope(item)
-                            Box(
-                                modifier = if (shouldAnimateChatListItems(listSettled)) {
-                                    Modifier.animateItem()
-                                } else {
-                                    Modifier
-                                },
-                            ) {
-                                when (item) {
-                                    is MessageDisplayItem.Turn -> {
-                                        val absoluteTurnIndex = store.loadedOffset + item.index
-                                        val collapseReply = item.turn.role != "user" &&
-                                            shouldCollapseReply(item.index, lastUserTurnIndex)
-                                        val isCurrentReply = item.turn.role != "user" && !collapseReply
-                                        TurnView(
-                                            item.turn,
-                                            employeeId = employeeId,
-                                            employeeName = liveEmployee?.name ?: store.snapshot?.employeeName,
-                                            employeeAvatar = liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
-                                            employeeProvider = store.snapshot?.provider,
-                                            isLastTurn = item.index == store.messages.lastIndex,
-                                            isResponding = store.isResponding,
-                                            activeCommandIds = activeCommandIds,
-                                            toolResultsById = toolResultsById,
-                                            compactUser = false,
-                                            initiallyCollapsed = collapseReply,
-                                            showHeader = true,
-                                            onUserExpand = { scrollReplyToTop(absoluteTurnIndex) },
-                                            onCurrentReplyExpandToBottom = {
-                                                if (isCurrentReply) expandCurrentReplyToBottom()
-                                            },
-                                            askSelections = store.askUserSelections,
-                                            onAskToggle = { toolUseId, qIdx, optIdx, multi ->
-                                                store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
-                                            },
-                                            onAskSubmit = { toolUseId, answerText ->
-                                                scrollMode = ChatScrollMode.StickToBottom
-                                                store.submitAskUser(toolUseId, answerText)
-                                            },
-                                            foldScope = foldScope,
-                                        )
-                                    }
-                                    is MessageDisplayItem.Exploration -> ExplorationGroupCard(
-                                        tools = item.tools,
-                                        running = store.isResponding &&
-                                            item.lastTurnIndex == store.messages.lastIndex &&
-                                            item.tools.any { it.result == null },
+                            // 不挂 Modifier.animateItem()：聊天卡是变高内容，滚动与逐帧测准时
+                            // 会不断修正条目偏移，位移动画把这些修正当成动画播出来，
+                            // 就是滚动里的橡皮筋抖动。卡片入场动效在各卡内部自己做。
+                            when (item) {
+                                is MessageDisplayItem.Turn -> {
+                                    val absoluteTurnIndex = store.loadedOffset + item.index
+                                    val collapseReply = item.turn.role != "user" &&
+                                        shouldCollapseReply(item.index, lastUserTurnIndex)
+                                    val isCurrentReply = item.turn.role != "user" && !collapseReply
+                                    TurnView(
+                                        item.turn,
+                                        employeeId = employeeId,
+                                        employeeName = liveEmployee?.name ?: store.snapshot?.employeeName,
+                                        employeeAvatar = liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
+                                        employeeProvider = store.snapshot?.provider,
+                                        isLastTurn = item.index == store.messages.lastIndex,
+                                        isResponding = store.isResponding,
+                                        activeCommandIds = activeCommandIds,
+                                        toolResultsById = toolResultsById,
+                                        compactUser = false,
+                                        initiallyCollapsed = collapseReply,
+                                        showHeader = true,
+                                        onUserExpand = { scrollReplyToTop(absoluteTurnIndex) },
+                                        onCurrentReplyExpandToBottom = {
+                                            if (isCurrentReply) expandCurrentReplyToBottom()
+                                        },
+                                        askSelections = store.askUserSelections,
+                                        onAskToggle = { toolUseId, qIdx, optIdx, multi ->
+                                            store.toggleAskOption(toolUseId, qIdx, optIdx, multi)
+                                        },
+                                        onAskSubmit = { toolUseId, answerText ->
+                                            scrollMode = ChatScrollMode.StickToBottom
+                                            store.submitAskUser(toolUseId, answerText)
+                                        },
                                         foldScope = foldScope,
                                     )
                                 }
+                                is MessageDisplayItem.Exploration -> ExplorationGroupCard(
+                                    tools = item.tools,
+                                    running = store.isResponding &&
+                                        item.lastTurnIndex == store.messages.lastIndex &&
+                                        item.tools.any { it.result == null },
+                                    foldScope = foldScope,
+                                    isLatestActivity = item.lastTurnIndex == store.messages.lastIndex,
+                                )
                             }
                         }
                         item(key = "chat-bottom") {
@@ -912,22 +1001,6 @@ fun ChatScreen(
                             color = WandColors.brand,
                         )
                     }
-                    val currentScrubberItem = conversationScrubberIndexForDisplayItem(
-                        scrubberTargets,
-                        listState.layoutInfo.visibleItemsInfo
-                            .filter { it.index >= headerOffset && it.index < headerOffset + displayItems.size }
-                            .minByOrNull { item ->
-                                kotlin.math.abs(
-                                    item.offset + item.size / 2 -
-                                        (listState.layoutInfo.viewportStartOffset +
-                                            listState.layoutInfo.viewportEndOffset) / 2,
-                                )
-                            }
-                            ?.index
-                            ?.minus(headerOffset)
-                            ?.coerceIn(0, (displayItems.size - 1).coerceAtLeast(0))
-                            ?: 0,
-                    )
                     ConversationTurnScrubber(
                         itemCount = scrubberTargets.size,
                         currentItem = currentScrubberItem,
@@ -972,7 +1045,7 @@ fun ChatScreen(
                     store.loadError == null &&
                     !activityDockExpanded &&
                     scrollMode == ChatScrollMode.Manual &&
-                    listState.canScrollForward,
+                    canScrollForwardToTail,
                 enter = fadeIn(WandMotion.tweenFast()) +
                     scaleIn(initialScale = 0.8f, animationSpec = WandMotion.tweenFast()),
                 exit = fadeOut(WandMotion.tweenFast()) +
@@ -987,12 +1060,10 @@ fun ChatScreen(
                         .size(48.dp)
                         .glassSurface(activeBackdrop, CircleShape, WandGlass.accent)
                         .clickable {
+                            // 也走同一个协调器：自己另起一条 animateScrollToItem 链，
+                            // 会和延后落位的补落位撞在一起（动画中途被瞬移打断）。
                             scrollMode = ChatScrollMode.StickToBottom
-                            scrollScope.launch {
-                                delay(50)
-                                val target = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                                listState.animateScrollToItem(target)
-                            }
+                            stickToBottom(0L, chatStickToBottomRetryDelaysMs(listSettled), true)
                         },
                 ) {
                     Icon(
@@ -1549,6 +1620,8 @@ private fun LaunchSettingPicker(
             WandBottomSheet(
                 onDismissRequest = { closePicker() },
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                // 列表滚到边界时剩余位移会交给弹层拖动，滚起来整块回弹；纵向手势归内部列表。
+                gesturesEnabled = false,
             ) {
                 NoOverscroll {
                     Column(
@@ -1865,14 +1938,14 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
             Icon(
                 WandIcons.wifiOff,
                 contentDescription = null,
-                tint = Color.White,
+                tint = WandColors.onDanger,
                 modifier = Modifier.size(14.dp),
             )
             Text(
                 "连接已断开，正在重连…",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = Color.White,
+                color = WandColors.onDanger,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1887,6 +1960,7 @@ private fun BottomBar(
     backdrop: GlassBackdrop?,
     store: ChatStore,
     composer: ChatComposer,
+    resources: com.wand.app.ui.PiResourcesController,
     voice: VoiceInputController,
     onMicDown: () -> Unit,
     uploading: Boolean,
@@ -1986,7 +2060,6 @@ private fun BottomBar(
                     backdrop = backdrop,
                     activities = subagentActivities,
                     usage = lastAssistantUsage,
-                    taskTitle = store.currentTaskTitle,
                     sessionRunning = store.isResponding,
                     onExpandedChange = onActivityDockExpandedChange,
                 )
@@ -1995,7 +2068,8 @@ private fun BottomBar(
         InputBar(
             backdrop = backdrop,
             store = store,
-            canSubmit = composer.canSubmit,
+            canSubmit = composer.canSubmit && resources.phase != "saving",
+            resources = resources,
             sendPhase = composer.sendPhase,
             draft = draft,
             onDraftChange = onDraftChange,
@@ -2030,6 +2104,7 @@ private fun InputBar(
     backdrop: GlassBackdrop?,
     store: ChatStore,
     canSubmit: Boolean,
+    resources: com.wand.app.ui.PiResourcesController,
     sendPhase: SendPhase,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -2047,9 +2122,16 @@ private fun InputBar(
     onAttachOpenChange: (Boolean) -> Unit,
 ) {
     val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
-    var showStopConfirm by remember { mutableStateOf(false) }
+    var showStopConfirm by remember(store.sessionId) { mutableStateOf(false) }
+    var modeOpen by remember(store.sessionId) { mutableStateOf(false) }
+    val menuTriggerFocus = remember(store.sessionId) { FocusRequester() }
+    val menuStopVisible = composerMenuHasStop(
+        store.isResponding,
+        sendActionVisual(sendPhase, store.isResponding, canSend),
+    )
     SharedMessageComposer(
         backdrop = backdrop,
+        sessionKey = store.sessionId,
         draft = draft,
         onDraftChange = onDraftChange,
         attachments = pendingAttachments,
@@ -2057,7 +2139,7 @@ private fun InputBar(
         onRemoveAttachment = onRemoveAttachment,
         uploading = uploading,
         attachOpen = attachOpen,
-        onAttachOpenChange = onAttachOpenChange,
+        onAttachOpenChange = { open -> resources.dismiss(); onAttachOpenChange(open) },
         onPickPhoto = onPickPhoto,
         onPickFile = onPickFile,
         canSubmit = canSubmit,
@@ -2065,13 +2147,45 @@ private fun InputBar(
         allowRefocus = !store.sessionEnded,
         voicePressed = voice.pressed,
         onExpandedChange = onExpandedChange,
+        resourcePanel = { PiResourcesPanel(resources) { runCatching { menuTriggerFocus.requestFocus() } } },
+        resourcePanelOpen = resources.open,
+        menuActionModifier = Modifier.focusRequester(menuTriggerFocus),
+        menuContent = {
+            if (store.isStructured) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WandInlinePanelAction(
+                        icon = WandIcons.permission,
+                        label = "权限 · ${sessionModeLabel(store.mode)}",
+                        enabled = store.snapshot?.provider != "codex",
+                        modifier = Modifier.weight(1f).heightIn(min = ComposerActionTouchSize),
+                        onClick = { onAttachOpenChange(false); resources.dismiss(); modeOpen = true },
+                    )
+                    if (store.snapshot?.provider == "pi") {
+                        WandInlinePanelAction(
+                            icon = WandIcons.settings,
+                            label = "会话设置",
+                            modifier = Modifier.weight(1f).heightIn(min = ComposerActionTouchSize),
+                            onClick = { onAttachOpenChange(false); resources.toggle() },
+                        )
+                    }
+                }
+            }
+            if (menuStopVisible) {
+                WandInlinePanelAction(
+                    icon = WandIcons.stop,
+                    label = "停止当前任务",
+                    modifier = Modifier.fillMaxWidth().heightIn(min = ComposerActionTouchSize),
+                    onClick = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
+                )
+            }
+        },
         trailingActions = { requestFocus, sendAndRefocus ->
             TrailingSendStop(
                 store = store,
                 sendPhase = sendPhase,
                 canSend = canSend,
                 canSubmit = canSubmit,
-                onStop = { showStopConfirm = true },
+                onStop = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
                 voiceAction = {
                     VoiceMicButton(
                         voice = voice,
@@ -2085,19 +2199,21 @@ private fun InputBar(
         },
         controls = {
             Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (store.isStructured) {
-                    ModeChip(store)
-                    ModelThinkingChip(store)
+                    ModelThinkingChip(store, beforeOpen = {
+                        onAttachOpenChange(false)
+                        resources.dismiss()
+                    }, modifier = Modifier.weight(1f))
                 }
             }
         },
     )
+    if (modeOpen) {
+        ComposerModeChoiceSheet(store, onDismiss = { modeOpen = false })
+    }
     if (showStopConfirm) {
         WandDialog(
             title = "停止任务",
@@ -2125,7 +2241,7 @@ private fun InputBar(
 /**
  * 发送 / 停止按钮组（对齐 iOS trailingButtons）：
  * - 运行中且无草稿 → 唯一按钮是黑底停止（对齐 Codex collapsed composer）；
- * - 有草稿 → 发送按钮（运行中时左侧追加一个红色停止，可一边排队一边停）。
+ * - 有草稿 → 发送按钮（运行中排队，停止入口收进加号面板）。
  *
  * 动效（`docs/motion-design.md` 规则 3 / 4）：
  * - 提交后按钮**原地**依次显示 发送中 → 已送达 / 失败，不弹 Toast、不换位置；
@@ -2148,133 +2264,52 @@ private fun TrailingSendStop(
     ).let { visual ->
         if (visual == SendActionVisual.Send && !canSubmit) SendActionVisual.Blocked else visual
     }
-    // 主按钮始终是同一个实例；运行中有草稿时保留左侧的独立停止入口。
-    if (store.isResponding && visual != SendActionVisual.Stop) {
-        SubmitMorphButton(
-            visual = SendActionVisual.Stop,
-            contentDescription = "停止任务",
-            onClick = onStop,
-            fillColor = WandColors.dangerSoft,
-            contentTint = WandColors.danger,
-        )
-    }
-    voiceAction()
-    SubmitMorphButton(
+    ComposerSendStopActions(
+        voiceAction = voiceAction,
         visual = visual,
-        contentDescription = when (visual) {
-            SendActionVisual.Sending -> "发送中"
-            SendActionVisual.Sent -> "已发送"
-            SendActionVisual.Failed -> "发送失败，可重试"
-            SendActionVisual.Blocked -> "当前没有可发送内容"
-            SendActionVisual.Stop -> "停止任务"
-            else -> if (store.isResponding) "排队发送消息" else "发送消息"
-        },
-        onClick = if (visual == SendActionVisual.Stop) onStop else onSend,
-        enabled = visual == SendActionVisual.Send || visual == SendActionVisual.Stop,
-        fillColor = when (visual) {
-            SendActionVisual.Send -> WandColors.brand
-            SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
-            SendActionVisual.Failed -> WandColors.dangerSoft
-            SendActionVisual.Stop -> WandColors.textPrimary
-            else -> WandColors.textSecondary.copy(alpha = 0.16f)
-        },
-        contentTint = when (visual) {
-            SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> Color.White
-            SendActionVisual.Failed -> WandColors.danger
-            SendActionVisual.Stop -> WandColors.surface
-            else -> WandColors.textSecondary
-        },
+        stopDescription = "停止任务",
+        sendDescription = if (store.isResponding) "排队发送消息" else "发送消息",
+        onSend = onSend,
+        onStop = onStop,
     )
-}
-
-/**
- * 提交按钮：箭头 / 转圈 / 对勾 / 叉 / 停止在固定圆形底内交叉淡入 + 缩放。
- * 按钮本身不移动、不变大（规则 3「全程在同一位置完成」+ 规则 4「同构变形」）。
- */
-@Composable
-internal fun SubmitMorphButton(
-    visual: SendActionVisual,
-    contentDescription: String,
-    onClick: () -> Unit,
-    fillColor: Color,
-    contentTint: Color,
-    enabled: Boolean = true,
-) {
-    // 底色也在原地过渡：品牌色 → 送达/失败态，不会出现一帧生硬的换色。
-    val animatedFill by animateColorAsState(
-        targetValue = fillColor,
-        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()),
-        label = "submitFill",
-    )
-    FilledComposerAction(
-        enabled = enabled,
-        fillColor = animatedFill,
-        contentDescription = contentDescription,
-        onClick = onClick,
-    ) {
-        WandInPlaceSwap(contentKey = visual, modifier = Modifier.size(ComposerActionIconSize)) { key ->
-            when (key as SendActionVisual) {
-                SendActionVisual.Sending -> CircularProgressIndicator(
-                    color = contentTint,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(ComposerActionIconSize),
-                )
-                SendActionVisual.Sent -> Icon(
-                    WandIcons.check,
-                    contentDescription = null,
-                    tint = contentTint,
-                    modifier = Modifier.size(ComposerActionIconSize),
-                )
-                SendActionVisual.Failed -> Icon(
-                    WandIcons.statusFail,
-                    contentDescription = null,
-                    tint = contentTint,
-                    modifier = Modifier.size(ComposerActionIconSize),
-                )
-                SendActionVisual.Stop -> Icon(
-                    WandIcons.stop,
-                    contentDescription = null,
-                    tint = contentTint,
-                    modifier = Modifier.size(ComposerActionIconSize),
-                )
-                else -> Icon(
-                    WandIcons.arrowUp,
-                    contentDescription = null,
-                    tint = contentTint,
-                    modifier = Modifier.size(ComposerActionIconSize),
-                )
-            }
-        }
-    }
 }
 
 /** 控制行通用胶囊徽标：图标 + 文字 + 弱色底 + 下拉箭头。 */
-/** item 尾部（活动段摘要行）当前相对视口起点的像素位置。 */
-private fun LazyListState.itemTailOffset(key: String): Int? =
-    layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.let { it.offset + it.size }
-
 /**
- * 保持 [key] 这个列表 item 尾部（活动段摘要行）停在 [target] 处。
+ * 让 [key] 这个 item 的底边（向下展开的工具面板底边）留在列表视口里。
  *
- * 向上展开的工具时间线让 item 高度逐帧变化；这里每帧补偿「读数偏差 + 上一帧的高度增量」：
- * 只补读数偏差会让摘要行永远落后一帧的高度（读数本身就滞后一帧），补偿量自身携带着增量信息。
- * 跑满 [maxFrames] 的短窗口即结束（覆盖 240ms 的进入动画，高刷屏也够），
- * 列表底部的 clamp 由 scrollBy 自身处理。
+ * 面板长在摘要行下面，item 在动画里逐帧变高：这里每帧只补「越过视口底部」的那一段，
+ * 因此有空间时补偿量为零（摘要行和上一屏内容都不动），放不下时才把列表抬起最小距离。
+ * 高度回落时同一个目标值会自然把列表放回原位（负增量走同一条滚动路径）。
+ * [applied] 按 item 记录已补偿量：无补偿时的尾部落点必须把它加回去，否则读数永远滞后一帧。
  */
-private suspend fun LazyListState.keepItemTailAnchor(key: String, target: Int, maxFrames: Int = 48) {
-    var previousTail: Int? = null
-    var lastCompensation = 0
+private suspend fun LazyListState.revealActivityPanelTail(
+    key: String,
+    applied: MutableMap<String, Int>,
+    maxFrames: Int = 48,
+    isCancelled: () -> Boolean = { false },
+) {
     repeat(maxFrames) {
         withFrameNanos { }
-        val info = layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
-        val tail = info.offset + info.size
-        val previous = previousTail
-        previousTail = tail
-        // 上一帧的高度增量 = 读数变化 + 上一帧实际补偿掉的量。
-        val increment = if (previous == null) 0 else tail - previous + lastCompensation
-        val delta = tail - target + increment
-        lastCompensation = if (delta != 0) scrollBy(delta.toFloat()).toInt() else 0
+        if (isCancelled()) {
+            // 补偿途中用户自己接管了列表（拖动/惯性/进入手动浏览）：以当前位置为新基准，
+            // 既不再拽回去，也不留下过期账目让下一次开合反向拉一把。
+            applied.remove(key)
+            return
+        }
+        val info = layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: run {
+            // 面板不可见时不做补偿，也不要留着过期账目影响下一次开合。
+            applied.remove(key)
+            return
+        }
+        val compensated = applied[key] ?: 0
+        val naturalTail = info.offset + info.size + compensated
+        val allowed = (layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding).coerceAtLeast(0)
+        val target = (naturalTail - allowed).coerceAtLeast(0)
+        val delta = target - compensated
+        if (delta != 0) applied[key] = compensated + scrollBy(delta.toFloat()).toInt()
     }
+    if ((applied[key] ?: 0) == 0) applied.remove(key)
 }
 
 @Composable
@@ -2392,33 +2427,15 @@ private fun ChoiceOptionsList(
         }
         items(options, key = { it.first }) { (id, optionLabel) ->
             val isSelected = selected == id
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            WandListItem(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(if (isSelected) accentSoft else Color.Transparent)
-                    .selectable(selected = isSelected, role = Role.RadioButton) { onSelect(id) }
-                    .padding(horizontal = 14.dp, vertical = 13.dp),
-            ) {
-                Text(
-                    optionLabel,
-                    fontSize = 14.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (isSelected) accent else WandColors.textPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                if (isSelected) {
-                    Icon(
-                        WandIcons.check,
-                        contentDescription = null,
-                        tint = accent,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
+                    .selectable(selected = isSelected, role = Role.RadioButton) { onSelect(id) },
+                headlineColor = if (isSelected) accent else WandColors.textPrimary,
+                headlineContent = { Text(optionLabel) },
+                trailingContent = { WandListItemIconSlot(if (isSelected) WandIcons.check else null, tint = accent) },
+            )
         }
     }
 }
@@ -2446,6 +2463,8 @@ internal fun ComposerChoiceSheet(
     WandBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        // 列表滚到边界时剩余位移会交给弹层拖动，滚起来整块回弹；纵向手势交给内部列表。
+        gesturesEnabled = false,
     ) {
         NoOverscroll {
             Column(
@@ -2495,43 +2514,22 @@ internal fun ComposerChoiceSheet(
     }
 }
 
-/** 执行模式徽标（纯 Logo 极简显示；点开查看与切换）。codex 锁 full-access。 */
+/** 执行模式从加号面板进入；弹层状态由输入栏持有，关闭面板不会销毁选择器。 */
 @Composable
-private fun ModeChip(store: ChatStore, modifier: Modifier = Modifier) {
-    val provider = store.snapshot?.provider
-    val isCodex = provider == "codex"
-    val supportedModeIds = supportedSessionModeIds(provider)
-    var open by remember { mutableStateOf(false) }
-    // 高权限模式（托管 / 全权限）用橙色提示，其余用次要色。
-    val tint = if (store.mode == "full-access" || store.mode == "managed")
-        WandColors.warning else WandColors.textSecondary
-    Box(modifier = modifier) {
-        ControlChip(
-            icon = WandIcons.permission,
-            text = "",
-            tint = tint,
-            contentDescription = buildString {
-                append("当前执行模式：${sessionModeLabel(store.mode)}")
-                if (isCodex) append("，Codex 会话固定")
-            },
-            enabled = !isCodex,
-            showText = false,
-        ) { open = true }
-        if (open) {
-            ComposerChoiceSheet(
-                title = "执行模式",
-                options = SESSION_MODE_OPTIONS
-                    .filter { it.id in supportedModeIds }
-                    .map { it.id to "${it.label} · ${it.description}" },
-                selected = store.mode,
-                onSelect = { id ->
-                    store.chooseMode(id)
-                    open = false
-                },
-                onDismiss = { open = false },
-            )
-        }
-    }
+private fun ComposerModeChoiceSheet(store: ChatStore, onDismiss: () -> Unit) {
+    val supportedModeIds = supportedSessionModeIds(store.snapshot?.provider)
+    ComposerChoiceSheet(
+        title = "执行模式",
+        options = SESSION_MODE_OPTIONS
+            .filter { it.id in supportedModeIds }
+            .map { it.id to "${it.label} · ${it.description}" },
+        selected = store.mode,
+        onSelect = { id ->
+            store.chooseMode(id)
+            onDismiss()
+        },
+        onDismiss = onDismiss,
+    )
 }
 
 /** 模型与思考深度合体弹层：上方思考深度横向快捷切换，下方模型搜索与列表。 */
@@ -2567,6 +2565,8 @@ internal fun ModelThinkingChoiceSheet(
     WandBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        // 列表滚到边界时剩余位移会交给弹层拖动，滚起来整块回弹；纵向手势交给内部列表。
+        gesturesEnabled = false,
     ) {
         NoOverscroll {
             Column(
@@ -2670,7 +2670,7 @@ internal fun ModelThinkingChoiceSheet(
 
 /** 模型与思考深度合体徽标：Logo +「模型名 · 思考程度」。 */
 @Composable
-private fun ModelThinkingChip(store: ChatStore, modifier: Modifier = Modifier) {
+private fun ModelThinkingChip(store: ChatStore, beforeOpen: () -> Unit, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     val thinkingTint = when (store.thinkingEffort) {
         "standard" -> WandColors.success
@@ -2683,10 +2683,11 @@ private fun ModelThinkingChip(store: ChatStore, modifier: Modifier = Modifier) {
         ControlChip(
             icon = WandIcons.sparkle,
             text = labelText,
+            modifier = Modifier.heightIn(min = ComposerActionTouchSize),
             tint = thinkingTint,
             contentDescription = "模型与思考深度：模型 ${modelDisplayLabel(store, store.selectedModel)}，思考深度 ${thinkingLabel(store, store.thinkingEffort)}",
             showText = true,
-        ) { open = true }
+        ) { beforeOpen(); open = true }
         if (open) {
             ModelThinkingChoiceSheet(
                 store = store,
@@ -2698,7 +2699,7 @@ private fun ModelThinkingChip(store: ChatStore, modifier: Modifier = Modifier) {
 
 /**
  * 输入栏左侧「更多操作」按钮（对齐 iOS composerActionsMenu）：
- * 圆形 + 号，点开菜单「从相册选择 / 从文件选择」两项；上传中显示转圈。
+ * 圆形 + 号，展开附件、会话设置与当前任务操作；上传中显示转圈。
  */
 @Composable
 internal fun ComposerActionsMenu(
@@ -2706,6 +2707,8 @@ internal fun ComposerActionsMenu(
     uploading: Boolean,
     attachOpen: Boolean,
     onAttachOpenChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    allowDuringUpload: Boolean = false,
 ) {
     val attachProgress by animateFloatAsState(
         targetValue = if (attachOpen) 1f else 0f,
@@ -2713,13 +2716,15 @@ internal fun ComposerActionsMenu(
         label = "composerAttachMorph",
     )
     FilledComposerAction(
-        enabled = !uploading,
+        enabled = !uploading || allowDuringUpload,
         fillColor = if (attachOpen) WandColors.brandSoft else WandColors.surface,
         contentDescription = when {
+            uploading && allowDuringUpload -> "正在上传附件，更多操作"
             uploading -> "正在上传附件"
-            attachOpen -> "收起添加附件"
-            else -> "添加照片或文件"
+            attachOpen -> "收起更多操作"
+            else -> "更多操作：附件、设置与任务"
         },
+        modifier = modifier,
         onClick = { onAttachOpenChange(!attachOpen) },
     ) {
         WandInPlaceSwap(contentKey = uploading, modifier = Modifier.size(ComposerActionIconSize)) { busy ->

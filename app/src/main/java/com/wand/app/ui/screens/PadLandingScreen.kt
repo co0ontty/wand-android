@@ -30,6 +30,7 @@ import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
+import com.wand.app.ui.components.wandStatusPresentation
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.ambientBackground
 
@@ -137,23 +138,22 @@ private fun PadLandingSessionRow(
 ) {
     val session = entry.session
     val pulse = sessionPulse(session)
-    val status = when (pulse) {
-        HomeSessionPulse.NeedsYou -> "等你处理"
-        HomeSessionPulse.Running -> "运行中"
-        HomeSessionPulse.Quiet -> "空闲"
-    }
-    val statusColor = when (pulse) {
-        HomeSessionPulse.NeedsYou -> WandColors.permission
-        HomeSessionPulse.Running -> WandColors.success
-        HomeSessionPulse.Quiet -> WandColors.textMuted
-    }
+    val presentation = wandStatusPresentation(when (pulse) {
+        HomeSessionPulse.NeedsYou -> "permission"
+        HomeSessionPulse.Running -> "running"
+        HomeSessionPulse.Quiet -> "idle"
+    })
     WandCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = { onOpenSession(taskSessionRoute(session, entry.group, entry.task)) },
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            WandProviderMark(provider = session.provider, variant = WandProviderMarkVariant.Tinted)
+            WandProviderMark(
+                provider = session.provider,
+                variant = WandProviderMarkVariant.Tinted,
+                modifier = Modifier.logoBreathingGlow(presentation, cornerRadius = 6.dp),
+            )
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -171,7 +171,6 @@ private fun PadLandingSessionRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(status, style = MaterialTheme.typography.labelMedium, color = statusColor)
             Icon(
                 WandIcons.chevronRight,
                 contentDescription = null,

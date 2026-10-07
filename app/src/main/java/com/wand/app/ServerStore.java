@@ -31,6 +31,11 @@ public class ServerStore {
     private static final String KEY_NOTIFICATION_SOUND = "notification_sound";
     private static final String KEY_NOTIFICATION_VOLUME = "notification_volume";
     private static final String KEY_HAPTIC_ENABLED = "haptic_enabled";
+    private static final String KEY_TRAFFIC_SAVING_ENABLED = "traffic_saving_enabled";
+    private static final String KEY_TRAFFIC_TIMELINE_MODE = "traffic_timeline_mode";
+    /** 实时工具时间线的网络范围。all = 关闭限制，wifi = 仅 Wi-Fi。 */
+    public static final String TRAFFIC_TIMELINE_MODE_ALL = "all";
+    public static final String TRAFFIC_TIMELINE_MODE_WIFI = "wifi";
     private static final String KEY_KEEP_ALIVE = "keep_alive_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
@@ -365,6 +370,44 @@ public class ServerStore {
         prefs.edit().putBoolean(KEY_HAPTIC_ENABLED, enabled).apply();
     }
 
+    /** 关闭限制时所有网络显示；仅 Wi-Fi 时移动网络不显示。 */
+    public String getTrafficTimelineMode() {
+        if (prefs.contains(KEY_TRAFFIC_TIMELINE_MODE)) {
+            return normalizeTrafficTimelineMode(prefs.getString(
+                KEY_TRAFFIC_TIMELINE_MODE,
+                TRAFFIC_TIMELINE_MODE_WIFI
+            ));
+        }
+        // 兼容旧版布尔设置：true 曾表示开启流量节约，即仅 Wi-Fi；false 表示关闭限制。
+        boolean legacySaving = prefs.getBoolean(KEY_TRAFFIC_SAVING_ENABLED, true);
+        return legacySaving ? TRAFFIC_TIMELINE_MODE_WIFI : TRAFFIC_TIMELINE_MODE_ALL;
+    }
+
+    public void setTrafficTimelineMode(String mode) {
+        prefs.edit()
+            .putString(KEY_TRAFFIC_TIMELINE_MODE, normalizeTrafficTimelineMode(mode))
+            .remove(KEY_TRAFFIC_SAVING_ENABLED)
+            .apply();
+    }
+
+    private static String normalizeTrafficTimelineMode(String mode) {
+        return TRAFFIC_TIMELINE_MODE_ALL.equals(mode)
+            ? TRAFFIC_TIMELINE_MODE_ALL
+            : TRAFFIC_TIMELINE_MODE_WIFI;
+    }
+
+    /** @deprecated 使用 getTrafficTimelineMode。 */
+    @Deprecated
+    public boolean isTrafficSavingEnabled() {
+        return TRAFFIC_TIMELINE_MODE_WIFI.equals(getTrafficTimelineMode());
+    }
+
+    /** @deprecated 使用 setTrafficTimelineMode。 */
+    @Deprecated
+    public void setTrafficSavingEnabled(boolean enabled) {
+        setTrafficTimelineMode(enabled ? TRAFFIC_TIMELINE_MODE_WIFI : TRAFFIC_TIMELINE_MODE_ALL);
+    }
+
     public boolean isKeepAliveEnabled() {
         return prefs.getBoolean(KEY_KEEP_ALIVE, false);
     }
@@ -397,12 +440,28 @@ public class ServerStore {
     }
 
     public String getHomeListMode() {
-        return prefs.getString(KEY_HOME_LIST_MODE, "sessions");
+        return prefs.getString(KEY_HOME_LIST_MODE, "");
     }
 
     public void setHomeListMode(String mode) {
-        String normalized = "board".equals(mode) ? "board" : "sessions";
+        String normalized = "im".equals(mode) ? "im" : "board".equals(mode) ? "board" : "sessions";
         prefs.edit().putString(KEY_HOME_LIST_MODE, normalized).apply();
+    }
+
+    public String getConversationUi(String serverId) {
+        return prefs.getString("wand.conversationUi." + serverId, "");
+    }
+
+    public void setConversationUi(String serverId, String value) {
+        prefs.edit().putString("wand.conversationUi." + serverId, value).apply();
+    }
+
+    public String getConversationRequests(String serverId) {
+        return prefs.getString("wand.conversationRequests." + serverId, "{}");
+    }
+
+    public void setConversationRequests(String serverId, String value) {
+        prefs.edit().putString("wand.conversationRequests." + serverId, value).apply();
     }
 
     private static String channelKey(String base, String channel) {

@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,8 +28,6 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +41,8 @@ import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandListItem
+import com.wand.app.ui.components.WandListItemIconSlot
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.wandSelectedSurface
 
@@ -231,56 +232,36 @@ private fun WorkspaceTargetOption(
     } else {
         BrandLogos.tintForProvider(target.raw, WandColors.brand)
     }
-    Row(
+    WandListItem(
         modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
             .wandSelectedSurface(
                 selected = isSelected,
                 shape = RoundedCornerShape(14.dp),
                 unselectedFill = WandColors.surfaceSoft.copy(alpha = 0.42f),
             )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .selectable(
+                selected = isSelected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
             .semantics {
-                role = Role.RadioButton
-                this.selected = isSelected
                 contentDescription = "${target.label} ${target.description}"
                 stateDescription = if (isSelected) "已选中" else "未选中"
             },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(
-            painter = icon,
-            contentDescription = null,
-            tint = iconTint,
-            modifier = Modifier.size(24.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                target.label,
-                style = MaterialTheme.typography.titleSmall,
-                color = WandColors.textPrimary,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                target.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = WandColors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (isSelected) {
-            Icon(
-                WandIcons.check,
-                contentDescription = null,
+        headlineColor = if (enabled) WandColors.textPrimary else WandColors.textMuted,
+        supportingColor = if (enabled) WandColors.textSecondary else WandColors.textMuted,
+        headlineContent = { Text(target.label) },
+        supportingContent = { Text(target.description) },
+        leadingContent = {
+            Icon(painter = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(24.dp))
+        },
+        trailingContent = {
+            WandListItemIconSlot(
+                icon = if (isSelected) WandIcons.check else null,
                 tint = WandColors.brand,
-                modifier = Modifier.size(20.dp),
+                iconSize = 20.dp,
             )
-        }
-    }
+        },
+    )
 }

@@ -15,12 +15,14 @@ data class AiTeamMember(
     val duty: String,
     val agents: List<BoardTaskAgent>,
     val isLeader: Boolean,
-    /** 头像：空串按 id 哈希选毛色、`cat:<n>` 指定毛色、`data:image/…` 是上传的小图。 */
+    /** 头像：空串按身份生成（渐变底 + 名字首字）、`cat:<n>` 指定毛色、`data:image/…` 是上传的小图。 */
     val avatar: String = "",
     /** 团队拥有的职责标注（plan / work / verify / any）；缺省视同 any。 */
     val role: String? = null,
     /** 通讯录身份；旧成员不按名字猜绑定，只有显式选择员工才设置。 */
     val employeeId: String? = null,
+    val legacyTemplateId: String? = null,
+    val legacyMemberId: String? = null,
 ) {
     companion object {
         fun parse(item: JSONObject): AiTeamMember? {
@@ -39,6 +41,7 @@ data class AiTeamMember(
                 avatar = item.str("avatar") ?: "",
                 role = item.str("role")?.takeIf { it.isNotBlank() },
                 employeeId = item.str("employeeId")?.trim()?.takeIf { it.isNotEmpty() },
+                legacyTemplateId = item.str("legacyTemplateId"), legacyMemberId = item.str("legacyMemberId"),
             )
         }
 
@@ -58,6 +61,8 @@ data class AiTeam(
     val requirePlanApproval: Boolean = true,
     /** Leader 轮次 + 成员步骤合计上限（5–200）。 */
     val maxSteps: Int = AI_TEAM_DEFAULT_MAX_STEPS,
+    /** 创建时间（ISO-8601）。通讯录按它做时间先后排序；旧服务不返回时为空串。 */
+    val createdAt: String = "",
 ) {
     companion object {
         fun parse(item: JSONObject): AiTeam? {
@@ -70,6 +75,7 @@ data class AiTeam(
                 instructions = item.str("instructions") ?: "",
                 requirePlanApproval = item.bool("requirePlanApproval") ?: true,
                 maxSteps = item.int("maxSteps") ?: AI_TEAM_DEFAULT_MAX_STEPS,
+                createdAt = item.str("createdAt") ?: "",
             )
         }
 
@@ -141,6 +147,9 @@ data class AiTeamRun(
     val taskTitle: String = "",
     val taskIdentifier: String = "",
     val updatedAt: String = "",
+    val conversationId: String? = null,
+    val memberVersion: Int? = null,
+    val roundNumber: Int? = null,
 ) {
     companion object {
         fun parse(item: JSONObject): AiTeamRun? {
@@ -159,6 +168,7 @@ data class AiTeamRun(
                 taskTitle = item.str("taskTitle") ?: "",
                 taskIdentifier = item.str("taskIdentifier") ?: "",
                 updatedAt = item.str("updatedAt") ?: "",
+                conversationId = item.str("conversationId"), memberVersion = item.int("memberVersion"), roundNumber = item.int("roundNumber"),
             )
         }
 
@@ -175,6 +185,9 @@ data class AiTeamStep(
     val title: String,
     val status: String,
     val sessionId: String? = null,
+    val instructions: String = "",
+    val report: String = "",
+    val reportPath: String = "",
 ) {
     val isLeader: Boolean
         get() = kind == "leader"
@@ -190,6 +203,7 @@ data class AiTeamStep(
                 title = item.str("title") ?: "",
                 status = item.str("status") ?: "queued",
                 sessionId = item.str("sessionId")?.takeIf { it.isNotBlank() },
+                instructions = item.str("instructions").orEmpty(), report = item.str("report").orEmpty(), reportPath = item.str("reportPath").orEmpty(),
             )
         }
 
@@ -215,7 +229,7 @@ data class AiTeamRunDetail(
     val delivery: AiTeamDeliverySummary? = null,
 ) {
     val presentationTeam: AiTeam? get() = displayTeam ?: run.team
-    val presentationChatTitle: String get() = chatTitle?.trim()?.takeIf { it.isNotEmpty() } ?: "任务处理群"
+    val presentationChatTitle: String get() = chatTitle?.trim()?.takeIf { it.isNotEmpty() } ?: "群聊"
 
     companion object {
         fun parse(item: JSONObject): AiTeamRunDetail? {

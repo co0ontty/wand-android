@@ -118,6 +118,30 @@ internal fun newTaskComposerControlChips(
 internal fun newTaskStartSessionDescription(enabled: Boolean): String =
     if (enabled) "建卡后直接进入会话" else "只创建任务，稍后再开始"
 
+/**
+ * 「没有指定任务的会话不建卡」（纯函数）：任务名留空、这一轮要直接起会话、又不挂父任务时，
+ * 会话只带目录归属落进侧栏「未分组任务」；要成卡由用户在那一行「归纳为新任务」。
+ * 团队与临时派工要的就是任务卡，由宿主各自的式子决定，不经这道闸。
+ */
+internal fun newTaskStartsUngroupedSession(
+    name: String,
+    startFirstSession: Boolean,
+    linkedToParent: Boolean,
+): Boolean = name.isBlank() && startFirstSession && !linkedToParent
+
+/** 未分组开工下那行开关的标题与说明：不建卡，也不许再暗示「建卡后…」。 */
+internal fun newTaskUngroupedStartLabel(): String = "直接开工，不建任务卡"
+
+internal fun newTaskUngroupedStartDescription(): String =
+    "会话先落在该目录的「未分组任务」里，需要时再归纳成新任务"
+
+/** 未分组开工时工作目录只做归属，没有任务可挂独立工作树，所以这行整条收起。 */
+internal fun newTaskUngroupedStatusLine(): String =
+    "不建任务卡 · 会话直接使用所选工作目录，先进「未分组任务」"
+
+internal fun newTaskUngroupedActionLabel(busy: Boolean): String =
+    if (busy) "正在启动会话…" else "开始会话"
+
 internal fun newTaskWorktreeDescription(enabled: Boolean): String =
     if (enabled) "在独立目录中工作，隔离当前修改" else "直接使用所选工作目录"
 
@@ -149,3 +173,31 @@ internal fun newTaskTeamActionLabel(
     retry && hasPrompt -> "重试交给团队"
     else -> "创建并交给团队"
 }
+
+/** 收起高级设置时只投影本次真正生效的配置；不把隐藏的 CLI / worktree 值当执行事实。 */
+internal fun newTaskMoreSettingsSummary(
+    name: String,
+    ungroupedStart: Boolean,
+    worktree: Boolean,
+    startFirstSession: Boolean,
+    namedSubjectSelected: Boolean,
+    kindLabel: String,
+    modelLabel: String,
+    effortLabel: String,
+    shellTarget: Boolean,
+    parentLabel: String?,
+): String = buildList {
+    add(if (ungroupedStart) "直接开始会话，不建卡" else name.trim().ifEmpty { "自动命名" })
+    if (!ungroupedStart) add(if (worktree) "独立工作树" else "共用目录")
+    if (!namedSubjectSelected) {
+        if (!startFirstSession) add("仅建分组")
+        else {
+            add(kindLabel)
+            if (!shellTarget) {
+                add(modelLabel.ifBlank { "默认模型" })
+                add("思考 · $effortLabel")
+            }
+        }
+    }
+    parentLabel?.takeIf { it.isNotBlank() }?.let { add("归属 · $it") }
+}.joinToString(" · ")

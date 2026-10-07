@@ -108,13 +108,13 @@ fun WandTeamReportFileCard(file: TeamReportFile, baseUrl: String, modifier: Modi
                 Text("Markdown · ${teamReportFileSize(file.size)}", fontSize = 10.sp, color = WandColors.textMuted)
             }
             Text(when { downloading -> "下载中…"; error != null -> "重试下载"; opened -> "已打开"; else -> "下载" },
-                fontSize = 12.sp, color = WandColors.brand, textAlign = TextAlign.End,
+                fontSize = 12.sp, color = WandColors.brandText, textAlign = TextAlign.End,
                 modifier = Modifier.widthIn(min = 80.dp).heightIn(min = 40.dp)
                     .clip(WandShapes.xs).clickable(enabled = !downloading && baseUrl.isNotBlank(),
                         role = Role.Button, onClickLabel = "下载${file.name}", onClick = { download() })
                     .padding(vertical = 10.dp))
         }
-        error?.let { Text(it, fontSize = 11.sp, color = WandColors.danger,
+        error?.let { Text(it, fontSize = 11.sp, color = WandColors.dangerText,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
     }
     if (preview) TextPreviewDialog(path = file.path, baseUrl = baseUrl,

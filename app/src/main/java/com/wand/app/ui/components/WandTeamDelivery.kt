@@ -55,11 +55,11 @@ fun WandTeamDeliveryBody(detail: AiTeamRunDetail, baseUrl: String) {
     val delivery = detail.delivery?.takeIf { it.runId == detail.run.id } ?: return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         delivery.conclusion?.takeIf { it.isNotBlank() }?.let {
-            Text("负责人交付说明", style = MaterialTheme.typography.labelMedium, color = WandColors.brand)
+            Text("负责人交付说明", style = MaterialTheme.typography.labelMedium, color = WandColors.brandText)
             Text(it, style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
         }
         delivery.attention?.let {
-            Text(it.message, style = MaterialTheme.typography.bodySmall, color = WandColors.warning)
+            Text(it.message, style = MaterialTheme.typography.bodySmall, color = WandColors.warningText)
         }
         Text("历史交付文件 · ${delivery.totalFiles}", style = MaterialTheme.typography.labelMedium,
             color = WandColors.textPrimary)

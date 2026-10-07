@@ -192,7 +192,7 @@ class QuickCommitStore(
                     if (archiveIntent) {
                         if (r.archiveError != null) append("，归档失败：").append(r.archiveError)
                         else if (r.archivedTaskCount > 0) append("，已归档 ${r.archivedTaskCount} 个关联任务")
-                        else append("，没有已完成的关联任务")
+                        else append("，没有可归档的关联任务")
                     }
                     outcome.pushError?.let { append("，推送失败：").append(it) }
                 }

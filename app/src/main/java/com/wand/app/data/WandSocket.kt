@@ -29,6 +29,11 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     var onEvent: ((SessionEvent) -> Unit)? = null
     /** System notification for a changed employee definition; unrelated to session input. */
     var onEmployeeDefinitionChanged: ((String) -> Unit)? = null
+    /** Read-only catalog invalidation, not an input or model mutation. */
+    var onModelCatalogChanged: (() -> Unit)? = null
+    /** Existing bounded team live feed; never treated as session input. */
+    var onTeamStepLive: ((AiTeamRunLive) -> Unit)? = null
+    var onConversationSessionPreview: ((ConversationSessionUpdate) -> Unit)? = null
 
     /** 连接状态变化（true=已连上），主线程回调。 */
     var onConnectionChange: ((Boolean) -> Unit)? = null
@@ -276,6 +281,9 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
             val packet = JSONObject(text)
             if (packet.optString("type") == "notification") {
                 val data = packet.optJSONObject("data")
+                if (data?.optString("kind") == "models") onModelCatalogChanged?.invoke()
+                if (data?.optString("kind") == "ai-team-step-live") AiTeamRunLive.parse(data)?.let { onTeamStepLive?.invoke(it) }
+                if (data?.optString("kind") == "conversation-session-preview") ConversationSessionUpdate.parse(data)?.let { onConversationSessionPreview?.invoke(it) }
                 if (data?.optString("kind") == "silicon-employee-definition") {
                     data.optString("employeeId").takeIf { it.isNotBlank() }
                         ?.let { onEmployeeDefinitionChanged?.invoke(it) }

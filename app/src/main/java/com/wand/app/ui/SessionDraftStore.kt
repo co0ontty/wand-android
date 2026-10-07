@@ -7,6 +7,11 @@ import com.wand.app.data.UploadedFile
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** An adoption offer contains identities/revisions only; pages never copy the draft payload. */
+data class ComposerDraftAdoption internal constructor(
+    val sourceId: String, val targetId: String, val sourceRevision: Long, val targetRevision: Long,
+)
+
 /** Keeps unsent composer text isolated by session while detail screens are replaced. */
 class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
     private val drafts = mutableStateMapOf<String, String>().apply {
@@ -16,6 +21,8 @@ class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
     private val revisions = mutableMapOf<String, Long>()
     private val unconfirmedTextRevisions = mutableMapOf<String, Long>()
     private val unconfirmedAttachmentPaths = mutableMapOf<String, Set<String>>()
+    /** Unknown delivery must continue to block the exact input even after the user edits the draft. */
+    private val unconfirmedInputs = mutableMapOf<String, MutableSet<String>>()
 
     operator fun get(sessionId: String): String = drafts[sessionId].orEmpty()
 
@@ -32,7 +39,36 @@ class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
     internal fun attachments(sessionId: String): List<UploadedFile> = attachmentDrafts[sessionId].orEmpty()
 
     internal fun setAttachments(sessionId: String, files: List<UploadedFile>) {
+        if (attachments(sessionId) != files) revisions[sessionId] = revision(sessionId) + 1
         if (files.isEmpty()) attachmentDrafts.remove(sessionId) else attachmentDrafts[sessionId] = files
+    }
+
+    internal fun discardScope(prefix: String) {
+        (drafts.keys + attachmentDrafts.keys + revisions.keys).filter { it.startsWith(prefix) }.toSet().forEach { id ->
+            revisions[id] = revision(id) + 1
+            drafts.remove(id); attachmentDrafts.remove(id)
+            unconfirmedInputs.remove(id); unconfirmedTextRevisions.remove(id); unconfirmedAttachmentPaths.remove(id)
+        }
+    }
+
+    internal fun adoption(from: String, to: String): ComposerDraftAdoption? {
+        if (from == to || (this[from].isEmpty() && attachments(from).isEmpty()) ||
+            this[to].isNotEmpty() || attachments(to).isNotEmpty() ||
+            unconfirmedInputs[from].orEmpty().isNotEmpty() || unconfirmedInputs[to].orEmpty().isNotEmpty()) return null
+        return ComposerDraftAdoption(from, to, revision(from), revision(to))
+    }
+
+    /** Explicit atomic move, not a merge and never an overwrite of a recipient's own content. */
+    internal fun adopt(offer: ComposerDraftAdoption): Boolean {
+        if (revision(offer.sourceId) != offer.sourceRevision || revision(offer.targetId) != offer.targetRevision ||
+            adoption(offer.sourceId, offer.targetId) != offer) return false
+        val text = this[offer.sourceId]
+        val files = attachments(offer.sourceId)
+        this[offer.targetId] = text
+        setAttachments(offer.targetId, files)
+        this[offer.sourceId] = ""
+        setAttachments(offer.sourceId, emptyList())
+        return true
     }
 
     internal fun submission(sessionId: String): ComposerSubmission {
@@ -40,6 +76,7 @@ class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
         unconfirmedTextRevisions[sessionId] = submission.textRevision
         unconfirmedAttachmentPaths[sessionId] = unconfirmedAttachmentPaths[sessionId].orEmpty() +
             submission.attachments.map { it.savedPath }
+        unconfirmedInputs.getOrPut(sessionId) { mutableSetOf() }.add(submission.prompt)
         return submission
     }
 
@@ -48,6 +85,7 @@ class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
         val submittedPaths = submission.attachments.map { it.savedPath }.toSet()
         setAttachments(sessionId, attachments(sessionId).filterNot { it.savedPath in submittedPaths })
         confirmAttachments(sessionId, submittedPaths)
+        forgetUnconfirmed(sessionId, submission)
     }
 
     internal fun rejected(sessionId: String, submission: ComposerSubmission) {
@@ -55,6 +93,16 @@ class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
             unconfirmedTextRevisions.remove(sessionId)
         }
         confirmAttachments(sessionId, submission.attachments.map { it.savedPath }.toSet())
+        forgetUnconfirmed(sessionId, submission)
+    }
+
+    internal fun isUnconfirmed(sessionId: String, prompt: String): Boolean =
+        prompt in unconfirmedInputs[sessionId].orEmpty()
+
+    private fun forgetUnconfirmed(sessionId: String, submission: ComposerSubmission) {
+        val pending = unconfirmedInputs[sessionId] ?: return
+        pending.remove(submission.prompt)
+        if (pending.isEmpty()) unconfirmedInputs.remove(sessionId)
     }
 
     private fun confirmAttachments(sessionId: String, paths: Set<String>) {
@@ -67,8 +115,9 @@ class SessionDraftStore(initialDrafts: Map<String, String> = emptyMap()) {
 
     // An interrupted/uncertain send stays available in this process, but must not become
     // a restored draft after process death and accidentally send the same input twice.
-    internal fun savedDrafts(): Map<String, String> = drafts.filterKeys {
-        unconfirmedTextRevisions[it] != revision(it)
+    internal fun savedDrafts(): Map<String, String> = drafts.filterKeys { sessionId ->
+        unconfirmedTextRevisions[sessionId] != revision(sessionId) &&
+            !isUnconfirmed(sessionId, attachmentPrompt(attachments(sessionId), this[sessionId]).trim())
     }
 
     internal fun savedAttachments(): Map<String, List<UploadedFile>> = attachmentDrafts.mapValues {

@@ -94,6 +94,7 @@ internal fun CollapsedDirectoryRail(
     onDirectoryTop: (Dp) -> Unit,
     onNewTask: () -> Unit,
     onExpandSidebar: () -> Unit,
+    onOpenIm: () -> Unit,
 ) {
     val directories = collapsedRailDirectories(groups)
     val directoryTops = remember { mutableMapOf<String, Dp>() }
@@ -184,6 +185,7 @@ internal fun CollapsedDirectoryRail(
                 }
             }
         }
+        com.wand.app.ui.components.WandButton("IM", onOpenIm, modifier = Modifier.size(48.dp), variant = com.wand.app.ui.components.WandButtonVariant.Text)
     }
 }
 
@@ -338,7 +340,7 @@ private fun DirectoryPeekPanel(
             }
             if (group.standaloneSessions.isNotEmpty()) {
                 Text(
-                    "${group.standaloneSessions.size} 个未分组终端",
+                    "${group.standaloneSessions.size} 个未分组任务",
                     style = MaterialTheme.typography.labelSmall,
                     color = WandColors.textMuted,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),

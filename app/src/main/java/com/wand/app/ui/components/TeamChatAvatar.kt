@@ -1,7 +1,5 @@
 package com.wand.app.ui.components
 
-import android.graphics.BitmapFactory
-import android.util.Base64
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -9,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -16,20 +15,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.wand.app.ui.decodeDataUriImage
 import com.wand.app.ui.screens.ChatAvatarSpec
+import com.wand.app.ui.screens.GeneratedAvatar
 import com.wand.app.ui.screens.catCoatGrid
 import com.wand.app.ui.theme.WandColors
 
 /**
- * 群聊发言头像（设计 §5）：32dp 圆角方块 —— 成员是各自的像素猫、有上传图就用上传图、
- * 定位不到身份的发言（「我」）用系统 APP logo。
+ * 群聊发言头像（设计 §5）：32dp 圆角方块 —— 成员没自定义过头像时是按身份生成的渐变底 + 名字首字、
+ * 挑过 `cat:<n>` 毛色或有上传图就各按各的画，定位不到身份的发言（「我」）用系统 APP logo。
  *
  * 与团队页/工位/侧栏的 `TeamAvatar` 分开：那边的 `wand-team-avatar*` 语义与状态环（工作中 /
  * 完成 / 失败 / 皇冠）是团队页的一部分，群聊消息头像按设计 D3 **不带**状态环与角标，
@@ -45,21 +48,42 @@ fun TeamMessageAvatar(
 ) {
     // 30% 圆角与 Web 的 `border-radius: 30%` 同比例（32dp → 9.6dp，取材料圆角一档）。
     val shape = RoundedCornerShape(size * 0.3f)
+    // 自带底色的两种（APP logo、生成脸）不再套第二层；猫与上传图衬团队页同款底色。
+    val carriesBackground = spec is ChatAvatarSpec.Brand || spec is ChatAvatarSpec.Generated
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .size(size)
             .clip(shape)
-            // 默认 APP logo 自带底色，不再套第二层；猫与上传图衬团队页同款底色。
-            .background(if (spec is ChatAvatarSpec.Brand) Color.Transparent else WandColors.surfaceSoft)
+            .background(if (carriesBackground) Color.Transparent else WandColors.surfaceSoft)
             // 装饰性头像：不读数、不单独聚焦（读屏只报署名行里的名字）。
             .clearAndSetSemantics {},
     ) {
         when (spec) {
             is ChatAvatarSpec.Upload -> UploadAvatarFace(spec.src)
             is ChatAvatarSpec.Cat -> PixelCatFace(spec.coat, size)
+            is ChatAvatarSpec.Generated -> GeneratedAvatarFace(spec.face, size)
             ChatAvatarSpec.Brand -> WandBrandMark(size = size.value.toInt())
         }
+    }
+}
+
+/** 生成脸：135° 渐变底 + 名字首字，字号与 Web `GeneratedAvatarGlyph` 的 `size * 0.42` 同口径。 */
+@Composable
+private fun GeneratedAvatarFace(face: GeneratedAvatar, size: Dp) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.fillMaxSize()
+            .background(Brush.linearGradient(listOf(Color(face.from), Color(face.to)))),
+    ) {
+        Text(
+            text = face.glyph,
+            color = Color(face.text),
+            fontSize = (size.value * 0.42f).coerceAtLeast(10f).sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -87,26 +111,11 @@ private fun PixelCatFace(coat: Int, size: Dp) {
 /** 上传头像：`data:image/…;base64,…` 解不出来就留底色（不渲染空图、不崩）。 */
 @Composable
 private fun UploadAvatarFace(src: String) {
-    val bitmap = remember(src) { decodeAvatarDataUri(src) } ?: return
+    val bitmap = remember(src) { decodeDataUriImage(src) } ?: return
     Image(
         bitmap = bitmap,
         contentDescription = null,
         contentScale = ContentScale.Crop,
         modifier = Modifier.fillMaxSize(),
     )
-}
-
-/**
- * `data:image/…;base64,…` → ImageBitmap；解析失败返回 null。
- * `WandImage.kt` 里有一份同逻辑的实现，但它是文件私有、且不在本轮允许改动的范围里。
- */
-private fun decodeAvatarDataUri(source: String): ImageBitmap? {
-    val comma = source.indexOf(',')
-    if (comma < 0) return null
-    return try {
-        val bytes = Base64.decode(source.substring(comma + 1), Base64.DEFAULT)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-    } catch (_: Exception) {
-        null
-    }
 }

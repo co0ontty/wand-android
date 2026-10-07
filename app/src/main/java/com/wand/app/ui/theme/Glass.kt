@@ -86,14 +86,14 @@ fun Modifier.layeredShadow(
     return this.shadow(elevation, shape, ambientColor = shadowColor, spotColor = shadowColor)
 }
 
-/** 卡片层叠投影的暖色调（亮：暖棕；暗：黑），返回 (接触硬影色, 环境柔影色)。 */
+/** 卡片层叠投影的中性调（亮：灰蓝；暗：黑），返回 (接触硬影色, 环境柔影色)。 */
 @Composable
 @ReadOnlyComposable
 fun cardShadowColors(): Pair<Color, Color> =
     if (isWandDarkTheme()) {
         Color.Black.copy(alpha = 0.28f) to Color.Black.copy(alpha = 0.16f)
     } else {
-        Color(0xFF593A20).copy(alpha = 0.07f) to Color(0xFF593A20).copy(alpha = 0.035f)
+        Color(0xFF252B3A).copy(alpha = 0.07f) to Color(0xFF252B3A).copy(alpha = 0.035f)
     }
 
 /**
@@ -105,58 +105,58 @@ fun bevelRimBrush(rimLight: Color, rimShade: Color): Brush =
 
 // —— 亮色玻璃 ——
 private val LightGlassRegular = GlassStyle(
-    tint = Color(0xFFFFF7E6), tintAlpha = 0.56f, fallbackAlpha = 0.92f,
+    tint = Color(0xFFFFFFFF), tintAlpha = 0.56f, fallbackAlpha = 0.92f,
     blurRadius = 18.dp, refractionHeight = 0.75.dp, refractionAmount = 2.25.dp,
     rimLight = Color.White.copy(alpha = 0.38f),
-    rimShade = Color(0xFF6D5848).copy(alpha = 0.075f),
-    shadowElevation = 0.8.dp, shadowColor = Color(0xFF493323).copy(alpha = 0.055f),
+    rimShade = Color(0xFF707581).copy(alpha = 0.075f),
+    shadowElevation = 0.8.dp, shadowColor = Color(0xFF252B3A).copy(alpha = 0.055f),
 )
 private val LightGlassClear = GlassStyle(
-    tint = Color(0xFFFFF7E6), tintAlpha = 0.48f, fallbackAlpha = 0.88f,
+    tint = Color(0xFFFFFFFF), tintAlpha = 0.48f, fallbackAlpha = 0.88f,
     blurRadius = 14.dp, refractionHeight = 0.5.dp, refractionAmount = 1.5.dp,
     rimLight = Color.White.copy(alpha = 0.34f),
-    rimShade = Color(0xFF6D5848).copy(alpha = 0.065f),
-    shadowElevation = 0.5.dp, shadowColor = Color(0xFF493323).copy(alpha = 0.05f),
+    rimShade = Color(0xFF707581).copy(alpha = 0.065f),
+    shadowElevation = 0.5.dp, shadowColor = Color(0xFF252B3A).copy(alpha = 0.05f),
 )
 private val LightGlassAccent = GlassStyle(
-    tint = Color(0xFFC5653D), tintAlpha = 0.92f, fallbackAlpha = 1f,
+    tint = Color(0xFF0076D6), tintAlpha = 0.92f, fallbackAlpha = 1f,
     blurRadius = 7.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
     rimLight = Color.White.copy(alpha = 0.18f),
     rimShade = Color.Black.copy(alpha = 0.12f),
-    shadowElevation = 1.2.dp, shadowColor = Color(0xFFC5653D).copy(alpha = 0.12f),
+    shadowElevation = 1.2.dp, shadowColor = Color(0xFF0076D6).copy(alpha = 0.12f),
 )
 private val LightGlassCard = GlassStyle(
-    tint = Color(0xFFFFF7E6), tintAlpha = 0.76f, fallbackAlpha = 0.90f,
+    tint = Color(0xFFFFFFFF), tintAlpha = 0.76f, fallbackAlpha = 0.90f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
     rimLight = Color.White.copy(alpha = 0.30f),
-    rimShade = Color(0xFF6D5848).copy(alpha = 0.065f),
-    shadowElevation = 0.45.dp, shadowColor = Color(0xFF493323).copy(alpha = 0.04f),
+    rimShade = Color(0xFF707581).copy(alpha = 0.065f),
+    shadowElevation = 0.45.dp, shadowColor = Color(0xFF252B3A).copy(alpha = 0.04f),
 )
 
 // —— 暗色玻璃 ——
 private val DarkGlassRegular = GlassStyle(
-    tint = Color(0xFF1D1A17), tintAlpha = 0.50f, fallbackAlpha = 0.90f,
+    tint = Color(0xFF17181C), tintAlpha = 0.50f, fallbackAlpha = 0.90f,
     blurRadius = 18.dp, refractionHeight = 0.75.dp, refractionAmount = 2.25.dp,
     rimLight = Color.White.copy(alpha = 0.11f),
     rimShade = Color.Black.copy(alpha = 0.20f),
     shadowElevation = 0.8.dp, shadowColor = Color.Black.copy(alpha = 0.22f),
 )
 private val DarkGlassClear = GlassStyle(
-    tint = Color(0xFF211E1A), tintAlpha = 0.40f, fallbackAlpha = 0.86f,
+    tint = Color(0xFF1C1D21), tintAlpha = 0.40f, fallbackAlpha = 0.86f,
     blurRadius = 14.dp, refractionHeight = 0.5.dp, refractionAmount = 1.5.dp,
     rimLight = Color.White.copy(alpha = 0.10f),
     rimShade = Color.Black.copy(alpha = 0.18f),
     shadowElevation = 0.5.dp, shadowColor = Color.Black.copy(alpha = 0.18f),
 )
 private val DarkGlassAccent = GlassStyle(
-    tint = Color(0xFFD47550), tintAlpha = 0.84f, fallbackAlpha = 1f,
+    tint = Color(0xFF63B4FF), tintAlpha = 0.84f, fallbackAlpha = 1f,
     blurRadius = 7.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
     rimLight = Color.White.copy(alpha = 0.13f),
     rimShade = Color.Black.copy(alpha = 0.16f),
     shadowElevation = 1.2.dp, shadowColor = Color.Black.copy(alpha = 0.22f),
 )
 private val DarkGlassCard = GlassStyle(
-    tint = Color(0xFF211E1A), tintAlpha = 0.58f, fallbackAlpha = 0.88f,
+    tint = Color(0xFF1C1D21), tintAlpha = 0.58f, fallbackAlpha = 0.88f,
     blurRadius = 0.dp, refractionHeight = 0.dp, refractionAmount = 0.dp,
     rimLight = Color.White.copy(alpha = 0.085f),
     rimShade = Color.Black.copy(alpha = 0.16f),
@@ -168,22 +168,24 @@ object WandGlass {
     /** 大面板：顶栏 / 输入栏 / 弹层 / 权限卡。 */
     val regular: GlassStyle
         @Composable @ReadOnlyComposable get() =
-            if (isWandDarkTheme()) DarkGlassRegular else LightGlassRegular
+            (if (isWandDarkTheme()) DarkGlassRegular else LightGlassRegular).copy(tint = WandColors.bgElevated)
 
     /** 小控件：圆形按钮 / FAB / 徽章底。 */
     val clear: GlassStyle
         @Composable @ReadOnlyComposable get() =
-            if (isWandDarkTheme()) DarkGlassClear else LightGlassClear
+            (if (isWandDarkTheme()) DarkGlassClear else LightGlassClear).copy(tint = WandColors.surface)
 
     /** 品牌强调：发送按钮 / 主操作。降级时是实色品牌底（与旧视觉一致）。 */
     val accent: GlassStyle
         @Composable @ReadOnlyComposable get() =
-            if (isWandDarkTheme()) DarkGlassAccent else LightGlassAccent
+            (if (isWandDarkTheme()) DarkGlassAccent else LightGlassAccent).copy(tint = WandColors.brand)
 
-    /** 列表/工具卡片：永远不走 backdrop（卡片不叠在滚动内容上），半透明 + rim。 */
+    /** 内容分组采用稳定实色平面，浮层由调用处显式请求投影。 */
     val card: GlassStyle
         @Composable @ReadOnlyComposable get() =
-            if (isWandDarkTheme()) DarkGlassCard else LightGlassCard
+            (if (isWandDarkTheme()) DarkGlassCard else LightGlassCard).copy(
+                tint = WandColors.surface, tintAlpha = 1f, fallbackAlpha = 1f, shadowElevation = 0.dp,
+            )
 }
 
 // —— 捕获层（backdrop 源） ——

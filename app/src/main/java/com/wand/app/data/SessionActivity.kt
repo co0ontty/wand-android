@@ -1,11 +1,7 @@
 package com.wand.app.data
 
-private val PROVIDER_CLI = setOf("claude", "codex", "opencode", "grok", "qoder", "pi", "gemini")
-
-fun isProviderCliSession(provider: String?): Boolean {
-    val id = provider?.trim()?.lowercase().orEmpty()
-    return id.isNotEmpty() && id in PROVIDER_CLI
-}
+fun isProviderCliSession(provider: String?): Boolean =
+    WandProvider.fromId(provider?.trim()?.lowercase()) != null
 
 /** Web `ptyTurnActive`: provider CLI needs ptyBusy; bare shells stay busy while running. */
 fun ptyTurnActive(

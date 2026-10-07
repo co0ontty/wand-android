@@ -29,7 +29,10 @@ data class ToolContentDetail(
  * 登录 cookie 自动携带；
  * 遇到 401 时用存储的 appToken 重新登录一次再重试。
  */
-class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort, TaskBoardPort {
+class WandApi(baseUrl: String, val token: String?,
+    private val readConversationRequests: () -> String = { "{}" },
+    private val saveConversationRequests: (String) -> Unit = {},
+) : MissionsPort, WorkspacePort, TaskBoardPort, PiResourcesPort {
 
     companion object {
         /**
@@ -163,6 +166,55 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
     // MARK: - 会话
 
     /** Returns all managed sessions for notification state, without session-list pagination. */
+    private val unresolvedConversations = java.util.concurrent.ConcurrentHashMap<String, String>().apply {
+        val saved = runCatching { JSONObject(readConversationRequests()) }.getOrNull()
+        saved?.keys()?.forEach { put(it, saved.optString(it)) }
+    }
+    private fun persistConversationRequests() = saveConversationRequests(JSONObject(unresolvedConversations.toMap()).toString())
+    fun pendingConversationRequests(): List<String> = unresolvedConversations.values.toList()
+
+    suspend fun conversations(): List<ConversationInstance> =
+        ConversationInstance.parseList(requestObject("GET", "/api/conversations"))
+
+    suspend fun deleteConversation(id: String) { requestObject("DELETE", "/api/conversations/${encode(id)}") }
+
+    suspend fun updateConversationListState(id: String, patch: JSONObject): ConversationInstance =
+        ConversationInstance.parse(requestObject("PATCH", "/api/conversations/${encode(id)}/list-state", patch))
+            ?: throw WandApiException(null, "对话列表数据无效")
+
+    suspend fun conversation(id: String): ConversationInstance =
+        ConversationInstance.parse(requestObject("GET", "/api/conversations/${encode(id)}"))
+            ?: throw WandApiException(null, "对话数据无效")
+
+    suspend fun conversationReceipt(id: String): ConversationReceipt {
+        val receipt = ConversationReceipt.parse(requestObject("GET", "/api/conversations/requests/${encode(id)}"))
+        if (receipt.state != "pending") { unresolvedConversations.entries.removeIf { it.value == id }; persistConversationRequests() }
+        return receipt
+    }
+
+    /** Accepted/unknown create or send is reconciled by GET, never by another POST. */
+    suspend fun conversationPost(path: String, body: JSONObject): ConversationReceipt {
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest((path + ":" + body.toString()).toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        if (unresolvedConversations.size >= 200) throw WandApiException(400, "请先核对未确认请求，再继续提交")
+        val requestId = java.util.UUID.randomUUID().toString()
+        unresolvedConversations.putIfAbsent(fingerprint, requestId)?.let { throw ConversationUnconfirmedException(it) }
+        persistConversationRequests()
+        try {
+            val receipt = ConversationReceipt.parse(requestObject("POST", path, JSONObject(body.toString()).put("requestId", requestId)))
+            if (receipt.requestId != requestId || receipt.state == "pending") throw ConversationUnconfirmedException(requestId)
+            if (receipt.state == "rejected") throw WandApiException(400, receipt.error ?: "请求未接受")
+            unresolvedConversations.remove(fingerprint, requestId); persistConversationRequests()
+            return receipt
+        } catch (e: Exception) {
+            if (isDefiniteRequestRejection(e)) {
+                unresolvedConversations.remove(fingerprint, requestId); persistConversationRequests()
+                throw e
+            }
+            throw ConversationUnconfirmedException(requestId)
+        }
+    }
+
     suspend fun listSessions(): List<SessionSnapshot> =
         SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
 
@@ -174,6 +226,46 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
                     (blockBudget?.let { "&blockBudget=$it" } ?: ""),
             ),
         )
+
+    override suspend fun getPiResources(id: String): PiResourcesResponse =
+        PiResourcesResponse.parse(requestObject("GET", "/api/sessions/${encode(id)}/pi-settings"))
+
+    override suspend fun setPiResources(id: String, selection: PiResourceSelection): PiResourceSelection {
+        val response = requestObject("PATCH", "/api/sessions/${encode(id)}/pi-settings",
+            JSONObject().put("resources", selection.toJson()))
+        return PiResourceSelection.parse(response.optJSONObject("settings")?.optJSONObject("resources"))
+            ?: throw WandApiException(null, "服务端未确认资源选择，请重新读取设置核对")
+    }
+
+    override suspend fun setPiSkillSelection(id: String, selection: PiSkillSelectionAck): PiSkillSelectionAck {
+        val response = requestObject("PATCH", "/api/sessions/${encode(id)}/pi-settings", selection.toJson())
+        return PiSkillSelectionAck.parse(response.optJSONObject("settings"))
+            ?: throw WandApiException(null, "服务端未确认 Skill 开关或锁定，请重新读取核对")
+    }
+
+    override suspend fun setPiAutoResources(id: String, enabled: Boolean): PiAutoResourcesAck {
+        val response = requestObject("PATCH", "/api/sessions/${encode(id)}/pi-settings",
+            JSONObject().put("autoResources", enabled))
+        val settings = response.optJSONObject("settings")
+            ?: throw WandApiException(null, "服务端未确认自动配置设置，请重新读取核对")
+        val actual = settings.bool("autoResources")
+            ?: throw WandApiException(null, "服务端未确认自动配置开关，请重新读取核对")
+        if (actual != enabled) throw WandApiException(null, "服务端未确认自动配置开关，请重新读取核对")
+        val selection = PiResourceSelection.parse(settings.optJSONObject("resources"))
+        if (enabled && selection == null) throw WandApiException(null, "服务端未确认本轮资源边界，请重新读取核对")
+        return PiAutoResourcesAck(actual, selection)
+    }
+
+    override suspend fun setPiCodemode(id: String, mode: String): String {
+        require(mode in listOf("follow", "off", "on", "only")) { "请选择有效的 CodeMode 模式" }
+        val response = requestObject("PATCH", "/api/sessions/${encode(id)}/pi-settings",
+            JSONObject().put("codemodeOverride", if (mode == "follow") JSONObject.NULL else mode))
+        val settings = response.optJSONObject("settings")
+            ?: throw WandApiException(null, "服务端未确认 CodeMode 设置，请重新读取核对")
+        val actual = settings.optString("codemodeOverride").takeIf { it in listOf("off", "on", "only") } ?: "follow"
+        if (actual != mode) throw WandApiException(null, "服务端未确认 CodeMode 设置，请重新读取核对")
+        return actual
+    }
 
     suspend fun markSessionCompletionViewed(id: String, revision: Int): SessionCompletion =
         SessionCompletion.parse(requestObject(
@@ -291,6 +383,24 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
 
     suspend fun models(): ModelsResponse =
         ModelsResponse.parse(requestObject("GET", "/api/models"))
+
+    /** Group edits retain the existing admin boundary. Password stays in memory and is never saved. */
+    suspend fun loginModelGroupAdmin(password: String) {
+        requestObject("POST", "/api/login", JSONObject().put("password", password))
+    }
+
+    suspend fun modelGroupSettings(): List<ModelGroup> {
+        val config = requestObject("GET", "/api/settings").obj("config")
+        val groups = config?.arr("modelGroups")
+            ?: throw IllegalStateException("请先升级服务器以配置模型分组。")
+        return ModelGroup.parseList(groups)
+    }
+
+    suspend fun saveModelGroups(groups: List<ModelGroup>, expected: List<ModelGroup>): List<ModelGroup> {
+        val result = requestObject("POST", "/api/settings/config", modelGroupsSaveBody(groups, expected))
+        return ModelGroup.parseList(result.obj("config")?.arr("modelGroups")
+            ?: throw IllegalStateException("保存回执缺少分组，请刷新核对；不要重复提交。"))
+    }
 
     /** 只改尚未发送消息的空白结构化对话，不创建替代会话或改变员工身份。 */
     suspend fun setProvider(id: String, provider: String): SessionSnapshot =
@@ -499,9 +609,12 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
             .put("archiveRelatedTasks", archiveRelatedTasks)
         if (customMessage != null) body.put("customMessage", customMessage)
         if (!tag.isNullOrEmpty()) body.put("tag", tag)
-        return QuickCommitResult.parse(
+        val result = QuickCommitResult.parse(
             requestObject("POST", "/api/sessions/$sessionId/quick-commit", body, timeoutSec = 180)
         )
+        // quick-commit 不在任务路由上，归档成功后要主动让任务列表重拉，否则行会留到下一轮轮询。
+        if (result.archivedTaskCount > 0) taskMutations.tryEmit(Unit)
+        return result
     }
 
     /** AI 预生成 commit message 与推荐 tag（只生成不提交，对应网页版「AI」按钮）。 */
@@ -703,6 +816,41 @@ class WandApi(baseUrl: String, val token: String?) : MissionsPort, WorkspacePort
                 JSONObject().put("workspaceId", workspaceId).put("note", note),
             ),
         ) ?: throw WandApiException(500, "团队开工响应无效。")
+
+    /**
+     * 无指派派工第一步（POST /api/team-dispatch/plan）：只出建议名单，不建任何东西。
+     */
+    override suspend fun planTeamDispatch(note: String, maxMembers: Int?): TeamDispatchPlan {
+        val body = JSONObject().put("note", note)
+        if (maxMembers != null) body.put("maxMembers", maxMembers)
+        return TeamDispatchPlan.parse(requestObject("POST", "/api/team-dispatch/plan", body))
+            ?: throw WandApiException(500, "派工建议响应无效。")
+    }
+
+    /**
+     * 无指派派工第二步：名单确认后才建临时团队、建卡、起 run。
+     */
+    override suspend fun startTeamDispatch(
+        workspaceId: String,
+        note: String,
+        members: List<TeamDispatchPick>,
+    ): AiTeamDispatchRun {
+        val picks = JSONArray()
+        members.forEach { member ->
+            picks.put(
+                JSONObject().put("employeeId", member.employeeId).apply {
+                    if (member.isLeader) put("isLeader", true)
+                },
+            )
+        }
+        val response = requestObject(
+            "POST",
+            "/api/team-dispatch/start",
+            JSONObject().put("workspaceId", workspaceId).put("note", note).put("members", picks),
+        )
+        return AiTeamDispatchRun.parse(response)
+            ?: throw WandApiException(500, "派工开工响应无效。")
+    }
 
     /** 运行动作统一走这里；响应仍是 run detail（src/server-ai-team-routes.ts:279-286）。 */
     override suspend fun actOnTeamRun(runId: String, action: TeamRunAction): AiTeamRunDetail {

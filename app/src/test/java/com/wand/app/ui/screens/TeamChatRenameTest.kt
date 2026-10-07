@@ -63,10 +63,10 @@ class TeamChatRenameTest {
         val renamed = detail.copy(chatTitle = "整理文档任务处理群", displayTeam = newTeam)
         assertEquals("整理文档任务处理群", renamed.presentationChatTitle)
         assertEquals("开发团队", detail.run.team?.name)
-        assertEquals("任务处理群", detail.copy(chatTitle = "  ").presentationChatTitle)
-        assertEquals("任务处理群", detail.copy(chatTitle = null).presentationChatTitle)
+        assertEquals("群聊", detail.copy(chatTitle = "  ").presentationChatTitle)
+        assertEquals("群聊", detail.copy(chatTitle = null).presentationChatTitle)
         val legacy = AiTeamRunDetail.parse(JSONObject().put("run", JSONObject().put("id", "old")))!!
-        assertEquals("任务处理群", legacy.presentationChatTitle)
+        assertEquals("群聊", legacy.presentationChatTitle)
     }
 
     @Test

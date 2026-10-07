@@ -228,6 +228,51 @@ class TaskListStateTest {
     }
 
     @Test
+    fun ungroupedStartCarriesDirectoryOnlyBindingAndBuildsNoCard() = runBlocking {
+        val port = FakeWorkspacePort()
+        val state = TaskListState(port)
+
+        val session = state.createUngroupedSession(
+            workspaceId = "ws-1",
+            cwd = " /repo ",
+            target = WorkspaceSessionTarget.Codex,
+            kind = WorkspaceSessionKind.Pty,
+            prompt = "先看一眼",
+            model = "gpt-5",
+            thinkingEffort = "low",
+        )
+
+        assertEquals("created-session", session?.id)
+        // 只带目录与项目归属、没有 workspaceTaskId —— 这条会话落进侧栏「未分组任务」。
+        assertEquals(WorkspaceBinding("ws-1", null, "/repo"), port.createdWindowBindings.single())
+        assertEquals(listOf(WorkspaceSessionTarget.Codex to WorkspaceSessionKind.Pty), port.createdWindowChoices)
+        assertEquals(listOf("先看一眼"), port.createdWindowPrompts)
+        assertTrue("没有指定任务就不建卡", port.taskRequests.isEmpty() && port.standaloneRequests.isEmpty())
+        assertTrue("未分组会话没有任务布局可改", port.savedLayouts.isEmpty())
+    }
+
+    @Test
+    fun ungroupedEmployeeStartDropsGlobalScratchBinding() = runBlocking {
+        val port = FakeWorkspacePort()
+        val state = TaskListState(port)
+
+        val session = state.createUngroupedSession(
+            workspaceId = com.wand.app.data.GLOBAL_WORKSPACE_ID,
+            cwd = "/scratch",
+            target = WorkspaceSessionTarget.Claude,
+            employeeId = "e-1",
+        )
+
+        assertEquals("created-employee-session", session?.id)
+        assertTrue(port.createdWindowBindings.isEmpty())
+        val request = port.employeeWindowRequests.single()
+        assertEquals("e-1", request.employeeId)
+        assertNull("全局暂存区不写成项目归属", request.binding.workspaceId)
+        assertNull(request.binding.workspaceTaskId)
+        assertEquals("/scratch", request.binding.cwd)
+    }
+
+    @Test
     fun newTaskRequestsAreConsumedExactlyOnce() {
         val state = TaskListState(FakeWorkspacePort())
 
@@ -514,6 +559,7 @@ class TaskListStateTest {
         val createdWindowModels = mutableListOf<String?>()
         val createdWindowEfforts = mutableListOf<String?>()
         val createdWindowChoices = mutableListOf<Pair<WorkspaceSessionTarget, WorkspaceSessionKind>>()
+        val employeeWindowRequests = mutableListOf<EmployeeWindowRequest>()
         var pendingConfig: CompletableDeferred<ServerConfigInfo>? = null
         val savedLayouts = mutableListOf<Pair<String, TaskWindowLayout?>>()
         var taskDefault: String? = null
@@ -642,6 +688,15 @@ class TaskListStateTest {
             return layout
         }
 
+        override suspend fun createEmployeeWorkspaceTaskWindow(
+            employeeId: String,
+            binding: WorkspaceBinding,
+            prompt: String?,
+        ): SessionSnapshot {
+            employeeWindowRequests += EmployeeWindowRequest(employeeId, binding, prompt)
+            return SessionSnapshot.parse(JSONObject().put("id", "created-employee-session"))
+        }
+
         override suspend fun createWorkspaceTaskWindow(
             target: WorkspaceSessionTarget,
             binding: WorkspaceBinding,
@@ -674,6 +729,12 @@ class TaskListStateTest {
         val worktree: Boolean?,
         val description: String? = null,
         val parentTaskId: String? = null,
+    )
+
+    private data class EmployeeWindowRequest(
+        val employeeId: String,
+        val binding: WorkspaceBinding,
+        val prompt: String?,
     )
 
     companion object {

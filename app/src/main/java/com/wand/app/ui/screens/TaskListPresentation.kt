@@ -11,15 +11,17 @@ import com.wand.app.ui.sessionCwdLeaf
 
 internal const val UNNAMED_TASK_NAME = "未命名任务"
 
-/** 首页模式：会话树（默认）或任务管理看板。通过右上角菜单切换并持久化。 */
+/** 独立根模式；通讯录是导航入口，不占用模式偏好。 */
 enum class HomeListMode(val storageValue: String) {
     Sessions("sessions"),
-    Tasks("board");
+    Tasks("board"),
+    Im("im");
 
     companion object {
         fun fromStorage(value: String?): HomeListMode = when (value) {
+            "sessions" -> Sessions
             "board" -> Tasks
-            else -> Sessions
+            else -> Im
         }
     }
 }

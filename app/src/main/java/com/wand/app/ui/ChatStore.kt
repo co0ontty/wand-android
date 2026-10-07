@@ -44,7 +44,23 @@ data class AskUserSelectionState(
     /** questionIndex → 已选 optionIndex 集合。 */
     val selected: Map<Int, Set<Int>> = emptyMap(),
     val submitted: Boolean = false,
+    val submissionUnconfirmed: Boolean = false,
+    val unavailableReason: String? = null,
 )
+
+/** 回答已发出后，超时/断线/部分 PTY 接受都不能变回可重复提交。 */
+internal fun askUserSelectionAfterFailure(selection: AskUserSelectionState, failure: Throwable): AskUserSelectionState =
+    if (com.wand.app.data.isDefiniteRequestRejection(failure)) selection.copy(submitted = false, submissionUnconfirmed = false)
+    else selection.copy(submitted = true, submissionUnconfirmed = true)
+
+/** 工具答复只属于最新一轮未配对的提问，历史卡不能向当前执行塞入旧答案。 */
+internal fun activeAskQuestionIds(messages: List<ConversationTurn>): Set<String> {
+    val results = messages.flatMap { it.content }.filterIsInstance<com.wand.app.data.ContentBlock.ToolResult>().map { it.toolUseId }.toSet()
+    val current = messages.drop(messages.indexOfLast { it.role == "user" } + 1)
+    return current.flatMap { it.content }.filterIsInstance<com.wand.app.data.ContentBlock.ToolUse>()
+        .filter { (it.semantic is com.wand.app.data.ToolUseSemantic.QuestionRequest || it.name == "AskUserQuestion") && it.id !in results }
+        .map { it.id }.toSet()
+}
 
 internal fun canSwitchBlankConversationProvider(snapshot: SessionSnapshot?, messageTotal: Int): Boolean =
     snapshot != null && snapshot.isStructured && snapshot.status == "idle" && snapshot.archived != true &&
@@ -158,6 +174,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private var modelMutationGeneration = 0L
     private var thinkingMutationGeneration = 0L
     private var modeMutationGeneration = 0L
+    private var modelCatalogGeneration = 0L
     private var pendingModelMutations by mutableIntStateOf(0)
     private var pendingThinkingMutations by mutableIntStateOf(0)
     private var pendingModeMutations by mutableIntStateOf(0)
@@ -184,7 +201,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 started = true
                 ensureScope()
                 socket.onEvent = { event -> handle(event) }
-                socket.onConnectionChange = { up -> connected = up }
+                socket.onConnectionChange = { up ->
+                    connected = up
+                    if (up && active) scope.launch { loadModels(normalizeThinking = false) }
+                }
+                socket.onModelCatalogChanged = {
+                    if (active) scope.launch { loadModels(normalizeThinking = false) }
+                }
                 socket.onAuthenticationFailure = { message ->
                     wlog("chat", "socket 鉴权失败 session=$sessionId：$message")
                     loadError = message
@@ -457,12 +480,16 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     }
 
     /** Read the catalog last persisted by the server; native clients never probe CLIs directly. */
-    private suspend fun loadModels() {
-        val response = runCatching { api.models() }.getOrNull() ?: return
+    private suspend fun loadModels(normalizeThinking: Boolean = true) {
+        val generation = ++modelCatalogGeneration
         val provider = snapshot?.provider ?: "claude"
+        val response = runCatching { api.models() }.getOrNull() ?: return
+        currentCoroutineContext().ensureActive()
+        if (!active || generation != modelCatalogGeneration || provider != (snapshot?.provider ?: "claude")) return
         availableModels = response.modelsFor(provider)
         defaultModel = response.defaultModelFor(provider)
-        normalizeThinkingEffortFor(selectedModel)
+        // Background group reorder/rename refreshes labels, never rewrites a user's model/depth choice.
+        if (normalizeThinking) normalizeThinkingEffortFor(selectedModel)
     }
 
     private suspend fun loadCardDefaults() {
@@ -574,10 +601,13 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     // MARK: - AskUserQuestion 交互（对齐 Web 端 __askSelect / __askSubmit）
 
+    fun canAnswerAskUser(toolUseId: String): Boolean =
+        !loading && loadError == null && !sessionEnded && toolUseId in activeAskQuestionIds(messages)
+
     /** 点选一个选项：单选点同一项取消、换选项替换；多选逐项 toggle。已提交后不可改。 */
     fun toggleAskOption(toolUseId: String, questionIndex: Int, optionIndex: Int, multiSelect: Boolean) {
         val sel = askUserSelections[toolUseId] ?: AskUserSelectionState()
-        if (sel.submitted) return
+        if (sel.submitted || !canAnswerAskUser(toolUseId)) return
         val current = sel.selected[questionIndex] ?: emptySet()
         val next = if (multiSelect) {
             if (optionIndex in current) current - optionIndex else current + optionIndex
@@ -594,7 +624,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
      */
     fun submitAskUser(toolUseId: String, answerText: String) {
         val sel = askUserSelections[toolUseId] ?: AskUserSelectionState()
-        if (sel.submitted) return
+        if (sel.submitted || !canAnswerAskUser(toolUseId)) return
         askUserSelections = askUserSelections + (toolUseId to sel.copy(submitted = true))
         if (isStructured) isResponding = true
         scope.launch {
@@ -606,10 +636,12 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 }
             } catch (e: Exception) {
                 wlog("chat", "回答提问失败 session=$sessionId：${e.message}", e)
-                toast = e.message ?: "发送失败"
-                val rollback = askUserSelections[toolUseId] ?: AskUserSelectionState()
-                askUserSelections = askUserSelections + (toolUseId to rollback.copy(submitted = false))
-                if (isStructured) isResponding = false
+                val rollback = askUserSelectionAfterFailure(askUserSelections[toolUseId] ?: AskUserSelectionState(), e)
+                askUserSelections = askUserSelections + (toolUseId to rollback)
+                toast = if (rollback.submissionUnconfirmed) "回答送达未确认，请核对执行记录，勿重复提交。" else e.message ?: "发送失败"
+                if (isStructured && !rollback.submissionUnconfirmed) isResponding = false
+                socket.requestResync()
+                if (e is CancellationException) throw e
             }
         }
     }
@@ -708,7 +740,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     }
 
     /** 权限决策。PTY 与 Claude SDK structured 都走 approve/deny；无 pending 时忽略。 */
-    fun resolvePermission(resolution: String) {
+    fun resolvePermission(resolution: String, expectedRequestId: String? = pendingEscalation?.requestId) {
+        if (pendingEscalation?.requestId != expectedRequestId) { toast = "权限请求已变化，请核对当前请求。"; return }
         val esc = pendingEscalation
         if (esc != null) {
             pendingEscalation = null

@@ -140,6 +140,15 @@ object WandHttp {
             .takeIf { it.isNotEmpty() }
     }
 
+    /** HttpOnly/Secure attributes survive the one-way handoff to the settings-only WebView. */
+    @JvmStatic
+    fun webSessionCookies(baseUrl: String): List<String> {
+        val endpoint = normalizeBaseUrl(baseUrl)
+        val url = "$endpoint/".toHttpUrlOrNull() ?: return emptyList()
+        return clients[endpoint]?.client?.cookieJar?.loadForRequest(url)
+            ?.map { "$it; SameSite=Strict" }.orEmpty()
+    }
+
     private val publicClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .followRedirects(false)
@@ -149,7 +158,7 @@ object WandHttp {
             .build()
     }
 
-    class SimpleResponse(val code: Int, val body: String)
+    class SimpleResponse @JvmOverloads constructor(val code: Int, val body: String, val location: String? = null)
 
     /**
      * 把一个 endpoint 从 http 升到 https，其余部分不变。
@@ -222,7 +231,7 @@ object WandHttp {
 
     private fun executeSimple(client: OkHttpClient, request: Request): SimpleResponse =
         client.newCall(request).execute().use { response ->
-            SimpleResponse(response.code, response.body?.string().orEmpty())
+            SimpleResponse(response.code, response.body?.string().orEmpty(), response.header("Location"))
         }
 
     @JvmStatic
