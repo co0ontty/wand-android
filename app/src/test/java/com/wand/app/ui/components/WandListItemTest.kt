@@ -52,7 +52,7 @@ class WandListItemTest {
     fun allFiveRowsDelegateInsteadOfReimplementingDensity() {
         for ((path, name) in listOf(
             "SettingsScreen" to "ActionRow", "SettingsScreen" to "SwitchRow",
-            "TaskListScreen" to "DirectoryPickerRow", "WorkspaceTargetSheet" to "WorkspaceTargetOption",
+            "WorkspaceDirectoryPicker" to "WorkspaceDirectoryOption", "WorkspaceTargetSheet" to "WorkspaceTargetOption",
             "ChatScreen" to "ChoiceOptionsList",
         )) {
             val row = body("screens/$path", name)
@@ -128,11 +128,10 @@ class WandListItemTest {
 
     @Test
     fun fullHeadlinesAndDescriptionsCanGrowWhileOnlyMetadataEllipsizes() {
-        val directory = body("screens/TaskListScreen", "DirectoryPickerRow")
+        val directory = body("screens/WorkspaceDirectoryPicker", "WorkspaceDirectoryOption")
         assertTrue(directory.contains("headlineContent = { Text(title) }"))
-        assertTrue(directory.contains("contentDescription = if (path == title) title else \"\$title \$path\""))
-        assertTrue(directory.contains("maxLines = 1"))
-        assertTrue(directory.contains("overflow = TextOverflow.Ellipsis"))
+        assertTrue(directory.contains("maxLines = 2"))
+        assertTrue(directory.contains("overflow = TextOverflow.MiddleEllipsis"))
         for ((path, name) in listOf("SettingsScreen" to "SwitchRow", "WorkspaceTargetSheet" to "WorkspaceTargetOption", "ChatScreen" to "ChoiceOptionsList")) {
             val row = body("screens/$path", name).let {
                 if (name == "ChoiceOptionsList") it.substringAfter("val isSelected = selected == id") else it
@@ -150,10 +149,11 @@ class WandListItemTest {
         assertTrue(chat.contains("matchesModelSearch(query, it.first, it.second)"))
         assertTrue(chat.contains("keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)"))
         assertTrue(chat.contains("store.chooseMode(id)\n            onDismiss()"))
-        val directory = source("screens/TaskListScreen")
+        val directory = source("screens/WorkspaceDirectoryPicker")
         assertTrue(directory.contains("filter { it.isDirectory }, key = { it.path }"))
-        assertTrue(directory.contains("if (!state.mutationBusy) directoryPickerOpen = false"))
-        assertTrue(directory.contains("enabled = !directoryLoading"))
+        assertTrue(source("screens/TaskListScreen").contains("onDismiss = { directoryPickerOpen = false }"))
+        assertTrue(directory.contains("enabled = state.canSelectDirectory"))
+        assertTrue(directory.contains("normalizeWorkspacePath(pathDraft) == normalizeWorkspacePath(state.path)"))
         val workspace = source("screens/WorkspaceTargetSheet")
         assertTrue(workspace.contains("key = { it.raw }"))
         assertTrue(workspace.contains("enabled = !creating"))

@@ -339,7 +339,7 @@ fun ChatScreen(
             sessionId = sessionId,
             drafts = drafts,
             parentScope = composerScope,
-            ready = { !store.loading && !store.providerSwitching && store.snapshot != null && resources.phase != "saving" },
+            ready = { !store.loading && !store.providerSwitching && !store.directoryChanging && store.snapshot != null && resources.phase != "saving" },
             send = store::submitInput,
             notice = { store.toast = it },
         )
@@ -1345,6 +1345,10 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
     // 头部品牌标随 provider 切换（Claude/Codex/Grok/OpenCode/Qoder 各自的原生 logo），
     // 让用户从会话列表进入聊天页时视觉连续——之前的 WandBrandMark 对所有 provider 都显示同一星芒标，
     // 与标题文字（如 "Codex"）对不上，是 logo 对应关系的根因。
+    var directoryOpen by remember(store) { mutableStateOf(false) }
+    LaunchedEffect(store.canChangeDirectory) {
+        if (!store.canChangeDirectory) directoryOpen = false
+    }
     val provider = store.snapshot?.provider
     val accent = if (provider == "codex") WandColors.info else WandColors.brand
     val accentSoft = if (provider == "codex") WandColors.infoSoft else WandColors.brandSoft
@@ -1404,7 +1408,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         selected = store.selectedModel?.takeUnless { it == "default" } ?: "default",
                         onSelect = { store.setModel(it.takeUnless { id -> id == "default" }) },
                         searchable = true,
-                        enabled = !store.providerSwitching,
+                        enabled = !store.providerSwitching && !store.directoryChanging,
                     )
                     HorizontalDivider(
                         thickness = 0.5.dp,
@@ -1420,12 +1424,35 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                         options = thinkingLevels(store).map { it.id to it.menuLabel },
                         selected = store.thinkingEffort,
                         onSelect = store::chooseThinkingEffort,
-                        enabled = !store.providerSwitching,
+                        enabled = !store.providerSwitching && !store.directoryChanging,
+                    )
+                    HorizontalDivider(thickness = 0.5.dp, color = WandColors.border.copy(alpha = 0.62f),
+                        modifier = Modifier.padding(start = 68.dp))
+                    LaunchSettingPicker(
+                        icon = WandIcons.folder, label = "运行目录",
+                        value = store.snapshot?.cwd.orEmpty(), accent = accent, accentSoft = accentSoft,
+                        options = emptyList(), selected = "", onSelect = {},
+                        enabled = store.canChangeDirectory, onOpen = { directoryOpen = true },
+                        valueOverflow = TextOverflow.MiddleEllipsis,
+                    )
+                    Text(
+                        store.directoryChangeError ?: if (store.directoryChanging) "正在切换运行目录…"
+                        else if (store.snapshot?.workspaceTaskId != null || store.snapshot?.directoryLocked == true)
+                            "当前任务或会话的运行目录已固定"
+                        else "首次发送前可更换运行目录",
+                        color = if (store.directoryChangeError != null) WandColors.danger else WandColors.textSecondary,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
             }
         }
     }
+    if (directoryOpen) WorkspaceDirectoryPicker(
+        api = store.api, currentCwd = store.snapshot?.cwd.orEmpty(),
+        onSelect = { directoryOpen = false; store.chooseWorkingDirectory(it.cwd) },
+        onDismiss = { directoryOpen = false },
+    )
 }
 
 /** 空白对话的 Logo 原位打开工具菜单；切换保留同一会话和同一个输入 composer。 */
@@ -1535,6 +1562,8 @@ private fun LaunchSettingPicker(
     onSelect: (String) -> Unit,
     searchable: Boolean = false,
     enabled: Boolean = true,
+    onOpen: (() -> Unit)? = null,
+    valueOverflow: TextOverflow = TextOverflow.Ellipsis,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -1575,7 +1604,7 @@ private fun LaunchSettingPicker(
                     indication = LocalIndication.current,
                     role = Role.DropdownList,
                     enabled = enabled,
-                ) { expanded = true }
+                ) { if (onOpen != null) onOpen() else expanded = true }
                 .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
             // 左侧品牌色图标片，让两行各有清晰的身份（模型 / 思考深度）。
@@ -1606,7 +1635,7 @@ private fun LaunchSettingPicker(
                     fontWeight = FontWeight.Medium,
                     color = WandColors.textPrimary,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    overflow = valueOverflow,
                 )
             }
             Icon(

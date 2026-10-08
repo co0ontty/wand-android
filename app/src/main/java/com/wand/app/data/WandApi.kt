@@ -407,6 +407,11 @@ class WandApi(baseUrl: String, val token: String?,
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/${encode(id)}/provider",
             JSONObject().put("provider", provider)))
 
+    /** 首次发送前原位改目录；服务端同时原子更新项目归属，员工和会话 ID 不变。 */
+    suspend fun setSessionDirectory(id: String, cwd: String): SessionSnapshot =
+        SessionSnapshot.parse(requestObject("POST", "/api/sessions/${encode(id)}/directory",
+            JSONObject().put("cwd", cwd)))
+
     /** model 传 null 表示恢复默认（服务端收 JSON null）。 */
     suspend fun setModel(id: String, model: String?): SessionSnapshot {
         val body = JSONObject().put("model", model ?: JSONObject.NULL)

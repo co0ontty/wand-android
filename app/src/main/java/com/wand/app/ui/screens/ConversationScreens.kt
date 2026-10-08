@@ -90,16 +90,21 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     var query by rememberSaveable { mutableStateOf("") }
     var create by rememberSaveable { mutableStateOf(false) }
     var listTier by rememberSaveable { mutableStateOf(ConversationListTier.All.storageValue) }
-    var menuId by rememberSaveable { mutableStateOf<String?>(null) }
+    var swipedId by rememberSaveable { mutableStateOf<String?>(null) }
     var dissolveId by rememberSaveable { mutableStateOf<String?>(null) }
     var deleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var confirmBatchDelete by remember { mutableStateOf(false) }
+    var batchBusy by remember { mutableStateOf(false) }
     var pendingId by remember { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var navigationMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    fun isBusy(): Boolean = pendingId != null || batchBusy
     fun update(itemId: String, patch: JSONObject) {
-        if (pendingId != null) return
-        pendingId = itemId; actionError = null; menuId = null
+        if (isBusy()) return
+        pendingId = itemId; actionError = null; swipedId = null
         scope.launch {
             try { state.updateListState(itemId, patch); dissolveId = null }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -107,8 +112,49 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
             finally { pendingId = null }
         }
     }
+    fun exitSelection() { selecting = false; selectedIds = emptySet(); confirmBatchDelete = false }
+    fun toggleSelected(itemId: String) {
+        selectedIds = if (itemId in selectedIds) selectedIds - itemId else selectedIds + itemId
+    }
+    /** 批量置顶整批走同一条 patch 通道，失败项留在选中集里可重试，不静默吞掉。 */
+    fun runBatchPin(action: ConversationBatchAction) {
+        val ids = selectedIds.toList()
+        if (ids.isEmpty() || isBusy()) return
+        batchBusy = true; actionError = null
+        scope.launch {
+            var failure: String? = null
+            ids.forEach { id ->
+                try { state.updateListState(id, JSONObject().put("pinned", action == ConversationBatchAction.Pin)) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (err: Exception) { failure = err.message ?: "更新失败，请重试" }
+            }
+            batchBusy = false; actionError = failure
+            if (failure == null) exitSelection()
+        }
+    }
+    fun runBatchDelete() {
+        val ids = selectedIds.toList()
+        if (ids.isEmpty() || isBusy()) return
+        batchBusy = true; actionError = null; confirmBatchDelete = false
+        scope.launch {
+            var failure: String? = null
+            val failed = linkedSetOf<String>()
+            ids.forEach { id ->
+                try { state.remove(id) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (err: Exception) { failure = err.message ?: "删除失败，请重试"; failed += id }
+            }
+            batchBusy = false; actionError = failure
+            if (failed.isEmpty()) exitSelection() else selectedIds = failed
+        }
+    }
     val forms = rememberSaveableStateHolder()
     val layer = remember { ConversationOutsideLayer() }
+    val conversationListState = state.listState("conversations")
+    // 滚动、切档、开建档面板都要收起唯一那一条划开的行；切档同时清掉多选态，避免残留跨档选中。
+    LaunchedEffect(conversationListState.isScrollInProgress) { if (conversationListState.isScrollInProgress) swipedId = null }
+    LaunchedEffect(listTier) { swipedId = null; exitSelection() }
+    LaunchedEffect(create) { if (create) swipedId = null }
     val searchTrigger = remember { androidx.compose.ui.focus.FocusRequester() }
     val createTrigger = remember { androidx.compose.ui.focus.FocusRequester() }
     val focus = LocalFocusManager.current
@@ -120,7 +166,8 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
         if (restoreFocus) runCatching { trigger.requestFocus() }
     }
     LaunchedEffect(state.layerRevision) { create = false }
-    ConversationLayerBackHandler(create) { close(true) }
+    // 建档面板优先于多选态消耗返回；多选态退出后选中集一并清掉。
+    ConversationLayerBackHandler(create || selecting) { if (create) close(true) else exitSelection() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
     CompositionLocalProvider(LocalConversationPanelHeight provides minOf(480.dp, maxHeight * .60f)) {
     Column(Modifier.fillMaxSize().imePadding().then(layer.host(create, setOf("actions", "form", "search", "list")) { close() }).onKeyEvent { event ->
@@ -158,30 +205,64 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 ConversationGroupEditor(state, onClose = { close(true) }, onAccepted = { create = false; onSelect(it) })
             }
         }
+        val rows = filterConversationList(state.items, ConversationListTier.of(listTier), query)
+        val selectedRows = rows.filter { it.id in selectedIds }
+        val batchAction = conversationBatchAction(selectedRows.map { it.pinnedAt != null })
+        if (selecting) ConversationManageBar(
+            count = selectedIds.size,
+            allSelected = selectedIds.isNotEmpty() && selectedIds.size == rows.size,
+            busy = isBusy(),
+            batchAction = batchAction,
+            onSelectAll = { selectedIds = if (selectedIds.isNotEmpty() && selectedIds.size == rows.size) emptySet() else rows.map { it.id }.toSet() },
+            onBatchPin = { batchAction?.let(::runBatchPin) },
+            onDelete = { if (selectedIds.isNotEmpty()) confirmBatchDelete = true },
+            onDone = { exitSelection() },
+        )
         actionError?.let { Text(it, Modifier.padding(12.dp), color = WandColors.danger) }
-        LazyColumn(state = state.listState("conversations"), modifier = Modifier.weight(1f).padding(horizontal = 12.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)).background(WandColors.surface).then(layer.region("list")), contentPadding = PaddingValues(top = 4.dp, bottom = bottomClearance)) {
+        LazyColumn(state = conversationListState, modifier = Modifier.weight(1f).padding(horizontal = 12.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)).background(WandColors.surface).then(layer.region("list")), contentPadding = PaddingValues(top = 4.dp, bottom = bottomClearance)) {
             if (state.error != null) item { ErrorState(state.error.orEmpty(), onRetry = { state.retry() }) }
             if (state.loading && state.items.isEmpty()) items(3) { Row(Modifier.fillMaxWidth().height(76.dp).padding(12.dp)) {
                 Box(Modifier.size(44.dp).clip(WandShapes.md).background(WandColors.surface))
                 Column(Modifier.padding(start = 12.dp)) { repeat(2) { Box(Modifier.padding(vertical = 4.dp).width(120.dp).height(12.dp).background(WandColors.surface)) } }
             } }
-            val rows = filterConversationList(state.items, ConversationListTier.of(listTier), query)
             items(rows, key = { it.id }) { item ->
                 val employee = state.employees.firstOrNull { it.id == item.peerEmployeeId }
                 val matchingTasks = if (query.isBlank()) item.tasks else item.tasks.filter { it.task.title.contains(query, ignoreCase = true) }
                 val expanded = if (query.isNotBlank()) matchingTasks.isNotEmpty() else item.id in state.expandedGroups
                 val selected = state.selectedId == item.id
+                val managedSelected = item.id in selectedIds
                 val archived = isConversationArchived(item)
                 val summary = if (item.dissolvedAt != null) "群聊已解散 · 点击查看或恢复" else item.preview.ifBlank { if (item.kind == "group") "尚未有消息" else "还没有消息" }
                 // 归档的对话不再是「等你回复/在跑」，只留给归档标记；否则和未归档的排成一样。
                 val status = if (archived) null else item.tasks.flatMap { it.runs }.firstOrNull { it.status in listOf("waiting_user", "awaiting_approval", "failed", "running") }?.status
                 Column {
-                  Box {
+                  // 操作从长按菜单改成从右往左划出的抽屉；多选态下没有滑动手势，整行只做选中切换。
+                  ConversationSwipeRowCard(
+                    actions = if (selecting) emptyList() else conversationSwipeActions(item.kind, item.pinnedAt != null, item.dissolvedAt != null),
+                    revealed = swipedId == item.id,
+                    onRevealedChange = { open -> swipedId = if (open) item.id else swipedId?.takeIf { it != item.id } },
+                    onAction = { action ->
+                        when (action) {
+                            ConversationSwipeAction.Pin -> update(item.id, JSONObject().put("pinned", true))
+                            ConversationSwipeAction.Unpin -> update(item.id, JSONObject().put("pinned", false))
+                            ConversationSwipeAction.Dissolve -> dissolveId = item.id
+                            ConversationSwipeAction.Restore -> update(item.id, JSONObject().put("dissolved", false))
+                            ConversationSwipeAction.Delete -> deleteId = item.id
+                        }
+                    },
+                    cardBackground = WandColors.surface,
+                  ) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 76.dp)
-                        .background(if (selected) WandColors.selectedFill else Color.Transparent)
-                        .semantics { this.selected = selected }.combinedClickable(onClick = { create = false; keyboard?.hide(); onSelect(item.id) }, onLongClickLabel = "打开对话菜单", onLongClick = { keyboard?.hide(); menuId = item.id })
+                        .background(if (selected || managedSelected) WandColors.selectedFill else Color.Transparent)
+                        .semantics { this.selected = if (selecting) managedSelected else selected }
+                        .combinedClickable(
+                            onClick = { if (selecting) toggleSelected(item.id) else { create = false; keyboard?.hide(); onSelect(item.id) } },
+                            onLongClickLabel = if (selecting) "取消选择对话" else "多选对话",
+                            onLongClick = { keyboard?.hide(); if (selecting) toggleSelected(item.id) else { swipedId = null; selecting = true; selectedIds = setOf(item.id) } },
+                        )
                         .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(48.dp).clickable(enabled = employee != null, role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "查看${employee?.name.orEmpty()}的资料") { employee?.let { onOpenEmployee(it.id) } }, contentAlignment = Alignment.Center) {
+                        if (selecting) ManageCheck(managedSelected)
+                        Box(Modifier.size(48.dp).clickable(enabled = employee != null && !selecting, role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "查看${employee?.name.orEmpty()}的资料") { employee?.let { onOpenEmployee(it.id) } }, contentAlignment = Alignment.Center) {
                             if (employee != null) EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 44.dp) else ConversationGroupAvatar(item, size = 44.dp)
                         }
                         Column(Modifier.weight(1f).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -198,20 +279,9 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                                     Modifier.weight(1f), fontSize = 14.sp, lineHeight = 20.sp, color = WandColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        if (listTier != ConversationListTier.Archived.storageValue && item.tasks.isNotEmpty()) WandMorphIconButton(expanded, WandIcons.expand, WandIcons.expand,
+                        if (!selecting && listTier != ConversationListTier.Archived.storageValue && item.tasks.isNotEmpty()) WandMorphIconButton(expanded, WandIcons.expand, WandIcons.expand,
                             if (expanded) "收起群任务" else "展开群任务", { if (item.id in state.expandedGroups) state.expandedGroups.remove(item.id) else state.expandedGroups.add(item.id) }, touchSize = 48.dp, rotationDegrees = 180f)
-                        else Icon(WandIcons.chevronRight, null, Modifier.padding(horizontal = 10.dp).size(16.dp), tint = WandColors.textMuted)
-                    }
-                    DropdownMenu(expanded = menuId == item.id, onDismissRequest = { menuId = null }) {
-                        DropdownMenuItem(text = { Text("打开对话") }, onClick = { menuId = null; onSelect(item.id) })
-                        if (item.peerEmployeeId != null) DropdownMenuItem(text = { Text("查看员工资料") }, onClick = { menuId = null; onOpenEmployee(item.peerEmployeeId) })
-                        DropdownMenuItem(text = { Text(if (item.pinnedAt == null) "置顶" else "取消置顶") }, enabled = pendingId == null,
-                            onClick = { update(item.id, JSONObject().put("pinned", item.pinnedAt == null)) })
-                        HorizontalDivider()
-                        if (item.kind == "group") DropdownMenuItem(text = { Text(if (item.dissolvedAt != null) "恢复群聊" else "解散群聊") }, enabled = pendingId == null,
-                            onClick = { if (item.dissolvedAt != null) update(item.id, JSONObject().put("dissolved", false)) else { menuId = null; dissolveId = item.id } })
-                        DropdownMenuItem(text = { Text(if (item.kind == "group") "删除群聊" else "删除对话", color = WandColors.danger) }, enabled = pendingId == null,
-                            onClick = { menuId = null; deleteId = item.id })
+                        else if (!selecting) Icon(WandIcons.chevronRight, null, Modifier.padding(horizontal = 10.dp).size(16.dp), tint = WandColors.textMuted)
                     }
                   }
                     WandInlinePanel(expanded && listTier != ConversationListTier.Archived.storageValue, growFrom = Alignment.Top) {
@@ -238,27 +308,72 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     }
     }
     dissolveId?.let { dissolving ->
-        WandDialog(title = "解散群聊？", onDismissRequest = { if (pendingId == null) dissolveId = null },
-            confirm = WandDialogAction("解散群聊", destructive = true, enabled = pendingId == null, onClick = { update(dissolving, JSONObject().put("dissolved", true)) }),
-            dismiss = WandDialogAction("取消", enabled = pendingId == null, onClick = { dissolveId = null })) {
+        WandDialog(title = "解散群聊？", onDismissRequest = { if (!isBusy()) dissolveId = null },
+            confirm = WandDialogAction("解散群聊", destructive = true, enabled = !isBusy(), onClick = { update(dissolving, JSONObject().put("dissolved", true)) }),
+            dismiss = WandDialogAction("取消", enabled = !isBusy(), onClick = { dissolveId = null })) {
             Text("群聊将归档并保留在会话列表。历史记录和关联任务保留，恢复后可继续聊天。")
             actionError?.let { Text(it, color = WandColors.danger) }
         }
     }
     deleteId?.let { deleting ->
         WandDialog(title = "删除对话「${state.items.firstOrNull { it.id == deleting }?.title.orEmpty()}」？",
-            onDismissRequest = { if (pendingId == null) deleteId = null },
-            confirm = WandDialogAction("删除对话", destructive = true, enabled = pendingId == null, onClick = {
-                if (pendingId == null) { pendingId = deleting; actionError = null; scope.launch {
+            onDismissRequest = { if (!isBusy()) deleteId = null },
+            confirm = WandDialogAction("删除对话", destructive = true, enabled = !isBusy(), onClick = {
+                if (pendingId == null && !batchBusy) { pendingId = deleting; actionError = null; scope.launch {
                     try { state.remove(deleting); deleteId = null }
                     catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                     catch (failure: Exception) { actionError = failure.message ?: "删除失败，请重试" }
                     finally { pendingId = null }
                 } }
             }),
-            dismiss = WandDialogAction("取消", enabled = pendingId == null, onClick = { deleteId = null })) {
+            dismiss = WandDialogAction("取消", enabled = !isBusy(), onClick = { deleteId = null })) {
             Text(if (state.items.firstOrNull { it.id == deleting }?.kind == "group") "将删除这个群聊、所有关联任务，以及它们的消息、执行记录和资源文件。此操作无法撤销。" else "将永久删除此私聊的消息记录和会话文件。员工资料及已经派出的群聊任务保留。此操作无法撤销。")
             actionError?.let { Text(it, color = WandColors.danger) }
+        }
+    }
+    if (confirmBatchDelete) {
+        WandDialog(title = "删除选中的 ${selectedIds.size} 个对话？",
+            onDismissRequest = { if (!isBusy()) confirmBatchDelete = false },
+            icon = WandIcons.delete,
+            confirm = WandDialogAction(if (batchBusy) "正在删除…" else "删除对话", destructive = true, enabled = !isBusy(), onClick = { runBatchDelete() }),
+            dismiss = WandDialogAction("取消", enabled = !isBusy(), onClick = { confirmBatchDelete = false })) {
+            Text("将逐个删除这些对话，以及其中关联的任务、消息记录和资源文件。此操作无法撤销。")
+            actionError?.let { Text(it, color = WandColors.danger) }
+        }
+    }
+}
+
+/** 多选操作条：沿用侧栏管理条的卡片形态，动作换成会话自己的置顶与删除。 */
+@Composable
+private fun ConversationManageBar(
+    count: Int,
+    allSelected: Boolean,
+    busy: Boolean,
+    batchAction: ConversationBatchAction?,
+    onSelectAll: () -> Unit,
+    onBatchPin: () -> Unit,
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
+) {
+    WandCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        containerColor = WandColors.surface.copy(alpha = .92f),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(if (count > 0) "已选择 $count 个对话" else "点选对话可批量置顶或删除",
+                style = MaterialTheme.typography.labelLarge, color = WandColors.textPrimary, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            TextButton(onClick = onSelectAll, enabled = !busy) { Text(if (allSelected) "取消全选" else "全选") }
+            TextButton(onClick = onBatchPin, enabled = !busy && batchAction != null) {
+                Text(if (batchAction == ConversationBatchAction.Unpin) "取消置顶" else "置顶",
+                    color = if (!busy && batchAction != null) WandColors.brand else WandColors.textMuted)
+            }
+            TextButton(onClick = onDelete, enabled = !busy && count > 0) {
+                Text("删除", color = if (!busy && count > 0) WandColors.danger else WandColors.textMuted)
+            }
+            TextButton(onClick = onDone) { Text("完成") }
         }
     }
 }

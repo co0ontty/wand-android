@@ -123,7 +123,13 @@ class ConversationEntryFirstScreenTest {
         assertSame(store.listState("conversations"), store.listState("conversations"))
         val list = screen("ConversationScreens").substringAfter("internal fun ConversationList(").substringBefore("internal fun ConversationContacts(")
         assertFalse("点条目不得清空搜索条件", list.contains("query = \"\"; onSelect"))
-        assertTrue(list.lineSequence().first { it.contains("this.selected = selected") }.contains("keyboard?.hide(); onSelect(item.id)"))
+        assertTrue(list.lineSequence().first { it.contains("toggleSelected(item.id) else { create = false; keyboard?.hide(); onSelect(item.id) }") }
+            .contains("onSelect(item.id)"))
+        assertTrue("选中态按多选或当前会话投影给无障碍", list.contains("this.selected = if (selecting) managedSelected else selected"))
+        // 长按不再弹菜单：改成进多选，条目操作由从右往左划出的抽屉承担。
+        assertTrue(list.contains("onLongClickLabel = if (selecting) \"取消选择对话\" else \"多选对话\""))
+        assertTrue(list.contains("ConversationSwipeRowCard("))
+        assertFalse(list.contains("DropdownMenu(expanded ="))
         // 列表自身算面板内：外点观察器不会在进详情前顺手关掉搜索。
         assertTrue(list.contains("setOf(\"actions\", \"form\", \"search\", \"list\")"))
         assertTrue(list.contains("layer.region(\"list\")"))

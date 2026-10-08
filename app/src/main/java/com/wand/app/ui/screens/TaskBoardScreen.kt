@@ -129,6 +129,7 @@ import org.json.JSONObject
 @Composable
 fun TaskBoardScreen(
     api: TaskBoardPort,
+    workspaceApi: com.wand.app.data.WorkspacePort,
     onOpenBoundSession: ((TaskSessionRoute) -> Unit)? = null,
     onBack: () -> Unit,
     onOpenSession: (sessionId: String, isStructured: Boolean) -> Unit,
@@ -373,6 +374,7 @@ fun TaskBoardScreen(
             },
             teamRunRetry = teamRetryTaskId != null,
             api = api,
+            workspaceApi = workspaceApi,
             onDispatchStarted = { started ->
                 // 派工由服务端建卡 + 起 run：关窗、刷新看板，直接落到那张卡的详情。
                 showCreate = false
@@ -380,12 +382,15 @@ fun TaskBoardScreen(
                 scope.launch { refresh() }
                 onOpenTaskDetail(started.taskId)
             },
-            onCreate = create@{ title, description, status, priority, workspaceId, agent, parentTaskId, teamId, employeeId ->
+            onCreate = create@{ title, description, status, priority, directory, agent, parentTaskId, teamId, employeeId ->
                 if (busy) return@create
                 busy = true
                 error = null
                 scope.launch {
                     try {
+                        val workspace = resolveCreationWorkspace(workspaceApi, directory)
+                        val workspaceId = workspace?.id
+                        if (workspace != null && workspaces.none { it.id == workspace.id }) workspaces = workspaces + workspace
                         // 上一步「交给团队」失败的卡还在手里：只在本次仍会走团队链路时才复用旧卡，
                         // 条件与下面的重发、按钮文案同一份（boardDispatchesToTeam）——
                         // 改回「待办」再点「创建任务」就真的是建新卡。
@@ -1653,227 +1658,6 @@ internal fun TaskBoardDetailPane(
             compact = true,
         )
         Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun CreateBoardTaskDialog(
-    workspaces: List<Workspace>,
-    tasks: List<BoardTask>,
-    teams: List<AiTeam>,
-    employees: List<SiliconEmployee>,
-    models: ModelsResponse?,
-    lastAgent: BoardTaskAgent,
-    defaultWorkspaceId: String,
-    initialStatus: String,
-    busy: Boolean,
-    error: String?,
-    teamRunRetry: Boolean = false,
-    api: TaskBoardPort,
-    onDismiss: () -> Unit,
-    onCreate: (title: String, description: String, status: String, priority: String, workspaceId: String?, agent: BoardTaskAgent, parentTaskId: String?, teamId: String?, employeeId: String?) -> Unit,
-    onDispatchStarted: (AiTeamDispatchRun) -> Unit,
-) {
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf(initialStatus) }
-    var priority by remember { mutableStateOf("none") }
-    var workspaceId by remember { mutableStateOf(defaultWorkspaceId) }
-    var parentTaskId by remember { mutableStateOf("") }
-    var agent by remember { mutableStateOf(lastAgent) }
-    var dispatchSubjectKey by remember { mutableStateOf("cli") }
-    // 临时派工：不指派员工，由本机决策模型给建议名单；服务端自己建卡 + 建临时团队 + 起 run。
-    val dispatchFlow = remember { TeamDispatchFlowState() }
-    val dispatchScope = rememberCoroutineScope()
-    val dispatchMode = dispatchSubjectKey == "dispatch"
-    // 派工必须有真实项目（服务端拒 global 与无 cwd 的项目）。
-    val dispatchReason = dispatchWorkspaceBlockedReason(workspaceId)
-    var showAdvanced by remember { mutableStateOf(false) }
-    val parentOptions = boardParentTaskOptions(tasks, workspaceId.ifBlank { null })
-    // 「进行中」列的新建代表已经决定要跑，所以创建后立刻派 Agent / 交给团队；其他列只落库。
-    val dispatches = boardCreateDispatches(status)
-    // 闭环回落：状态切离「进行中」、或团队列表刷新后选中项消失时，不许带着失效 teamId 提交
-    // （照 TaskBoardDetailPane 派发表单的 LaunchedEffect 写法）。
-    LaunchedEffect(dispatches, teams, employees, dispatchSubjectKey) {
-        // 派工模式不是 ExecutionSubject，不能被下面的回落改写成 cli。
-        if (dispatchSubjectKey == "dispatch") return@LaunchedEffect
-        val selected = ExecutionSubject.fromKey(dispatchSubjectKey, agent.provider)
-        if (!dispatches ||
-            (selected.type == "team" && teams.none { it.id == selected.id }) ||
-            (selected.type == "employee" && employees.none { it.id == selected.id })) {
-            dispatchSubjectKey = "cli"
-        }
-    }
-    val selectedSubject = ExecutionSubject.fromKey(dispatchSubjectKey, agent.provider)
-    val teamTarget = teams.firstOrNull { selectedSubject.type == "team" && it.id == selectedSubject.id }
-    val employeeTarget = employees.firstOrNull { selectedSubject.type == "employee" && it.id == selectedSubject.id }
-    WandDialog(
-        title = "新建任务",
-        onDismissRequest = onDismiss,
-        confirm = if (dispatchMode) WandDialogAction(
-            label = dispatchPrimaryActionLabel(dispatchFlow.phase, dispatchFlow.hasPlan),
-            enabled = !busy && !dispatchFlow.busy &&
-                (if (dispatchFlow.hasPlan) {
-                    dispatchStartBlockedReason(dispatchFlow.selection, workspaceId, description, false).isEmpty()
-                } else {
-                    description.trim().isNotEmpty()
-                }),
-            onClick = {
-                // 同一个按钮依次承担：选人 → 开工；结果与失败都留在原位。
-                dispatchScope.launch {
-                    if (!dispatchFlow.hasPlan) {
-                        dispatchFlow.loadPlan(api, description)
-                    } else {
-                        dispatchFlow.submit(api, workspaceId, description)?.let(onDispatchStarted)
-                    }
-                }
-            },
-        ) else WandDialogAction(
-            label = boardCreateActionLabel(
-                teamSelected = teamTarget != null,
-                dispatches = dispatches,
-                hasDescription = description.trim().isNotEmpty(),
-                busy = busy,
-                teamRunRetry = teamRunRetry,
-                employeeSelected = employeeTarget != null,
-            ),
-            enabled = !busy && (title.trim().isNotEmpty() || description.trim().isNotEmpty()),
-            onClick = {
-                onCreate(title.trim(), description.trim(), status, priority, workspaceId.ifBlank { null }, agent,
-                    parentTaskId.takeIf { id -> parentOptions.any { it.first == id } },
-                    teamTarget?.id, employeeTarget?.id)
-            },
-        ),
-        dismiss = WandDialogAction(label = "取消", onClick = onDismiss, enabled = !busy),
-    ) {
-        error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall) }
-        WandTextField(
-            value = description,
-            onValueChange = { description = it },
-            label = "描述",
-            placeholder = when {
-                dispatchMode -> "将作为决策判断与团队执行的唯一目标"
-                teamTarget != null -> "将作为交给团队的开工内容"
-                employeeTarget != null -> "将作为交给员工的开工内容"
-                dispatches -> "将作为第一个 Agent 的指派内容"
-                else -> "只创建任务，不指派 Agent"
-            },
-            minLines = 3,
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        WandChoice(
-            label = "状态 · ${boardTaskStatusLabel(status)}",
-            options = BOARD_TASK_STATUSES.map { it to boardTaskStatusLabel(it) },
-            onSelect = { status = it },
-            enabled = !busy,
-        )
-        WandChoice(
-            label = "工作区 · ${workspaces.firstOrNull { it.id == workspaceId }?.name ?: "未归属工作区"}",
-            options = listOf("" to "未归属工作区（使用临时目录）") + workspaces.map { it.id to it.name },
-            onSelect = { workspaceId = it; parentTaskId = "" },
-            enabled = !busy,
-        )
-        if (dispatches) {
-            WandChoice(
-                label = "指派对象 · " + when {
-                    dispatchMode -> "临时派工（决策选人）"
-                    else -> employeeTarget?.name ?: teamTarget?.name ?: "CLI 工具"
-                },
-                options = buildList {
-                    add("cli" to "CLI 工具")
-                    employees.forEach { add("employee:${it.id}" to "员工 · ${it.name}") }
-                    teams.forEach { add("team:${it.id}" to "团队 · ${it.name}（${it.members.size} 人）") }
-                    add("dispatch" to "临时派工 · 决策选人")
-                },
-                onSelect = { dispatchSubjectKey = it },
-                enabled = !busy,
-            )
-        }
-        if (dispatchMode) {
-            if (dispatchReason != null) {
-                Text(dispatchReason, color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall)
-            } else {
-                Text(
-                    "不指派员工：写清描述，本机决策模型按职责与标签给出建议名单，确认后才开工。",
-                    color = WandColors.textMuted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            TeamDispatchRoster(dispatchFlow, maxRosterHeight = 220.dp)
-            dispatchFlow.message?.let { message ->
-                Text(
-                    message,
-                    color = if (dispatchFlow.phase == TeamDispatchPhase.Failed) WandColors.danger else WandColors.textMuted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-        if (dispatches && (teamTarget != null || employeeTarget != null)) {
-            // 团队分支的参数由团队定义决定，这里只留一条原位说明（对齐 Web 文案口径）。
-            Text(
-                if (teamTarget != null) "有描述时会立刻交给团队，由负责人拆解分派"
-                else "有描述时会立刻交给员工，按工具链顺序工作",
-                color = WandColors.textMuted,
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
-        WandButton(
-            label = "更多设置",
-            onClick = { showAdvanced = !showAdvanced },
-            enabled = !busy,
-            variant = WandButtonVariant.Text,
-            modifier = Modifier.fillMaxWidth().semantics {
-                stateDescription = if (showAdvanced) "已展开" else "已收起"
-            },
-        )
-        Text(
-            listOfNotNull(
-                title.trim().takeIf { it.isNotEmpty() } ?: "自动命名",
-                boardTaskPriorityLabel(priority),
-                parentOptions.firstOrNull { it.first == parentTaskId && it.first.isNotBlank() }?.second,
-                if (dispatches && teamTarget == null && employeeTarget == null && !dispatchMode)
-                    "${boardTaskProviderLabel(agent.provider)} · ${boardTaskKindLabel(agent.kind)} · ${boardTaskModeLabel(agent.mode)}" else null,
-            ).joinToString(" · "),
-            color = WandColors.textMuted,
-            style = MaterialTheme.typography.labelSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        )
-        WandInlinePanel(visible = showAdvanced) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                WandTextField(
-                    value = title,
-                    onValueChange = { title = it.replace("\n", "") },
-                    label = "任务标题（可选）",
-                    placeholder = "不填写则按描述自动生成",
-                    singleLine = true,
-                    enabled = !busy,
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                if (dispatches && teamTarget == null && employeeTarget == null && !dispatchMode) {
-                    WandAgentFields(models = models, agent = agent, providerLabel = "CLI 工具",
-                        onChange = { agent = it }, enabled = !busy)
-                }
-
-                WandChoice(
-                    label = "归属父任务 · ${parentOptions.firstOrNull { it.first == parentTaskId }?.second ?: "不关联父任务"}",
-                    options = parentOptions,
-                    onSelect = { parentTaskId = it },
-                    enabled = !busy,
-                )
-                WandChoice(
-                    label = "优先级 · ${boardTaskPriorityLabel(priority)}",
-                    options = BOARD_TASK_PRIORITIES.map { it to boardTaskPriorityLabel(it) },
-                    onSelect = { priority = it },
-                    enabled = !busy,
-                )
-            }
-        }
     }
 }
 

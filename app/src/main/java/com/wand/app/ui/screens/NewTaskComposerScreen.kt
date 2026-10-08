@@ -21,8 +21,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -36,7 +34,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Switch
 import com.wand.app.ui.components.WandInlinePanel
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,18 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.core.view.WindowCompat
 import com.wand.app.data.AiTeamDispatchRun
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.dispatchStartBlockedReason
@@ -68,10 +59,9 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.boardAgentModelOptions
+import com.wand.app.ui.components.WandFormDialog
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.WandCard
-import com.wand.app.ui.components.WandDetailTopBar
-import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
@@ -166,31 +156,117 @@ internal fun NewTaskComposerDialog(
     var parentOpen by remember { mutableStateOf(false) }
     var advancedOpen by remember { mutableStateOf(false) }
 
-    Dialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
-        val dialogView = LocalView.current
-        val window = (dialogView.parent as? DialogWindowProvider)?.window
-        val lightBackground = WandColors.bgPrimary.luminance() > 0.5f
-        DisposableEffect(window, lightBackground) {
-            val controller = window?.let { WindowCompat.getInsetsController(it, dialogView) }
-            val previous = controller?.isAppearanceLightStatusBars
-            controller?.isAppearanceLightStatusBars = lightBackground
-            onDispose { if (previous != null) controller.isAppearanceLightStatusBars = previous }
-        }
-        val motionEnabled = !reduceMotionEnabled()
-        Column(
-            modifier = Modifier.fillMaxSize().background(WandColors.bgPrimary)
-                .navigationBarsPadding().imePadding(),
-        ) {
-            WandDetailTopBar(
-                title = "新建任务",
-                leading = { WandDetailBackButton(onClick = onDismiss, contentDescription = "取消新建任务", enabled = !busy) },
-            )
+    val motionEnabled = !reduceMotionEnabled()
+    WandFormDialog(
+        title = "新建任务",
+        busy = busy || dispatchFlow.busy,
+        onDismiss = onDismiss,
+        footer = {
             Column(
-                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().background(WandColors.bgPrimary)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    val visibleError = error
+                        ?: teamError.takeIf { teamSelected }
+                        ?: dispatchFlow.message?.takeIf { dispatchFlow.phase == TeamDispatchPhase.Failed }
+                        ?: dispatchReason?.takeIf { dispatchMode }
+                    if (visibleError != null) {
+                        Text(
+                            visibleError, color = WandColors.danger,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        )
+                    } else {
+                        Text(
+                            if (dispatchMode) {
+                                if (dispatchFlow.hasPlan) dispatchBlocked.ifEmpty { "已选出名单：确认后开工" }
+                                else "决策选人后再确认开工"
+                            } else if (ungroupedStart) newTaskUngroupedStatusLine()
+                            else if (employeeSelected) "建卡后立即交给员工开工 · " +
+                                if (worktree) "独立工作树" else "共用工作区"
+                            else newTaskComposerStatusLine(teamSelected, startFirstSession, worktree),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = WandColors.textSecondary,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                WandButton(
+                    label = if (dispatchMode) dispatchPrimaryActionLabel(dispatchFlow.phase, dispatchFlow.hasPlan)
+                    else if (ungroupedStart) newTaskUngroupedActionLabel(busy)
+                    else if (employeeSelected) {
+                        if (busy) "正在交给员工…" else "创建并交给员工"
+                    } else if (teamSelected) {
+                        newTaskTeamActionLabel(busy, teamRunRetry, prompt.isNotBlank())
+                    } else if (busy) "创建中…" else if (startFirstSession) "创建并启动会话"
+                    else "创建任务分组",
+                    onClick = {
+                        if (!dispatchMode) {
+                            onSubmit()
+                        } else {
+                            // 同一个按钮依次承担：选人 → 开工；结果与失败都留在原位。
+                            dispatchScope.launch {
+                                if (!dispatchFlow.hasPlan) {
+                                    dispatchFlow.loadPlan(api, prompt)
+                                } else {
+                                    dispatchFlow.submit(api, dispatchWorkspaceId, prompt)?.let(onDispatchStarted)
+                                }
+                            }
+                        }
+                    },
+                    enabled = if (dispatchMode) {
+                        !busy && !dispatchFlow.busy && dispatchReason == null &&
+                            if (dispatchFlow.hasPlan) dispatchBlocked.isEmpty() else prompt.isNotBlank()
+                    } else canCreate && !busy,
+                    loading = busy || (dispatchMode && dispatchFlow.busy), modifier = Modifier.fillMaxWidth().height(48.dp),
+                )
+            }
+        },
+        overlays = {
+        if (parentOpen) {
+            ComposerChoiceSheet(
+                title = "归属父任务", options = parentOptions, selected = parentTaskId,
+                searchable = true, searchPlaceholder = "搜索任务",
+                onSelect = { parentOpen = false; onParentTaskChange(it) },
+                onDismiss = { parentOpen = false },
+            )
+        }
+        // 会话类型 / 模型 / 思考深度是 CLI 专属参数，团队分支不读：选择器
+        // 与设置行同源（controlChips），切回 CLI 后已选值原样恢复。
+        if (modelOpen && NewTaskComposerControlChip.Model in controlChips) {
+            ComposerChoiceSheet(
+                title = "模型", options = modelOptions.map { it.id to it.label },
+                selected = model, searchable = true,
+                onSelect = { modelOpen = false; onModelChange(it) },
+                onDismiss = { modelOpen = false },
+            )
+        }
+        if (effortOpen && NewTaskComposerControlChip.ThinkingEffort in controlChips) {
+            ComposerChoiceSheet(
+                title = "思考深度", options = effortOptions.map { it.id to it.menuLabel },
+                selected = thinkingEffort,
+                onSelect = { effortOpen = false; onThinkingEffortChange(it) },
+                onDismiss = { effortOpen = false },
+            )
+        }
+        if (kindOpen && NewTaskComposerControlChip.SessionKind in controlChips) {
+            ComposerChoiceSheet(
+                title = "会话类型", options = WorkspaceSessionKind.entries.map { it.raw to it.label },
+                selected = kind.raw,
+                onSelect = { raw -> kindOpen = false; onKindChange(WorkspaceSessionKind.fromRaw(raw)) },
+                onDismiss = { kindOpen = false },
+            )
+        }
+        directoryPickerContent()
+        },
+    ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Spacer(Modifier.height(4.dp))
@@ -371,7 +447,7 @@ internal fun NewTaskComposerDialog(
                     }
                     HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
                     NewTaskSettingRow(
-                        icon = WandIcons.folder, label = "工作目录",
+                        icon = WandIcons.folder, label = "运行目录",
                         value = cwd.ifEmpty { "选择目录" },
                         enabled = !busy && !fieldsLocked, onClick = onChooseDirectory,
                     )
@@ -490,111 +566,12 @@ internal fun NewTaskComposerDialog(
                 }
                 Spacer(Modifier.height(12.dp))
             }
-            Column(
-                modifier = Modifier.fillMaxWidth().background(WandColors.bgPrimary)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 96.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    val visibleError = error
-                        ?: teamError.takeIf { teamSelected }
-                        ?: dispatchFlow.message?.takeIf { dispatchFlow.phase == TeamDispatchPhase.Failed }
-                        ?: dispatchReason?.takeIf { dispatchMode }
-                    if (visibleError != null) {
-                        Text(
-                            visibleError, color = WandColors.danger,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                        )
-                    } else {
-                        Text(
-                            if (dispatchMode) {
-                                if (dispatchFlow.hasPlan) dispatchBlocked.ifEmpty { "已选出名单：确认后开工" }
-                                else "决策选人后再确认开工"
-                            } else if (ungroupedStart) newTaskUngroupedStatusLine()
-                            else if (employeeSelected) "建卡后立即交给员工开工 · " +
-                                if (worktree) "独立工作树" else "共用工作区"
-                            else newTaskComposerStatusLine(teamSelected, startFirstSession, worktree),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = WandColors.textSecondary,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                WandButton(
-                    label = if (dispatchMode) dispatchPrimaryActionLabel(dispatchFlow.phase, dispatchFlow.hasPlan)
-                    else if (ungroupedStart) newTaskUngroupedActionLabel(busy)
-                    else if (employeeSelected) {
-                        if (busy) "正在交给员工…" else "创建并交给员工"
-                    } else if (teamSelected) {
-                        newTaskTeamActionLabel(busy, teamRunRetry, prompt.isNotBlank())
-                    } else if (busy) "创建中…" else if (startFirstSession) "创建并启动会话"
-                    else "创建任务分组",
-                    onClick = {
-                        if (!dispatchMode) {
-                            onSubmit()
-                        } else {
-                            // 同一个按钮依次承担：选人 → 开工；结果与失败都留在原位。
-                            dispatchScope.launch {
-                                if (!dispatchFlow.hasPlan) {
-                                    dispatchFlow.loadPlan(api, prompt)
-                                } else {
-                                    dispatchFlow.submit(api, dispatchWorkspaceId, prompt)?.let(onDispatchStarted)
-                                }
-                            }
-                        }
-                    },
-                    enabled = if (dispatchMode) {
-                        !busy && !dispatchFlow.busy && dispatchReason == null &&
-                            if (dispatchFlow.hasPlan) dispatchBlocked.isEmpty() else prompt.isNotBlank()
-                    } else canCreate && !busy,
-                    loading = busy || (dispatchMode && dispatchFlow.busy), modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-        if (parentOpen) {
-            ComposerChoiceSheet(
-                title = "归属父任务", options = parentOptions, selected = parentTaskId,
-                searchable = true, searchPlaceholder = "搜索任务",
-                onSelect = { parentOpen = false; onParentTaskChange(it) },
-                onDismiss = { parentOpen = false },
-            )
-        }
-        // 会话类型 / 模型 / 思考深度是 CLI 专属参数，团队分支不读：选择器
-        // 与设置行同源（controlChips），切回 CLI 后已选值原样恢复。
-        if (modelOpen && NewTaskComposerControlChip.Model in controlChips) {
-            ComposerChoiceSheet(
-                title = "模型", options = modelOptions.map { it.id to it.label },
-                selected = model, searchable = true,
-                onSelect = { modelOpen = false; onModelChange(it) },
-                onDismiss = { modelOpen = false },
-            )
-        }
-        if (effortOpen && NewTaskComposerControlChip.ThinkingEffort in controlChips) {
-            ComposerChoiceSheet(
-                title = "思考深度", options = effortOptions.map { it.id to it.menuLabel },
-                selected = thinkingEffort,
-                onSelect = { effortOpen = false; onThinkingEffortChange(it) },
-                onDismiss = { effortOpen = false },
-            )
-        }
-        if (kindOpen && NewTaskComposerControlChip.SessionKind in controlChips) {
-            ComposerChoiceSheet(
-                title = "会话类型", options = WorkspaceSessionKind.entries.map { it.raw to it.label },
-                selected = kind.raw,
-                onSelect = { raw -> kindOpen = false; onKindChange(WorkspaceSessionKind.fromRaw(raw)) },
-                onDismiss = { kindOpen = false },
-            )
-        }
-        directoryPickerContent()
     }
 }
 
+
 @Composable
-private fun NewTaskSettingRow(
+internal fun NewTaskSettingRow(
     icon: ImageVector,
     label: String,
     value: String,

@@ -145,6 +145,8 @@ internal fun HomeTopBar(
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)?,
+    onNewTask: (() -> Unit)? = null,
+    newTaskEnabled: Boolean = interactionEnabled,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var restoreMenuFocus by remember { mutableStateOf(false) }
@@ -170,6 +172,15 @@ internal fun HomeTopBar(
         }
         Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
             textAlign = TextAlign.Center, color = WandColors.textPrimary, maxLines = 1)
+        if (onNewTask != null) {
+            WandIconButton(
+                icon = WandIcons.add,
+                contentDescription = "全局新建任务或会话，选择工作区",
+                onClick = onNewTask,
+                enabled = newTaskEnabled,
+                tint = WandColors.brand,
+            )
+        }
         if (onCollapseSidebar != null) {
             WandIconButton(
                 icon = WandIcons.panelCollapse,
@@ -1493,8 +1504,6 @@ internal fun HomeSessionRow(
     // 权限态只在 WS 事件里，轮询摘要没有；首页要显示它必须先看实时 overlay。
     val permissionBlocked = SessionTitleStore.permissionBlockedOf(session.id) == true
     val presentation = wandStatusPresentation(if (permissionBlocked) "permission" else status)
-    // 二级行不再重复一级行的头像（同一个员工/团队），只用内缩对齐一级标题，留出「从属」的感觉。
-    val rowIndent = if (secondary) 32.dp else 4.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1513,7 +1522,7 @@ internal fun HomeSessionRow(
                     onLongClickLabel = if (selecting) "切换选择会话" else "进入多选会话",
                     onLongClick = { if (!selecting) onEnterSelection() else onToggleManaged() },
                 )
-                .padding(start = rowIndent, top = 7.dp, bottom = 7.dp, end = 4.dp),
+                .padding(start = 4.dp, top = 7.dp, bottom = 7.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selecting) {
@@ -1556,14 +1565,19 @@ internal fun HomeSessionRow(
             if (secondary) {
                 // 二级行只有一行：标题（是什么东西）+ 团队来源，状态由左侧 logo 呼吸灯表达，取消文字标签。
                 Row(
-                    modifier = Modifier.weight(1f).padding(start = 10.dp),
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (session.employeeId != null) {
-                        WandProviderMark(provider = session.provider,
-                            variant = WandProviderMarkVariant.Tinted,
-                            modifier = Modifier.logoBreathingGlow(presentation, cornerRadius = 6.dp))
+                    // 图标列仍占一级行头像的宽度：标题才和一级标题对齐；
+                    // 终端、无员工身份的会话没有 logo，也不会把标题挂到左边线上。
+                    Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                        if (session.employeeId != null) {
+                            WandProviderMark(provider = session.provider,
+                                variant = WandProviderMarkVariant.Tinted,
+                                boxSize = 20.dp,
+                                modifier = Modifier.logoBreathingGlow(presentation, cornerRadius = 6.dp))
+                        }
                     }
                     Text(
                         label,
@@ -1863,9 +1877,9 @@ private fun RowScope.HomeMenuPillButton(
 
 // MARK: - 共享微件
 
-/** 多选模式下的勾选框：底与描边跟着选中过渡，避免快速多选时整列硬闪。 */
+/** 多选模式下的勾选框：底与描边跟着选中过渡，避免快速多选时整列硬闪。侧栏与 IM 对话列表共用。 */
 @Composable
-private fun ManageCheck(checked: Boolean) {
+internal fun ManageCheck(checked: Boolean) {
     val motionEnabled = !reduceMotionEnabled()
     val fill by animateColorAsState(
         targetValue = if (checked) WandColors.brand else WandColors.surfaceSoft,

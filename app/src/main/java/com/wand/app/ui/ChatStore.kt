@@ -68,6 +68,10 @@ internal fun canSwitchBlankConversationProvider(snapshot: SessionSnapshot?, mess
         snapshot.messages.isNullOrEmpty() && (snapshot.messageTotal ?: 0) == 0 && messageTotal == 0 &&
         snapshot.queuedMessages.isNullOrEmpty()
 
+internal fun canChangeBlankConversationDirectory(snapshot: SessionSnapshot?, messageTotal: Int): Boolean =
+    canSwitchBlankConversationProvider(snapshot, messageTotal) && snapshot != null &&
+        snapshot.workspaceTaskId.isNullOrBlank() && !snapshot.directoryLocked
+
 class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     var messages by mutableStateOf<List<ConversationTurn>>(emptyList())
@@ -104,9 +108,16 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         private set
     var providerSwitchResult by mutableStateOf<String?>(null)
         private set
-    val canSwitchProvider: Boolean get() = !loading && !providerSwitching &&
+    val canSwitchProvider: Boolean get() = !loading && !providerSwitching && !directoryChanging &&
         pendingModelMutations == 0 && pendingThinkingMutations == 0 && pendingModeMutations == 0 &&
         canSwitchBlankConversationProvider(snapshot, messageTotal)
+
+    var directoryChanging by mutableStateOf(false)
+        private set
+    var directoryChangeError by mutableStateOf<String?>(null)
+        private set
+    val canChangeDirectory: Boolean get() = canSwitchProvider &&
+        canChangeBlankConversationDirectory(snapshot, messageTotal)
 
     var availableModels by mutableStateOf<List<ModelInfo>>(emptyList())
         private set
@@ -383,8 +394,34 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         }
     }
 
+    /** 目录回执属于这个 store/会话；失败不改真实目录，不清草稿，也不自动重发。 */
+    fun chooseWorkingDirectory(cwd: String) {
+        if (!canChangeDirectory || cwd.isBlank() || snapshot?.cwd == cwd) return
+        directoryChanging = true
+        directoryChangeError = null
+        val employeeId = snapshot?.employeeId
+        scope.launch {
+            try {
+                settingsMutationMutex.withLock {
+                    val snap = api.setSessionDirectory(sessionId, cwd)
+                    check(snap.id == sessionId && snap.isStructured && snap.employeeId == employeeId) {
+                        "未收到有效的运行目录切换回执"
+                    }
+                    currentCoroutineContext().ensureActive()
+                    if (active) {
+                        apply(snap)
+                        socket.requestResync()
+                    }
+                }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                if (active) directoryChangeError = failure.message ?: "切换运行目录失败，请重试"
+            } finally { directoryChanging = false }
+        }
+    }
+
     fun setModel(model: String?) {
-        if (providerSwitching) return
+        if (providerSwitching || directoryChanging) return
         val generation = ++modelMutationGeneration
         pendingModelMutations++
         selectedModel = model
@@ -416,7 +453,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     }
 
     fun chooseThinkingEffort(effort: String) {
-        if (providerSwitching) return
+        if (providerSwitching || directoryChanging) return
         val generation = ++thinkingMutationGeneration
         pendingThinkingMutations++
         thinkingEffort = effort
@@ -457,7 +494,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
 
     /** 中途切换执行模式（乐观更新 + 失败回滚）。codex 会话固定 full-access，调用方负责拦。 */
     fun chooseMode(newMode: String) {
-        if (providerSwitching) return
+        if (providerSwitching || directoryChanging) return
         val generation = ++modeMutationGeneration
         pendingModeMutations++
         mode = newMode
@@ -502,6 +539,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     /** Protocol send only: composer owns content, submit concurrency and inline feedback. */
     suspend fun submitInput(text: String) {
         check(!providerSwitching) { "工具正在切换，请稍后发送" }
+        check(!directoryChanging) { "运行目录正在切换，请稍后发送" }
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val structured = snapshot?.isStructured

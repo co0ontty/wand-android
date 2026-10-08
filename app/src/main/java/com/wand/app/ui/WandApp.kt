@@ -596,6 +596,7 @@ private fun SessionDetailScreen(
         } else {
             TaskBoardScreen(
                 api = api,
+                workspaceApi = api,
                 onOpenBoundSession = { route -> nav.push(route.toScreen()) },
                 onBack = { nav.pop() },
                 onOpenSession = { sessionId, isStructured ->

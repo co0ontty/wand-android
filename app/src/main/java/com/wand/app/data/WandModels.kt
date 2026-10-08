@@ -638,6 +638,12 @@ fun isStructuredSession(sessionKind: String?, runner: String? = null): Boolean =
  * SessionSnapshot 的客户端子集。GET /api/sessions 返回 slim 版（无 messages），
  * GET /api/sessions/:id?format=chat 与 ws init 返回带 messages 的完整版。
  */
+/** 原始快照中的执行/恢复/工作树绑定决定目录是否已经固定。 */
+private fun sessionDirectoryLocked(o: JSONObject): Boolean =
+    o.bool("worktreeEnabled") == true || o.obj("worktree") != null ||
+        !o.str("automationId").isNullOrBlank() || !o.str("resumedFromSessionId").isNullOrBlank() ||
+        o.bool("autoRecovered") == true || (o.str("sessionSource")?.let { it != "interactive" } == true)
+
 data class SessionSnapshot(
     val id: String,
     val sessionKind: String?,
@@ -683,6 +689,7 @@ data class SessionSnapshot(
     val employeeId: String? = null,
     val employeeName: String? = null,
     val employeeAvatar: String? = null,
+    val directoryLocked: Boolean = false,
     val completionRevision: Int? = null,
     val viewedCompletionRevision: Int? = null,
 ) {
@@ -749,6 +756,7 @@ data class SessionSnapshot(
             employeeId = o.str("employeeId")?.takeIf { it.isNotEmpty() },
             employeeName = o.str("employeeName")?.takeIf { it.isNotEmpty() },
             employeeAvatar = o.str("employeeAvatar")?.takeIf { it.isNotEmpty() },
+            directoryLocked = sessionDirectoryLocked(o),
             completionRevision = o.int("completionRevision"),
             viewedCompletionRevision = o.int("viewedCompletionRevision"),
         )
@@ -1036,6 +1044,7 @@ internal data class WsData(
     val ptyCols: Int? = null,
     val ptyRows: Int? = null,
     val terminalState: PtyTerminalSnapshot? = null,
+    val directoryLocked: Boolean = false,
     val completionRevision: Int? = null,
     val viewedCompletionRevision: Int? = null,
 ) {
@@ -1059,6 +1068,7 @@ internal data class WsData(
             ptyBusy = ptyBusy,
             providerCliActive = providerCliActive, providerCliExitCode = providerCliExitCode,
             workspaceId = workspaceId, workspaceTaskId = workspaceTaskId,
+            directoryLocked = directoryLocked,
             completionRevision = completionRevision, viewedCompletionRevision = viewedCompletionRevision,
         )
     }
@@ -1109,6 +1119,7 @@ internal data class WsData(
             isResponding = o.bool("isResponding"),
             permissionRequest = PermissionRequestInfo.parse(o.obj("permissionRequest")),
             taskTitle = o.str("title"),
+            directoryLocked = sessionDirectoryLocked(o),
             chunk = o.str("chunk"),
             output = o.str("output"),
             ptyCols = o.int("ptyCols"),

@@ -61,7 +61,6 @@ import com.wand.app.data.AiTeamRun
 import com.wand.app.data.ExecutionSubject
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.BoardTask
-import com.wand.app.data.DirectoryListing
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
@@ -206,10 +205,6 @@ fun TaskListScreen(
     var newTaskSubmitting by remember { mutableStateOf(false) }
     var targetDraftRevision by remember { mutableLongStateOf(0L) }
     var directoryPickerOpen by remember { mutableStateOf(false) }
-    var directoryPickerPath by remember { mutableStateOf("") }
-    var directoryListing by remember { mutableStateOf<DirectoryListing?>(null) }
-    var directoryLoading by remember { mutableStateOf(false) }
-    var directoryError by remember { mutableStateOf<String?>(null) }
     var pendingTarget by remember { mutableStateOf<Pair<TaskDirectoryGroup, WorkspaceTaskSummary>?>(null) }
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
@@ -428,43 +423,7 @@ fun TaskListScreen(
     }
 
     fun openDirectoryPicker() {
-        directoryPickerPath = taskCwdDraft.trim().ifEmpty {
-            state.defaultCwd?.trim().takeUnless { it.isNullOrEmpty() }
-                ?: state.recentPaths.firstOrNull()?.path.orEmpty()
-        }.ifEmpty { "/" }
         directoryPickerOpen = true
-        directoryLoading = true
-        directoryError = null
-        scope.launch {
-            try {
-                directoryListing = api.listDirectory(directoryPickerPath)
-            } catch (error: Exception) {
-                directoryError = error.message ?: "无法读取目录"
-            } finally {
-                directoryLoading = false
-            }
-        }
-    }
-
-    fun browseDirectory(path: String) {
-        directoryPickerPath = path
-        directoryLoading = true
-        directoryError = null
-        scope.launch {
-            try {
-                directoryListing = api.listDirectory(path)
-            } catch (error: Exception) {
-                directoryError = error.message ?: "无法读取目录"
-            } finally {
-                directoryLoading = false
-            }
-        }
-    }
-
-    fun parentDirectory(path: String): String {
-        val normalized = path.trim().trimEnd('/').ifEmpty { "/" }
-        if (normalized == "/") return "/"
-        return normalized.substringBeforeLast('/').ifEmpty { "/" }
     }
 
     LaunchedEffect(state.newTaskRequest) {
@@ -492,59 +451,16 @@ fun TaskListScreen(
     }
 
     val directoryPickerContent: @Composable () -> Unit = {
-        if (directoryPickerOpen) {
-            WandBottomSheet(
-                onDismissRequest = { if (!state.mutationBusy) directoryPickerOpen = false },
-                modifier = Modifier.navigationBarsPadding(),
-                sheetState = targetSheetState,
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("选择工作目录", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
-                        Text(
-                            directoryPickerPath,
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                            color = WandColors.textMuted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    TextButton(onClick = { directoryPickerOpen = false }) { Text("关闭") }
-                }
-                directoryError?.let {
-                    Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp))
-                }
-                if (directoryLoading) {
-                    Text("读取中…", color = WandColors.textMuted, modifier = Modifier.padding(20.dp))
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp).padding(horizontal = 12.dp)) {
-                        if (directoryPickerPath != "/") {
-                            item {
-                                DirectoryPickerRow("返回上一级", parentDirectory(directoryPickerPath), WandIcons.chevronRight) {
-                                    browseDirectory(parentDirectory(directoryPickerPath))
-                                }
-                            }
-                        }
-                        items(directoryListing?.items.orEmpty().filter { it.isDirectory }, key = { it.path }) { item ->
-                            DirectoryPickerRow(item.name, item.path, WandIcons.folder) { browseDirectory(item.path) }
-                        }
-                    }
-                }
-                TextButton(
-                    onClick = {
-                        updateTaskCwd(directoryPickerPath)
-                        directoryPickerOpen = false
-                    },
-                    enabled = !directoryLoading,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                ) {
-                    Text("选择此目录")
-                }
-            }
-        }
+        if (directoryPickerOpen) WorkspaceDirectoryPicker(
+            api = api,
+            currentCwd = taskCwdDraft,
+            onSelect = { selection ->
+                updateTaskCwd(selection.cwd)
+                newTaskWorkspaceId = selection.workspaceId ?: newTaskWorkspaceId
+                directoryPickerOpen = false
+            },
+            onDismiss = { directoryPickerOpen = false },
+        )
     }
 
     if (newTaskOpen) {
@@ -1248,6 +1164,8 @@ fun TaskListScreen(
                     title = if (homeListMode == HomeListMode.Tasks) "任务" else "工作区",
                     serverDisplayName = serverDisplayName,
                     interactionEnabled = interactionEnabled,
+                    onNewTask = if (homeListMode == HomeListMode.Sessions) ({ beginNewTask() }) else null,
+                    newTaskEnabled = interactionEnabled && !selecting && !recentCreationBusy() && !newTaskOpen && !newTaskSubmitting,
                     onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
                     onSwitchServer = { invalidateRecentConversationOpening(); onSwitchServer() },
                     onCollapseSidebar = onCollapseSidebar?.let { collapse ->
@@ -1292,6 +1210,7 @@ fun TaskListScreen(
                     Box(modifier = Modifier.fillMaxSize()) {
                         TaskBoardScreen(
                             api = boardApi,
+                            workspaceApi = api,
                             onOpenBoundSession = onOpenSession,
                             onBack = {},
                             onOpenSession = onOpenBoardSession,
@@ -1751,34 +1670,6 @@ private fun TaskDirectoryGroup.asWorkspace(): Workspace = Workspace(
     lastOpenedAt = null,
     worktreeCount = tasks.count { it.worktree != null },
 )
-
-@Composable
-private fun DirectoryPickerRow(
-    title: String,
-    path: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit,
-) {
-    WandListItem(
-        modifier = Modifier
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = if (path == title) title else "$title $path" },
-        headlineContent = { Text(title) },
-        supportingColor = WandColors.textMuted,
-        supportingContent = path.takeIf { it != title }?.let {
-            {
-                Text(
-                    it,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        },
-        leadingContent = { WandListItemIconSlot(icon, tint = WandColors.brand, iconSize = 20.dp) },
-        trailingContent = { WandListItemIconSlot(WandIcons.chevronRight, iconSize = 24.dp) },
-    )
-}
 
 /**
  * 任务增删改共用的错误提示槽。原来在 5 个对话框里各抄一遍同样的 Text 样式，

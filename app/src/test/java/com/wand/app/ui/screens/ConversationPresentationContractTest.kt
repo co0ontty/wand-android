@@ -69,7 +69,7 @@ class ConversationPresentationContractTest {
         assertTrue(list.contains("if (status == \"failed\") WandColors.danger"))
         assertFalse(list.contains("status?.let(::conversationRunLabel) ?:"))
         assertTrue(list.contains("size(width = 96.dp, height = 48.dp)"))
-        assertTrue(list.contains("this.selected = selected"))
+        assertTrue(list.contains("this.selected = if (selecting) managedSelected else selected"))
         assertTrue(screen.contains("detail.team?.members.orEmpty().size + 1"))
         assertTrue(list.contains("touchSize = 48.dp"))
         assertTrue(screen.contains("ConversationInsetDivider(start = 68.dp)"))

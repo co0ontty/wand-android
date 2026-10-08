@@ -329,13 +329,15 @@ object ChatSessionEventReducer {
         }
         changes.providerCliExitCode?.let { next = next.copy(providerCliExitCode = it) }
         changes.currentTaskTitle?.let { next = next.copy(currentTaskTitle = it) }
-        if (changes.title != null || changes.description != null || changes.summary != null
+        if (changes.cwd != null || changes.workspaceId != null || changes.title != null || changes.description != null || changes.summary != null
             || changes.titleGenerating != null || changes.providerCliActive != null
             || changes.providerCliExitCode != null || changes.ptyBusy != null
             || changes.completionRevision != null || changes.viewedCompletionRevision != null
         ) {
             next.snapshot?.let { snapshot ->
                 next = next.copy(snapshot = snapshot.copy(
+                    cwd = changes.cwd ?: snapshot.cwd,
+                    workspaceId = changes.workspaceId ?: snapshot.workspaceId,
                     title = changes.title ?: snapshot.title,
                     description = changes.description ?: snapshot.description,
                     summary = changes.summary ?: snapshot.summary,

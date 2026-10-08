@@ -430,12 +430,13 @@ fun WandProviderMark(
     provider: String?,
     modifier: Modifier = Modifier,
     variant: WandProviderMarkVariant = WandProviderMarkVariant.Plain,
+    boxSize: Dp = 28.dp,
 ) {
     val logoSize = (if (variant == WandProviderMarkVariant.Tinted) 15.dp else 20.dp) *
         BrandLogos.opticalScale(provider)
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier.size(28.dp),
+        modifier = modifier.size(boxSize),
     ) {
         Icon(
             painter = BrandLogos.painterForProvider(provider),
