@@ -85,7 +85,6 @@ import com.wand.app.ui.screens.ConversationChatScreen
 import com.wand.app.ui.screens.ConversationList
 import com.wand.app.ui.screens.AiTeamDetailScreen
 import com.wand.app.ui.screens.AiTeamEditorScreen
-import com.wand.app.ui.screens.ContactsScreen
 import com.wand.app.ui.screens.SiliconEmployeeEditorScreen
 import com.wand.app.ui.screens.HomeListMode
 import com.wand.app.ui.screens.PadLandingScreen
@@ -519,6 +518,8 @@ private fun SessionDetailScreen(
     embedded: Boolean,
     onOpenMissionSession: (sessionId: String, screen: Screen.Missions) -> Unit,
     onOpenIm: () -> Unit,
+    /** 会话详情里的「通讯录」入口：回根壳并切到通讯录页签，不再 push 一页。 */
+    onOpenContacts: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     LaunchedEffect(screen) {
@@ -535,7 +536,7 @@ private fun SessionDetailScreen(
             // 另一条会话是新 key，不继承上一个对象的派发状态。
             shellState.SaveableStateProvider("im-detail-${screen.conversationId}") {
                 ConversationChatScreen(conversationState, screen.conversationId, actions.settings.isHapticEnabled,
-                    onContacts = { nav.push(Screen.Contacts()) }, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSession = { id -> conversationState.openSession(id) { nav.push(it.detailScreen()) } }, showBack = showBack, onBack = { nav.pop() })
+                    onContacts = onOpenContacts, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSession = { id -> conversationState.openSession(id) { nav.push(it.detailScreen()) } }, showBack = showBack, onBack = { nav.pop() })
             }
         }
         is Screen.Chat -> ChatScreen(
@@ -619,21 +620,6 @@ private fun SessionDetailScreen(
             settings = actions.settings,
             onBack = { nav.pop() },
             embedded = embedded,
-        )
-        is Screen.Contacts -> ContactsScreen(
-            api = api,
-            conversationState = conversationState,
-            onOpenConversation = { id -> conversationState.select(id); nav.push(Screen.Conversation(id)) },
-            // 通讯录这一支刻意不走 openDetail：宽屏左栏是会话/任务列表，没有通讯录列表，
-            // setDetail 会把栈里的通讯录覆盖掉，用户就回不去了。push 保留「可回上一层」，
-            // 于是员工资料/新对话/群聊的首段面包屑恒有真实落点。
-            onBack = { nav.pop() },
-            onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) },
-            onOpenTeam = { nav.push(Screen.AiTeamDetail(it)) },
-            onCreateEmployee = { nav.push(Screen.SiliconEmployeeEditor()) },
-            onOpenSession = { route -> nav.push(route.toScreen()) },
-            onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
-            onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
         )
         is Screen.SiliconEmployeeEditor -> SiliconEmployeeEditorScreen(
             api = api,
@@ -771,6 +757,7 @@ private fun SinglePaneContent(
                 state = taskState,
                 api = api,
                 boardApi = api,
+                directoryApi = api,
                 serverDisplayName = actions.connection.serverDisplayName,
                 homeListMode = homeListMode,
                 onHomeListModeChange = { onHomeListModeChange(it) },
@@ -783,7 +770,11 @@ private fun SinglePaneContent(
                 onTaskClosed = nav::closeWorkspaceTask,
                 onSessionClosed = nav::closeSession,
                 onOpenSettings = onOpenSettings,
-                onOpenContacts = { if (nav.current !is Screen.Contacts) nav.push(Screen.Contacts()) },
+                onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) },
+                onOpenTeam = { nav.push(Screen.AiTeamDetail(it)) },
+                onCreateEmployee = { nav.push(Screen.SiliconEmployeeEditor()) },
+                onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
+                onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
                 onSwitchServer = actions.navigation.switchServer,
             )
             }
@@ -803,6 +794,8 @@ private fun SinglePaneContent(
                 showBack = true,
                 embedded = false,
                 onOpenIm = { onHomeListModeChange(HomeListMode.Im) },
+                // 回根并切页签：changeHomeListMode → selectHomeMode 自己会收栈到根。
+                onOpenContacts = { onHomeListModeChange(HomeListMode.Contacts) },
                 onOpenMissionSession = { sessionId, missions ->
                     nav.push(
                         Screen.Chat(
@@ -856,7 +849,10 @@ private fun WideReadyContent(
     val maxSidebarWidth = (windowWidth - 360.dp)
         .coerceAtLeast(minSidebarWidth)
         .coerceAtMost(420.dp)
-    val collapsedForMode = sidebarCollapsed && homeListMode != HomeListMode.Im
+    // 通讯录虽然是一个页签，但和 IM 一样自带页头与名单；折叠成目录轨道就看不到它了，
+    // 所以这两种模式都不进折叠态。
+    val collapsedForMode = sidebarCollapsed && homeListMode != HomeListMode.Im &&
+        homeListMode != HomeListMode.Contacts
     val sidebarContentWidth = if (homeListMode == HomeListMode.Im) {
         listPaneWidth.coerceIn(280.dp, minOf(400.dp, windowWidth - 360.dp))
     } else if (collapsedForMode) {
@@ -955,6 +951,7 @@ private fun WideReadyContent(
                                 state = taskState,
                                 api = api,
                                 boardApi = api,
+                                directoryApi = api,
                                 serverDisplayName = actions.connection.serverDisplayName,
                                 modifier = Modifier.fillMaxSize(),
                                 homeListMode = homeListMode,
@@ -970,11 +967,15 @@ private fun WideReadyContent(
                                 onTaskClosed = nav::closeWorkspaceTask,
                                 onSessionClosed = nav::closeSession,
                                 onOpenSettings = onOpenSettings,
-                                onOpenContacts = {
-                                    if (nav.current !is Screen.Contacts) nav.push(Screen.Contacts())
-                                },
+                                onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) },
+                                onOpenTeam = { nav.push(Screen.AiTeamDetail(it)) },
+                                onCreateEmployee = { nav.push(Screen.SiliconEmployeeEditor()) },
+                                onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
+                                onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
                                 onSwitchServer = actions.navigation.switchServer,
-                                onCollapseSidebar = onToggleSidebarCollapsed.takeUnless { homeListMode == HomeListMode.Im },
+                                onCollapseSidebar = onToggleSidebarCollapsed.takeUnless {
+                                    homeListMode == HomeListMode.Im || homeListMode == HomeListMode.Contacts
+                                },
                             )
                             }
                         }
@@ -1019,6 +1020,11 @@ private fun WideReadyContent(
                         title = "选择一条对话",
                         modifier = Modifier.fillMaxSize(),
                         subtitle = "在左侧「近期对话」里点一条继续，或从通讯录发起",
+                    ) else if (homeListMode == HomeListMode.Contacts) EmptyState(
+                        icon = WandIcons.contacts,
+                        title = "选择一位成员",
+                        modifier = Modifier.fillMaxSize(),
+                        subtitle = "在左侧通讯录里点名字开对话，点头像改资料",
                     ) else PadLandingScreen(taskState.groups, onOpenSession, taskState::requestNewTask)
                 } else {
                     SessionDetailScreen(
@@ -1033,6 +1039,8 @@ private fun WideReadyContent(
                         showBack = showDetailBack,
                         embedded = true,
                         onOpenIm = { onHomeListModeChange(HomeListMode.Im) },
+                        // 回根并切页签：changeHomeListMode → selectHomeMode 自己会收栈到根。
+                        onOpenContacts = { onHomeListModeChange(HomeListMode.Contacts) },
                         onOpenMissionSession = { sessionId, missions ->
                             nav.setDetail(
                                 Screen.Chat(
@@ -1166,7 +1174,6 @@ private fun Screen.transitionKey(): String = when (this) {
     is Screen.Missions -> "missions:${taskId.orEmpty()}"
     is Screen.TaskBoard -> "task-board:${workspaceId.orEmpty()}:${taskId.orEmpty()}"
     Screen.Settings -> "settings"
-    is Screen.Contacts -> "contacts"
     is Screen.SiliconEmployeeEditor -> "silicon-employee-editor:${employeeId.orEmpty()}"
     is Screen.AiTeamDetail -> "ai-team-detail:$teamId"
     is Screen.AiTeamEditor -> "ai-team-editor:${teamId.orEmpty()}:${templateId.orEmpty()}"
@@ -1210,7 +1217,6 @@ private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.Missions,
     is Screen.TaskBoard,
     Screen.Settings,
-    is Screen.Contacts,
     is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
     // 群聊页的运行 id 不是任务/会话 id：会话 id 由服务端 run 详情给出，不在导航里。
@@ -1227,7 +1233,6 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Missions,
     is Screen.TaskBoard,
     Screen.Settings,
-    is Screen.Contacts,
     is Screen.SiliconEmployeeEditor,
     is Screen.AiTeamDetail,
     is Screen.Conversation,

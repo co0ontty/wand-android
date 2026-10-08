@@ -32,12 +32,15 @@ import androidx.compose.ui.unit.dp
 import com.wand.app.data.BOARD_TASK_EFFORTS
 import com.wand.app.data.BOARD_TASK_KINDS
 import com.wand.app.data.BOARD_TASK_PROVIDERS
+import com.wand.app.data.BOARD_TASK_TOOLS
 import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.boardAgentModelOptions
 import com.wand.app.data.boardTaskEffortLabel
 import com.wand.app.data.boardTaskKindLabel
 import com.wand.app.data.boardTaskModeLabel
+import com.wand.app.data.agentToolOption
+import com.wand.app.data.boardTaskAgentLabel
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.normalizeBoardTaskAgentMode
 import com.wand.app.data.supportedBoardTaskModes
@@ -134,20 +137,16 @@ fun WandAgentFields(
 ) {
     val modelOptions = boardAgentModelOptions(models, agent.provider)
     WandChoice(
-        label = "$providerLabel · ${boardTaskProviderLabel(agent.provider)}",
-        options = BOARD_TASK_PROVIDERS.map { it to boardTaskProviderLabel(it) },
-        onSelect = { provider ->
-            val nextModels = boardAgentModelOptions(models, provider)
+        label = "$providerLabel · ${boardTaskAgentLabel(agent.provider, agent.engine)}",
+        // 选项是「执行工具」而不是 provider：Pi CLI 与 Wand Agent 共用 pi provider。
+        options = BOARD_TASK_TOOLS.map { it to (agentToolOption(it)?.label ?: it) },
+        onSelect = { toolId ->
+            val next = BoardTaskAgent.fromTool(toolId, agent)
+            val nextModels = boardAgentModelOptions(models, next.provider)
             val model = nextModels.firstOrNull { it.id == agent.model }?.id
                 ?: nextModels.firstOrNull()?.id
                 ?: "default"
-            onChange(
-                agent.copy(
-                    provider = provider,
-                    model = model,
-                    mode = normalizeBoardTaskAgentMode(provider, agent.mode),
-                ),
-            )
+            onChange(next.copy(model = model))
         },
         modifier = modifier,
         enabled = enabled,

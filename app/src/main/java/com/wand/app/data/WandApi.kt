@@ -32,7 +32,7 @@ data class ToolContentDetail(
 class WandApi(baseUrl: String, val token: String?,
     private val readConversationRequests: () -> String = { "{}" },
     private val saveConversationRequests: (String) -> Unit = {},
-) : MissionsPort, WorkspacePort, TaskBoardPort, PiResourcesPort {
+) : MissionsPort, WorkspacePort, TaskBoardPort, PiResourcesPort, SessionFilesPort {
 
     companion object {
         /**
@@ -403,9 +403,9 @@ class WandApi(baseUrl: String, val token: String?,
     }
 
     /** 只改尚未发送消息的空白结构化对话，不创建替代会话或改变员工身份。 */
-    suspend fun setProvider(id: String, provider: String): SessionSnapshot =
+    suspend fun setProvider(id: String, provider: String, engine: WandAgentEngine? = null): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/${encode(id)}/provider",
-            JSONObject().put("provider", provider)))
+            JSONObject().put("provider", provider).also { body -> engine?.let { body.put("engine", it.raw) } }))
 
     /** 首次发送前原位改目录；服务端同时原子更新项目归属，员工和会话 ID 不变。 */
     suspend fun setSessionDirectory(id: String, cwd: String): SessionSnapshot =
@@ -497,9 +497,12 @@ class WandApi(baseUrl: String, val token: String?,
         defaultProvider: String? = null,
         defaultSessionKind: String? = null,
         defaultTaskWorktree: Boolean? = null,
+        defaultEngine: String? = null,
     ) {
         val body = JSONObject()
         if (mode != null) body.put("defaultMode", mode)
+        // 引擎跟 provider 一起记：选了 Wand Agent 下次打开要能沿用，而不是悄悄回到 Pi CLI。
+        if (defaultEngine != null) body.put("defaultEngine", defaultEngine)
         if (model != null) {
             // 老服务端只认 provider 专属字段，新服务端读 defaultModels 映射；两边同时写。
             val (legacyKey, canonicalProvider) = when (modelProvider) {
@@ -953,6 +956,20 @@ class WandApi(baseUrl: String, val token: String?,
     override suspend fun listDirectory(path: String): DirectoryListing =
         DirectoryListing.parse(requestObject("GET", "/api/directory?q=${encode(path)}"))
 
+    override suspend fun previewFile(path: String): ServerFilePreview =
+        parseResponse(requestData("GET", "/api/file-preview?path=${encode(path)}")) {
+            ServerFilePreview.parse(JSONObject(it))
+        }
+
+    override suspend fun writeFile(file: ServerFilePreview, content: String): ServerFileWriteResult {
+        require(file.canEdit) { "此文件无法安全编辑，请重新读取" }
+        val body = JSONObject().put("path", file.path).put("content", content)
+            .put("expectedMtime", file.mtime).put("expectedSize", file.size)
+        return parseResponse(requestData("POST", "/api/file-write", body)) {
+            ServerFileWriteResult.parse(JSONObject(it))
+        }
+    }
+
     override suspend fun taskDefaultCwd(): String? =
         requestObject("GET", "/api/config").str("defaultCwd")?.takeIf { it.isNotBlank() }
 
@@ -1084,11 +1101,13 @@ class WandApi(baseUrl: String, val token: String?,
         defaultProvider: String?,
         defaultSessionKind: String?,
         defaultTaskWorktree: Boolean?,
+        defaultEngine: String?,
     ) {
         updateNewSessionDefaults(
             defaultProvider = defaultProvider,
             defaultSessionKind = defaultSessionKind,
             defaultTaskWorktree = defaultTaskWorktree,
+            defaultEngine = defaultEngine,
         )
     }
 }

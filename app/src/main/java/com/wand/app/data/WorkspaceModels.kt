@@ -29,19 +29,35 @@ enum class WorkspaceSessionTarget(val raw: String, val label: String, val descri
     OpenCode("opencode", "OpenCode", "OpenCode CLI"),
     Grok("grok", "Grok", "Grok Build CLI"),
     Qoder("qoder", "Qoder", "Qoder CLI"),
-    Pi("pi", "Pi", "Pi coding agent"),
+    Pi("pi", "Pi", "Pi CLI：结构化 JSON 或 PTY 终端"),
+    WandAgent("wand-agent", "Wand Agent", "Wand 自带 Agent：进程内 SDK 执行，只支持结构化会话"),
     Gemini("gemini", "Gemini", "Gemini CLI"),
     Shell("shell", "空白终端", "仅启动系统 Shell");
 
     val isShell: Boolean get() = this == Shell
 
-    val provider: WorkspaceProvider? get() = if (this == Shell) null else raw
+    /** Wand Agent 与 Pi 共用 pi provider，只是引擎不同。 */
+    val provider: WorkspaceProvider? get() = when (this) {
+        Shell -> null
+        WandAgent -> "pi"
+        else -> raw
+    }
+
+    /** 执行引擎；只有 Wand Agent 走进程内 SDK，其余都是 CLI。 */
+    val engine: WandAgentEngine? get() = if (this == WandAgent) WandAgentEngine.Sdk else null
+
+    /** 进程内 SDK 只能跑结构化会话，没有终端形态。 */
+    val isSdk: Boolean get() = engine == WandAgentEngine.Sdk
 
     companion object {
         val OPTIONS: List<WorkspaceSessionTarget> = entries.toList()
 
         fun fromRaw(raw: String?): WorkspaceSessionTarget? =
             OPTIONS.firstOrNull { it.raw == raw }
+
+        /** 服务端偏好（provider + 引擎）→ 目标；不认得的引擎按 CLI 处理。 */
+        fun fromPreference(provider: String?, engine: String?): WorkspaceSessionTarget? =
+            if (provider == "pi" && engine == WandAgentEngine.Sdk.raw) WandAgent else fromRaw(provider)
     }
 }
 

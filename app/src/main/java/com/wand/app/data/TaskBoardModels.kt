@@ -11,13 +11,19 @@ data class BoardTaskAgent(
     val mode: String = "default",
     /** 派发出来的会话是结构化对话还是 PTY 终端。缺省 / 老服务端不返回时按结构化处理。 */
     val kind: String = "structured",
+    /** 执行引擎：`sdk` = Wand Agent（进程内 SDK）；缺省 = CLI。仅 pi + 结构化有效。 */
+    val engine: String? = null,
 ) {
+    /** 下拉选中的执行工具 id：Pi CLI 与 Wand Agent 是两条选项。 */
+    val toolId: String get() = agentToolId(provider, engine)
+
     fun toJson(): JSONObject = JSONObject()
         .put("provider", provider)
         .put("model", model)
         .put("thinkingEffort", thinkingEffort)
         .put("mode", mode)
         .put("kind", kind)
+        .apply { if (engine == WandAgentEngine.Sdk.raw) put("engine", WandAgentEngine.Sdk.raw) }
 
     companion object {
         fun default(provider: String = "claude"): BoardTaskAgent =
@@ -29,15 +35,31 @@ data class BoardTaskAgent(
                 normalizeBoardTaskAgentKind(null),
             )
 
+        /** 执行工具（provider + 引擎）→ agent 配置；形态按工具能力收敛。 */
+        fun fromTool(toolId: String, previous: BoardTaskAgent): BoardTaskAgent {
+            val tool = agentToolOption(toolId) ?: return previous
+            return previous.copy(
+                provider = tool.provider,
+                kind = if (tool.isStructuredOnly) "structured" else previous.kind,
+                mode = normalizeBoardTaskAgentMode(tool.provider, previous.mode),
+                engine = tool.engine?.raw,
+            )
+        }
+
         fun parse(item: JSONObject?): BoardTaskAgent? {
             val provider = item?.str("provider")?.takeIf { it.isNotBlank() } ?: return null
+            val kind = normalizeBoardTaskAgentKind(item.str("kind"))
+            // engine 是后加字段：只有 pi + 结构化才认，其它形状按 CLI 读，不因此丢整条配置。
+            val engine = item.str("engine")?.trim()?.lowercase()
+                ?.takeIf { it == WandAgentEngine.Sdk.raw && provider == "pi" && kind == "structured" }
             return BoardTaskAgent(
                 provider = provider,
                 model = item.str("model")?.takeIf { it.isNotBlank() } ?: "default",
                 thinkingEffort = item.str("thinkingEffort")?.takeIf { it.isNotBlank() } ?: "off",
                 // mode / kind 是后加字段：老服务端不返回时按标准模式 / 结构化读，不因此整条配置退化成 null。
                 mode = normalizeBoardTaskAgentMode(provider, item.str("mode")),
-                kind = normalizeBoardTaskAgentKind(item.str("kind")),
+                kind = kind,
+                engine = engine,
             )
         }
     }
@@ -82,22 +104,30 @@ data class BoardTaskSession(
     val cwd: String,
     val model: String,
     val thinkingEffort: String,
+    /** 执行引擎：`sdk` = Wand Agent（进程内 SDK）；缺省 / `cli` 都是命令行。 */
+    val engine: String? = null,
 ) {
     val isStructured: Boolean
         get() = !isTerminalSessionKind(sessionKind)
 
+    /** 会话卡 / 指派记录里的工具名：同一 provider 的两条执行路径要分开。 */
+    val toolLabel: String get() = boardTaskAgentLabel(provider, engine)
+
     companion object {
         fun parseList(array: JSONArray?): List<BoardTaskSession> = array?.parseEach { item ->
             val id = item.str("id") ?: return@parseEach null
+            val sessionKind = item.str("sessionKind") ?: ""
             BoardTaskSession(
                 id = id,
                 provider = item.str("provider") ?: "",
-                sessionKind = item.str("sessionKind") ?: "",
+                sessionKind = sessionKind,
                 title = item.str("title") ?: id,
                 status = item.str("status") ?: "",
                 cwd = item.str("cwd") ?: "",
                 model = item.str("model") ?: "",
                 thinkingEffort = item.str("thinkingEffort") ?: "off",
+                engine = item.str("engine")?.trim()?.lowercase()
+                    ?.takeIf { it == WandAgentEngine.Sdk.raw && !isTerminalSessionKind(sessionKind) },
             )
         } ?: emptyList()
     }
@@ -208,6 +238,9 @@ val BOARD_TASK_STATUSES = listOf("todo", "doing", "done")
 val BOARD_TASK_DETAIL_STATUSES = listOf("todo", "doing", "done", "archived")
 val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
 val BOARD_TASK_PROVIDERS = WandProvider.entries.map { it.id }
+
+/** 任务看板的执行工具：Pi CLI 与 Wand Agent 是两条独立选项（与新建会话同一份清单）。 */
+val BOARD_TASK_TOOLS = AGENT_TOOL_OPTIONS.map { it.id }
 val BOARD_TASK_EFFORTS = listOf("off", "standard", "deep", "max")
 
 /** 任务派发允许的执行模式；顺序即下拉顺序。Codex 只有 full-access 一个有效值。 */
@@ -261,6 +294,10 @@ fun boardTaskProviderLabel(provider: String): String =
         else -> provider
     }
 
+/** 执行工具标签：同一 provider 的 Pi CLI 与 Wand Agent 必须分开显示；终端仍按终端处理。 */
+fun boardTaskAgentLabel(provider: String, engine: String?): String =
+    if (provider == "pi" && engine == WandAgentEngine.Sdk.raw) "Wand Agent" else boardTaskProviderLabel(provider)
+
 /** 模型字段里的「跟随服务端默认」哨兵值：不是模型 id，写进请求前必须换掉。 */
 const val BOARD_AGENT_DEFAULT_MODEL = "default"
 
@@ -288,31 +325,41 @@ fun boardAgentModelName(models: ModelsResponse?, provider: String, model: String
 
 data class BoardAgentGroup(
     val provider: String,
+    /** 组内执行引擎；`sdk` = Wand Agent。CLI 组为空。 */
+    val engine: String?,
     val agent: BoardTaskAgent?,
     val sessions: List<BoardTaskSession>,
-)
+) {
+    /** 组标题：同一 provider 的两条执行路径要分开。 */
+    val label: String get() = boardTaskAgentLabel(provider, engine)
+}
 
 /** 打开任务时按 CLI 工具列出已执行 / 已指派的 Agent。 */
 fun groupBoardSessionsByAgent(
     sessions: List<BoardTaskSession>,
     assigned: BoardTaskAgent? = null,
 ): List<BoardAgentGroup> {
-    data class Builder(val provider: String, var agent: BoardTaskAgent?, val sessions: MutableList<BoardTaskSession>)
+    data class Builder(
+        val provider: String,
+        val engine: String?,
+        var agent: BoardTaskAgent?,
+        val sessions: MutableList<BoardTaskSession>,
+    )
     val builders = mutableListOf<Builder>()
     val index = linkedMapOf<String, Builder>()
-    fun ensure(provider: String, agent: BoardTaskAgent?): Builder {
-        val key = provider.ifBlank { "session" }
+    fun ensure(provider: String, engine: String?, agent: BoardTaskAgent?): Builder {
+        val key = "${provider.ifBlank { "session" }}:${engine ?: WandAgentEngine.Cli.raw}"
         index[key]?.let {
             if (it.agent == null && agent != null) it.agent = agent
             return it
         }
-        val next = Builder(key, agent, mutableListOf())
+        val next = Builder(provider.ifBlank { "session" }, engine, agent, mutableListOf())
         index[key] = next
         builders += next
         return next
     }
     if (assigned != null && assigned.provider in BOARD_TASK_PROVIDERS) {
-        ensure(assigned.provider, assigned)
+        ensure(assigned.provider, assigned.engine, assigned)
     }
     for (session in sessions) {
         val agent = if (session.provider in BOARD_TASK_PROVIDERS) {
@@ -323,17 +370,18 @@ fun groupBoardSessionsByAgent(
                 mode = normalizeBoardTaskAgentMode(session.provider, null),
                 // 会话形态按会话自身的 sessionKind 还原，PTY 会话在「再指派」时不会被误当结构化。
                 kind = if (session.sessionKind == "pty") "pty" else "structured",
+                engine = session.engine,
             )
         } else {
             null
         }
-        ensure(agent?.provider ?: session.provider, agent).sessions += session
+        ensure(agent?.provider ?: session.provider, agent?.engine, agent).sessions += session
     }
-    return builders.map { BoardAgentGroup(it.provider, it.agent, it.sessions.toList()) }
+    return builders.map { BoardAgentGroup(it.provider, it.engine, it.agent, it.sessions.toList()) }
 }
 
 fun boardTaskAgentLabels(sessions: List<BoardTaskSession>, assigned: BoardTaskAgent?): String? {
-    val labels = groupBoardSessionsByAgent(sessions, assigned).map { boardTaskProviderLabel(it.provider) }
+    val labels = groupBoardSessionsByAgent(sessions, assigned).map { it.label }
     return labels.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 

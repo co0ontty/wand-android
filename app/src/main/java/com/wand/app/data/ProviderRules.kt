@@ -58,6 +58,65 @@ fun providerDisplayName(provider: String?): String = when (provider) {
     else -> WandProvider.fromId(provider)?.displayName ?: WandProvider.Claude.displayName
 }
 
+/**
+ * 同一个 provider 的两条执行路径：`cli` 起外部命令行，`sdk` 在 Wand 进程内跑 agent loop。
+ * 服务端只对 pi 同时支持这两种（`engine` 字段），其余 provider 没有引擎维度。
+ */
+enum class WandAgentEngine(val raw: String) {
+    Cli("cli"),
+    Sdk("sdk"),
+    ;
+
+    companion object {
+        fun fromRaw(raw: String?): WandAgentEngine? =
+            entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
+    }
+}
+
+/** Wand Agent（进程内 SDK）在 UI 上的选项 id；不是 provider 名，只是一个稳定标识。 */
+const val WAND_AGENT_TOOL_ID = "wand-agent"
+
+/**
+ * 一条可选的执行工具：`pi` 与 `wand-agent` 共用 pi provider，但执行方式不同，
+ * 所以下拉的值必须是「工具」而不是 provider，否则两者只能共用一个名字。
+ * 顺序即 UI 顺序，与 Web `AGENT_TOOL_OPTIONS` 保持一致。
+ */
+data class AgentToolOption(
+    val id: String,
+    val provider: String,
+    val engine: WandAgentEngine?,
+    val label: String,
+    val description: String,
+) {
+    /** 只有结构化会话能跑（进程内 SDK 没有终端形态）。 */
+    val isStructuredOnly: Boolean get() = engine == WandAgentEngine.Sdk
+}
+
+val AGENT_TOOL_OPTIONS: List<AgentToolOption> = listOf(
+    AgentToolOption("claude", "claude", null, "Claude", "Claude Code"),
+    AgentToolOption("codex", "codex", null, "Codex", "OpenAI Codex CLI"),
+    AgentToolOption("opencode", "opencode", null, "OpenCode", "OpenCode CLI"),
+    AgentToolOption("grok", "grok", null, "Grok", "Grok Build CLI"),
+    AgentToolOption("qoder", "qoder", null, "Qoder", "Qoder CLI"),
+    AgentToolOption("pi", "pi", WandAgentEngine.Cli, "Pi", "Pi CLI：结构化 JSON 或 PTY 终端"),
+    AgentToolOption(WAND_AGENT_TOOL_ID, "pi", WandAgentEngine.Sdk, "Wand Agent", "Wand 自带 Agent：进程内 SDK 执行，只支持结构化会话"),
+    AgentToolOption("gemini", "gemini", null, "Gemini", "Gemini CLI"),
+)
+
+fun agentToolOption(id: String?): AgentToolOption? =
+    AGENT_TOOL_OPTIONS.firstOrNull { it.id == id }
+
+/** provider + 引擎 → 下拉选项 id；缺省引擎按 CLI，其它 provider 就是 provider 名。 */
+fun agentToolId(provider: String?, engine: String?): String =
+    if (provider == "pi" && engine == WandAgentEngine.Sdk.raw) WAND_AGENT_TOOL_ID else provider.orEmpty()
+
+/**
+ * 执行工具的展示名。同一 provider 的 Pi CLI 与 Wand Agent 必须分开，
+ * 否则跑进程内 SDK 的会话会被显示成 Pi。
+ */
+fun agentToolLabel(provider: String?, engine: String?): String =
+    if (provider == "pi" && engine == WandAgentEngine.Sdk.raw) "Wand Agent" else providerDisplayName(provider)
+
 fun ProviderDefaultModels.defaultFor(provider: String?): String? = when (WandProvider.fromId(provider)) {
     WandProvider.Codex -> codex
     WandProvider.OpenCode -> opencode

@@ -10,6 +10,7 @@ import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.RecentPath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.TaskDirectoryGroup
+import com.wand.app.data.WandAgentEngine
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
@@ -48,6 +49,8 @@ class TaskListState(
     var recentPaths by mutableStateOf<List<RecentPath>>(emptyList())
         private set
     var defaultProvider by mutableStateOf("claude")
+    /** 上次选的执行引擎；选过 Wand Agent 就继续沿用它。 */
+    var defaultEngine by mutableStateOf(WandAgentEngine.Cli.raw)
         private set
     var defaultSessionKind by mutableStateOf(WorkspaceSessionKind.Structured)
     var defaultThinkingEffort by mutableStateOf("off")
@@ -201,6 +204,11 @@ class TaskListState(
                 // A slow defaults request must not undo a choice made in the open dialog.
                 if (choiceRevision != creationChoiceRevision) return@let
                 defaultProvider = config.defaultProvider?.takeIf { it.isNotBlank() } ?: defaultProvider
+                defaultEngine = if (config.defaultProvider == "pi" && config.defaultEngine == WandAgentEngine.Sdk.raw) {
+                    WandAgentEngine.Sdk.raw
+                } else {
+                    WandAgentEngine.Cli.raw
+                }
                 defaultSessionKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
             }
             true
@@ -475,16 +483,19 @@ class TaskListState(
         defaultProvider: String? = null,
         defaultSessionKind: WorkspaceSessionKind? = null,
         defaultTaskWorktree: Boolean? = null,
+        defaultEngine: String? = null,
     ) {
         creationChoiceRevision += 1
         if (defaultProvider != null) this.defaultProvider = defaultProvider
         if (defaultSessionKind != null) this.defaultSessionKind = defaultSessionKind
+        if (defaultEngine != null) this.defaultEngine = defaultEngine
         scope.launch {
             runCatching {
                 port.updateCreationDefaults(
                     defaultProvider = defaultProvider,
                     defaultSessionKind = defaultSessionKind?.raw,
                     defaultTaskWorktree = defaultTaskWorktree,
+                    defaultEngine = defaultEngine,
                 )
             }
         }

@@ -24,7 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +52,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -67,8 +67,6 @@ import com.wand.app.ui.SEND_SENT_DWELL_MS
 import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
-import com.wand.app.ui.components.WandDetailBackButton
-import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandInlinePanelAction
@@ -91,30 +89,32 @@ private val ContactAvatarSize = 40.dp
 private val ContactDividerInset = 64.dp
 
 /**
- * 通讯录：常驻搜索框 + 连续名单。
+ * 通讯录：常驻搜索框 + 连续名单，是根壳 `HomeListMode.Contacts` 的视图本体。
  *
  * 顶部搜索框按「名字 / 职责 / 标签」过滤；名单、团队都按创建时间先后排列（早的在上），
  * 不做拼音分组；团队（群聊）在上、员工在下。
  * 点头像管理资料，点名字开新对话，右上角 ＋ 仍从原位展开创建面板。
+ *
+ * 它不是一条独立页面：顶栏复用根壳的 [HomeTopBar]，底部按 [bottomClearance] 给悬浮菜单胶囊留位，
+ * 于是切到通讯录时底栏常驻、且本项按页签高亮。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ContactsScreen(
     api: WandApi,
-    onBack: () -> Unit,
+    serverDisplayName: String,
+    interactionEnabled: Boolean,
+    onOpenSettings: () -> Unit,
+    onSwitchServer: () -> Unit,
+    bottomClearance: Dp,
     onOpenEmployee: (String) -> Unit,
     onOpenTeam: (String) -> Unit,
     onCreateEmployee: () -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit,
     onOpenGroupChat: (String) -> Unit,
     onCreateTeam: (String) -> Unit,
-    conversationState: com.wand.app.ui.ConversationStore? = null,
-    onOpenConversation: (String) -> Unit = {},
+    onCollapseSidebar: (() -> Unit)? = null,
 ) {
-    if (conversationState != null) {
-        ConversationContacts(conversationState, onBack, onOpenConversation, onOpenEmployee, onCreateEmployee, onOpenTeam)
-        return
-    }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var employees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
@@ -313,267 +313,268 @@ fun ContactsScreen(
         }
     }
 
-    Scaffold(
-        containerColor = WandColors.bgPrimary,
-        topBar = {
-            WandDetailTopBar(
-                title = "通讯录",
-                leading = { WandDetailBackButton(onClick = { if (!conversationBusy()) onBack() }, enabled = !anyBusy) },
-                actions = {
-                    WandMorphIconButton(
-                        expanded = dispatchOpen,
-                        collapsedIcon = WandIcons.thinking,
-                        expandedIcon = WandIcons.close,
-                        contentDescription = if (dispatchOpen) "收起临时派工" else "临时派工（决策选人）",
-                        enabled = !anyBusy,
-                        onClick = {
-                            if (dispatchOpen) closeDispatchPanel() else { closeCreatePanel(); dispatchOpen = true }
-                        },
-                    )
-                    WandMorphIconButton(
-                        expanded = templatesOpen,
-                        collapsedIcon = WandIcons.add,
-                        expandedIcon = WandIcons.close,
-                        contentDescription = if (templatesOpen) "收起创建" else "创建员工或团队",
-                        enabled = !anyBusy,
-                        onClick = {
-                            // 两个面板互斥：它们是同位展开的，同时开会让原位语义变得摸不到。
-                            if (templatesOpen) closeCreatePanel() else { closeDispatchPanel(); templatesOpen = true }
-                        },
-                    )
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            // 通讯录自带搜索框：键盘弹出时只有本页需要让出高度。根壳在 Im 模式之外不重复加。
+            .imePadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        HomeTopBar(
+            title = "通讯录",
+            serverDisplayName = serverDisplayName,
+            interactionEnabled = interactionEnabled,
+            onOpenSettings = onOpenSettings,
+            onSwitchServer = onSwitchServer,
+            onCollapseSidebar = onCollapseSidebar,
+            trailingActions = {
+                WandMorphIconButton(
+                    expanded = dispatchOpen,
+                    collapsedIcon = WandIcons.thinking,
+                    expandedIcon = WandIcons.close,
+                    contentDescription = if (dispatchOpen) "收起临时派工" else "临时派工（决策选人）",
+                    enabled = !anyBusy,
+                    onClick = {
+                        if (dispatchOpen) closeDispatchPanel() else { closeCreatePanel(); dispatchOpen = true }
+                    },
+                )
+                WandMorphIconButton(
+                    expanded = templatesOpen,
+                    collapsedIcon = WandIcons.add,
+                    expandedIcon = WandIcons.close,
+                    contentDescription = if (templatesOpen) "收起创建" else "创建员工或团队",
+                    enabled = !anyBusy,
+                    onClick = {
+                        // 两个面板互斥：它们是同位展开的，同时开会让原位语义变得摸不到。
+                        if (templatesOpen) closeCreatePanel() else { closeDispatchPanel(); templatesOpen = true }
+                    },
+                )
+            },
+        )
+        Box(
+            modifier = Modifier
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            WandInlineSearchField(
+                expanded = true,
+                query = query,
+                onQueryChange = { query = it },
+                onCollapse = null,
+                placeholder = "搜索名字、职责、标签",
+                autoFocus = false,
+                focusRequester = searchFocus,
+                onClear = {
+                    query = ""
+                    searchFocus.requestFocus()
+                    keyboard?.show()
                 },
             )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
+        // 派工面板在搜索框下方原位展开：列表顺势下移，触发按钮留在页头不动。
+        WandInlinePanel(visible = dispatchOpen, growFrom = Alignment.Top) {
+            TeamDispatchPanel(
+                projects = teamStartProjectCandidates(workspaces),
+                projectsLoading = loading,
+                projectError = error,
+                projectMenuOpen = dispatchProjectMenuOpen,
+                onToggleProjectMenu = { dispatchProjectMenuOpen = !dispatchProjectMenuOpen },
+                onPickProject = {
+                    dispatchWorkspaceId = it
+                    dispatchProjectMenuOpen = false
+                    dispatchFlow.resetResults()
+                },
+                selectedProjectName = teamStartProjectCandidates(workspaces)
+                    .firstOrNull { it.id == dispatchWorkspaceId }?.name,
+                selectedProjectId = dispatchWorkspaceId,
+                note = dispatchNote,
+                onNoteChange = { dispatchNote = it.take(TEAM_DISPATCH_NOTE_MAX) },
+                flow = dispatchFlow,
+                onPlan = { planDispatch() },
+                onStart = { startDispatch() },
+            )
+        }
+        Box(
+            modifier = Modifier
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
+                .weight(1f)
+                .semantics {
+                    if (loading) {
+                        liveRegion = LiveRegionMode.Polite
+                        contentDescription = "正在刷新通讯录…"
+                    }
+                },
         ) {
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 720.dp)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            WandPullToRefresh(
+                isRefreshing = loading && !loadingEmpty,
+                onRefresh = {
+                    if (!loading) {
+                        closeCreatePanel()
+                        refreshNonce += 1
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
             ) {
-                WandInlineSearchField(
-                    expanded = true,
-                    query = query,
-                    onQueryChange = { query = it },
-                    onCollapse = null,
-                    placeholder = "搜索名字、职责、标签",
-                    autoFocus = false,
-                    focusRequester = searchFocus,
-                    onClear = {
-                        query = ""
-                        searchFocus.requestFocus()
-                        keyboard?.show()
-                    },
-                )
-            }
-            HorizontalDivider(thickness = 0.5.dp, color = WandColors.border)
-            // 派工面板在搜索框下方原位展开：列表顺势下移，触发按钮留在页头不动。
-            WandInlinePanel(visible = dispatchOpen, growFrom = Alignment.Top) {
-                TeamDispatchPanel(
-                    projects = teamStartProjectCandidates(workspaces),
-                    projectsLoading = loading,
-                    projectError = error,
-                    projectMenuOpen = dispatchProjectMenuOpen,
-                    onToggleProjectMenu = { dispatchProjectMenuOpen = !dispatchProjectMenuOpen },
-                    onPickProject = {
-                        dispatchWorkspaceId = it
-                        dispatchProjectMenuOpen = false
-                        dispatchFlow.resetResults()
-                    },
-                    selectedProjectName = teamStartProjectCandidates(workspaces)
-                        .firstOrNull { it.id == dispatchWorkspaceId }?.name,
-                    selectedProjectId = dispatchWorkspaceId,
-                    note = dispatchNote,
-                    onNoteChange = { dispatchNote = it.take(TEAM_DISPATCH_NOTE_MAX) },
-                    flow = dispatchFlow,
-                    onPlan = { planDispatch() },
-                    onStart = { startDispatch() },
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 720.dp)
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .semantics {
-                        if (loading) {
-                            liveRegion = LiveRegionMode.Polite
-                            contentDescription = "正在刷新通讯录…"
-                        }
-                    },
-            ) {
-                WandPullToRefresh(
-                    isRefreshing = loading && !loadingEmpty,
-                    onRefresh = {
-                        if (!loading) {
-                            closeCreatePanel()
-                            refreshNonce += 1
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .semantics { contentDescription = "点名字开新对话，点头像改资料" },
+                    state = listState,
+                    contentPadding = PaddingValues(bottom = maxOf(28.dp, bottomClearance + 12.dp)),
                 ) {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .semantics { contentDescription = "点名字开新对话，点头像改资料" },
-                        state = listState,
-                        contentPadding = PaddingValues(bottom = 28.dp),
-                    ) {
-                        layout.forEachIndexed { index, slot ->
-                            val next = layout.getOrNull(index + 1)
-                            when (slot) {
-                                ContactSlot.CreatePanel -> item(key = "create-panel") {
-                                    WandInlinePanel(visible = templatesOpen, growFrom = Alignment.Top) {
-                                        Column(Modifier.padding(bottom = 8.dp)) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            ) {
-                                                WandInlinePanelAction(
-                                                    icon = WandIcons.agent,
-                                                    label = "创建员工",
-                                                    enabled = !anyBusy,
-                                                    onClick = {
-                                                        if (!conversationBusy()) {
-                                                            closeCreatePanel()
-                                                            onCreateEmployee()
-                                                        }
-                                                    },
-                                                )
-                                            }
-                                            AiTeamTemplatePanel(onPick = { templateId ->
-                                                if (!conversationBusy()) {
-                                                    closeCreatePanel()
-                                                    onCreateTeam(templateId)
-                                                }
-                                            })
+                    layout.forEachIndexed { index, slot ->
+                        val next = layout.getOrNull(index + 1)
+                        when (slot) {
+                            ContactSlot.CreatePanel -> item(key = "create-panel") {
+                                WandInlinePanel(visible = templatesOpen, growFrom = Alignment.Top) {
+                                    Column(Modifier.padding(bottom = 8.dp)) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            WandInlinePanelAction(
+                                                icon = WandIcons.agent,
+                                                label = "创建员工",
+                                                enabled = !anyBusy,
+                                                onClick = {
+                                                    if (!conversationBusy()) {
+                                                        closeCreatePanel()
+                                                        onCreateEmployee()
+                                                    }
+                                                },
+                                            )
                                         }
+                                        AiTeamTemplatePanel(onPick = { templateId ->
+                                            if (!conversationBusy()) {
+                                                closeCreatePanel()
+                                                onCreateTeam(templateId)
+                                            }
+                                        })
                                     }
                                 }
-                                ContactSlot.Error -> item(key = "contacts-error") {
-                                    Row(
-                                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            error.orEmpty(),
-                                            modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
-                                            color = WandColors.danger,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                        WandButton(
-                                            "重试",
-                                            onClick = { refreshNonce += 1 },
-                                            enabled = !loading,
-                                            variant = WandButtonVariant.Text,
-                                            compact = true,
-                                        )
-                                    }
-                                }
-                                ContactSlot.Loading -> item(key = "loading") {
-                                    Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
-                                        WandStatusIconSlot(
-                                            indicatorColor = WandColors.brand,
-                                            containerColor = Color.Transparent,
-                                            running = true,
-                                            icon = WandIcons.refresh,
-                                            boxSize = 40.dp,
-                                            iconSize = 24.dp,
-                                            modifier = Modifier.semantics { contentDescription = "正在加载通讯录" },
-                                        )
-                                    }
-                                }
-                                ContactSlot.NoResults -> item(key = "no-results") {
-                                    Column(
-                                        Modifier.fillMaxWidth().padding(vertical = 28.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                    ) {
-                                        Text("没有匹配的员工或团队", color = WandColors.textSecondary)
-                                        WandButton("清空搜索", onClick = ::clearSearch, variant = WandButtonVariant.Text)
-                                    }
-                                }
-                                ContactSlot.ResultCount -> item(key = "result-count") {
+                            }
+                            ContactSlot.Error -> item(key = "contacts-error") {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
                                     Text(
-                                        "找到 ${visibleEmployees.size + visibleTeams.size} 个结果",
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                                            .semantics { liveRegion = LiveRegionMode.Polite },
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = WandColors.textMuted,
-                                    )
-                                }
-                                ContactSlot.TeamHeader -> item(key = "teams-header") {
-                                    ContactSectionHeader("团队", visibleTeams.size)
-                                }
-                                ContactSlot.TeamEmpty -> item(key = "teams-empty") {
-                                    Text(
-                                        "还没有团队。点右上角 ＋ 选一个模板就能开始。",
-                                        color = WandColors.textMuted,
+                                        error.orEmpty(),
+                                        modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+                                        color = WandColors.danger,
                                         style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                    )
+                                    WandButton(
+                                        "重试",
+                                        onClick = { refreshNonce += 1 },
+                                        enabled = !loading,
+                                        variant = WandButtonVariant.Text,
+                                        compact = true,
                                     )
                                 }
-                                is ContactSlot.Team -> item(key = "team:${slot.id}") {
-                                    val team = teamById[slot.id] ?: return@item
-                                    val conversation = teamConversations[team.id]
-                                    ContactTeamRow(
-                                        team = team,
-                                        creating = conversation?.busy == true,
-                                        created = conversation?.runId != null,
-                                        enabled = !anyBusy && conversation?.creationUnconfirmed != true,
-                                        error = conversation?.error ?: rowErrors[team.id],
-                                        showDivider = next is ContactSlot.Team,
-                                        onOpen = { openTeamConversation(team) },
-                                        onAvatar = { if (!conversationBusy()) onOpenTeam(team.id) },
-                                        managementEnabled = !anyBusy,
-                                        modifier = Modifier.animateItem(
-                                            fadeInSpec = if (motionEnabled) WandMotion.tweenFast() else null,
-                                            placementSpec = if (motionEnabled) WandMotion.tweenNormal() else null,
-                                            fadeOutSpec = if (motionEnabled) WandMotion.tweenFast() else null,
-                                        ),
+                            }
+                            ContactSlot.Loading -> item(key = "loading") {
+                                Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                                    WandStatusIconSlot(
+                                        indicatorColor = WandColors.brand,
+                                        containerColor = Color.Transparent,
+                                        running = true,
+                                        icon = WandIcons.refresh,
+                                        boxSize = 40.dp,
+                                        iconSize = 24.dp,
+                                        modifier = Modifier.semantics { contentDescription = "正在加载通讯录" },
                                     )
                                 }
-                                ContactSlot.GroupGap -> item(key = "group-gap") {
-                                    Spacer(Modifier.fillMaxWidth().height(8.dp))
+                            }
+                            ContactSlot.NoResults -> item(key = "no-results") {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(vertical = 28.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Text("没有匹配的员工或团队", color = WandColors.textSecondary)
+                                    WandButton("清空搜索", onClick = ::clearSearch, variant = WandButtonVariant.Text)
                                 }
-                                ContactSlot.EmployeeHeader -> item(key = "employees-header") {
-                                    ContactSectionHeader("员工", visibleEmployees.size)
-                                }
-                                ContactSlot.EmployeeEmpty -> item(key = "employees-empty") {
-                                    Text(
-                                        "还没有员工。点右上角 ＋ 创建一位。",
-                                        color = WandColors.textMuted,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                                    )
-                                }
-                                is ContactSlot.Employee -> item(key = "employee:${slot.id}") {
-                                    val employee = employeeById[slot.id] ?: return@item
-                                    val conversation = employeeConversations[employee.id]
-                                    ContactPersonRow(
-                                        employee = employee,
-                                        creating = conversation?.busy == true,
-                                        created = conversation?.snapshot != null,
-                                        enabled = !anyBusy && conversation?.creationUnconfirmed != true,
-                                        error = conversation?.error ?: rowErrors[employee.id],
-                                        showDivider = next is ContactSlot.Employee,
-                                        onAvatar = { if (!conversationBusy()) onOpenEmployee(employee.id) },
-                                        managementEnabled = !anyBusy,
-                                        onOpen = { openEmployeeConversation(employee) },
-                                        modifier = Modifier.animateItem(
-                                            fadeInSpec = if (motionEnabled) WandMotion.tweenFast() else null,
-                                            placementSpec = if (motionEnabled) WandMotion.tweenNormal() else null,
-                                            fadeOutSpec = if (motionEnabled) WandMotion.tweenFast() else null,
-                                        ),
-                                    )
-                                }
+                            }
+                            ContactSlot.ResultCount -> item(key = "result-count") {
+                                Text(
+                                    "找到 ${visibleEmployees.size + visibleTeams.size} 个结果",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                                        .semantics { liveRegion = LiveRegionMode.Polite },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = WandColors.textMuted,
+                                )
+                            }
+                            ContactSlot.TeamHeader -> item(key = "teams-header") {
+                                ContactSectionHeader("团队", visibleTeams.size)
+                            }
+                            ContactSlot.TeamEmpty -> item(key = "teams-empty") {
+                                Text(
+                                    "还没有团队。点右上角 ＋ 选一个模板就能开始。",
+                                    color = WandColors.textMuted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                )
+                            }
+                            is ContactSlot.Team -> item(key = "team:${slot.id}") {
+                                val team = teamById[slot.id] ?: return@item
+                                val conversation = teamConversations[team.id]
+                                ContactTeamRow(
+                                    team = team,
+                                    creating = conversation?.busy == true,
+                                    created = conversation?.runId != null,
+                                    enabled = !anyBusy && conversation?.creationUnconfirmed != true,
+                                    error = conversation?.error ?: rowErrors[team.id],
+                                    showDivider = next is ContactSlot.Team,
+                                    onOpen = { openTeamConversation(team) },
+                                    onAvatar = { if (!conversationBusy()) onOpenTeam(team.id) },
+                                    managementEnabled = !anyBusy,
+                                    modifier = Modifier.animateItem(
+                                        fadeInSpec = if (motionEnabled) WandMotion.tweenFast() else null,
+                                        placementSpec = if (motionEnabled) WandMotion.tweenNormal() else null,
+                                        fadeOutSpec = if (motionEnabled) WandMotion.tweenFast() else null,
+                                    ),
+                                )
+                            }
+                            ContactSlot.GroupGap -> item(key = "group-gap") {
+                                Spacer(Modifier.fillMaxWidth().height(8.dp))
+                            }
+                            ContactSlot.EmployeeHeader -> item(key = "employees-header") {
+                                ContactSectionHeader("员工", visibleEmployees.size)
+                            }
+                            ContactSlot.EmployeeEmpty -> item(key = "employees-empty") {
+                                Text(
+                                    "还没有员工。点右上角 ＋ 创建一位。",
+                                    color = WandColors.textMuted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                )
+                            }
+                            is ContactSlot.Employee -> item(key = "employee:${slot.id}") {
+                                val employee = employeeById[slot.id] ?: return@item
+                                val conversation = employeeConversations[employee.id]
+                                ContactPersonRow(
+                                    employee = employee,
+                                    creating = conversation?.busy == true,
+                                    created = conversation?.snapshot != null,
+                                    enabled = !anyBusy && conversation?.creationUnconfirmed != true,
+                                    error = conversation?.error ?: rowErrors[employee.id],
+                                    showDivider = next is ContactSlot.Employee,
+                                    onAvatar = { if (!conversationBusy()) onOpenEmployee(employee.id) },
+                                    managementEnabled = !anyBusy,
+                                    onOpen = { openEmployeeConversation(employee) },
+                                    modifier = Modifier.animateItem(
+                                        fadeInSpec = if (motionEnabled) WandMotion.tweenFast() else null,
+                                        placementSpec = if (motionEnabled) WandMotion.tweenNormal() else null,
+                                        fadeOutSpec = if (motionEnabled) WandMotion.tweenFast() else null,
+                                    ),
+                                )
                             }
                         }
                     }

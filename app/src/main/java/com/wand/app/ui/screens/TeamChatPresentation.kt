@@ -17,7 +17,7 @@ import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.isDefiniteRequestRejection
 import com.wand.app.data.aiTeamRunActive
 import com.wand.app.data.boardAgentModelName
-import com.wand.app.data.boardTaskProviderLabel
+import com.wand.app.data.boardTaskAgentLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -804,7 +804,7 @@ fun teamAgentEffortLabel(effort: String): String {
 
 /**
  * 「CLI · 模型 · 思考深度」，群聊三处署名（live 卡头部、成员步骤行、负责人行）共用。
- * provider 走 `boardTaskProviderLabel`（与 Web `ISSUE_AGENT_PROVIDERS` 同表），
+ * provider + engine 走 `boardTaskAgentLabel`（与 Web `ISSUE_AGENT_PROVIDERS` 同表），
  * 思考深度走 [teamAgentEffortLabel]（与 Web `ISSUE_AGENT_EFFORTS` + `compactThinkingLabel` 同表），
  * `model` 等于 `BOARD_AGENT_DEFAULT_MODEL`（"default"）时是「跟随服务端默认」的哨兵值、不是模型名：
  * 传了模型目录就换成服务端默认模型的具体名字，拿不到名字才整段不显示。
@@ -815,9 +815,10 @@ fun agentSignatureLabel(
     model: String?,
     thinkingEffort: String?,
     models: ModelsResponse? = null,
+    engine: String? = null,
 ): String {
     val parts = mutableListOf<String>()
-    provider?.takeIf { it.isNotBlank() }?.let { parts.add(boardTaskProviderLabel(it)) }
+    provider?.takeIf { it.isNotBlank() }?.let { parts.add(boardTaskAgentLabel(it, engine)) }
     val modelName = boardAgentModelName(models, provider.orEmpty(), model)
     if (modelName.isNotBlank()) parts.add(modelName)
     val trimmedEffort = thinkingEffort?.trim().orEmpty()

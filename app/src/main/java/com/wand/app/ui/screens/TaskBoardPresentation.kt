@@ -197,7 +197,7 @@ internal fun boardTaskCardSessions(
 
 /** 会话标题；与工具名重复（或为空）时退回工具名，避免一行里出现两次「Claude」。 */
 internal fun boardSessionCardLabel(session: BoardTaskSession): String {
-    val provider = boardTaskProviderLabel(session.provider)
+    val provider = session.toolLabel
     val title = session.title.trim()
     if (title.isEmpty() || title.equals(provider, ignoreCase = true)) return provider
     return title

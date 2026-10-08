@@ -17,7 +17,7 @@ import com.wand.app.data.SessionEvent
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandSocket
-import com.wand.app.data.WandProvider
+import com.wand.app.data.agentToolOption
 import com.wand.app.wlog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -367,27 +367,31 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     // MARK: - 模型与思考深度（乐观更新 + 串行请求 + generation 防旧响应覆盖）
 
     /** Logo 选择只修改这个空白会话；草稿和附件仍由同一个 composer 持有。 */
-    fun chooseProvider(provider: String) {
-        if (!canSwitchProvider || WandProvider.fromId(provider) == null || snapshot?.provider == provider) return
+    fun chooseProvider(toolId: String) {
+        val tool = agentToolOption(toolId) ?: return
+        if (!canSwitchProvider || snapshot?.toolId == toolId) return
+        val employeeId = snapshot?.employeeId
         providerSwitching = true
         providerSwitchError = null
         providerSwitchResult = null
         scope.launch {
             try {
                 settingsMutationMutex.withLock {
-                    val snap = api.setProvider(sessionId, provider)
-                    check(snap.id == sessionId && snap.provider == provider && snap.isStructured &&
-                        snap.employeeId == snapshot?.employeeId) { "未收到有效的工具切换回执" }
+                    val snap = api.setProvider(sessionId, tool.provider, tool.engine)
+                    check(snap.id == sessionId && snap.toolId == toolId && snap.isStructured &&
+                        snap.employeeId == employeeId) { "未收到有效的工具切换回执" }
                     currentCoroutineContext().ensureActive()
-                    apply(snap)
-                    availableModels = emptyList()
-                    defaultModel = null
-                    loadModels()
-                    providerSwitchResult = "已切换为 ${snap.providerLabel}"
+                    if (active) {
+                        apply(snap)
+                        availableModels = emptyList()
+                        defaultModel = null
+                        loadModels()
+                        if (active) providerSwitchResult = "已切换为 ${snap.providerLabel}"
+                    }
                 }
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure
-                providerSwitchError = failure.message ?: "切换工具失败，请重试"
+                if (active) providerSwitchError = failure.message ?: "切换工具失败，请重试"
             } finally {
                 providerSwitching = false
             }

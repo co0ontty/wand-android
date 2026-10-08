@@ -39,11 +39,6 @@ sealed class Screen {
         val taskId: String? = null,
     ) : Screen()
     data object Settings : Screen()
-    /**
-     * 通讯录：员工与团队名称目录。点头像改资料，点名字开新对话。
-     * initialTab 只为兼容合并前的分段键，页内不再切换分段。
-     */
-    data class Contacts(val initialTab: ContactsTab = ContactsTab.Employees) : Screen()
     data class SiliconEmployeeEditor(val employeeId: String? = null) : Screen()
     /** 团队详情：成员组织图 + 「直接开工」表单（§6.2 A2/A3）。 */
     data class AiTeamDetail(val teamId: String) : Screen()
@@ -76,17 +71,6 @@ sealed class Screen {
     ) : Screen()
 }
 
-/** 通讯录的两个分段：员工（个人）与群聊（团队）。 */
-enum class ContactsTab(val storageValue: String) {
-    Employees("employees"),
-    Chats("chats");
-
-    companion object {
-        fun fromStorage(value: String?): ContactsTab =
-            entries.firstOrNull { it.storageValue == value } ?: Employees
-    }
-}
-
 /** Chat / PTY 首帧很重，手机栈用交叉淡入淡出，避免和滑动转场抢同一帧。 */
 internal fun usesHeavyDetailTransition(screen: Screen): Boolean =
     screen is Screen.Chat || screen is Screen.PtyTerminal || screen is Screen.AiTeamChat || screen is Screen.Conversation
@@ -106,7 +90,6 @@ class NavState {
     val current: Screen get() = stack.last()
     var homeMode by mutableStateOf<HomeListMode?>(null)
     private val workPaths = mutableMapOf<HomeListMode, List<Screen>>()
-    private var contactsMode: HomeListMode? = null
     private var conversationOriginMode: HomeListMode? = null
 
     fun initializeHomeMode(preference: String): HomeListMode {
@@ -140,7 +123,6 @@ class NavState {
     }
 
     fun push(screen: Screen) {
-        if (screen is Screen.Contacts) contactsMode = homeMode
         if (screen is Screen.Conversation) adoptConversation()
         stack.add(screen)
     }
@@ -185,8 +167,7 @@ class NavState {
         if (stack.size <= 1) return
         val leaving = current
         stack.removeAt(stack.lastIndex)
-        if (leaving is Screen.Contacts || current is Screen.Contacts) contactsMode?.let { homeMode = it }
-        else if (leaving is Screen.Conversation && current != Screen.SessionList) conversationOriginMode?.let { homeMode = it }
+        if (leaving is Screen.Conversation && current != Screen.SessionList) conversationOriginMode?.let { homeMode = it }
     }
 
     fun popToRoot() {
@@ -267,7 +248,7 @@ class NavState {
     companion object {
         val Saver: Saver<NavState, Any> = listSaver(
             save = { nav ->
-                nav.stack.map { it.saveKey() } + listOfNotNull(nav.homeMode?.let { "home-mode:" + it.storageValue }, nav.contactsMode?.let { "contacts-mode:" + it.storageValue }, nav.conversationOriginMode?.let { "conversation-origin:" + it.storageValue }) +
+                nav.stack.map { it.saveKey() } + listOfNotNull(nav.homeMode?.let { "home-mode:" + it.storageValue }, nav.conversationOriginMode?.let { "conversation-origin:" + it.storageValue }) +
                     nav.workPaths.flatMap { (mode, path) -> path.map { "home-path:" + mode.storageValue + FIELD_SEP + it.saveKey() } }
             },
             restore = { savedStack ->
@@ -282,7 +263,6 @@ class NavState {
                         }
                         savedStack.filterIsInstance<String>().forEach { record ->
                             if (record.startsWith("home-mode:")) homeMode = HomeListMode.fromStorage(record.removePrefix("home-mode:"))
-                            if (record.startsWith("contacts-mode:")) contactsMode = HomeListMode.fromStorage(record.removePrefix("contacts-mode:"))
                             if (record.startsWith("conversation-origin:")) conversationOriginMode = HomeListMode.fromStorage(record.removePrefix("conversation-origin:"))
                             if (record.startsWith("home-path:")) {
                                 val parts = record.removePrefix("home-path:").split(FIELD_SEP, limit = 2)
@@ -290,6 +270,9 @@ class NavState {
                                 parts.getOrNull(1)?.restoreScreen()?.let { workPaths[mode] = workPaths[mode].orEmpty() + it }
                             }
                         }
+                        // 旧版本把通讯录存成一条栈记录（`contacts` / 合并前的 `ai-teams`、`silicon-employees`）。
+                        // 它是根壳的页签后不该再占一条记录：丢掉记录、落回根，并把模式切到通讯录。
+                        if (legacyContactsAtTop(savedStack)) homeMode = HomeListMode.Contacts
                     }
                 } catch (_: Exception) {
                     NavState()
@@ -305,8 +288,8 @@ class NavState {
         private const val MISSIONS_KEY = "missions"
         private const val TASK_BOARD_KEY = "task-board"
         private const val SETTINGS_KEY = "settings"
+        /** 旧版本的通讯录页面键（含合并前的两个）：只用于识别老栈并把模式切到通讯录。 */
         private const val CONTACTS_KEY = "contacts"
-        /** 合并前的两个页面键：老栈恢复时落到通讯录对应分段，不变成空页。 */
         private const val AI_TEAMS_KEY = "ai-teams"
         private const val SILICON_EMPLOYEES_KEY = "silicon-employees"
         private const val SILICON_EMPLOYEE_EDITOR_KEY = "silicon-employee-editor"
@@ -348,7 +331,6 @@ class NavState {
                 TASK_BOARD_KEY + FIELD_SEP + workspaceId.orEmpty() + FIELD_SEP + taskId.orEmpty()
             }
             Screen.Settings -> SETTINGS_KEY
-            is Screen.Contacts -> CONTACTS_KEY + FIELD_SEP + initialTab.storageValue
             is Screen.SiliconEmployeeEditor -> SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP + employeeId.orEmpty()
             is Screen.AiTeamDetail -> AI_TEAM_DETAIL_KEY + FIELD_SEP + teamId
             is Screen.AiTeamEditor ->
@@ -359,6 +341,20 @@ class NavState {
             // 或换行破坏恢复（与 Web 不同，这里 ID 不含控制字符）。
             is Screen.WorkspaceTask ->
                 WORKSPACE_TASK_KEY + FIELD_SEP + workspaceId + FIELD_SEP + taskId + FIELD_SEP + workspaceName + FIELD_SEP + taskName
+        }
+
+        /**
+         * 旧版本栈尾是否是通讯录记录（含合并前的两个页面键）。
+         * 只有栈尾是它时才把模式切到通讯录：`[列表, 通讯录, 会话]` 这种后面还有别的页，
+         * 恢复应该停在会话上，而不是拽回通讯录。
+         */
+        private fun legacyContactsAtTop(savedStack: List<Any?>): Boolean {
+            val screenKeys = savedStack.filterIsInstance<String>()
+                .filterNot { it.startsWith("home-mode:") || it.startsWith("contacts-mode:") ||
+                    it.startsWith("conversation-origin:") || it.startsWith("home-path:") }
+            val top = screenKeys.lastOrNull() ?: return false
+            return top == CONTACTS_KEY || top == AI_TEAMS_KEY || top == SILICON_EMPLOYEES_KEY ||
+                top.startsWith(CONTACTS_KEY + FIELD_SEP)
         }
 
         private fun String.restoreScreen(): Screen? = when {
@@ -396,11 +392,9 @@ class NavState {
                 )
             }
             this == SETTINGS_KEY -> Screen.Settings
-            startsWith(CONTACTS_KEY + FIELD_SEP) ->
-                Screen.Contacts(ContactsTab.fromStorage(removePrefix(CONTACTS_KEY + FIELD_SEP)))
-            this == CONTACTS_KEY -> Screen.Contacts()
-            this == AI_TEAMS_KEY -> Screen.Contacts(ContactsTab.Chats)
-            this == SILICON_EMPLOYEES_KEY -> Screen.Contacts(ContactsTab.Employees)
+            // 旧版本的通讯录页面键在这里退场：通讯录已经是根壳的页签，没有对应的栈记录。
+            this == CONTACTS_KEY || this == AI_TEAMS_KEY || this == SILICON_EMPLOYEES_KEY -> null
+            startsWith(CONTACTS_KEY + FIELD_SEP) -> null
             startsWith(SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP) ->
                 Screen.SiliconEmployeeEditor(removePrefix(SILICON_EMPLOYEE_EDITOR_KEY + FIELD_SEP)
                     .takeIf(String::isNotBlank))

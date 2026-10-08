@@ -149,6 +149,7 @@ fun WandAsyncImage(
     modifier: Modifier = Modifier,
     maxWidth: Int = 240,
     maxHeight: Int = 200,
+    onFailure: (() -> Unit)? = null,
 ) {
     val (loader, model) = rememberRemoteImage(path, baseUrl)
     var failed by remember(baseUrl, path) { mutableStateOf(false) }
@@ -162,7 +163,10 @@ fun WandAsyncImage(
         contentDescription = path.substringAfterLast('/'),
         contentScale = ContentScale.Fit,
         onState = { state ->
-            if (state is AsyncImagePainter.State.Error) failed = true
+            if (state is AsyncImagePainter.State.Error) {
+                failed = true
+                onFailure?.invoke()
+            }
         },
         modifier = modifier
             .widthIn(max = maxWidth.dp)

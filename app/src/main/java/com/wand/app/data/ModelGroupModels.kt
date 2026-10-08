@@ -70,7 +70,7 @@ fun modelGroupListError(groups: List<ModelGroup>): String? {
                 || model == "default" || model == FREE_MODEL_GROUP_SELECTOR || isModelGroupSelector(model)
                 || isAutoAssignSelector(model) || model.startsWith("-"))
                 return "组内需为具体模型 ID，不能嵌套分组或使用默认值。"
-            if (model.startsWith("wand-openrouter-free/") && group.provider != "pi") return "免费模型只属于 one 的 Agent。"
+            if (model.startsWith("wand-openrouter-free/") && group.provider != "pi") return "免费模型只属于 Pi。"
             if (group.builtIn && !model.startsWith("wand-openrouter-free/")) return "免费分组只能包含免费池中的模型。"
         }
     }

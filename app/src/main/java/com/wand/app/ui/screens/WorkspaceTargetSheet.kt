@@ -139,7 +139,13 @@ fun WorkspaceTargetSheet(
                         target = target,
                         isSelected = selectedEmployeeId == null && target == selected,
                         enabled = !creating,
-                        onClick = { onSelect(target) },
+                        onClick = {
+                            onSelect(target)
+                            // Wand Agent 只跑进程内 SDK 的结构化会话：选它时把形态一并纠正。
+                            if (target.isSdk && selectedKind != WorkspaceSessionKind.Structured) {
+                                onSelectKind(WorkspaceSessionKind.Structured)
+                            }
+                        },
                     )
                 }
             }
@@ -157,6 +163,8 @@ fun WorkspaceTargetSheet(
                 ) {
                     WorkspaceSessionKind.entries.forEach { option ->
                         val active = option == selectedKind
+                        // PTY 下 Wand Agent 留在原位、只置灰：列表不因形态切换跳动。
+                        val optionEnabled = !creating && !(option == WorkspaceSessionKind.Pty && selected.isSdk)
                         Column(
                             modifier = Modifier
                                 .weight(1f)
@@ -166,7 +174,7 @@ fun WorkspaceTargetSheet(
                                     shape = RoundedCornerShape(14.dp),
                                     unselectedFill = WandColors.surfaceSoft.copy(alpha = 0.42f),
                                 )
-                                .clickable(enabled = !creating) { onSelectKind(option) }
+                                .clickable(enabled = optionEnabled) { onSelectKind(option) }
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                         ) {
                             Text(
@@ -225,12 +233,13 @@ private fun WorkspaceTargetOption(
     val icon: Painter = if (target.isShell) {
         rememberVectorPainter(WandIcons.terminal)
     } else {
-        BrandLogos.painterForProvider(target.raw)
+        // Wand Agent 与 Pi 共用 pi 品牌标；名字上的区分由 label 负责。
+        BrandLogos.painterForProvider(target.provider ?: "shell")
     }
     val iconTint = if (target.isShell) {
         WandColors.textSecondary
     } else {
-        BrandLogos.tintForProvider(target.raw, WandColors.brand)
+        BrandLogos.tintForProvider(target.provider ?: "shell", WandColors.brand)
     }
     WandListItem(
         modifier = Modifier

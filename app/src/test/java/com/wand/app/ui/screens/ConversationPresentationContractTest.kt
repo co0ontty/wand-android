@@ -20,7 +20,7 @@ class ConversationPresentationContractTest {
         assertTrue(phone.contains("list { id -> nav.push(Screen.Conversation(id)) }"))
         assertTrue(wide.contains("if (homeListMode == HomeListMode.Im)"))
         assertTrue(wide.contains("else PadLandingScreen"))
-        assertTrue(wide.contains("sidebarCollapsed && homeListMode != HomeListMode.Im"))
+        assertTrue(wide.contains("sidebarCollapsed && homeListMode != HomeListMode.Im &&"))
         assertTrue(wide.contains("coerceIn(280.dp, minOf(400.dp, windowWidth - 360.dp))"))
         assertTrue(app.contains("configuration.screenHeightDp.dp"))
         // 负责人裁决 1：平板能恢复「上次明确打开」的两栏，但根屏右栏不得由 selectedId 变出一个聊天输入框。
@@ -32,7 +32,8 @@ class ConversationPresentationContractTest {
         val list = source("ui/screens/TaskListScreen.kt")
         assertFalse(list.contains("legacyConversations"))
         assertFalse(list.contains("工作窗口 / 历史对话"))
-        assertTrue(list.contains("homeListMode != HomeListMode.Im && homeActivityStripVisible"))
+        assertTrue(list.contains("homeListMode != HomeListMode.Im"))
+        assertTrue(list.contains("homeActivityStripVisible(showingBoard, activityStats)"))
     }
 
     @Test fun bodyContentChangesDoNotChangeMessageExpansionIdentity() {
@@ -62,7 +63,7 @@ class ConversationPresentationContractTest {
 
     @Test fun imHierarchyKeepsRealClocksSeparateFromExecutionFactsAndSharedInput() {
         val screen = source("ui/screens/ConversationScreens.kt")
-        val list = screen.substringAfter("internal fun ConversationList(").substringBefore("internal fun ConversationContacts(")
+        val list = screen.substringAfter("internal fun ConversationList(").substringBefore("internal fun ConversationChatScreen(")
         assertTrue(list.contains("conversationListClock(item.messageAt)"))
         assertTrue(list.contains("if (clock.isNotBlank()) Text(clock"))
         assertTrue(list.contains("if (status != null) Text(conversationRunLabel(status)"))
@@ -88,15 +89,14 @@ class ConversationPresentationContractTest {
         assertTrue(row.contains("conversationNeedsCollapse(text)"))
     }
 
-    @Test fun contactsBackClosesLayersBeforeReturningFromPresetList() {
-        val contacts = source("ui/screens/ConversationScreens.kt").substringAfter("internal fun ConversationContacts(").substringBefore("internal fun ConversationChatScreen(")
-        val back = contacts.substringAfter("fun backFromContacts() {").substringBefore("ConversationLayerBackHandler")
-        assertTrue(back.contains("preset != null || expanded.isNotEmpty() -> closeLayer()"))
-        assertTrue(back.indexOf("-> closeLayer()") < back.indexOf("tab == 1 -> tab = 0"))
-        assertTrue(back.indexOf("tab == 1 -> tab = 0") < back.indexOf("else -> onBack()"))
-        assertTrue(contacts.contains("ConversationLayerBackHandler(preset != null || expanded.isNotEmpty() || tab == 1) { backFromContacts() }"))
-        assertTrue(contacts.contains("WandIconButton(WandIcons.back, \"返回\", { backFromContacts() }"))
-        assertTrue(contacts.contains("KeyEventType.KeyUp && (preset != null || expanded.isNotEmpty() || tab == 1)) { backFromContacts(); true }"))
+    @Test fun contactsBackClosesPanelsAndSearchBeforeLeavingTheTab() {
+        // 通讯录是根壳的页签：返回键先收派工/创建面板与搜索，再交给系统回上一层。
+        val contacts = source("ui/screens/ContactsScreen.kt")
+        val back = contacts.substringAfter("BackHandler(enabled = templatesOpen || dispatchOpen || query.isNotEmpty())")
+            .substringBefore("BackHandler(enabled = anyBusy)")
+        assertTrue(back.contains("dispatchOpen -> closeDispatchPanel()"))
+        assertTrue(back.contains("templatesOpen -> closeCreatePanel()"))
+        assertTrue(back.contains("else -> clearSearch()"))
     }
 
     @Test fun sharedMorphKeepsPressInsideFixedTouchBoxAndRetiringLayerCannotReceiveInput() {

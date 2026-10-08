@@ -64,8 +64,11 @@ internal fun createWorkspaceTaskWindowRequest(
         body.put("shell", true)
         return WorkspaceTaskWindowRequest("/api/commands", body)
     }
-    val provider = target.raw
+    // Wand Agent 与 Pi 共用 pi provider：请求里的 provider 必须是 pi，引擎单独传。
+    val provider = target.provider.orEmpty()
     body.put("provider", provider)
+    // 引擎是第二个维度：Wand Agent 与 Pi 共用 pi provider，必须显式告诉服务端走进程内 SDK。
+    target.engine?.let { engine -> body.put("engine", engine.raw) }
     model?.trim()?.takeIf { it.isNotEmpty() && it != "default" }?.let { body.put("model", it) }
     thinkingEffort?.trim()?.takeIf { it.isNotEmpty() }?.let { body.put("thinkingEffort", it) }
     val initialPrompt = prompt?.trim()?.takeIf { it.isNotEmpty() }

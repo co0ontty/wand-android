@@ -168,7 +168,7 @@ fun ModelGroupsSettingsPanel(api: WandApi, initiallyExpanded: Boolean = false) {
 }
 
 private fun groupProviderLabel(provider: String): String =
-    if (provider == "pi") "one 的 Agent" else providerDisplayName(provider)
+    if (provider == "pi") "Pi" else providerDisplayName(provider)
 
 @Composable
 private fun ModelGroupEditor(group: ModelGroup, catalog: ModelsResponse?, busy: Boolean,

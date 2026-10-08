@@ -360,6 +360,7 @@ fun PtyTerminalScreen(
         snackbarHost = { WandSnackbarHost(snackbarHostState) },
         topBar = {
             PtyTopBar(
+                api = api,
                 backdrop = null,
                 sessionId = sessionId,
                 snapshot = snapshot,
@@ -370,6 +371,10 @@ fun PtyTerminalScreen(
                 showBack = showBack,
                 onBack = onBack,
                 onOpenQuickCommit = { quickCommit.openPanel() },
+                onOpenFiles = {
+                    keyboardRequested = false
+                    quickCommit.closePanel()
+                },
             )
         },
         bottomBar = {
@@ -490,6 +495,7 @@ internal fun shouldResumePtyTerminal(
 
 @Composable
 private fun PtyTopBar(
+    api: WandApi,
     backdrop: GlassBackdrop?,
     sessionId: String,
     snapshot: SessionSnapshot?,
@@ -500,6 +506,7 @@ private fun PtyTopBar(
     showBack: Boolean,
     onBack: () -> Unit,
     onOpenQuickCommit: () -> Unit,
+    onOpenFiles: () -> Unit,
 ) {
     WandDetailTopBar(
         title = "终端会话",
@@ -548,6 +555,7 @@ private fun PtyTopBar(
             }
         },
         actions = {
+            SessionFilesButton(api, sessionId, snapshot?.cwd, onOpen = onOpenFiles)
             GitChangesButton(quickCommit, compact = true) { onOpenQuickCommit() }
         },
     )

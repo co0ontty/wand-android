@@ -25,7 +25,7 @@ internal class RecentTerminalConversation(
             api.createWorkspaceTaskWindow(target, checkNotNull(context), WorkspaceSessionKind.Pty).also { created ->
                 check(created.id.isNotBlank() && !created.isStructured &&
                     if (target.isShell) created.provider.isNullOrBlank() || created.provider == "shell"
-                    else created.provider == target.raw
+                    else created.provider == target.provider
                 ) { "未收到有效的终端回执" }
             }
         }

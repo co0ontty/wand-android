@@ -96,17 +96,48 @@ class WorkspaceTaskCreationTest {
             val pty = createWorkspaceTaskWindowRequest(target, binding, WorkspaceSessionKind.Pty)
             assertEquals("/api/commands", pty.path)
             assertEquals("command for ${target.raw}", expectedCommand, pty.body.getString("command"))
-            assertEquals("provider for ${target.raw}", target.raw, pty.body.getString("provider"))
+            assertEquals("provider for ${target.raw}", target.provider, pty.body.getString("provider"))
             assertEquals("ws-1", pty.body.getString("workspaceId"))
             assertEquals("task-1", pty.body.getString("workspaceTaskId"))
             assertEquals("/worktree/path", pty.body.getString("cwd"))
 
             val structured = createWorkspaceTaskWindowRequest(target, binding, WorkspaceSessionKind.Structured)
             assertEquals("/api/structured-sessions", structured.path)
-            assertEquals(target.raw, structured.body.getString("provider"))
-            assertEquals(structuredRunnerFor(target.raw), structured.body.getString("runner"))
+            assertEquals(target.provider, structured.body.getString("provider"))
+            assertEquals(structuredRunnerFor(target.provider!!), structured.body.getString("runner"))
             assertTrue(!structured.body.has("command"))
         }
+    }
+
+    @Test
+    fun wandAgentSendsPiProviderWithSdkEngine() {
+        // Wand Agent 与 Pi 共用 pi provider：provider 必须还是 pi，引擎单独告诉服务端。
+        val request = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.WandAgent,
+            WorkspaceBinding("ws-1", "task-1", "/worktree/path"),
+            WorkspaceSessionKind.Structured,
+        )
+        assertEquals("/api/structured-sessions", request.path)
+        assertEquals("pi", request.body.getString("provider"))
+        assertEquals("sdk", request.body.getString("engine"))
+        assertEquals("pi-cli-json", request.body.getString("runner"))
+
+        // Pi CLI 不发明引擎字段：不传就是 CLI，老服务端也照旧。
+        val cli = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.Pi,
+            WorkspaceBinding("ws-1", "task-1", "/worktree/path"),
+            WorkspaceSessionKind.Structured,
+        )
+        assertEquals("pi", cli.body.getString("provider"))
+        assertFalse(cli.body.has("engine"))
+    }
+
+    @Test
+    fun wandAgentIsStructuredOnlyAndReportsPiAsItsProvider() {
+        assertEquals("pi", WorkspaceSessionTarget.WandAgent.provider)
+        assertTrue(WorkspaceSessionTarget.WandAgent.isSdk)
+        assertFalse(WorkspaceSessionTarget.Pi.isSdk)
+        assertEquals("Wand Agent", WorkspaceSessionTarget.WandAgent.label)
     }
 
     @Test
@@ -193,6 +224,8 @@ class WorkspaceTaskCreationTest {
         assertTrue("pi" in raws)
         assertTrue("gemini" in raws)
         assertTrue("shell" in raws)
-        assertEquals(8, raws.size)
+        // Wand Agent（进程内 SDK）与 Pi CLI 是两条独立选项。
+        assertTrue("wand-agent" in raws)
+        assertEquals(9, raws.size)
     }
 }

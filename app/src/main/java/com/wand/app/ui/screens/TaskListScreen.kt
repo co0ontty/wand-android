@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.repeatOnLifecycle
 import com.wand.app.SessionWatcher
 import kotlinx.coroutines.flow.collect
+import com.wand.app.data.WandApi
 import com.wand.app.data.normalizeWorkspacePath
 import com.wand.app.data.AiTeam
 import com.wand.app.data.AiTeamRun
@@ -124,6 +125,11 @@ fun TaskListScreen(
     state: TaskListState,
     api: WorkspacePort,
     boardApi: TaskBoardPort,
+    /**
+     * 通讯录数据源（员工 / 团队 / 项目）。它与会话端口分开声明：通讯录读的是目录数据，
+     * 不是任务树，两个端口虽然由同一个 WandApi 实现，但不必在这里合并成一个宽接口。
+     */
+    directoryApi: WandApi? = null,
     serverDisplayName: String,
     modifier: Modifier = Modifier,
     homeListMode: HomeListMode = HomeListMode.Sessions,
@@ -145,8 +151,12 @@ fun TaskListScreen(
     onTaskClosed: (taskId: String) -> Unit = {},
     onSessionClosed: (sessionId: String) -> Unit = {},
     onOpenSettings: () -> Unit,
-    /** 底部悬浮菜单「通讯录」：纯穿透回调。 */
-    onOpenContacts: () -> Unit = {},
+    /** 通讯录下钻：与列表里的会话/员工/团队入口同源，页签不另建一套导航。 */
+    onOpenEmployee: (String) -> Unit = {},
+    onOpenTeam: (String) -> Unit = {},
+    onCreateEmployee: () -> Unit = {},
+    onCreateTeam: (String) -> Unit = {},
+    onOpenGroupChat: (String) -> Unit = {},
     onSwitchServer: () -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
 ) {
@@ -406,7 +416,7 @@ fun TaskListScreen(
             }
             if (defaultsRevision == newTaskDraftRevision && initialTarget == null &&
                 initialEmployeeId == null && initialTeamId == null) {
-                newTaskTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider) ?: newTaskTarget
+                newTaskTarget = WorkspaceSessionTarget.fromPreference(state.defaultProvider, state.defaultEngine) ?: newTaskTarget
                 newTaskKind = state.defaultSessionKind
                 newTaskThinkingEffort = state.defaultThinkingEffort
             }
@@ -587,7 +597,8 @@ fun TaskListScreen(
                         return@launch
                     }
                     state.rememberCreationChoice(
-                        defaultProvider = submittedTarget.raw.takeUnless { submittedTarget.isShell },
+                        defaultProvider = submittedTarget.provider.takeUnless { submittedTarget.isShell },
+                        defaultEngine = submittedTarget.engine?.raw,
                         defaultSessionKind = submittedKind,
                     )
                     if (newTaskStartsUngroupedSession(
@@ -731,14 +742,19 @@ fun TaskListScreen(
                 if (resetsCliParams) {
                     newTaskModel = "default"
                     val available = com.wand.app.ui.thinkingEffortOptions(
-                        option.raw, "default", newTaskModels?.defaultModelFor(option.raw),
-                        newTaskModels?.modelsFor(option.raw).orEmpty(),
+                        option.provider.orEmpty(), "default", newTaskModels?.defaultModelFor(option.provider.orEmpty()),
+                        newTaskModels?.modelsFor(option.provider.orEmpty()).orEmpty(),
                     )
                     newTaskThinkingEffort = state.defaultThinkingEffort.takeIf { effort ->
                         available.any { it.id == effort }
                     } ?: "off"
                 }
-                if (!option.isShell) state.rememberCreationChoice(defaultProvider = option.raw)
+                if (!option.isShell) {
+                    state.rememberCreationChoice(
+                        defaultProvider = option.provider.orEmpty(),
+                        defaultEngine = option.engine?.raw,
+                    )
+                }
             },
             kind = newTaskKind,
             onKindChange = {
@@ -1148,6 +1164,10 @@ fun TaskListScreen(
         }
     }
 
+    // 通讯录自带顶栏（搜索框就在页头），IM 列表在 conversationList 非空时也自带；
+    // 这两种情况不叠根壳的 HomeTopBar。
+    val modeOwnsTopBar = homeListMode == HomeListMode.Contacts ||
+        (homeListMode == HomeListMode.Im && conversationList != null)
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1160,7 +1180,7 @@ fun TaskListScreen(
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Column(Modifier.fillMaxSize()) {
-                if (homeListMode != HomeListMode.Im || conversationList == null) HomeTopBar(
+                if (!modeOwnsTopBar) HomeTopBar(
                     title = if (homeListMode == HomeListMode.Tasks) "任务" else "工作区",
                     serverDisplayName = serverDisplayName,
                     interactionEnabled = interactionEnabled,
@@ -1174,7 +1194,9 @@ fun TaskListScreen(
                 )
                 // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
                 // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
-                if (homeListMode != HomeListMode.Im && homeActivityStripVisible(showingBoard, activityStats)) {
+                if (homeListMode != HomeListMode.Im && homeListMode != HomeListMode.Contacts &&
+                    homeActivityStripVisible(showingBoard, activityStats)
+                ) {
                     HomeActivityStrip(
                         stats = activityStats,
                         enabled = interactionEnabled,
@@ -1220,6 +1242,29 @@ fun TaskListScreen(
                             // 底部悬浮胶囊压在列表上，最后一张卡要能滑到胶囊上方。
                             bottomClearance = menuClearance,
                         )
+                    }
+                } else if (projection == HomeListMode.Contacts.storageValue) {
+                    // 通讯录与工作区/任务共享同一张列表壳：底栏、系统栏、清屏都在这里，
+                    // 内容自己只管页头与名单。
+                    val directory = directoryApi
+                    if (directory == null) {
+                        LoadingState(modifier = Modifier.fillMaxSize(), text = "正在打开通讯录…")
+                    } else {
+                    ContactsScreen(
+                        api = directory,
+                        serverDisplayName = serverDisplayName,
+                        interactionEnabled = interactionEnabled,
+                        onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
+                        onSwitchServer = { invalidateRecentConversationOpening(); onSwitchServer() },
+                        bottomClearance = menuClearance,
+                        onOpenEmployee = onOpenEmployee,
+                        onOpenTeam = onOpenTeam,
+                        onCreateEmployee = onCreateEmployee,
+                        onOpenSession = onOpenSession,
+                        onOpenGroupChat = onOpenGroupChat,
+                        onCreateTeam = onCreateTeam,
+                        onCollapseSidebar = onCollapseSidebar,
+                    )
                     }
                 } else if (projection == HomeListMode.Im.storageValue && conversationList != null) {
                     conversationList(menuClearance)
@@ -1556,10 +1601,7 @@ fun TaskListScreen(
                             HomeMenuPillItem.Chats -> selectHomeMode(HomeListMode.Sessions)
                             HomeMenuPillItem.Tasks -> selectHomeMode(HomeListMode.Tasks)
                             HomeMenuPillItem.Im -> selectHomeMode(HomeListMode.Im)
-                            HomeMenuPillItem.Contacts -> {
-                                invalidateRecentConversationOpening()
-                                onOpenContacts()
-                            }
+                            HomeMenuPillItem.Contacts -> selectHomeMode(HomeListMode.Contacts)
                         }
                     },
                     modifier = Modifier

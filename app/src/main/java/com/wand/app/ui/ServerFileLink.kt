@@ -9,13 +9,17 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import android.widget.Toast
+import com.wand.app.data.WandAuth
 import com.wand.app.data.WandHttp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import java.io.IOException
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import kotlin.coroutines.coroutineContext
 
 /** Resolves Markdown links that point at files on the connected Wand server. */
 object WandServerFileLink {
@@ -57,49 +61,76 @@ object WandServerFileLink {
         return value.takeIf { it.startsWith("/") }
     }
 
-    /** Downloads into the public Downloads/Wand folder, then opens it when an app supports the MIME type. */
-    suspend fun downloadAndOpen(context: Context, baseUrl: String, serverPath: String) {
-        val downloaded = withContext(Dispatchers.IO) {
-            val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
-            val url = Uri.parse("$endpoint/api/file-raw")
-                .buildUpon()
-                .appendQueryParameter("download", "1")
-                .appendQueryParameter("path", serverPath)
-                .build()
-                .toString()
-            val request = Request.Builder().url(url).get().build()
+    /** Download only: the caller presents in-place status, without launching an external app or a Toast. */
+    suspend fun download(context: Context, baseUrl: String, serverPath: String, token: String? = null): String =
+        downloadToDownloads(context, baseUrl, serverPath, token).fileName
 
-            WandHttp.clientFor(endpoint).newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IllegalStateException("服务端返回 HTTP ${response.code}")
-                }
-                val body = response.body ?: throw IllegalStateException("服务端没有返回文件内容")
-                val fileName = safeFileName(serverPath.substringAfterLast('/'))
-                val mime = resolveMimeType(fileName, response.header("Content-Type"))
-                val resolver = context.contentResolver
-                val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                    put(MediaStore.Downloads.MIME_TYPE, mime)
-                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/Wand")
-                    put(MediaStore.Downloads.IS_PENDING, 1)
-                }
-                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                    ?: throw IllegalStateException("无法创建本地下载文件")
-                try {
-                    resolver.openOutputStream(uri, "w")?.use { output ->
-                        body.byteStream().use { input -> input.copyTo(output) }
-                    } ?: throw IllegalStateException("无法写入本地下载文件")
-                    resolver.update(uri, ContentValues().apply {
-                        put(MediaStore.Downloads.IS_PENDING, 0)
-                    }, null, null)
-                    DownloadedFile(uri, fileName, mime)
-                } catch (error: Throwable) {
-                    resolver.delete(uri, null, null)
-                    throw error
-                }
+    private suspend fun downloadToDownloads(
+        context: Context, baseUrl: String, serverPath: String, token: String? = null,
+    ): DownloadedFile = withContext(Dispatchers.IO) {
+        val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
+        val url = Uri.parse("$endpoint/api/file-raw")
+            .buildUpon()
+            .appendQueryParameter("download", "1")
+            .appendQueryParameter("path", serverPath)
+            .build()
+            .toString()
+        val request = Request.Builder().url(url).get().build()
+
+        val client = WandHttp.clientFor(endpoint)
+        val first = client.newCall(request).execute()
+        val authenticated = if (first.code == 401 && !token.isNullOrBlank()) {
+            first.close()
+            WandAuth.loginWithToken(endpoint, token, client)
+            client.newCall(request).execute()
+        } else first
+        authenticated.use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("服务端返回 HTTP ${response.code}")
+            }
+            val body = response.body ?: throw IllegalStateException("服务端没有返回文件内容")
+            val fileName = safeFileName(serverPath.substringAfterLast('/'))
+            val mime = resolveMimeType(fileName, response.header("Content-Type"))
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/Wand")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("无法创建本地下载文件")
+            try {
+                resolver.openOutputStream(uri, "w")?.use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(8192)
+                        var received = 0L
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                            received += count
+                        }
+                        if (body.contentLength() >= 0 && received != body.contentLength()) {
+                            throw IOException("下载不完整，请重试")
+                        }
+                    }
+                } ?: throw IllegalStateException("无法写入本地下载文件")
+                resolver.update(uri, ContentValues().apply {
+                    put(MediaStore.Downloads.IS_PENDING, 0)
+                }, null, null)
+                DownloadedFile(uri, fileName, mime)
+            } catch (error: Throwable) {
+                resolver.delete(uri, null, null)
+                throw error
             }
         }
+    }
 
+    /** Downloads into the public Downloads/Wand folder, then opens it when an app supports the MIME type. */
+    suspend fun downloadAndOpen(context: Context, baseUrl: String, serverPath: String) {
+        val downloaded = downloadToDownloads(context, baseUrl, serverPath)
         withContext(Dispatchers.Main) {
             val openMime = downloaded.mime.takeUnless { it == "application/octet-stream" } ?: "*/*"
             val intent = Intent(Intent.ACTION_VIEW).apply {

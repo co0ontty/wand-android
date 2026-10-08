@@ -48,7 +48,7 @@ import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.boardAgentModelName
-import com.wand.app.data.boardTaskProviderLabel
+import com.wand.app.data.boardTaskAgentLabel
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspacePort
 import com.wand.app.ui.components.WandBreadcrumb
@@ -516,7 +516,7 @@ private fun AiTeamMemberCard(member: AiTeamMember, models: ModelsResponse?) {
  * `model` 是 `default` 哨兵时换成服务端配置的默认模型名（拿不到名字才省掉这一段，不写「默认模型」）。
  */
 fun aiTeamAgentLabel(agent: BoardTaskAgent, models: ModelsResponse? = null): String = buildString {
-    append(boardTaskProviderLabel(agent.provider))
+    append(boardTaskAgentLabel(agent.provider, agent.engine))
     val model = boardAgentModelName(models, agent.provider, agent.model)
     if (model.isNotBlank()) append(" · ").append(model)
     if (agent.thinkingEffort.isNotBlank() && agent.thinkingEffort != "off") {

@@ -133,7 +133,7 @@ fun WorkspaceTaskScreen(
     LaunchedEffect(taskId) {
         workflow.loadTask(taskId)
         runCatching { api.serverConfig() }.getOrNull()?.let { config ->
-            WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
+            WorkspaceSessionTarget.fromPreference(config.defaultProvider, config.defaultEngine)?.let { selectedTarget = it }
             selectedKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
         }
     }
@@ -148,7 +148,7 @@ fun WorkspaceTaskScreen(
             employees = runCatching { api.listSiliconEmployees(false) }.getOrDefault(emptyList())
             selectedEmployeeId = null
             runCatching { api.serverConfig() }.getOrNull()?.let { config ->
-                WorkspaceSessionTarget.fromRaw(config.defaultProvider)?.let { selectedTarget = it }
+                WorkspaceSessionTarget.fromPreference(config.defaultProvider, config.defaultEngine)?.let { selectedTarget = it }
                 selectedKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
             }
             sheetState.show()
@@ -379,7 +379,12 @@ fun WorkspaceTaskScreen(
                     selectedTarget = it
                     if (!it.isShell) {
                         scope.launch {
-                            runCatching { api.updateCreationDefaults(defaultProvider = it.raw) }
+                            runCatching {
+                                api.updateCreationDefaults(
+                                    defaultProvider = it.provider,
+                                    defaultEngine = it.engine?.raw,
+                                )
+                            }
                         }
                     }
                 },

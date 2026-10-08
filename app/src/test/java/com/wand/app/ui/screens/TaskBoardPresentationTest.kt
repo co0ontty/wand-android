@@ -6,6 +6,8 @@ import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.BoardTaskMilestone
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.BoardTaskWorkspace
+import com.wand.app.data.boardTaskAgentLabel
+import com.wand.app.data.groupBoardSessionsByAgent
 import com.wand.app.data.boardTaskStatusLabel
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
@@ -248,6 +250,54 @@ class TaskBoardPresentationTest {
         assertEquals("Claude", boardSessionCardLabel(session().copy(title = "claude")))
         assertEquals("修自动填充", boardSessionCardLabel(session().copy(title = "修自动填充")))
         assertEquals("终端", boardSessionCardLabel(session(provider = "shell").copy(title = "")))
+    }
+
+    @Test
+    fun wandAgentSessionsAreLabeledAndGroupedApartFromPiCli() {
+        // 同一个 pi provider 的两条执行路径：标签分开、分组也分开。
+        assertEquals("Wand Agent", boardTaskAgentLabel("pi", "sdk"))
+        assertEquals("Pi", boardTaskAgentLabel("pi", null))
+        assertEquals("Pi", boardTaskAgentLabel("pi", "cli"))
+        assertEquals("终端", boardTaskAgentLabel("shell", null))
+
+        val cliSession = session(provider = "pi")
+        val sdkSession = cliSession.copy(id = "sdk-1", engine = "sdk")
+        assertEquals("Pi", cliSession.toolLabel)
+        assertEquals("Wand Agent", sdkSession.toolLabel)
+
+        val groups = groupBoardSessionsByAgent(listOf(cliSession, sdkSession))
+        assertEquals(2, groups.size)
+        assertEquals(listOf("Pi", "Wand Agent"), groups.map { it.label })
+        assertEquals(listOf(listOf("session-1"), listOf("sdk-1")), groups.map { group -> group.sessions.map { it.id } })
+
+        val markupLabel = boardSessionCardLabel(session(provider = "pi").copy(title = "", engine = "sdk"))
+        assertEquals("Wand Agent", markupLabel)
+    }
+
+    @Test
+    fun boardTaskAgentCarriesEngineThroughToolSelectionAndJson() {
+        val wandAgent = BoardTaskAgent.fromTool("wand-agent", BoardTaskAgent.default("claude"))
+        assertEquals("pi", wandAgent.provider)
+        assertEquals("sdk", wandAgent.engine)
+        assertEquals("structured", wandAgent.kind)
+        assertEquals("wand-agent", wandAgent.toolId)
+
+        // 切回 Pi CLI 时引擎跟着回到 cli，不能把 sdk 带到 CLI 会话上。
+        val piCli = BoardTaskAgent.fromTool("pi", wandAgent)
+        assertEquals("pi", piCli.provider)
+        assertEquals("cli", piCli.engine)
+
+        assertEquals("sdk", wandAgent.toJson().getString("engine"))
+        assertEquals(false, piCli.toJson().has("engine"))
+
+        // 老服务端 / 别的 provider 的 engine 一律按 CLI 读，不写成脏数据。
+        val parsed = BoardTaskAgent.parse(
+            org.json.JSONObject().put("provider", "claude").put("kind", "structured").put("engine", "sdk"),
+        )
+        assertEquals("别的 provider 不认 engine", null, parsed?.engine)
+        assertEquals("PTY 会话没有 SDK 形态", null, BoardTaskAgent.parse(
+            org.json.JSONObject().put("provider", "pi").put("kind", "pty").put("engine", "sdk"),
+        )?.engine)
     }
 
     @Test

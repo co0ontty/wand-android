@@ -202,7 +202,7 @@ private fun BoardTaskSettingsSummary(
 ) {
     Text(listOfNotNull(title.trim().takeIf { it.isNotEmpty() } ?: "自动命名", boardTaskPriorityLabel(priority),
         parents.firstOrNull { it.first == parentTaskId && it.first.isNotBlank() }?.second,
-        if (showAgent) "${boardTaskProviderLabel(agent.provider)} · ${boardTaskKindLabel(agent.kind)} · ${boardTaskModeLabel(agent.mode)}" else null,
+        if (showAgent) "${boardTaskAgentLabel(agent.provider, agent.engine)} · ${boardTaskKindLabel(agent.kind)} · ${boardTaskModeLabel(agent.mode)}" else null,
     ).joinToString(" · "), color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall,
         maxLines = 2, overflow = TextOverflow.Ellipsis)
 }

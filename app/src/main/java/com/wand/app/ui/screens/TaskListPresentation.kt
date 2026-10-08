@@ -15,12 +15,20 @@ internal const val UNNAMED_TASK_NAME = "未命名任务"
 enum class HomeListMode(val storageValue: String) {
     Sessions("sessions"),
     Tasks("board"),
-    Im("im");
+    Im("im"),
+
+    /**
+     * 通讯录是根壳的第四个视图，和会话/任务/看板一样由 [TaskListScreen] 就地渲染。
+     * 它曾经是一条 push 进导航栈的页面记录，于是底栏跟着根屏一起退场，
+     * 看起来像另一套壳；这里改为模式，底栏常驻、通讯录项按页签高亮。
+     */
+    Contacts("contacts");
 
     companion object {
         fun fromStorage(value: String?): HomeListMode = when (value) {
             "sessions" -> Sessions
             "board" -> Tasks
+            "contacts" -> Contacts
             else -> Im
         }
     }

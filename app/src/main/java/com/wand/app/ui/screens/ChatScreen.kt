@@ -190,7 +190,8 @@ import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandStatusIconSlot
-import com.wand.app.data.WandProvider
+import com.wand.app.data.AGENT_TOOL_OPTIONS
+import com.wand.app.data.agentToolOption
 import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
@@ -746,8 +747,8 @@ fun ChatScreen(
     // ＋ 展开的动作面板：就地展开，返回键/发送/换会话时收起（规则 2）。
     var attachOpen by remember(sessionId) { mutableStateOf(false) }
     BackHandler(enabled = attachOpen) { attachOpen = false }
-    LaunchedEffect(voice.pressed, store.snapshot?.provider, store.isStructured, store.pendingEscalation) {
-        if (voice.pressed || store.snapshot?.provider != "pi" || !store.isStructured || store.pendingEscalation != null) resources.dismiss()
+    LaunchedEffect(voice.pressed, store.snapshot?.provider, store.snapshot?.toolId, store.providerSwitching, store.isStructured, store.pendingEscalation) {
+        if (voice.pressed || store.providerSwitching || store.snapshot?.toolId == "wand-agent" || store.snapshot?.provider != "pi" || !store.isStructured || store.pendingEscalation != null) resources.dismiss()
     }
     CompositionLocalProvider(
         LocalServerBaseUrl provides api.baseUrl,
@@ -832,6 +833,12 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    SessionFilesButton(api, sessionId, store.snapshot?.cwd) {
+                        resources.dismiss()
+                        quickCommit.closePanel()
+                        attachOpen = false
+                        focusManager.clearFocus()
+                    }
                     GitChangesButton(quickCommit, compact = true) { resources.dismiss(); quickCommit.openPanel() }
                 },
             )
@@ -1467,12 +1474,12 @@ private fun LaunchProviderPicker(store: ChatStore) {
         Box {
             Box(
                 modifier = Modifier.size(52.dp).semantics {
-                    contentDescription = "更换 CLI 工具，当前 ${store.snapshot?.providerLabel.orEmpty()}"
+                    contentDescription = "更换执行工具，当前 ${store.snapshot?.providerLabel.orEmpty()}"
                     role = Role.Button
-                }.clickable(enabled = store.canSwitchProvider, role = Role.Button) { menuOpen = true },
+                }.clickable(enabled = store.canSwitchProvider, role = Role.Button) { menuOpen = !menuOpen },
             ) {
-                WandInPlaceSwap(contentKey = store.snapshot?.provider, enterScale = 1f, exitScale = 1f) { shown ->
-                    ProviderBrandMark(provider = shown as? String, size = 52)
+                WandInPlaceSwap(contentKey = store.snapshot?.toolId, enterScale = 1f, exitScale = 1f) { shown ->
+                    ProviderBrandMark(provider = agentToolOption(shown as? String)?.provider, size = 52)
                 }
                 WandStatusIconSlot(
                     running = store.providerSwitching,
@@ -1489,11 +1496,11 @@ private fun LaunchProviderPicker(store: ChatStore) {
                 onDismissRequest = { menuOpen = false },
                 containerColor = WandColors.bgElevated,
             ) {
-                WandProvider.entries.forEach { tool ->
+                AGENT_TOOL_OPTIONS.forEach { tool ->
                     DropdownMenuItem(
-                        text = { Text(tool.displayName) },
-                        leadingIcon = { WandProviderMark(tool.id) },
-                        trailingIcon = if (store.snapshot?.provider == tool.id) {
+                        text = { Text(tool.label) },
+                        leadingIcon = { WandProviderMark(tool.provider) },
+                        trailingIcon = if (store.snapshot?.toolId == tool.id) {
                             { Icon(WandIcons.check, contentDescription = "当前工具", tint = WandColors.brand) }
                         } else null,
                         onClick = { menuOpen = false; store.chooseProvider(tool.id) },

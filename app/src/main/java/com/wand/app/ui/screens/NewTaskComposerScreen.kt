@@ -121,7 +121,8 @@ internal fun NewTaskComposerDialog(
     directoryPickerContent: @Composable () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val modelOptions = boardAgentModelOptions(models, target.raw)
+    val provider = target.provider.orEmpty()
+    val modelOptions = boardAgentModelOptions(models, provider)
     // 团队与 CLI 目标互斥：teamId 命中列表才算「选中团队」，选中后隐藏 CLI 参数行。
     val teamTarget = teams.firstOrNull { it.id == teamId }
     val teamSelected = teamTarget != null
@@ -139,9 +140,9 @@ internal fun NewTaskComposerDialog(
     val namedSubjectSelected = teamSelected || employeeSelected || dispatchMode
     val teamDisabledReason = newTaskTeamDisabledReason(teamAllowed, teams.isNotEmpty())
     val teamError = newTaskTeamSubmitError(prompt, teamSelected, teamAllowed)
-    val defaultModel = models?.defaultModelFor(target.raw).orEmpty()
+    val defaultModel = models?.defaultModelFor(provider).orEmpty()
     val selectedModelLabel = modelOptions.firstOrNull { it.id == model }?.label ?: model
-    val effortOptions = thinkingEffortOptions(target.raw, model, defaultModel, models?.modelsFor(target.raw).orEmpty())
+    val effortOptions = thinkingEffortOptions(provider, model, defaultModel, models?.modelsFor(provider).orEmpty())
     val effortLabel = effortOptions.firstOrNull { it.id == thinkingEffort }?.label ?: "自动"
     // 会话参数行与选择器可开性共用这份判定。
     val controlChips = newTaskComposerControlChips(namedSubjectSelected, startFirstSession, target.isShell)
@@ -301,7 +302,7 @@ internal fun NewTaskComposerDialog(
                             } else {
                                 Image(
                                     painter = BrandLogos.painterForProvider(
-                                        target.raw.takeUnless { target.isShell },
+                                        target.provider.takeUnless { target.isShell },
                                     ),
                                     contentDescription = null, modifier = Modifier.size(22.dp),
                                 )
@@ -328,7 +329,7 @@ internal fun NewTaskComposerDialog(
                                     leadingIcon = {
                                         Image(
                                             painter = BrandLogos.painterForProvider(
-                                                option.raw.takeUnless { option.isShell },
+                                                option.provider.takeUnless { option.isShell },
                                             ),
                                             contentDescription = null, modifier = Modifier.size(20.dp),
                                         )
@@ -341,6 +342,10 @@ internal fun NewTaskComposerDialog(
                                         dispatchMode = false
                                         dispatchFlow.resetResults()
                                         onTargetChange(option)
+                                        // Wand Agent 只有进程内 SDK 的结构化会话，不能停在 PTY。
+                                        if (option.isSdk && kind != WorkspaceSessionKind.Structured) {
+                                            onKindChange(WorkspaceSessionKind.Structured)
+                                        }
                                     },
                                 )
                             }

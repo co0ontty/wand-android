@@ -442,6 +442,7 @@ data class TurnAuthor(
     /** 该回合实际使用的思考深度；缺字段 → null。 */
     val thinkingEffort: String? = null,
     val sessionId: String? = null,
+    val engine: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): TurnAuthor? {
@@ -457,6 +458,7 @@ data class TurnAuthor(
                 model = o.str("model"),
                 thinkingEffort = o.str("thinkingEffort"),
                 sessionId = o.str("sessionId"),
+                engine = WandAgentEngine.fromRaw(o.str("engine"))?.raw,
             )
         }
     }
@@ -594,6 +596,11 @@ data class StructuredSessionState(
     val lastError: String?,
     val inFlight: Boolean?,
     val activeRequestId: String?,
+    /**
+     * 服务端裁决的执行引擎：`core` = Wand Agent（进程内 SDK），`cli` = 命令行。
+     * 老服务端不返回该字段时保持 null，展示上按 CLI 处理。
+     */
+    val engine: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): StructuredSessionState? {
@@ -604,6 +611,7 @@ data class StructuredSessionState(
                 lastError = o.str("lastError"),
                 inFlight = o.bool("inFlight"),
                 activeRequestId = o.str("activeRequestId"),
+                engine = o.str("engine"),
             )
         }
     }
@@ -695,8 +703,11 @@ data class SessionSnapshot(
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
+    val toolId: String
+        get() = agentToolId(provider, if (isStructured && structuredState?.engine == "core") "sdk" else "cli")
+
     val providerLabel: String
-        get() = providerDisplayName(provider)
+        get() = agentToolOption(toolId)?.label ?: providerDisplayName(provider)
 
     /** 列表标题以服务端 `title` 为准，不再用任务名 / 目录名自行兜底。 */
     val displayTitle: String
@@ -1183,6 +1194,7 @@ data class DirectoryItem(
     val path: String,
     val name: String,
     val type: String,
+    val size: Long? = null,
 ) {
     val isDirectory: Boolean get() = type == "dir"
 
@@ -1191,6 +1203,7 @@ data class DirectoryItem(
             path = o.str("path") ?: "",
             name = o.str("name") ?: "",
             type = o.str("type") ?: "",
+            size = if (o.isNull("size")) null else o.optLong("size"),
         )
     }
 }
@@ -1198,11 +1211,13 @@ data class DirectoryItem(
 data class DirectoryListing(
     val items: List<DirectoryItem>,
     val truncated: Boolean?,
+    val total: Int? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): DirectoryListing = DirectoryListing(
             items = o.arr("items")?.parseEach { DirectoryItem.parse(it) } ?: emptyList(),
             truncated = o.bool("truncated"),
+            total = o.int("total"),
         )
     }
 }
@@ -1231,6 +1246,8 @@ data class RecentPath(
 data class ServerConfigInfo(
     val defaultCwd: String?,
     val defaultProvider: String?,
+    /** 默认执行引擎：`sdk` = Wand Agent（进程内 SDK）；老服务端不返回时按 CLI 处理。 */
+    val defaultEngine: String? = null,
     val defaultSessionKind: String?,
     val defaultTaskWorktree: Boolean? = null,
     val defaultMode: String?,
@@ -1263,6 +1280,7 @@ data class ServerConfigInfo(
         fun parse(o: JSONObject): ServerConfigInfo = ServerConfigInfo(
             defaultCwd = o.str("defaultCwd"),
             defaultProvider = o.str("defaultProvider"),
+            defaultEngine = o.str("defaultEngine"),
             defaultSessionKind = o.str("defaultSessionKind"),
             defaultTaskWorktree = if (o.has("defaultTaskWorktree")) o.optBoolean("defaultTaskWorktree", true) else null,
             defaultMode = o.str("defaultMode"),

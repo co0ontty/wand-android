@@ -56,7 +56,7 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SiliconEmployeeDraft
 import com.wand.app.data.WandApi
 import com.wand.app.data.boardAgentModelOptions
-import com.wand.app.data.boardTaskProviderLabel
+import com.wand.app.data.boardTaskAgentLabel
 import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandAgentFields
 import com.wand.app.ui.components.WandButton
@@ -275,7 +275,7 @@ fun SiliconEmployeeEditorScreen(
                                 WandInlinePanel(configurationExpanded, growFrom = Alignment.Top) {
                                     Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 12.dp)) {
                                         draft.agents.forEachIndexed { index, agent ->
-                                            Text("${if (index == 0) "首选" else "备用 $index"} · ${boardTaskProviderLabel(agent.provider)} · ${agent.model.ifBlank { "默认模型" }}",
+                                            Text("${if (index == 0) "首选" else "备用 $index"} · ${boardTaskAgentLabel(agent.provider, agent.engine)} · ${agent.model.ifBlank { "默认模型" }}",
                                                 style = MaterialTheme.typography.bodyMedium, color = WandColors.textSecondary)
                                         }
                                         Text("员工 ID · ${editingId.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
@@ -377,7 +377,7 @@ fun SiliconEmployeeEditorScreen(
                             ?: agent.model.ifBlank { "跟随默认模型" }
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                             EmployeeDisclosureHeader(
-                                title = "${if (index == 0) "首选" else "候选 ${index + 1}"} · ${boardTaskProviderLabel(agent.provider)}",
+                                title = "${if (index == 0) "首选" else "候选 ${index + 1}"} · ${boardTaskAgentLabel(agent.provider, agent.engine)}",
                                 summary = model,
                                 expanded = expanded,
                                 enabled = !busy,

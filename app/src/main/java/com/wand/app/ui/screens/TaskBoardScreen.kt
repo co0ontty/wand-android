@@ -95,6 +95,7 @@ import com.wand.app.data.groupBoardSessionsByAgent
 import com.wand.app.data.boardTaskKindLabel
 import com.wand.app.data.boardTaskModeLabel
 import com.wand.app.data.boardTaskPriorityLabel
+import com.wand.app.data.boardTaskAgentLabel
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
 import com.wand.app.data.patchBoardTaskBody
@@ -1458,7 +1459,7 @@ internal fun TaskBoardDetailPane(
         } else {
             agentGroups.forEach { group ->
                 Text(
-                    boardTaskProviderLabel(group.provider) + group.agent?.let {
+                    group.label + group.agent?.let {
                         val model = boardAgentModelName(models, it.provider, it.model)
                         (if (model.isBlank()) "" else " · $model") + " · ${boardTaskModeLabel(it.mode)}"
                     }.orEmpty(),
@@ -1494,7 +1495,7 @@ internal fun TaskBoardDetailPane(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     ) {
                                         Text(
-                                            session.title.ifBlank { boardTaskProviderLabel(session.provider) },
+                                            session.title.ifBlank { session.toolLabel },
                                             color = WandColors.textPrimary,
                                             style = MaterialTheme.typography.titleSmall,
                                             maxLines = 1,
@@ -1579,7 +1580,7 @@ internal fun TaskBoardDetailPane(
                 }
                 if (teamTarget == null && employeeTarget == null) {
                     WandButton(
-                        label = "执行设置 · ${boardTaskProviderLabel(agent.provider)} · ${boardTaskModeLabel(agent.mode)}",
+                        label = "执行设置 · ${boardTaskAgentLabel(agent.provider, agent.engine)} · ${boardTaskModeLabel(agent.mode)}",
                         onClick = { executionSettingsOpen = !executionSettingsOpen }, enabled = !busy,
                         variant = WandButtonVariant.Text, modifier = Modifier.fillMaxWidth().semantics {
                             stateDescription = if (executionSettingsOpen) "已展开" else "已收起"

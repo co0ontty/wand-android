@@ -1,6 +1,7 @@
 package com.wand.app.ui
 
 import androidx.compose.runtime.saveable.SaverScope
+import com.wand.app.ui.screens.HomeListMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -236,17 +237,28 @@ class AppNavTest {
     }
 
     @Test
-    fun roundTrip_contactsTabs() {
-        assertEquals(Screen.Contacts(), roundTrip(Screen.Contacts()))
-        assertEquals(
-            Screen.Contacts(ContactsTab.Chats),
-            roundTrip(Screen.Contacts(ContactsTab.Chats)),
-        )
-        // 合并前的两个页面键仍能恢复：不落到空页，也不丢分段。
-        assertEquals(listOf(Screen.SessionList, Screen.Contacts(ContactsTab.Chats)),
-            restoreKeys("session-list", "ai-teams"))
-        assertEquals(listOf(Screen.SessionList, Screen.Contacts(ContactsTab.Employees)),
-            restoreKeys("session-list", "silicon-employees"))
+    fun legacyContactsKeysMigrateToTheContactsHomeMode() {
+        // 通讯录曾经是栈记录（`contacts`，合并前还有 `ai-teams` / `silicon-employees`）。
+        // 它现在是根壳的页签：恢复时丢掉那条记录、落回根，并把模式切到通讯录。
+        for (key in listOf("contacts", "contacts\u0001chats", "ai-teams", "silicon-employees")) {
+            val restored = NavState.Saver.restore(listOf("session-list", key))!!
+            assertEquals(listOf(Screen.SessionList), restored.stack.toList())
+            assertEquals(HomeListMode.Contacts, restored.homeMode)
+        }
+    }
+
+    @Test
+    fun legacyContactsKeyBelowAnotherScreenDoesNotStealTheTop() {
+        // `[列表, 通讯录, 会话]`：栈尾是会话，恢复停在会话上，不该被通讯录拽走。
+        val restored = NavState.Saver.restore(
+            listOf("session-list", "contacts", "conversation\u0001dm_a"),
+        )!!
+        assertEquals(Screen.Conversation("dm_a"), restored.current)
+        assertTrue(restored.homeMode != HomeListMode.Contacts)
+    }
+
+    @Test
+    fun roundTrip_aiTeamDetailKeepsTeamIdVerbatim() {
         val detail = roundTrip(Screen.AiTeamDetail("team_1"))
         assertEquals(Screen.AiTeamDetail("team_1"), detail)
         // teamId 里的特殊字符不破坏恢复（\u0001 才是字段分隔符）。

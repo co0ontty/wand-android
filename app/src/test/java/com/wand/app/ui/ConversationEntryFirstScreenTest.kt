@@ -121,7 +121,7 @@ class ConversationEntryFirstScreenTest {
         var preference = "{}"
         val store = ConversationStore(WandApi("http://127.0.0.1:1", null), SessionDraftStore(), backgroundScope, { preference }, { preference = it })
         assertSame(store.listState("conversations"), store.listState("conversations"))
-        val list = screen("ConversationScreens").substringAfter("internal fun ConversationList(").substringBefore("internal fun ConversationContacts(")
+        val list = screen("ConversationScreens").substringAfter("internal fun ConversationList(").substringBefore("internal fun ConversationChatScreen(")
         assertFalse("点条目不得清空搜索条件", list.contains("query = \"\"; onSelect"))
         assertTrue(list.lineSequence().first { it.contains("toggleSelected(item.id) else { create = false; keyboard?.hide(); onSelect(item.id) }") }
             .contains("onSelect(item.id)"))

@@ -55,8 +55,21 @@ class HomeShellNavigationTest {
         assertEquals("b", (restored.current as Screen.TaskBoard).taskId)
     }
 
-    @Test fun directoryReturnsToSourceAndExecutionWindowReturnsToSameObject() {
-        val nav = NavState().apply { initializeHomeMode("board"); push(Screen.TaskBoard(taskId = "t")); push(Screen.Contacts()) }
+    @Test fun contactsIsAHomeModeThatKeepsWorkPathsAcrossSwitches() {
+        val nav = NavState().apply { initializeHomeMode("board") }
+        nav.push(Screen.TaskBoard(taskId = "t"))
+        nav.selectHomeMode(HomeListMode.Contacts)
+        // 页签不占栈记录：底下的任务路径留着，切回任务仍落回同一张卡。
+        assertEquals(listOf(Screen.SessionList), nav.stack.toList())
+        assertEquals(HomeListMode.Contacts, nav.homeMode)
+        val restored = restore(nav)
+        assertEquals(HomeListMode.Contacts, restored.homeMode)
+        restored.selectHomeMode(HomeListMode.Tasks)
+        assertEquals(Screen.TaskBoard(taskId = "t"), restored.current)
+    }
+
+    @Test fun executionWindowReturnsToSameObject() {
+        val nav = NavState().apply { initializeHomeMode("board"); push(Screen.TaskBoard(taskId = "t")) }
         nav.push(Screen.Conversation("dm_a"))
         nav.syncConversation("dm_b")
         nav.push(Screen.PtyTerminal("pty"))
@@ -64,10 +77,6 @@ class HomeShellNavigationTest {
         assertEquals(Screen.Conversation("dm_b"), nav.current)
         val restored = restore(nav)
         restored.pop()
-        assertTrue(restored.current is Screen.Contacts)
-        assertEquals(HomeListMode.Tasks, restored.homeMode)
-        restored.pop()
         assertEquals(Screen.TaskBoard(taskId = "t"), restored.current)
-        assertEquals(HomeListMode.Tasks, restored.homeMode)
     }
 }

@@ -3,12 +3,13 @@ package com.wand.app.ui.screens
 import com.wand.app.data.RecentPath
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.TaskWindowLayout
+import com.wand.app.data.WandAgentEngine
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspaceBinding
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
-import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTarget
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskCreation
 import com.wand.app.data.WorkspaceTaskDetail
@@ -36,6 +37,42 @@ import org.junit.Test
 import org.json.JSONObject
 
 class TaskListStateTest {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun creationChoiceRemembersTheEngineAndRestoresItFromConfig() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val port = FakeWorkspacePort()
+        val state = TaskListState(port)
+        try {
+            // 选了 Wand Agent：provider 仍是 pi，引擎单独记。
+            state.rememberCreationChoice(defaultProvider = "pi", defaultEngine = WandAgentEngine.Sdk.raw)
+            assertEquals("pi", state.defaultProvider)
+            assertEquals("sdk", state.defaultEngine)
+            assertEquals("sdk", port.rememberedEngine)
+
+            // 服务端带着引擎回来时，恢复出来的目标必须是 Wand Agent 而不是 Pi CLI。
+            port.pendingConfig = CompletableDeferred(ServerConfigInfo.parse(JSONObject()
+                .put("defaultProvider", "pi").put("defaultEngine", "sdk")))
+            val restored = TaskListState(port)
+            assertTrue(restored.loadCreationDefaults())
+            assertEquals("sdk", restored.defaultEngine)
+            assertEquals(
+                WorkspaceSessionTarget.WandAgent,
+                WorkspaceSessionTarget.fromPreference(restored.defaultProvider, restored.defaultEngine),
+            )
+
+            // 老服务端没有该字段：按 Pi CLI 处理，不冒充 Wand Agent。
+            assertEquals(
+                WorkspaceSessionTarget.Pi,
+                WorkspaceSessionTarget.fromPreference("pi", null),
+            )
+            restored.shutdown()
+        } finally {
+            state.shutdown()
+            Dispatchers.resetMain()
+        }
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun lateDefaultsCannotReplaceExplicitStructuredChoiceBeforeCreation() = runTest {
@@ -564,13 +601,18 @@ class TaskListStateTest {
         val savedLayouts = mutableListOf<Pair<String, TaskWindowLayout?>>()
         var taskDefault: String? = null
         var recent: List<RecentPath> = emptyList()
+        /** 最近一次写回服务端的默认执行引擎。 */
+        var rememberedEngine: String? = null
 
         override suspend fun serverConfig(): ServerConfigInfo = pendingConfig?.await()
             ?: ServerConfigInfo.parse(JSONObject())
 
         override suspend fun updateCreationDefaults(
             defaultProvider: String?, defaultSessionKind: String?, defaultTaskWorktree: Boolean?,
-        ) = Unit
+            defaultEngine: String?,
+        ) {
+            rememberedEngine = defaultEngine
+        }
 
         override suspend fun listTaskGroups(): List<TaskDirectoryGroup> {
             listGroupsCalls += 1

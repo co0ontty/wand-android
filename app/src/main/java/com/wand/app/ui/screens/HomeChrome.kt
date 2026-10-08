@@ -147,6 +147,8 @@ internal fun HomeTopBar(
     onCollapseSidebar: (() -> Unit)?,
     onNewTask: (() -> Unit)? = null,
     newTaskEnabled: Boolean = interactionEnabled,
+    /** 模式专属动作（如通讯录的派工 / 创建）：同一根顶栏的右侧槽位，不另开一条标题栏。 */
+    trailingActions: (@Composable () -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var restoreMenuFocus by remember { mutableStateOf(false) }
@@ -181,6 +183,7 @@ internal fun HomeTopBar(
                 tint = WandColors.brand,
             )
         }
+        trailingActions?.invoke()
         if (onCollapseSidebar != null) {
             WandIconButton(
                 icon = WandIcons.panelCollapse,
@@ -1256,7 +1259,7 @@ internal fun HomeGroupCard(
                         WorkspaceSessionTarget.OPTIONS.filterNot { it.isShell }.forEach { target ->
                             DropdownMenuItem(
                                 text = { Text(target.label) },
-                                leadingIcon = { WandProviderMark(provider = target.raw,
+                                leadingIcon = { WandProviderMark(provider = target.provider ?: "shell",
                                     variant = WandProviderMarkVariant.Tinted) },
                                 enabled = enabled,
                                 onClick = {
@@ -1799,11 +1802,12 @@ internal enum class HomeMenuPillItem(val label: String, val description: String)
         }
 }
 
-/** 通讯录保留现有返回来源；其余三项切换各自保存的工作路径。 */
+/** 四项都是根壳里的视图页签（含通讯录），选中态由当前 [HomeListMode] 决定。 */
 internal fun homeMenuPillSelection(mode: HomeListMode): Int = when (mode) {
     HomeListMode.Sessions -> HomeMenuPillItem.Chats.ordinal
     HomeListMode.Tasks -> HomeMenuPillItem.Tasks.ordinal
     HomeListMode.Im -> HomeMenuPillItem.Im.ordinal
+    HomeListMode.Contacts -> HomeMenuPillItem.Contacts.ordinal
 }
 
 /** 参考 APP 的细描边悬浮胶囊；字体放大时以实际测量扩高，不压缩文字或触控区域。 */
@@ -1857,11 +1861,11 @@ private fun RowScope.HomeMenuPillButton(
         modifier = Modifier.weight(1f).heightIn(min = height)
             .clip(WandShapes.full)
             .background(if (selected) WandColors.surfaceSoft else Color.Transparent)
-            .clickable(enabled = enabled, role = if (item == HomeMenuPillItem.Contacts) Role.Button else Role.Tab,
+            .clickable(enabled = enabled, role = Role.Tab,
                 onClickLabel = item.description, onClick = onClick)
             .semantics {
                 contentDescription = if (selected) "当前${item.label}" else item.description
-                if (item != HomeMenuPillItem.Contacts) this.selected = selected
+                this.selected = selected
             }
             .padding(horizontal = 4.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

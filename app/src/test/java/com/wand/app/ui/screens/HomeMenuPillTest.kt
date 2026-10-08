@@ -16,12 +16,11 @@ class HomeMenuPillTest {
     }
 
     @Test fun selectionFollowsModesAfterChangingDisplayOrder() {
+        // 四项都是根壳里的页签，通讯录不再是一个「点了就跳走」的按钮。
         assertEquals(HomeMenuPillItem.Chats.ordinal, homeMenuPillSelection(HomeListMode.Sessions))
         assertEquals(HomeMenuPillItem.Tasks.ordinal, homeMenuPillSelection(HomeListMode.Tasks))
         assertEquals(HomeMenuPillItem.Im.ordinal, homeMenuPillSelection(HomeListMode.Im))
-        HomeListMode.entries.forEach {
-            assertNotEquals(HomeMenuPillItem.Contacts.ordinal, homeMenuPillSelection(it))
-        }
+        assertEquals(HomeMenuPillItem.Contacts.ordinal, homeMenuPillSelection(HomeListMode.Contacts))
     }
 
     @Test fun phoneAndTabletRetainTheSameNavigationAndDirectoryReturnPath() {
@@ -30,7 +29,10 @@ class HomeMenuPillTest {
         val tablet = app.substringAfter("private fun WideReadyContent(").substringBefore("private fun SidebarResizeHandle(")
         assertTrue(phone.contains("TaskListScreen("))
         assertTrue(tablet.contains("TaskListScreen("))
-        assertTrue(tablet.contains("if (nav.current !is Screen.Contacts) nav.push(Screen.Contacts())"))
+        // 通讯录不再是 push 出去的详情页：两个尺寸都把目录数据交给同一张列表壳。
+        assertTrue(phone.contains("directoryApi = api,"))
+        assertTrue(tablet.contains("directoryApi = api,"))
+        assertFalse(app.contains("nav.push(Screen.Contacts"))
         assertFalse(app.contains("showMenuPill"))
     }
 

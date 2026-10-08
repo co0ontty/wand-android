@@ -87,6 +87,7 @@ interface WorkspacePort : TaskChangeSource {
         defaultProvider: String? = null,
         defaultSessionKind: String? = null,
         defaultTaskWorktree: Boolean? = null,
+        defaultEngine: String? = null,
     ) {
         throw UnsupportedOperationException("配置接口不可用")
     }
