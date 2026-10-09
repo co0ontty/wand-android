@@ -34,10 +34,11 @@ internal fun ConversationGroupEditor(
     state: ConversationStore,
     inviteTo: ConversationInstance? = null,
     presetId: String? = null,
+    draftContext: String = inviteTo?.id ?: "create",
     onClose: () -> Unit,
     onAccepted: (String) -> Unit,
 ) {
-    val context = inviteTo?.id ?: "create"
+    val context = draftContext
     val draft = rememberSaveable(context, saver = com.wand.app.ui.ConversationGroupDraft.Saver) { state.groupDraft(context) }
     SideEffect { state.rememberGroupDraft(context, draft) }
     var selected by draft::selected

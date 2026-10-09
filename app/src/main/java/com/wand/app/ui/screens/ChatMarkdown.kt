@@ -92,9 +92,11 @@ private sealed class MarkdownBlock {
 /** 默认 null：只在群聊启用，普通聊天/工具卡/公告完全沿用旧解析与链接动作。 */
 typealias InlineMarkdownDecoration = (AnnotatedString, List<IntRange>) -> AnnotatedString
 
+internal val LocalMarkdownInlineDecoration = androidx.compose.runtime.compositionLocalOf<InlineMarkdownDecoration?> { null }
+
 /** 原生 Markdown 渲染：块级结构独立布局，内联标记使用 AnnotatedString。 */
 @Composable
-fun MarkdownText(text: String, inlineDecoration: InlineMarkdownDecoration? = null) {
+fun MarkdownText(text: String, inlineDecoration: InlineMarkdownDecoration? = LocalMarkdownInlineDecoration.current) {
     val compact = LocalActivityFoldCompact.current
     val bodySize = if (compact) 12.sp else 15.sp
     val bodyHeight = if (compact) 18.sp else 22.sp

@@ -80,7 +80,7 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
-import com.wand.app.ui.screens.AiTeamChatScreen
+import com.wand.app.ui.screens.AiTeamConversationRoute
 import com.wand.app.ui.screens.ConversationChatScreen
 import com.wand.app.ui.screens.ConversationList
 import com.wand.app.ui.screens.AiTeamDetailScreen
@@ -522,12 +522,6 @@ private fun SessionDetailScreen(
     onOpenContacts: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    LaunchedEffect(screen) {
-        if (screen is Screen.AiTeamChat) {
-            val groupId = runCatching { api.aiTeamRunDetail(screen.runId).run.conversationId }.getOrNull()
-            if (groupId != null && nav.current == screen) { conversationState.select(groupId); nav.replaceTop(Screen.Conversation(groupId)) }
-        }
-    }
     when (screen) {
         is Screen.SessionList -> Unit
         is Screen.Conversation -> {
@@ -649,16 +643,21 @@ private fun SessionDetailScreen(
                 if (nav.current is Screen.AiTeamDetail) nav.pop()
             },
         )
-        is Screen.AiTeamChat -> AiTeamChatScreen(
+        is Screen.AiTeamChat -> AiTeamConversationRoute(
             api = api,
             runId = screen.runId,
-            sessionDrafts = sessionDrafts,
-            isHapticEnabled = actions.settings.isHapticEnabled,
-            taskIdentifier = screen.taskIdentifier,
             showBack = showBack,
             onBack = { nav.pop() },
-            onOpenMemberSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
-            onOpenFullSession = { sessionId -> nav.push(Screen.Chat(sessionId)) },
+            onOpenSession = { id -> conversationState.openSession(id) { nav.push(it.detailScreen()) } },
+            onResolved = { run, id ->
+                if (nav.current == screen) {
+                    conversationState.filter(id, run.taskId)
+                    conversationState.target(id, if (run.status in listOf("running", "awaiting_approval", "waiting_user"))
+                        com.wand.app.data.ConversationTarget(run.taskId, run.id) else null)
+                    conversationState.select(id)
+                    nav.replaceTop(Screen.Conversation(id))
+                }
+            },
         )
         is Screen.WorkspaceTask -> WorkspaceTaskScreen(
             api = api,
@@ -758,6 +757,8 @@ private fun SinglePaneContent(
                 api = api,
                 boardApi = api,
                 directoryApi = api,
+                directoryConversations = conversationState,
+                onOpenConversation = { id -> conversationState.select(id); openConversation(id) },
                 serverDisplayName = actions.connection.serverDisplayName,
                 homeListMode = homeListMode,
                 onHomeListModeChange = { onHomeListModeChange(it) },
@@ -952,6 +953,8 @@ private fun WideReadyContent(
                                 api = api,
                                 boardApi = api,
                                 directoryApi = api,
+                                directoryConversations = conversationState,
+                                onOpenConversation = { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) },
                                 serverDisplayName = actions.connection.serverDisplayName,
                                 modifier = Modifier.fillMaxSize(),
                                 homeListMode = homeListMode,

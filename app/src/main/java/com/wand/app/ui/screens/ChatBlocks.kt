@@ -216,6 +216,7 @@ fun TurnView(
     activeCommandIds: Set<String>? = null,
     toolResultsById: Map<String, ContentBlock.ToolResult> = emptyMap(),
     compactUser: Boolean = false,
+    userTail: Boolean = true,
     initiallyCollapsed: Boolean = false,
     currentReplyExpandedOverride: Boolean? = null,
     showHeader: Boolean = true,
@@ -234,7 +235,7 @@ fun TurnView(
         return
     }
     if (turn.role == "user") {
-        UserTurnView(turn, compact = compactUser)
+        UserTurnView(turn, compact = compactUser, showTime = showHeader, tail = userTail)
         return
     }
     val messageScope = cardMessageScope(
@@ -291,6 +292,9 @@ fun TurnView(
                     }
                 },
             )
+        }
+        if (showContent && !showHeader && collapsed && !activityOnly && preview.isNotBlank()) {
+            Text(preview, style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary)
         }
         if (showContent) turn.resourceSelection?.let { selection ->
             Text(selection.label, color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall,
@@ -1450,10 +1454,13 @@ private fun ChatMessageTime(
 
 /** user turn 只保留父对话内容；subagent 输出统一交给底部常驻 Agent 状态坞。 */
 @Composable
-private fun UserTurnView(turn: ConversationTurn, compact: Boolean) {
+private fun UserTurnView(turn: ConversationTurn, compact: Boolean, showTime: Boolean, tail: Boolean) {
     val parentBlocks = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
     if (parentBlocks.any { it is ContentBlock.Text && it.text.isNotBlank() }) {
-        UserBubble(turn.copy(content = parentBlocks), compact = compact)
+        UserBubble(turn.copy(content = parentBlocks), compact = compact, showTime = showTime, tail = tail)
+    }
+    parentBlocks.filterNot { it is ContentBlock.Text }.forEach { block ->
+        BlockView(block, foldKey = cardMessageScope(LocalChatSessionId.current, turn.role, turn.createdAt, ""))
     }
 }
 
@@ -2324,7 +2331,7 @@ internal fun subagentStepCount(blocks: List<ContentBlock>): Int =
     }
 
 @Composable
-private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
+private fun UserBubble(turn: ConversationTurn, compact: Boolean, showTime: Boolean, tail: Boolean) {
     val rawText = turn.content
         .filterIsInstance<ContentBlock.Text>()
         .joinToString("\n") { it.text }
@@ -2338,7 +2345,7 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
     val bubbleShape = RoundedCornerShape(
         topStart = WandShapes.radiusLg,
         topEnd = WandShapes.radiusLg,
-        bottomEnd = WandShapes.radiusXs, // 右下小圆角"尾巴"
+        bottomEnd = if (tail) WandShapes.radiusXs else WandShapes.radiusLg, // 连续消息仅最后一条收尾
         bottomStart = WandShapes.radiusLg,
     )
     Column(
@@ -2346,13 +2353,13 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean) {
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 44.dp),
+            .padding(start = if (showTime) 44.dp else 0.dp),
     ) {
-        if (parsed.body.isNotBlank()) {
+        if (showTime && parsed.body.isNotBlank()) {
             ChatMessageTime(conversationTurnClock(turn), alignEnd = true) {
                 MessageCopyButton(copyText = parsed.body)
             }
-        } else {
+        } else if (showTime) {
             ChatMessageTime(conversationTurnClock(turn), alignEnd = true)
         }
         // 附件缩略图 / 文件块：右对齐贴在气泡上方（对齐网页 user-attachments 块在正文之上）。

@@ -2,7 +2,6 @@ package com.wand.app.ui.screens
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -34,7 +33,7 @@ internal fun ConversationSessionReplyCard(turn: ConversationTurn, protocol: Chat
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(turn.sessionLink?.title.orEmpty(), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll)) {
-                SelectionContainer { Text(preview?.text ?: "消息已接收，正在启动独立会话。", style = MaterialTheme.typography.bodyMedium) }
+                TurnView(ConversationTurn("assistant", listOf(ContentBlock.Text(preview?.text ?: "消息已接收，正在启动独立会话。", null))), showHeader = false)
                 val last = protocol?.messages?.lastOrNull()
                 val questions = last?.content?.filterIsInstance<ContentBlock.ToolUse>()?.filter { protocol?.canAnswerAskUser(it.id) == true }.orEmpty()
                 if (questions.isNotEmpty() && last != null) TurnView(last.copy(content = questions), showHeader = false,

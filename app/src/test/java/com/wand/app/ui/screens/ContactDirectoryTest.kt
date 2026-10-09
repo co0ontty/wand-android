@@ -1,30 +1,12 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.AiTeam
-import com.wand.app.data.AiTeamDirectRun
-import com.wand.app.data.AiTeamRun
-import com.wand.app.data.AiTeamRunDetail
-import com.wand.app.data.BoardDispatchResult
-import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskAgent
-import com.wand.app.data.GLOBAL_WORKSPACE_ID
-import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SiliconEmployee
-import com.wand.app.data.TaskBoardPort
-import com.wand.app.data.WandApiException
-import com.wand.app.data.Workspace
-import com.wand.app.data.WorkspaceBinding
 import java.io.File
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
-import kotlinx.coroutines.runBlocking
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -43,12 +25,6 @@ class ContactDirectoryTest {
         name: String = "开发组",
         createdAt: String = "",
     ) = AiTeam(id, name, "", emptyList(), createdAt = createdAt)
-
-    private fun workspace(
-        id: String = "ws-1",
-        cwd: String = "/repo",
-        createdAt: String? = "2026-10-02T00:00:00Z",
-    ) = Workspace(id, "项目-$id", cwd, null, null, createdAt, null)
 
     @Test
     fun directoryKeepsEveryActiveEmployeeIncludingBuiltinAndDropsArchived() {
@@ -101,93 +77,6 @@ class ContactDirectoryTest {
         assertNull(contactAssignableEmployee("e-1", listOf(employee("other"))))
         assertNull(contactAssignableEmployee("e-1", listOf(current.copy(archivedAt = "2026-10-01"))))
         assertNull(contactAssignableEmployee("e-1", listOf(current.copy(agents = emptyList()))))
-    }
-
-    @Test
-    fun newConversationUsesDefaultDirectoryWithoutOldTask() {
-        val project = workspace()
-        assertEquals(
-            WorkspaceBinding("ws-1", cwd = "/repo"),
-            contactConversationBinding("/repo", listOf(project)),
-        )
-        assertEquals(
-            WorkspaceBinding(cwd = "/repo"),
-            contactConversationBinding("/repo", listOf(workspace(GLOBAL_WORKSPACE_ID, "/repo"))),
-        )
-        assertEquals(
-            WorkspaceBinding("ws-1", cwd = "/repo"),
-            contactConversationBinding(null, listOf(project)),
-        )
-        assertNull(contactConversationBinding(null, emptyList()))
-        assertNull(contactConversationBinding("  ", listOf(workspace(GLOBAL_WORKSPACE_ID, ""))))
-        assertEquals("ws-1", contactTeamStartWorkspaceId(listOf(project)))
-        assertEquals("", contactTeamStartWorkspaceId(listOf(workspace(GLOBAL_WORKSPACE_ID, "/tmp"))))
-    }
-
-    @Test
-    fun oneClickStartsTeamChatWithoutOpeningManagement() = runBlocking {
-        val api = FakeTeamPort()
-        val request = RecentTeamConversation("team-1", "ws-1")
-        val created = request.create(api, team())
-        assertEquals(listOf(StartRequest("team-1", "ws-1", CONTACT_TEAM_NEW_CHAT_NOTE)), api.starts)
-        assertEquals("run-1", created?.detail?.run?.id)
-        assertEquals("run-1", request.runId)
-        assertNull(request.error)
-        assertFalse(request.busy)
-        assertNull(request.create(api, team()))
-        assertEquals(1, api.starts.size)
-    }
-
-    @Test
-    fun missingTeamOrProjectNeverStartsRun() = runBlocking {
-        val api = FakeTeamPort()
-        val request = RecentTeamConversation("team-1", "ws-1")
-        assertNull(request.create(api, null))
-        assertNull(request.create(api, team("other")))
-        assertNotNull(request.error)
-        val noProject = RecentTeamConversation("team-1", "")
-        assertNull(noProject.create(api, team()))
-        assertEquals("AI 团队需要先选择一个已有项目", noProject.error)
-        assertTrue(api.starts.isEmpty())
-    }
-
-    @Test
-    fun duplicateClickWhileCreatingDoesNotStartTwoRuns() = runBlocking {
-        val gate = CompletableDeferred<Unit>()
-        val api = FakeTeamPort().apply { startGate = gate }
-        val request = RecentTeamConversation("team-1", "ws-1")
-        val creating = async { request.create(api, team()) }
-        api.startStarted.await()
-        assertTrue(request.busy)
-        assertNull(request.create(api, team()))
-        gate.complete(Unit)
-        assertNotNull(creating.await())
-        assertEquals(1, api.starts.size)
-        assertFalse(request.busy)
-    }
-
-    @Test
-    fun unknownCreationNeverBlindlyCreatesDuplicate() = runBlocking {
-        for (status in listOf(null, 500, 408, 409)) {
-            val api = FakeTeamPort().apply { failure = WandApiException(status, "结果未知") }
-            val request = RecentTeamConversation("team-1", "ws-1")
-            assertNull(request.create(api, team()))
-            assertTrue(request.creationUnconfirmed)
-            assertTrue(request.error!!.contains("核对"))
-            assertNull(request.create(api, team()))
-            assertEquals(1, api.starts.size)
-        }
-    }
-
-    @Test
-    fun cancellationKeepsUnknownDeliveryProtection() {
-        val api = FakeTeamPort().apply { failure = CancellationException("页面离开") }
-        val request = RecentTeamConversation("team-1", "ws-1")
-        assertThrows(CancellationException::class.java) {
-            runBlocking { request.create(api, team()) }
-        }
-        assertTrue(request.creationUnconfirmed)
-        assertFalse(request.busy)
     }
 
     @Test
@@ -259,10 +148,14 @@ class ContactDirectoryTest {
         assertFalse(screen.contains("拼音索引"))
         assertFalse(screen.contains("WandCard"))
         assertTrue(screen.contains("管理\${employee.name}的信息"))
-        assertTrue(screen.contains("与\${employee.name}新建对话"))
+        assertTrue(screen.contains("与\${employee.name}聊天"))
         assertTrue(screen.contains("与\${team.name}新建群聊"))
-        assertTrue(screen.contains("RecentEmployeeConversation"))
-        assertTrue(screen.contains("RecentTeamConversation"))
+        assertTrue(screen.contains("onOpenConversation(employeeConversationId(assignable.id))"))
+        assertTrue(screen.contains("ConversationGroupEditor("))
+        assertTrue(screen.contains("draftContext = \"contact:\$presetId\""))
+        assertFalse(screen.contains("RecentEmployeeConversation"))
+        assertFalse(screen.contains("startDirectTeamRun"))
+        assertFalse(screen.contains("taskDefaultCwd"))
         assertTrue(screen.contains("onOpenEmployee(employee.id)"))
         assertFalse(screen.contains("SiliconEmployeeListSection"))
         assertFalse(screen.contains("AiTeamListSection"))
@@ -276,59 +169,16 @@ class ContactDirectoryTest {
             .substringBefore("projection == HomeListMode.Im.storageValue")
         assertTrue(branch.contains("ContactsScreen("))
         assertTrue(branch.contains("onOpenEmployee = onOpenEmployee"))
+        assertTrue(branch.contains("onOpenConversation = onOpenConversation"))
+        assertTrue(branch.contains("conversations = directoryConversations"))
         assertTrue(branch.contains("bottomClearance = menuClearance"))
         val app = File("src/main/java/com/wand/app/ui/WandApp.kt").readText()
         assertTrue(app.contains("onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }"))
-        assertTrue(app.contains("onOpenSession = onOpenSession"))
+        assertTrue(app.contains("onOpenConversation = { id -> conversationState.select(id); openConversation(id) }"))
+        assertTrue(app.contains("onOpenConversation = { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) }"))
         assertTrue(app.contains("onOpenTeam = { nav.push(Screen.AiTeamDetail(it)) }"))
         assertTrue(app.contains("onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) }"))
         assertFalse(branch.contains("onEditTeam"))
     }
 
-    private data class StartRequest(val teamId: String, val workspaceId: String, val note: String)
-
-    private class FakeTeamPort : TaskBoardPort {
-        val starts = mutableListOf<StartRequest>()
-        val startStarted = CompletableDeferred<Unit>()
-        var startGate: CompletableDeferred<Unit>? = null
-        var failure: Exception? = null
-        var result = AiTeamDirectRun(
-            detail = AiTeamRunDetail(
-                run = AiTeamRun(
-                    id = "run-1", teamId = "team-1", team = null, taskId = "task-1",
-                    objective = CONTACT_TEAM_NEW_CHAT_NOTE, status = "running",
-                    statusDetail = "", stepsUsed = 0, stepLimit = 30, chatSessionId = "chat-1",
-                ),
-                steps = emptyList(),
-            ),
-            taskId = "task-1",
-        )
-
-        override suspend fun startDirectTeamRun(
-            teamId: String, workspaceId: String, note: String,
-        ): AiTeamDirectRun {
-            starts += StartRequest(teamId, workspaceId, note)
-            startStarted.complete(Unit)
-            startGate?.await()
-            failure?.let { throw it }
-            return result
-        }
-
-        override suspend fun listBoardTasks(workspaceId: String?): List<BoardTask> = error("unused")
-        override suspend fun getBoardTask(id: String): BoardTask? = error("unused")
-        override suspend fun createBoardTask(
-            title: String, description: String, status: String, priority: String,
-            workspaceId: String?, agent: BoardTaskAgent?, parentTaskId: String?,
-        ): BoardTask = error("unused")
-        override suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask = error("unused")
-        override suspend fun deleteBoardTask(id: String) = error("unused")
-        override suspend fun dispatchBoardTask(
-            id: String, agent: BoardTaskAgent, prompt: String?, workspaceId: String?,
-        ): BoardDispatchResult = error("unused")
-        override suspend fun listBoardWorkspaces(): List<Workspace> = error("unused")
-        override suspend fun boardModels(): ModelsResponse = error("unused")
-        override suspend fun boardTaskAgentDefaults(): BoardTaskAgent = error("unused")
-        override suspend fun saveBoardTaskAgentDefaults(agent: BoardTaskAgent): BoardTaskAgent =
-            error("unused")
-    }
 }

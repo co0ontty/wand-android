@@ -56,7 +56,8 @@ class ConversationPresentationContractTest {
         assertTrue(screen.contains("messages:$" + "displayedId:$" + "displayedFilter"))
         val row = source("ui/screens/AiTeamChatScreen.kt").substringAfter("internal fun ConversationInstanceTurn(").substringBefore("private fun TeamTurnRow(")
         assertTrue(row.contains("TurnView(turn, showHeader = false"))
-        assertTrue(row.contains("parseUserAttachmentText"))
+        assertTrue(source("ui/screens/ChatBlocks.kt").contains("parseUserAttachmentText"))
+        assertFalse(row.contains("MarkdownText("))
         assertTrue(row.contains("WandTeamReportFileCard"))
         assertFalse(row.contains("hashCode()"))
     }
@@ -83,8 +84,9 @@ class ConversationPresentationContractTest {
         assertTrue(row.contains("TeamMessageRow(own,"))
         assertTrue(row.contains("val clock = conversationBubbleClock(turn)"))
         assertTrue(row.contains("if (clock.isNotBlank()) Text(clock"))
-        assertTrue(row.contains("turn.reportFile != null -> WandTeamReportFileCard"))
-        assertTrue(row.contains("WandInlinePanel(expanded, growFrom = Alignment.Top) { MarkdownText(text) }"))
+        assertTrue(row.contains("if (turn.reportFile != null) WandTeamReportFileCard"))
+        assertTrue(row.contains("currentReplyExpandedOverride = if (!own && truncated && !nativeBlocks) expanded else true"))
+        assertTrue(row.contains("LocalMarkdownInlineDecoration provides teamChatMarkdownDecoration(mentionNames)"))
         assertTrue(row.contains("onOpenSession(sessionId)"))
         assertTrue(row.contains("conversationNeedsCollapse(text)"))
     }
@@ -92,8 +94,9 @@ class ConversationPresentationContractTest {
     @Test fun contactsBackClosesPanelsAndSearchBeforeLeavingTheTab() {
         // 通讯录是根壳的页签：返回键先收派工/创建面板与搜索，再交给系统回上一层。
         val contacts = source("ui/screens/ContactsScreen.kt")
-        val back = contacts.substringAfter("BackHandler(enabled = templatesOpen || dispatchOpen || query.isNotEmpty())")
-            .substringBefore("BackHandler(enabled = anyBusy)")
+        val back = contacts.substringAfter("BackHandler(enabled = templatesOpen || dispatchOpen || groupPresetId != null || query.isNotEmpty())")
+            .substringBefore("BackHandler(enabled = dispatchFlow.busy)")
+        assertTrue(back.contains("groupPresetId != null -> groupPresetId = null"))
         assertTrue(back.contains("dispatchOpen -> closeDispatchPanel()"))
         assertTrue(back.contains("templatesOpen -> closeCreatePanel()"))
         assertTrue(back.contains("else -> clearSearch()"))

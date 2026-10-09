@@ -130,6 +130,8 @@ fun TaskListScreen(
      * 不是任务树，两个端口虽然由同一个 WandApi 实现，但不必在这里合并成一个宽接口。
      */
     directoryApi: WandApi? = null,
+    directoryConversations: com.wand.app.ui.ConversationStore? = null,
+    onOpenConversation: (String) -> Unit = {},
     serverDisplayName: String,
     modifier: Modifier = Modifier,
     homeListMode: HomeListMode = HomeListMode.Sessions,
@@ -1247,11 +1249,11 @@ fun TaskListScreen(
                     // 通讯录与工作区/任务共享同一张列表壳：底栏、系统栏、清屏都在这里，
                     // 内容自己只管页头与名单。
                     val directory = directoryApi
-                    if (directory == null) {
+                    if (directory == null || directoryConversations == null) {
                         LoadingState(modifier = Modifier.fillMaxSize(), text = "正在打开通讯录…")
                     } else {
                     ContactsScreen(
-                        api = directory,
+                        conversations = directoryConversations,
                         serverDisplayName = serverDisplayName,
                         interactionEnabled = interactionEnabled,
                         onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
@@ -1260,7 +1262,7 @@ fun TaskListScreen(
                         onOpenEmployee = onOpenEmployee,
                         onOpenTeam = onOpenTeam,
                         onCreateEmployee = onCreateEmployee,
-                        onOpenSession = onOpenSession,
+                        onOpenConversation = onOpenConversation,
                         onOpenGroupChat = onOpenGroupChat,
                         onCreateTeam = onCreateTeam,
                         onCollapseSidebar = onCollapseSidebar,

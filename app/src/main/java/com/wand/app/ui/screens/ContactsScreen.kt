@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,10 +27,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,10 +61,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.wand.app.SessionWatcher
 import com.wand.app.data.AiTeam
 import com.wand.app.data.SiliconEmployee
-import com.wand.app.data.WandApi
 import com.wand.app.data.Workspace
-import com.wand.app.ui.SEND_FAILED_DWELL_MS
-import com.wand.app.ui.SEND_SENT_DWELL_MS
+import com.wand.app.data.employeeConversationId
+import com.wand.app.ui.ConversationStore
 import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandButtonVariant
@@ -81,7 +81,6 @@ import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val ContactRowMinHeight = 56.dp
@@ -93,7 +92,7 @@ private val ContactDividerInset = 64.dp
  *
  * 顶部搜索框按「名字 / 职责 / 标签」过滤；名单、团队都按创建时间先后排列（早的在上），
  * 不做拼音分组；团队（群聊）在上、员工在下。
- * 点头像管理资料，点名字开新对话，右上角 ＋ 仍从原位展开创建面板。
+ * 点头像管理资料，点员工名字进入私聊，点团队名字按模板建群；发送需求后才开始工作。
  *
  * 它不是一条独立页面：顶栏复用根壳的 [HomeTopBar]，底部按 [bottomClearance] 给悬浮菜单胶囊留位，
  * 于是切到通讯录时底栏常驻、且本项按页签高亮。
@@ -101,7 +100,7 @@ private val ContactDividerInset = 64.dp
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ContactsScreen(
-    api: WandApi,
+    conversations: ConversationStore,
     serverDisplayName: String,
     interactionEnabled: Boolean,
     onOpenSettings: () -> Unit,
@@ -110,17 +109,17 @@ fun ContactsScreen(
     onOpenEmployee: (String) -> Unit,
     onOpenTeam: (String) -> Unit,
     onCreateEmployee: () -> Unit,
-    onOpenSession: (TaskSessionRoute) -> Unit,
+    onOpenConversation: (String) -> Unit,
     onOpenGroupChat: (String) -> Unit,
     onCreateTeam: (String) -> Unit,
     onCollapseSidebar: (() -> Unit)? = null,
 ) {
+    val api = conversations.api
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var employees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
     var teams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
     var workspaces by remember { mutableStateOf<List<Workspace>>(emptyList()) }
-    var defaultCwd by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshNonce by remember { mutableIntStateOf(0) }
@@ -133,10 +132,8 @@ fun ContactsScreen(
     var dispatchProjectMenuOpen by remember { mutableStateOf(false) }
     val dispatchFlow = remember { TeamDispatchFlowState() }
     var query by rememberSaveable { mutableStateOf("") }
-    val employeeConversations = remember { mutableStateMapOf<String, RecentEmployeeConversation>() }
-    val teamConversations = remember { mutableStateMapOf<String, RecentTeamConversation>() }
+    var groupPresetId by rememberSaveable { mutableStateOf<String?>(null) }
     val rowErrors = remember { mutableStateMapOf<String, String>() }
-    var openingId by remember { mutableLongStateOf(0L) }
     val visibleEmployees = remember(employees, query) {
         contactOrderedEmployees(contactDirectoryEmployees(employees, query))
     }
@@ -148,9 +145,7 @@ fun ContactsScreen(
     val searchFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val binding = contactConversationBinding(defaultCwd, workspaces)
-    val teamWorkspaceId = contactTeamStartWorkspaceId(workspaces)
-    val anyBusy = employeeConversations.values.any { it.busy } || teamConversations.values.any { it.busy }
+    val anyBusy = dispatchFlow.busy || groupPresetId?.let { conversations.operation("group:contact:$it").phase == "sending" } == true
     val loadingEmpty = loading && employees.isEmpty() && teams.isEmpty()
     val layout = remember(visibleEmployees, visibleTeams, query.isBlank(), error != null, loadingEmpty) {
         contactDirectoryLayout(
@@ -164,8 +159,7 @@ fun ContactsScreen(
     val employeeById = remember(visibleEmployees) { visibleEmployees.associateBy { it.id } }
     val teamById = remember(visibleTeams) { visibleTeams.associateBy { it.id } }
 
-    fun conversationBusy(): Boolean = employeeConversations.values.any { it.busy } ||
-        teamConversations.values.any { it.busy }
+    fun conversationBusy(): Boolean = anyBusy
 
     fun closeCreatePanel() {
         templatesOpen = false
@@ -184,14 +178,15 @@ fun ContactsScreen(
         keyboard?.hide()
     }
 
-    BackHandler(enabled = templatesOpen || dispatchOpen || query.isNotEmpty()) {
+    BackHandler(enabled = templatesOpen || dispatchOpen || groupPresetId != null || query.isNotEmpty()) {
         when {
+            groupPresetId != null -> groupPresetId = null
             dispatchOpen -> closeDispatchPanel()
             templatesOpen -> closeCreatePanel()
             else -> clearSearch()
         }
     }
-    BackHandler(enabled = anyBusy) { /* 等待新对话回执，防止离开后重复创建。 */ }
+    BackHandler(enabled = dispatchFlow.busy) { /* 临时派工仍等待确定回执；建群可退出，由共享 owner 保留提交锁。 */ }
 
     LaunchedEffect(templatesOpen, query) {
         if (templatesOpen || query.isNotEmpty()) listState.scrollToItem(0)
@@ -214,12 +209,10 @@ fun ContactsScreen(
                         val people = async { fetch { api.listSiliconEmployees() } }
                         val groups = async { fetch { api.listAiTeams() } }
                         val projects = async { fetch { api.listWorkspaces() } }
-                        val directory = async { fetch { api.taskDefaultCwd() } }
                         val failures = mutableListOf<String>()
-                        people.await().onSuccess { employees = it }.onFailure { failures += "员工" }
-                        groups.await().onSuccess { teams = it }.onFailure { failures += "团队" }
+                        people.await().onSuccess { employees = it; conversations.employees.clear(); conversations.employees.addAll(it) }.onFailure { failures += "员工" }
+                        groups.await().onSuccess { teams = it; conversations.presets.clear(); conversations.presets.addAll(it) }.onFailure { failures += "团队" }
                         projects.await().onSuccess { workspaces = it }.onFailure { failures += "项目" }
-                        directory.await().onSuccess { defaultCwd = it }.onFailure { failures += "默认目录" }
                         error = failures.takeIf { it.isNotEmpty() }
                             ?.joinToString("、")?.let { "${it}未能刷新，已有内容已保留。请重试。" }
                     }
@@ -237,35 +230,12 @@ fun ContactsScreen(
         closeCreatePanel()
         rowErrors.remove(employee.id)
         val assignable = contactAssignableEmployee(employee.id, employees)
-        val target = binding
         if (assignable == null) {
             rowErrors[employee.id] = "员工已不存在或不可用，请刷新后重试。"
             return
         }
-        if (target == null) {
-            rowErrors[employee.id] = "还没有可用的工作目录，请先选择或创建一个项目。"
-            return
-        }
-        val request = employeeConversations[employee.id]
-            ?.takeIf { it.snapshot == null && it.binding == target }
-            ?: RecentEmployeeConversation(employee.id, target).also {
-                employeeConversations[employee.id] = it
-            }
-        if (request.creationUnconfirmed) return
-        openingId += 1
-        val currentOpening = openingId
-        scope.launch {
-            val snapshot = request.create(api, contactAssignableEmployee(employee.id, employees))
-            if (snapshot != null && currentOpening == openingId) {
-                onOpenSession(
-                    TaskSessionRoute(
-                        sessionId = snapshot.id,
-                        structured = snapshot.isStructured,
-                        workspaceId = snapshot.workspaceId,
-                    ),
-                )
-            }
-        }
+        // 与聊天列表、员工资料共用私聊身份；选择联系人本身不启动执行。
+        onOpenConversation(employeeConversationId(assignable.id))
     }
 
     /** 派工两步都走共享流程：建议名单 → 确认开工；导航由本页负责。 */
@@ -279,7 +249,9 @@ fun ContactsScreen(
             val runId = started.detail.run?.id.orEmpty()
             dispatchOpen = false
             dispatchNote = ""
-            if (runId.isNotBlank()) onOpenGroupChat(runId)
+            val conversationId = started.detail.run?.conversationId
+            if (!conversationId.isNullOrBlank()) onOpenConversation(conversationId)
+            else if (runId.isNotBlank()) onOpenGroupChat(runId)
         }
     }
 
@@ -292,25 +264,8 @@ fun ContactsScreen(
             rowErrors[team.id] = "团队已不存在，请刷新后重试。"
             return
         }
-        if (teamWorkspaceId.isBlank()) {
-            rowErrors[team.id] = "AI 团队需要先选择一个已有项目"
-            return
-        }
-        val request = teamConversations[team.id]
-            ?.takeIf { it.runId == null && it.workspaceId == teamWorkspaceId }
-            ?: RecentTeamConversation(team.id, teamWorkspaceId).also {
-                teamConversations[team.id] = it
-            }
-        if (request.creationUnconfirmed) return
-        openingId += 1
-        val currentOpening = openingId
-        scope.launch {
-            val created = request.create(api, contactAssignableTeam(team.id, teams))
-            val runId = created?.detail?.run?.id
-            if (!runId.isNullOrBlank() && currentOpening == openingId) {
-                onOpenGroupChat(runId)
-            }
-        }
+        closeDispatchPanel()
+        groupPresetId = assignable.id
     }
 
     Column(
@@ -335,7 +290,7 @@ fun ContactsScreen(
                     contentDescription = if (dispatchOpen) "收起临时派工" else "临时派工（决策选人）",
                     enabled = !anyBusy,
                     onClick = {
-                        if (dispatchOpen) closeDispatchPanel() else { closeCreatePanel(); dispatchOpen = true }
+                        if (dispatchOpen) closeDispatchPanel() else { closeCreatePanel(); groupPresetId = null; dispatchOpen = true }
                     },
                 )
                 WandMorphIconButton(
@@ -346,7 +301,7 @@ fun ContactsScreen(
                     enabled = !anyBusy,
                     onClick = {
                         // 两个面板互斥：它们是同位展开的，同时开会让原位语义变得摸不到。
-                        if (templatesOpen) closeCreatePanel() else { closeDispatchPanel(); templatesOpen = true }
+                        if (templatesOpen) closeCreatePanel() else { closeDispatchPanel(); groupPresetId = null; templatesOpen = true }
                     },
                 )
             },
@@ -396,7 +351,7 @@ fun ContactsScreen(
                 onStart = { startDispatch() },
             )
         }
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .widthIn(max = 720.dp)
                 .fillMaxWidth()
@@ -408,7 +363,20 @@ fun ContactsScreen(
                     }
                 },
         ) {
-            WandPullToRefresh(
+            val presetId = groupPresetId
+            if (presetId != null) {
+                CompositionLocalProvider(LocalConversationPanelHeight provides (maxHeight - bottomClearance).coerceAtLeast(0.dp)) {
+                    androidx.compose.runtime.key(presetId) {
+                        ConversationGroupEditor(
+                            state = conversations,
+                            presetId = presetId,
+                            draftContext = "contact:$presetId",
+                            onClose = { groupPresetId = null },
+                            onAccepted = { id -> groupPresetId = null; onOpenConversation(id) },
+                        )
+                    }
+                }
+            } else WandPullToRefresh(
                 isRefreshing = loading && !loadingEmpty,
                 onRefresh = {
                     if (!loading) {
@@ -524,13 +492,10 @@ fun ContactsScreen(
                             }
                             is ContactSlot.Team -> item(key = "team:${slot.id}") {
                                 val team = teamById[slot.id] ?: return@item
-                                val conversation = teamConversations[team.id]
                                 ContactTeamRow(
                                     team = team,
-                                    creating = conversation?.busy == true,
-                                    created = conversation?.runId != null,
-                                    enabled = !anyBusy && conversation?.creationUnconfirmed != true,
-                                    error = conversation?.error ?: rowErrors[team.id],
+                                    enabled = !anyBusy,
+                                    error = rowErrors[team.id],
                                     showDivider = next is ContactSlot.Team,
                                     onOpen = { openTeamConversation(team) },
                                     onAvatar = { if (!conversationBusy()) onOpenTeam(team.id) },
@@ -558,13 +523,10 @@ fun ContactsScreen(
                             }
                             is ContactSlot.Employee -> item(key = "employee:${slot.id}") {
                                 val employee = employeeById[slot.id] ?: return@item
-                                val conversation = employeeConversations[employee.id]
                                 ContactPersonRow(
                                     employee = employee,
-                                    creating = conversation?.busy == true,
-                                    created = conversation?.snapshot != null,
-                                    enabled = !anyBusy && conversation?.creationUnconfirmed != true,
-                                    error = conversation?.error ?: rowErrors[employee.id],
+                                    enabled = !anyBusy,
+                                    error = rowErrors[employee.id],
                                     showDivider = next is ContactSlot.Employee,
                                     onAvatar = { if (!conversationBusy()) onOpenEmployee(employee.id) },
                                     managementEnabled = !anyBusy,
@@ -614,8 +576,6 @@ private fun ContactSectionHeader(title: String, count: Int) {
 @Composable
 private fun ContactPersonRow(
     employee: SiliconEmployee,
-    creating: Boolean,
-    created: Boolean,
     enabled: Boolean,
     error: String?,
     showDivider: Boolean,
@@ -638,12 +598,10 @@ private fun ContactPersonRow(
         title = employee.name,
         subtitle = subtitle,
         subtitleColor = subtitleColor,
-        creating = creating,
-        created = created,
         enabled = enabled,
         error = error,
         showDivider = showDivider,
-        openDescription = if (creating) "正在创建${employee.name}的对话" else "与${employee.name}新建对话",
+        openDescription = "与${employee.name}聊天",
         onOpen = onOpen,
         modifier = modifier,
         avatar = {
@@ -667,8 +625,6 @@ private fun ContactPersonRow(
 @Composable
 private fun ContactTeamRow(
     team: AiTeam,
-    creating: Boolean,
-    created: Boolean,
     enabled: Boolean,
     error: String?,
     showDivider: Boolean,
@@ -682,12 +638,10 @@ private fun ContactTeamRow(
         title = team.name,
         subtitle = "${team.members.size} 位成员" + team.description.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
         subtitleColor = WandColors.textMuted,
-        creating = creating,
-        created = created,
         enabled = enabled,
         error = error,
         showDivider = showDivider,
-        openDescription = if (creating) "正在创建${team.name}的群聊" else "与${team.name}新建群聊",
+        openDescription = "与${team.name}新建群聊",
         onOpen = onOpen,
         modifier = modifier,
         avatar = {
@@ -720,8 +674,6 @@ private fun ContactDirectoryRow(
     title: String,
     subtitle: String?,
     subtitleColor: Color,
-    creating: Boolean,
-    created: Boolean,
     enabled: Boolean,
     error: String?,
     showDivider: Boolean,
@@ -743,7 +695,7 @@ private fun ContactDirectoryRow(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = ContactRowMinHeight)
-                    .clickable(enabled = enabled && !creating, role = Role.Button, onClick = onOpen)
+                    .clickable(enabled = enabled, role = Role.Button, onClick = onOpen)
                     .semantics { contentDescription = openDescription }
                     .padding(start = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -767,7 +719,7 @@ private fun ContactDirectoryRow(
                         )
                     }
                 }
-                ContactConversationStatus(creating = creating, created = created, enabled = enabled)
+                Icon(WandIcons.chevronRight, null, Modifier.size(24.dp), tint = if (enabled) WandColors.textSecondary else WandColors.textMuted)
             }
         }
         WandInlinePanel(visible = error != null, growFrom = Alignment.Top) {
@@ -788,28 +740,6 @@ private fun ContactDirectoryRow(
                 color = WandColors.border,
             )
         }
-    }
-}
-
-@Composable
-private fun ContactConversationStatus(
-    creating: Boolean,
-    created: Boolean,
-    enabled: Boolean,
-) {
-    Box(modifier = Modifier.size(32.dp), contentAlignment = Alignment.Center) {
-        WandStatusIconSlot(
-            indicatorColor = when {
-                creating || created -> WandColors.brand
-                enabled -> WandColors.textSecondary
-                else -> WandColors.textMuted.copy(alpha = 0.48f)
-            },
-            containerColor = Color.Transparent,
-            running = creating,
-            icon = if (created) WandIcons.check else WandIcons.send,
-            boxSize = 28.dp,
-            iconSize = 18.dp,
-        )
     }
 }
 

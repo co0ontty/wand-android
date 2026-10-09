@@ -661,6 +661,18 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             val resultsBySession = displayedDetail?.let(::conversationSessionToolResults).orEmpty()
             var previousKeys by remember(displayedId, displayedFilter) { mutableStateOf<List<String>?>(null) }
             val arrivals = remember(displayedId, displayedFilter) { mutableStateMapOf<String, Boolean>() }
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            var foreground by remember(lifecycleOwner) { mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) }
+            DisposableEffect(lifecycleOwner, displayedId, displayedFilter) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    foreground = lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) arrivals.clear()
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer); arrivals.clear() }
+            }
+            val reducedMotion = com.wand.app.ui.theme.reduceMotionEnabled()
+            LaunchedEffect(reducedMotion) { if (reducedMotion) arrivals.clear() }
             var unseen by remember(displayedId, displayedFilter) { mutableIntStateOf(0) }
             var following by remember(displayedId, displayedFilter) { mutableStateOf(true) }
             LaunchedEffect(messageList) {
@@ -684,7 +696,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         withFrameNanos { }
                         val visibleKeys = messageList.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
                         arrivals.clear()
-                        added.filter { it in visibleKeys }.forEach { arrivals[it] = true }
+                        if (foreground && !reducedMotion) added.filter { it in visibleKeys }.forEach { arrivals[it] = true }
                         unseen = 0
                     } else unseen += added.size
                 }
@@ -726,6 +738,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         else if (turn.conversationLink != null) ConversationTaskPreviewCard(turn) { state.openTask(turn.conversationLink, turn.taskPreview) }
                         else ConversationInstanceTurn(turn, state.api.baseUrl, onOpenSession, protocol = protocol, toolResults = toolResults, onAvatarClick = authorEmployeeId?.let { { onOpenEmployee(it) } }, group = displayedDetail?.kind == "group", joined = joined, tail = tail,
                             fallbackAuthor = privatePeer?.let { TurnAuthor(id = it.id, name = it.name, avatar = it.avatar) },
+                            mentionNames = (displayedDetail?.team?.members.orEmpty() + displayedDetail?.runDetails.orEmpty().flatMap { it.run.team?.members.orEmpty() }).map { it.name }.distinct(),
                             expanded = messageKey in state.expandedMessages, onExpandedChange = { expanded ->
                                 if (expanded) state.expandedMessages.add(messageKey) else state.expandedMessages.remove(messageKey)
                             }, expandRequester = messageTriggers.getOrPut(messageKey) { androidx.compose.ui.focus.FocusRequester() })

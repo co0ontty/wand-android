@@ -78,4 +78,48 @@ class ConversationStoreModeTest {
         store.shutdown()
     }
 
+    @Test fun directorySelectionReusesPrivateChatHistoryComposerAndTargetWithoutStartingRequests() = runTest {
+        val store = ConversationStore(WandApi("http://127.0.0.1:1", null), SessionDraftStore(), backgroundScope, { "" }, {})
+        val id = com.wand.app.data.employeeConversationId("employee-a")
+        val composer = store.composer(id)
+        composer.editDraft("通讯录返回后继续写")
+        val scroll = store.listState("messages:$id:")
+        val target = ConversationTarget("task-a", "run-a")
+        store.target(id, target)
+        store.select("dm_employee-b")
+        store.select(id)
+        assertEquals(id, store.selectedId)
+        assertSame(composer, store.composer(id, null))
+        assertSame(scroll, store.listState("messages:$id:"))
+        assertEquals("通讯录返回后继续写", composer.draft)
+        assertEquals(target, store.targets[id])
+        assertEquals(SendPhase.Idle, composer.sendPhase)
+        store.shutdown()
+    }
+
+    @Test fun directoryTemplateDraftsAndReceiptLocksDoNotLeakIntoOtherTemplatesOrOrdinaryCreation() = runTest {
+        val store = ConversationStore(WandApi("http://127.0.0.1:1", null), SessionDraftStore(), backgroundScope, { "" }, {})
+        val a = store.groupDraft("contact:preset-a").apply { templateId = "preset-a"; name = "我的群" }
+        val b = store.groupDraft("contact:preset-b").apply { templateId = "preset-b" }
+        assertNotSame(a, b)
+        assertNotSame(a, store.groupDraft("create"))
+        val operation = store.operation("group:contact:preset-a")
+        operation.attach()
+        var posts = 0
+        operation.submit({ posts++; throw com.wand.app.data.ConversationUnconfirmedException("request-a") })
+        runCurrent()
+        operation.detach(); operation.attach()
+        assertSame(operation, store.operation("group:contact:preset-a"))
+        assertFalse(operation.canSubmit)
+        assertFalse(operation.submit({ error("must not post twice") }))
+        assertTrue(store.operation("group:contact:preset-b").canSubmit)
+        assertSame(a, store.groupDraft("contact:preset-a"))
+        assertEquals("我的群", a.name)
+        assertEquals(1, posts)
+        val body = a.groupInput(emptyMap(), inviting = false)
+        assertEquals("preset-a", body.getString("templateId"))
+        assertFalse(body.has("input")); assertFalse(body.has("note")); assertFalse(body.has("workspaceId"))
+        store.shutdown()
+    }
+
 }

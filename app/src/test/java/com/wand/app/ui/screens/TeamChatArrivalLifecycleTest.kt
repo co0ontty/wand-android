@@ -10,10 +10,10 @@ import org.junit.Test
 /** First guard: lifecycle callbacks must actually dispatch to the page's arrival owner. */
 class TeamChatArrivalLifecycleTest {
     @Test fun pauseAndStopMustConsumePageArrivalState() {
-        val screen = File("src/main/java/com/wand/app/ui/screens/AiTeamChatScreen.kt").readText()
-        assertTrue("ON_PAUSE/ON_STOP must reach page-owned state", screen.contains("teamArrivalPaused(arrivalState)"))
-        assertTrue("new arrival must be gated by foreground", screen.contains("arrivalState.scope == projectionScope && resumed && !reducedMotion"))
-        assertTrue("old row callback must be scoped", screen.contains("teamArrivalConsumed(arrivalState, projectionScope, id)"))
+        val screen = File("src/main/java/com/wand/app/ui/screens/ConversationScreens.kt").readText()
+        assertTrue("ON_PAUSE/ON_STOP must reach page-owned state", screen.contains("Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) arrivals.clear()"))
+        assertTrue("new arrival must be gated by foreground", screen.contains("foreground && !reducedMotion"))
+        assertTrue("old row callback must be scoped", screen.contains("remember(displayedId, displayedFilter) { mutableStateMapOf<String, Boolean>() }"))
     }
 
     @Test fun pauseThenStopThenResumeConsumesOldBatchButNotLaterOne() {
