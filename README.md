@@ -58,7 +58,9 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 - 连接页只读发现当前 Wi-Fi / 有线内网的 Wand 服务：扫描当前 IPv4 网段（最多本地 `/24`）的 8443 及已保存私网端口，最多 30 秒，离开页面即取消；自定义端口也可手动输入。发现阶段不发送凭据、不登录、不扫描公网/移动数据/VPN。
 - 设置页「完整 Web 设置」直接打开当前服务器的 `/settings` 全屏网页，不经过首页、不模拟点击设置弹窗，也不替换原生聊天/终端。直接复用客户端认证，无权限面板、无第二次密码。WebView 使用当前端点的登录 cookie 与绑定到该登录的设置访问凭据；凭据不回写原生 CookieJar，客户端登录撤销/过期后立即失效。登录确实失效时返回客户端重连，不在网页再输密码。返回键直接回原生设置，关闭后清理 WebView 登录态，网页管理权限不回写原生会话。旧服务需先升级以支持 `/settings`。
 
-## 按住说话（端侧语音识别）
+## 按住说话（服务端 / 客户端本地识别）
+
+设置 → 语音输入可选择「服务端识别」或「客户端本地识别」（默认保留本地）。服务端模式录制最多 60 秒、16 kHz 单声道音频，松手后上传当前 Wand 服务器转写；需要管理员先启用、安装 whisper.cpp 并下载模型，手机不下载本地引擎。不会自动切换识别方式或第三方云服务；取消、切会话和修改草稿后，迟到转写不会覆盖新输入。服务端部署说明见主仓 `docs/server-speech.md`。
 
 聊天输入栏左侧麦克风按钮：按住录音 → 气泡实时转写 → 松手把文字**追加**进输入框（不覆盖草稿）→ 上滑取消。交互协议对齐 Web 端 voice-btn / iOS `SpeechRecognizerService`（覆盖式完整文本，非增量）。
 
@@ -67,13 +69,13 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 | 文件 | 职责 |
 |------|------|
 | `SpeechEngine.kt` | 引擎接口（start / finish / cancel，回调 onPartial / onFinal / onError） |
-| `SystemSpeechEngine.kt` | 系统 `SpeechRecognizer`（API 31+ 有端侧服务时用 `createOnDeviceSpeechRecognizer`，否则默认识别器 + `EXTRA_PREFER_OFFLINE`） |
+| `SystemSpeechEngine.kt` | 仅系统端侧 `createOnDeviceSpeechRecognizer`；没有端侧服务时用本地模型，不调用厂商云识别 |
 | `SherpaSpeechEngine.kt` | sherpa-onnx 流式 Zipformer-CTC 中文模型，完全离线；识别器常驻复用 |
 | `SttModelManager.kt` | 用户确认后下载语音引擎与模型（模型从 hf-mirror 优先 / huggingface 兜底下载，中文模型约 26 MB → `filesDir/asr/`） |
 | `SpeechNativeLibrary.kt` | 从固定版本的官方 GitHub AAR 按需下载 arm64 JNI，校验 SHA-256、只读落入 `noBackupFilesDir` 后 `System.load` |
 | `VoiceInputController.kt` | 按住会话状态机 + 引擎选择 |
 
-**引擎优先级**：sherpa 本地模型 + 已下载引擎 → 系统识别器（GMS 设备）→ 弹出启用对话框。未启用本地语音时，APK 不含 sherpa 原生库，不会自动下载；确认启用才下载约 38 MB 的官方 AAR，提取约 22 MB arm64 库，同时按需下载所选模型。已有模型的升级用户只需下载引擎一次。国产无谷歌服务 ROM 上系统识别器普遍不可用（OPPO 返回 false、华为挂假服务），因此对话框会提供本地路径；官方 GitHub 不可达时提示错误而不是运行未校验的库。启用后转写完全离线。
+**本地模式引擎优先级**：sherpa 本地模型 + 已下载引擎 → 系统端侧识别器（GMS 设备）→ 弹出启用对话框。未启用本地语音时，APK 不含 sherpa 原生库，不会自动下载；确认启用才下载约 38 MB 的官方 AAR，提取约 22 MB arm64 库，同时按需下载所选模型。已有模型的升级用户只需下载引擎一次。国产无谷歌服务 ROM 上系统识别器普遍不可用（OPPO 返回 false、华为挂假服务），因此对话框会提供本地路径；官方 GitHub 不可达时提示错误而不是运行未校验的库。启用后转写完全离线。
 
 **构建说明**：仓库只保留 `app/libs/sherpa-onnx-api-1.13.2.jar`（约 535 KiB），包括官方 JVM API、Kotlin 元数据及许可证。`sherpa-onnx-api-1.13.2.json` 固定官方 AAR、classes.jar 和过滤后 API 的 SHA-256；Gradle 每次构建校验 API，不下载完整 AAR。已移除上游两个强制 `loadLibrary` 的 wrapper，由本仓库同名 JNI wrapper 替代；APK 不包含 sherpa `.so`。
 

@@ -42,6 +42,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -89,6 +95,7 @@ internal fun rememberVoiceInputHandle(
     onCommit: (String) -> Unit,
     sessionKey: Any? = null,
     onCommitForPress: (() -> (String) -> Unit)? = null,
+    api: com.wand.app.data.WandApi? = null,
 ): VoiceInputHandle {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -96,7 +103,7 @@ internal fun rememberVoiceInputHandle(
     val currentOnToast = rememberUpdatedState(onToast)
     val currentOnCommit = rememberUpdatedState(onCommit)
     val currentOnCommitForPress = rememberUpdatedState(onCommitForPress)
-    val voice = remember(context, sessionKey) { VoiceInputController(context) }
+    val voice = remember(context, sessionKey, api) { VoiceInputController(context, api) }
 
     DisposableEffect(voice) {
         voice.onToast = { message -> currentOnToast.value(message) }
@@ -353,6 +360,9 @@ internal fun <T> prioritizeSelectedItem(
  * 书写区保持固定的文字宽度与清空触控槽，焦点变化只改变颜色。
  * 聊天使用外层统一描边；独立 PTY 输入保留自身表面。
  */
+internal fun composerHoldToTalkEligible(text: String, focused: Boolean, keyboardVisible: Boolean): Boolean =
+    text.isEmpty() && !focused && !keyboardVisible
+
 @Composable
 internal fun ComposerInputField(
     value: String,
@@ -375,7 +385,19 @@ internal fun ComposerInputField(
     ),
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     onTextLayout: (TextLayoutResult) -> Unit = {},
+    voice: VoiceInputController? = null,
+    onMicDown: (() -> Unit)? = null,
+    keyboardVisible: Boolean = false,
 ) {
+    val holdEnabled = voice != null && onMicDown != null && composerHoldToTalkEligible(value, isFocused, keyboardVisible)
+    val currentMicDown by rememberUpdatedState(onMicDown)
+    val displayedPlaceholder = when {
+        holdEnabled && voice?.canceling == true -> "松开取消"
+        holdEnabled && voice?.pressed == true -> "松开完成 · 上滑取消"
+        holdEnabled && voice?.processing == true -> "${voice.engineLabel}中…"
+        holdEnabled -> "发消息或按住说话"
+        else -> placeholder
+    }
     val motionEnabled = !reduceMotionEnabled()
     val dark = isWandDarkTheme()
     val shape = WandShapes.md
@@ -437,7 +459,7 @@ internal fun ComposerInputField(
                         ) {
                             if (value.isEmpty()) {
                                 Text(
-                                    placeholder,
+                                    displayedPlaceholder,
                                     fontSize = 16.sp,
                                     lineHeight = 24.sp,
                                     fontWeight = FontWeight.Normal,
@@ -455,6 +477,20 @@ internal fun ComposerInputField(
                         .focusRequester(focusRequester)
                         .onFocusChanged { onFocusChanged(it.isFocused) },
                 )
+                if (holdEnabled) {
+                    // A small adapter over the native text field: short tap focuses, hold doesn't summon IME.
+                    Box(Modifier.matchParentSize()
+                        .semantics {
+                            role = Role.Button
+                            contentDescription = displayedPlaceholder
+                            onClick("输入文字") { runCatching { focusRequester.requestFocus() }; true }
+                            onLongClick("语音输入") { currentMicDown?.invoke(); true }
+                        }
+                        .pointerInput(voice) {
+                            voiceTapOrHoldGesture(voice, onTap = { runCatching { focusRequester.requestFocus() } },
+                                onHoldStart = { currentMicDown?.invoke() })
+                        })
+                }
             }
             // 始终预留触控槽，清空按钮显隐不改变换行或光标位置。
             if (showClearAction) Box(modifier = Modifier.size(ComposerActionTouchSize), contentAlignment = Alignment.Center) {

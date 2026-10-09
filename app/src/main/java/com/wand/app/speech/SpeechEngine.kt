@@ -15,6 +15,8 @@ package com.wand.app.speech
 interface SpeechEngine {
     /** 引擎展示名（气泡里提示用户走的是哪条路径）。 */
     val label: String
+    /** Local partials finish quickly; server batch inference needs a longer, bounded budget. */
+    val finalTimeoutMs: Long get() = 1_500L
 
     /** 开始一次会话。所有回调都必须发生在主线程。 */
     fun start(listener: Listener)

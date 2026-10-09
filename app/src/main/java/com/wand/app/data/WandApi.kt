@@ -5,6 +5,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
@@ -162,6 +165,47 @@ class WandApi(baseUrl: String, val token: String?,
         parseResponse(requestData(method, path)) { JSONArray(it) }
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+    // MARK: - 语音（原始 WAV，复用当前服务器认证；取消会真正终止上传/请求）
+
+    suspend fun speechStatus(): ServerSpeechStatus = ServerSpeechStatus.parse(requestObject("GET", "/api/speech/status"))
+
+    private suspend fun speechResponse(request: Request): Pair<Int, String> = suspendCancellableCoroutine { continuation ->
+        val call = longTimeoutClient.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(e.toApiException())
+            }
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                try {
+                    val result = response.use { it.code to (it.body?.string() ?: "") }
+                    if (continuation.isActive) continuation.resume(result)
+                } catch (e: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(e.toApiException())
+                }
+            }
+        })
+    }
+
+    suspend fun transcribeSpeech(wav: ByteArray): String {
+        val request = Request.Builder().url("$baseUrl/api/speech/transcribe")
+            .post(wav.toRequestBody("audio/wav".toMediaType())).build()
+        var (code, text) = speechResponse(request)
+        if (code == 401 && !token.isNullOrEmpty()) {
+            withContext(Dispatchers.IO) { WandAuth.loginWithToken(baseUrl, token, client) }
+            val retried = speechResponse(request); code = retried.first; text = retried.second
+        }
+        // Never log the response body: it contains the user's dictation.
+        if (code !in 200..299) {
+            val message = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotBlank() }
+            throw WandApiException(code, message ?: "服务端语音识别失败（$code）")
+        }
+        val result = runCatching { JSONObject(text).getString("text") }.getOrNull()
+            ?: throw WandApiException(null, "语音转写响应无效")
+        if (result.length > 8_000) throw WandApiException(null, "语音转写响应过大")
+        return result.trim()
+    }
 
     // MARK: - 会话
 

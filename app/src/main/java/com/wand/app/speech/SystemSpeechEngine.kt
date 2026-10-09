@@ -19,8 +19,7 @@ import java.util.Locale
  * SpeechRecognizer 要求在主线程创建和调用，回调也在主线程，无需再切线程。
  */
 class SystemSpeechEngine(private val context: Context) : SpeechEngine {
-    override val label: String =
-        if (onDeviceAvailable(context)) "系统端侧识别" else "系统识别"
+    override val label: String = "系统端侧识别"
 
     private var recognizer: SpeechRecognizer? = null
     private var listener: SpeechEngine.Listener? = null
@@ -30,8 +29,7 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
 
     companion object {
         /** 系统识别是否可用（不可用时上层换 sherpa 路径）。 */
-        fun isUsable(context: Context): Boolean =
-            SpeechRecognizer.isRecognitionAvailable(context) || onDeviceAvailable(context)
+        fun isUsable(context: Context): Boolean = onDeviceAvailable(context)
 
         fun onDeviceAvailable(context: Context): Boolean =
             SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
@@ -44,11 +42,9 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
         destroyRecognizer()
 
         val recognizer = try {
-            if (onDeviceAvailable(context)) {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(context)
-            }
+            // A local choice must not silently route to the vendor's online recognizer.
+            if (!onDeviceAvailable(context)) throw IllegalStateException("系统端侧模型不可用，请启用本地模型或选择服务端识别")
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } catch (e: Exception) {
             listener.onError("系统语音识别启动失败：${e.message}")
             return

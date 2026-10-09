@@ -336,6 +336,7 @@ fun AiTeamChatScreen(
         onCommit = { text -> composer?.appendVoice(text) },
         sessionKey = composer,
         onCommitForPress = { composer?.voiceCommitForCurrentDraft() ?: {} },
+        api = api,
     )
     val attachmentPickers = rememberAttachmentPickerActions { uris ->
         val target = composer
@@ -1648,7 +1649,7 @@ private fun TeamChatComposer(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
-            if (voice.pressed) {
+            if (voice.pressed || voice.processing) {
                 Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                     VoiceTranscriptBubble(backdrop = null, voice = voice)
                 }
@@ -1676,6 +1677,8 @@ private fun TeamChatComposer(
                 onSend = onSend,
                 allowRefocus = true,
                 voicePressed = voice.pressed,
+                voice = voice,
+                onMicDown = onMicDown,
                 onExpandedChange = {},
                 menuContent = {
                     if (composerMenuHasStop(active, visual)) {

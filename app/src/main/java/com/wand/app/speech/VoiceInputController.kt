@@ -22,10 +22,11 @@ import androidx.core.content.ContextCompat
  * 按住录音 → transcript 覆盖式更新 → 上滑取消 → 松手等 final（限时 1.5 s 兜底）
  * → 非空文本回调 commit（追加进输入框草稿）。
  */
-class VoiceInputController(private val context: Context) {
+class VoiceInputController(private val context: Context, private val api: com.wand.app.data.WandApi? = null) {
     private var session by mutableStateOf(VoiceSessionState())
     val pressed: Boolean get() = session.pressed
     val canceling: Boolean get() = session.canceling
+    val processing: Boolean get() = session.phase == VoiceSessionPhase.AWAITING_FINAL
     val transcript: String get() = session.transcript
     var engineLabel by mutableStateOf("")
         private set
@@ -41,12 +42,9 @@ class VoiceInputController(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private var finalTimeout: Runnable? = null
 
-    /** 松手后等 final 的最长时间，超时按当前 partial 提交（对齐 iOS finalResultGrace）。 */
-    private val finalGraceMs = 1_500L
-
     init {
         SttModelManager.refresh(context)
-        if (SttModelManager.isReady(context)) SherpaSpeechEngine.warmUp(context)
+        if (SpeechPreferences.mode(context) == SpeechMode.LOCAL && SttModelManager.isReady(context)) SherpaSpeechEngine.warmUp(context)
     }
 
     fun hasMicPermission(): Boolean =
@@ -61,7 +59,10 @@ class VoiceInputController(private val context: Context) {
             engine?.cancel()
             resetSession()
         }
+        val server = SpeechPreferences.mode(context) == SpeechMode.SERVER
+        if (server && api == null) { onToast?.invoke("请先连接 Wand 服务器"); return }
         val chosen: SpeechEngine? = when {
+            server -> ServerSpeechEngine(api!!)
             SttModelManager.isReady(context) -> SherpaSpeechEngine(context)
             SystemSpeechEngine.isUsable(context) -> SystemSpeechEngine(context)
             else -> null
@@ -108,12 +109,18 @@ class VoiceInputController(private val context: Context) {
             }
             VoiceSessionEffect.FinishEngine -> {
                 engine?.finish()
-                val fallback = Runnable { deliver(null) }
+                val fallback = Runnable { engine?.cancel(); deliver(null) }
                 finalTimeout = fallback
-                main.postDelayed(fallback, finalGraceMs)
+                main.postDelayed(fallback, engine?.finalTimeoutMs ?: 1_500L)
             }
             else -> Unit
         }
+    }
+
+    /** Pointer cancellation/navigation must discard, never finish/commit the current utterance. */
+    fun cancelPress() {
+        engine?.cancel()
+        resetSession()
     }
 
     fun destroy() {

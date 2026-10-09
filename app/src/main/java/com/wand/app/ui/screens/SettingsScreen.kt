@@ -305,11 +305,9 @@ fun SettingsScreen(
                                     }
                                 }
                                 SettingsDestination.Voice -> {
-                                    SettingsSection(
-                                        title = "",
-                                        description = "选择离线识别模型；缺少的模型会在选中后下载。",
-                                    ) {
-                                        SttModelSection()
+                                    SpeechRecognitionSection(api) {
+                                        context.startActivity(Intent(context, WebSettingsActivity::class.java)
+                                            .putExtra(WebSettingsActivity.EXTRA_SERVER_ID, connection.serverId))
                                     }
                                 }
                                 SettingsDestination.Server -> {
@@ -933,6 +931,53 @@ private fun ConnectionActionsRow(onSwitchServer: () -> Unit) {
  * 点选即切换；未下载的模型点选后立即开始下载（下载完成自动预热）。
  * 下载中的行内展示进度条；所选模型未就绪期间语音输入自动回退到已就绪模型。
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpeechRecognitionSection(api: WandApi, onOpenWeb: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var mode by remember { mutableStateOf(com.wand.app.speech.SpeechPreferences.mode(context)) }
+    var status by remember(api) { mutableStateOf<com.wand.app.data.ServerSpeechStatus?>(null) }
+    var error by remember(api) { mutableStateOf<String?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    suspend fun refresh() {
+        checking = true; error = null
+        try { status = api.speechStatus() }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { error = e.message ?: "无法读取服务端语音状态" }
+        finally { checking = false }
+    }
+    LaunchedEffect(api, mode) { if (mode == com.wand.app.speech.SpeechMode.SERVER) refresh() }
+    SettingsSection(title = "识别方式", description = "选择只影响此设备，不会自动切换到第三方云识别。") {
+        SettingsCard {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                val modes = listOf(com.wand.app.speech.SpeechMode.SERVER to "服务端识别", com.wand.app.speech.SpeechMode.LOCAL to "客户端本地识别")
+                modes.forEachIndexed { index, (value, label) ->
+                    SegmentedButton(selected = mode == value, onClick = { mode = value; com.wand.app.speech.SpeechPreferences.select(context, value) },
+                        shape = SegmentedButtonDefaults.itemShape(index, modes.size)) { Text(label) }
+                }
+            }
+        }
+    }
+    if (mode == com.wand.app.speech.SpeechMode.SERVER) {
+        SettingsSection(title = "当前服务器", description = "松手后把音频发送到当前 Wand 服务器，离线转写；最长 60 秒。") {
+            SettingsCard {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(error ?: if (checking) "检查中…" else status?.reason ?: if (status?.ready == true) "已就绪 · Whisper ${status?.model} · ${status?.backend?.uppercase()}" else "尚未读取状态",
+                        color = if (error != null || status?.ready == false) WandColors.danger else WandColors.textSecondary,
+                        style = MaterialTheme.typography.bodyMedium)
+                    Text("服务端支持 CPU、Mac Metal 与可选 CUDA。模型由管理员在服务器下载，手机不需要安装本地引擎。", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+                    androidx.compose.material3.TextButton(enabled = !checking, onClick = { scope.launch { refresh() } }) { Text("刷新状态") }
+                }
+                RowDivider()
+                ActionRow("管理服务端语音模型", WandIcons.web, onClick = onOpenWeb)
+            }
+        }
+    } else {
+        SettingsSection(title = "客户端本地模型", description = "优先使用已下载的 sherpa 模型，其次系统端侧模型；不上传音频。") { SttModelSection() }
+    }
+}
+
 @Composable
 private fun SttModelSection() {
     val context = LocalContext.current

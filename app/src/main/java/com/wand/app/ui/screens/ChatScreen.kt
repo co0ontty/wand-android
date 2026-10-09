@@ -468,6 +468,7 @@ fun ChatScreen(
         onCommit = composer::appendVoice,
         sessionKey = composer,
         onCommitForPress = composer::voiceCommitForCurrentDraft,
+        api = api,
     )
     val voice = voiceInput.voice
     val onMicDown = voiceInput.onMicDown
@@ -2077,7 +2078,7 @@ private fun BottomBar(
         // 结构化会话没有「会话已结束 / 恢复会话」的概念：一个回合结束后只是回到 idle，
         // 直接继续输入即可（服务端 sendMessage 自动 --resume 续接）。不再渲染结束态横幅。
         // 按住说话实时转写气泡（按住期间悬浮在输入栏上方）。
-        if (voice.pressed) {
+        if (voice.pressed || voice.processing) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 VoiceTranscriptBubble(backdrop, voice)
             }
@@ -2182,6 +2183,8 @@ private fun InputBar(
         onSend = onSend,
         allowRefocus = !store.sessionEnded,
         voicePressed = voice.pressed,
+        voice = voice,
+        onMicDown = onMicDown,
         onExpandedChange = onExpandedChange,
         resourcePanel = { PiResourcesPanel(resources) { runCatching { menuTriggerFocus.requestFocus() } } },
         resourcePanelOpen = resources.open,
@@ -2799,7 +2802,7 @@ private const val VOICE_HOLD_THRESHOLD_MS = 180L
  * - 阈值内松手 → onTap()。
  * 录音的触感反馈在 onHoldStart（即 onMicDown）里触发，正好对应「真正开始聆听」。
  */
-private suspend fun PointerInputScope.voiceTapOrHoldGesture(
+internal suspend fun PointerInputScope.voiceTapOrHoldGesture(
     voice: VoiceInputController,
     onTap: () -> Unit,
     onHoldStart: () -> Unit,
@@ -2809,32 +2812,34 @@ private suspend fun PointerInputScope.voiceTapOrHoldGesture(
         val down = awaitFirstDown()
         down.consume()
         var recording = false
+        var released = false
         var elapsed = 0L
-        while (true) {
-            val event = if (recording) {
-                awaitPointerEvent()
-            } else {
-                withTimeoutOrNull(VOICE_HOLD_THRESHOLD_MS - elapsed) { awaitPointerEvent() }
-            }
-            if (event == null) {
-                // 按满阈值仍未松手 → 进入按住录音（原有交互）。
-                recording = true
-                onHoldStart()
-                continue
-            }
-            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-            elapsed = change.uptimeMillis - down.uptimeMillis
-            if (!change.pressed) {
+        try {
+            while (true) {
+                val event = if (recording) awaitPointerEvent()
+                    else withTimeoutOrNull(VOICE_HOLD_THRESHOLD_MS - elapsed) { awaitPointerEvent() }
+                if (event == null) {
+                    recording = true
+                    onHoldStart()
+                    continue
+                }
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                elapsed = change.uptimeMillis - down.uptimeMillis
+                if (!change.pressed) {
+                    released = !change.isConsumed
+                    change.consume()
+                    if (!recording && released) onTap()
+                    break
+                }
+                if (!recording && (change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
                 change.consume()
-                if (!recording) onTap()
-                break
+                if (recording) voice.updateCancel(down.position.y - change.position.y > cancelThresholdPx)
             }
-            change.consume()
+        } finally {
             if (recording) {
-                voice.updateCancel(down.position.y - change.position.y > cancelThresholdPx)
+                if (released) voice.endPress() else voice.cancelPress()
             }
         }
-        if (recording) voice.endPress()
     }
 }
 
@@ -2940,6 +2945,7 @@ internal fun VoiceTranscriptBubble(backdrop: GlassBackdrop?, voice: VoiceInputCo
             Text(
                 when {
                     voice.canceling -> "松开手指，取消输入"
+                    voice.processing -> "${voice.engineLabel}中…"
                     voice.transcript.isEmpty() -> "正在聆听…"
                     else -> voice.transcript
                 },

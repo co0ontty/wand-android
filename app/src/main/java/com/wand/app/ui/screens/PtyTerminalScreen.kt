@@ -196,7 +196,8 @@ fun PtyTerminalScreen(
     // 草稿抽屉默认收起，只在整段提示、语音或附件时打开。
     var inputDrawerOpen by remember(sessionId) { mutableStateOf(false) }
     var keyboardRequested by remember(sessionId) { mutableStateOf(false) }
-    var draft by remember(sessionId) { mutableStateOf("") }
+    val voiceDrafts = remember(sessionId) { com.wand.app.ui.SessionDraftStore() }
+    val draft = voiceDrafts[sessionId]
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
     val scope = rememberCoroutineScope()
@@ -245,7 +246,13 @@ fun PtyTerminalScreen(
     val voiceInput = rememberVoiceInputHandle(
         isHapticEnabled = isHapticEnabled,
         onToast = { message -> toast = message },
-        onCommit = { text -> draft = appendVoiceText(draft, text) },
+        onCommit = { text -> voiceDrafts[sessionId] = appendVoiceText(draft, text) },
+        sessionKey = sessionId,
+        api = api,
+        onCommitForPress = {
+            val revision = voiceDrafts.revision(sessionId);
+            { text -> if (voiceDrafts.revision(sessionId) == revision) voiceDrafts[sessionId] = appendVoiceText(voiceDrafts[sessionId], text) }
+        },
     )
     val shortcutQueue = remember(sessionId) {
         Channel<TerminalShortcut>(capacity = 12, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -320,7 +327,7 @@ fun PtyTerminalScreen(
         sendPhase = SendPhase.Sending
         val text = buildAttachmentPrompt(attachments, body).trim()
         val restore = draft
-        draft = ""
+        voiceDrafts[sessionId] = ""
         pendingAttachments = emptyList()
         val blockedTitles = sessionTopicBlocklist(
             taskName = taskName,
@@ -347,7 +354,7 @@ fun PtyTerminalScreen(
                 dwellSendPhase(SendPhase.Failed, SEND_FAILED_DWELL_MS)
                 toast = error.message ?: "终端命令发送失败"
                 if (draft.isEmpty()) {
-                    draft = restore
+                    voiceDrafts[sessionId] = restore
                     pendingAttachments = attachments
                 }
             }
@@ -398,7 +405,7 @@ fun PtyTerminalScreen(
                     }
                 },
                 draft = draft,
-                onDraftChange = { draft = it },
+                onDraftChange = { voiceDrafts[sessionId] = it },
                 sendPhase = sendPhase,
                 onSend = { sendPtyDraft() },
                 uploadingAttachments = uploadingAttachments,
@@ -597,6 +604,7 @@ private fun PtyBottomBar(
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
+            if (voice.pressed || voice.processing) VoiceTranscriptBubble(backdrop = null, voice = voice)
             AnimatedVisibility(
                 visible = inputDrawerOpen,
                 enter = if (reduceMotionEnabled()) {
@@ -1045,6 +1053,9 @@ private fun PtyInputDrawer(
                     value = draft,
                     onValueChange = onDraftChange,
                     placeholder = "整段文字、语音或附件",
+                    voice = voice,
+                    onMicDown = onMicDown,
+                    keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0,
                     isFocused = isFocused,
                     onFocusChanged = { isFocused = it },
                     focusRequester = focusRequester,

@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import com.wand.app.speech.VoiceInputController
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -46,6 +49,8 @@ internal fun SharedMessageComposer(
     onSend: () -> Unit,
     allowRefocus: Boolean,
     voicePressed: Boolean,
+    voice: VoiceInputController? = null,
+    onMicDown: (() -> Unit)? = null,
     onExpandedChange: (Boolean) -> Unit,
     trailingActions: @Composable RowScope.(requestFocus: () -> Unit, sendAndRefocus: () -> Unit) -> Unit,
     controls: @Composable RowScope.() -> Unit,
@@ -59,6 +64,7 @@ internal fun SharedMessageComposer(
     inlineControls: Boolean = false,
 ) {
     val focusRequester = remember(sessionKey) { FocusRequester() }
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var refocusAfterSend by remember(sessionKey) { mutableStateOf(false) }
     var isFocused by remember(sessionKey) { mutableStateOf(false) }
     var draftNeedsExpanded by remember(sessionKey) { mutableStateOf(false) }
@@ -128,6 +134,9 @@ internal fun SharedMessageComposer(
                         imeAction = ImeAction.Send,
                     ),
                     keyboardActions = KeyboardActions(onSend = { sendAndRefocus() }),
+                    voice = voice,
+                    onMicDown = onMicDown,
+                    keyboardVisible = keyboardVisible,
                 )
             }
         },

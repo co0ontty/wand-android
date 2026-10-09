@@ -475,7 +475,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     LaunchedEffect(state.layerRevision) { applyComposer(ConversationComposerEvent.LeftScreen); invite = false; members = false; taskDetails = false; titleOpen = false; headerMenu = false }
     ConversationLayerBackHandler(menu || invite || members || taskDetails || titleOpen) { closeLayer() }
     val voice = rememberVoiceInputHandle(isHapticEnabled, onToast = { state.feedback[key] = it }, onCommit = composer::appendVoice,
-        sessionKey = composer, onCommitForPress = composer::voiceCommitForCurrentDraft)
+        sessionKey = composer, onCommitForPress = composer::voiceCommitForCurrentDraft, api = state.api)
     val pickers = rememberAttachmentPickerActions { uris ->
         val captured = composer; val capturedId = id; val cwd = if (taskMode) state.projects.firstOrNull { it.id == projectId }?.cwd else chatCwd.ifBlank { null }
         captured.upload { remaining ->
@@ -781,7 +781,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 onClick = { action("approve") },
             )
             if (run?.run?.status == "waiting_user" && run.run.statusDetail.contains("步数上限")) WandButton("明确增加本轮步数", { action("continue") }, enabled = actionOperation.canSubmit)
-            if (voice.voice.pressed) VoiceTranscriptBubble(backdrop = null, voice = voice.voice)
+            if (voice.voice.pressed || voice.voice.processing) VoiceTranscriptBubble(backdrop = null, voice = voice.voice)
             val canSubmit = composer.canSubmit && id.isNotBlank() && detail != null && detail.unavailableReason == null && unknown == null && actionOperation.canSubmit
             val visual = actionPhase ?: if (unknown != null) SendActionVisual.Failed else sendActionVisual(composer.sendPhase, running && !taskMode, composer.draft.isNotBlank() || composer.attachments.isNotEmpty())
             SharedMessageComposer(backdrop = null, sessionKey = composer.sessionId, draft = composer.draft, onDraftChange = composer::editDraft,
@@ -792,7 +792,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 },
                 onMenuDismissFocus = { runCatching { menuTrigger.requestFocus() } },
                 onPickPhoto = pickers.pickPhoto, onPickFile = pickers.pickFile, canSubmit = canSubmit, onSend = ::send,
-                allowRefocus = true, voicePressed = voice.voice.pressed, onExpandedChange = {},
+                allowRefocus = true, voicePressed = voice.voice.pressed, voice = voice.voice, onMicDown = voice.onMicDown, onExpandedChange = {},
                 inlineControls = true,
                 menuActionModifier = Modifier.focusRequester(menuTrigger).then(layer.region("menu-trigger")),
                 menuPanelModifier = layer.region("menu").heightIn(max = menuPanelHeight).verticalScroll(rememberScrollState()),
