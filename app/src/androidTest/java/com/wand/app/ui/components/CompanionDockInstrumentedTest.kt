@@ -22,6 +22,9 @@ import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.FileInputStream
+import java.io.File
+import java.io.FileOutputStream
 
 /** Real native pointers/layout; inert recognizer and receipt adapter. No permissions, AI or user data. */
 @RunWith(AndroidJUnit4::class)
@@ -91,12 +94,28 @@ class CompanionDockInstrumentedTest {
         while (SystemClock.uptimeMillis() < deadline) {
             var node = find(instrumentation.uiAutomation.rootInActiveWindow, label)
             while (node != null) {
-                if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+                if (node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK } &&
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
                 node = node.parent
             }
             Thread.sleep(80)
         }
-        fail("Native accessible action missing: $label")
+        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+            FileOutputStream(File(context.getExternalFilesDir(null), "native-action-failure.png")).use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
+        }
+        val labels = mutableListOf<String>()
+        fun describe(node: AccessibilityNodeInfo?) {
+            if (node == null || labels.size >= 40) return
+            (node.contentDescription ?: node.text)?.toString()?.takeIf { it.isNotBlank() }?.let {
+                labels.add("${it.take(120)} [click=${node.isClickable}, actions=${node.actionList.map { action -> action.id }}]")
+            }
+            for (i in 0 until node.childCount) describe(node.getChild(i))
+        }
+        describe(instrumentation.uiAutomation.rootInActiveWindow)
+        fail("Native accessible action missing: $label; visible labels: $labels")
     }
     private fun editable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
@@ -121,8 +140,11 @@ class CompanionDockInstrumentedTest {
             waitFor("editor IME opened") { imeVisible(activity) && field(activity, "EditorVisible") == true }
             type("模型切换保留草稿")
             waitFor("draft accepted") { composer(activity).draft == "模型切换保留草稿" }
-            click("选择示例模型")
-            waitFor("model sheet survives IME handoff") { field(activity, "ModelSheetOpen") == true && !imeVisible(activity) }
+            click("选择模型")
+            waitFor("model sheet survives IME handoff") {
+                field(activity, "ModelSheetOpen") == true && !imeVisible(activity) && !activity.hasWindowFocus() &&
+                    find(instrumentation.uiAutomation.rootInActiveWindow, "搜索模型") != null
+            }
             assertEquals(true, field(activity, "EditorVisible"))
             assertNotNull(find(instrumentation.uiAutomation.rootInActiveWindow, "搜索模型"))
             type("model-b")
@@ -131,14 +153,28 @@ class CompanionDockInstrumentedTest {
                 field(activity, "ModelForTest") == "model-b" && field(activity, "ModelSheetOpen") == false && imeVisible(activity)
             }
             assertEquals("模型切换保留草稿", composer(activity).draft)
-            click("选择示例模型")
-            waitFor("second model sheet opened") { field(activity, "ModelSheetOpen") == true && !imeVisible(activity) }
+            click("选择模型")
+            waitFor("second model sheet opened") {
+                field(activity, "ModelSheetOpen") == true && !imeVisible(activity) && !activity.hasWindowFocus() &&
+                    find(instrumentation.uiAutomation.rootInActiveWindow, "搜索模型") != null
+            }
             instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             waitFor("cancel restores editor not page navigation") { field(activity, "ModelSheetOpen") == false && imeVisible(activity) }
             assertEquals(true, field(activity, "EditorVisible"))
             click("更多操作：附件、设置与任务")
             click("从文件选择")
-            waitFor("native picker borrowed the window") { !activity.hasWindowFocus() }
+            // Test shell can resolve the system activity without expanding production
+            // package visibility. A dialog losing focus is not yet an external picker.
+            val pickerPackage = instrumentation.uiAutomation.executeShellCommand(
+                "cmd package resolve-activity --brief -a android.intent.action.OPEN_DOCUMENT -c android.intent.category.OPENABLE -t '*/*'"
+            ).use { descriptor ->
+                FileInputStream(descriptor.fileDescriptor).bufferedReader().readText().lineSequence()
+                    .lastOrNull { it.contains('/') }?.substringBefore('/')
+            }
+            assertNotNull("System document picker is installed", pickerPackage)
+            waitFor("native picker, rather than our attachment sheet, owns the foreground") {
+                !activity.hasWindowFocus() && instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == pickerPackage
+            }
             instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             waitFor("picker cancel restored editor") { activity.hasWindowFocus() && imeVisible(activity) && field(activity, "EditorVisible") == true }
             assertEquals("模型切换保留草稿", composer(activity).draft)
@@ -153,10 +189,11 @@ class CompanionDockInstrumentedTest {
         val activity = start("progress")
         try {
             val initial = point(activity)
+            waitFor("Microphone has a stable native accessible target") { find(instrumentation.uiAutomation.rootInActiveWindow, "按住说话，松手转写，上滑取消") != null }
             val mic = find(instrumentation.uiAutomation.rootInActiveWindow, "按住说话，松手转写，上滑取消")
             assertNotNull(mic)
             val micBounds = Rect(); mic!!.getBoundsInScreen(micBounds)
-            assertTrue("Scene and controls share one centerline", kotlin.math.abs(initial.second - micBounds.exactCenterY()) <= 2f)
+            assertTrue("Scene is anchored above the message viewport, mic stays in the composer", initial.second < micBounds.top)
             instrumentation.runOnMainSync { composer(activity).editDraft("测试第三个操作槽") }
             Thread.sleep(500)
             val expandedMic = find(instrumentation.uiAutomation.rootInActiveWindow, "按住说话，松手转写，上滑取消")
@@ -171,10 +208,44 @@ class CompanionDockInstrumentedTest {
             assertNotNull(find(instrumentation.uiAutomation.rootInActiveWindow, "\$0.13"))
             assertNotNull(find(instrumentation.uiAutomation.rootInActiveWindow, "修复输入焦点与重复语音入口，保留模型搜索、附件选择和原生文字编辑"))
             assertEquals(initial.second, point(activity).second, 2f)
-            click("收起任务进度")
-            Thread.sleep(500)
+            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            waitFor("progress sheet dismissed") { find(instrumentation.uiAutomation.rootInActiveWindow, "展开任务进度") != null }
             assertNull(find(instrumentation.uiAutomation.rootInActiveWindow, "\$0.13"))
             assertEquals(initial.second, point(activity).second, 2f)
+            assertEquals(0, field(activity, "SendCount"))
+        } finally { finish(activity) }
+    }
+
+    @Test fun focusedCapsuleIsFullWidthAndSettingsDoNotMoveTheSceneOrLoseChineseDraft() {
+        val activity = start("composer-focus")
+        try {
+            val initial = point(activity)
+            click("展开键盘输入")
+            waitFor("native editor focused") { imeVisible(activity) && field(activity, "EditorVisible") == true }
+            val text = "第一行中文，正在编辑\n第二行保留光标与附件"
+            type(text)
+            waitFor("multiline draft retained") { composer(activity).draft == text }
+            val fieldBounds = Rect(); editable(instrumentation.uiAutomation.rootInActiveWindow)!!.getBoundsInScreen(fieldBounds)
+            assertTrue("Text uses the full width without icon lanes", fieldBounds.width() > context.resources.displayMetrics.widthPixels * .8f)
+            assertEquals("IME never moves top scene", initial.second, point(activity).second, 2f)
+            for (setting in listOf("选择权限", "选择思考")) {
+                val node = find(instrumentation.uiAutomation.rootInActiveWindow, setting)
+                assertNotNull(node)
+                val bounds = Rect(); node!!.getBoundsInScreen(bounds)
+                assertTrue("Setting target is at least 48dp high", bounds.height() >= 48 * context.resources.displayMetrics.density - 1)
+                click(setting)
+                // Android does not expose ACTION_CLICK on an already-selected radio.
+                // Choose a distinct inert option to exercise the real selector callback.
+                click("另一档（离线示例，不更改会话）")
+                waitFor("settings return the original field") { imeVisible(activity) && field(activity, "EditorVisible") == true }
+                assertEquals(text, composer(activity).draft)
+            }
+            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            waitFor("explicit Back collapses draft") { field(activity, "EditorVisible") == false }
+            assertNull(find(instrumentation.uiAutomation.rootInActiveWindow, "选择模型"))
+            click("展开键盘输入")
+            waitFor("same draft reopens") { imeVisible(activity) && field(activity, "EditorVisible") == true }
+            assertEquals(text, composer(activity).draft)
             assertEquals(0, field(activity, "SendCount"))
         } finally { finish(activity) }
     }
@@ -235,7 +306,8 @@ class CompanionDockInstrumentedTest {
         val otherChat = start("orange")
         try {
             val position = point(otherChat)
-            assertTrue("Global local side retained across chats", position.first > context.resources.displayMetrics.widthPixels / 2)
+            assertEquals("Global local side retained across chats", "Right", side())
+            assertTrue("Top slot clears right controls", position.first < context.resources.displayMetrics.widthPixels - 140 * context.resources.displayMetrics.density)
         } finally { finish(otherChat) }
     }
 
@@ -258,6 +330,7 @@ class CompanionDockInstrumentedTest {
             val activity = start(mode)
             try {
                 waitFor("fixture ready") { field(activity, "ComposerForTest") != null && !composer(activity).uploading }
+                click("展开键盘输入")
                 click("发送消息")
                 waitFor("receipt applied") { composer(activity).sendPhase == if (mode == "send") SendPhase.Sent else SendPhase.Failed }
                 if (mode == "send") {

@@ -24,6 +24,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -395,6 +398,10 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     val filter = state.filters[id].orEmpty()
     val key = state.draftKey(id, target)
     val composer = state.composer(id, target)
+    val inputPresentation = remember(key) { ChatInputPresentation() }
+    var defaultsOpen by remember(key) { mutableStateOf(false) }
+    var voiceCommitSignal by remember(key) { mutableIntStateOf(0) }
+    val privateChat = detail?.kind == "dm"
     val currentId by rememberUpdatedState(id)
     val currentKey by rememberUpdatedState(key)
     val employee = state.employees.firstOrNull { it.id == detail?.peerEmployeeId || id == employeeConversationId(it.id) }
@@ -475,7 +482,15 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     LaunchedEffect(state.layerRevision) { applyComposer(ConversationComposerEvent.LeftScreen); invite = false; members = false; taskDetails = false; titleOpen = false; headerMenu = false }
     ConversationLayerBackHandler(menu || invite || members || taskDetails || titleOpen) { closeLayer() }
     val voice = rememberVoiceInputHandle(isHapticEnabled, onToast = { state.feedback[key] = it }, onCommit = composer::appendVoice,
-        sessionKey = composer, onCommitForPress = composer::voiceCommitForCurrentDraft, api = state.api)
+        sessionKey = composer, onCommitForPress = {
+            val commit = composer.voiceCommitForCurrentDraft();
+            { text: String ->
+                val revision = composer.draftRevision
+                commit(text)
+                if (revision != composer.draftRevision) voiceCommitSignal++
+            }
+        }, api = state.api)
+    val draftVoice = DraftVoiceGesture(voice.onMicDown, voice.voice::updateCancel, voice.voice::endPress, voice.voice::cancelPress)
     val pickers = rememberAttachmentPickerActions { uris ->
         val captured = composer; val capturedId = id; val cwd = if (taskMode) state.projects.firstOrNull { it.id == projectId }?.cwd else chatCwd.ifBlank { null }
         captured.upload { remaining ->
@@ -539,6 +554,12 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             }
         })
     }
+    if (defaultsOpen) WandDialog(title = "员工默认配置", onDismissRequest = { defaultsOpen = false },
+        confirm = WandDialogAction("查看配置", { defaultsOpen = false; employee?.id?.let(onOpenEmployee) }),
+        dismiss = WandDialogAction("取消", { defaultsOpen = false })) {
+        val defaults = employeeComposerDefaults(employee?.agents.orEmpty())
+        Text("首选模型：${defaults.model}\n权限：${defaults.permission}\n思考：${defaults.thinking}\n\n私聊每条消息开启独立工作。修改员工默认配置将影响此员工后续新工作，不修改历史会话或正在运行的任务；此处不会直接保存更改。", color = WandColors.textSecondary)
+    }
     val receiver = if (taskMode) "${if (continueTask != null) "继续此任务" else "派新任务"} · 我 + ${detail?.team?.members?.joinToString { it.name } ?: employee?.name.orEmpty()}"
         else if (target != null && run != null) "${if (run.run.status == "awaiting_approval") "计划意见" else if (run.run.status == "waiting_user") "回复任务" else "补充任务"} · ${detail.tasks.firstOrNull { it.task.id == target.taskId }?.task?.title} · 第 ${run.run.roundNumber ?: 1} 轮"
         else if (detail?.kind == "group") "群内沟通 · 发给负责人 ${detail.leader?.name}，群内可见" else "每条消息开启独立会话"
@@ -548,17 +569,27 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     val panelHeight = minOf(480.dp, (safeHeight * .60f).coerceAtLeast(0.dp))
     val menuPanelHeight = minOf(360.dp, panelHeight)
     val minimumChrome = with(density) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() * 3 + MaterialTheme.typography.labelSmall.lineHeight.toDp() } + 64.dp + 44.dp + 32.dp
-    val shortPane = safeHeight < minimumChrome
+    val shortPane = safeHeight < minimumChrome && !privateChat
     CompositionLocalProvider(LocalConversationPanelHeight provides panelHeight) {
     Column(Modifier.fillMaxSize().then(if (shortPane) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-        .background(WandColors.surface).statusBarsPadding().then(layer.host(menu || invite, if (menu) setOf("menu", "menu-trigger") else setOf("invite", "member-trigger", "invite-trigger")) {
+        .background(if (privateChat) WandColors.bgPrimary else WandColors.surface).statusBarsPadding().then(layer.host((menu && !privateChat) || invite, if (menu) setOf("menu", "menu-trigger") else setOf("invite", "member-trigger", "invite-trigger")) {
         if (menu) applyComposer(ConversationComposerEvent.PanelClose) else invite = false
     }).onKeyEvent { event ->
         event.key == Key.Escape && event.type == KeyEventType.KeyUp && closeLayer()
     }, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-            if (showBack) WandIconButton(WandIcons.back, "返回", onBack, modifier = Modifier.align(Alignment.CenterStart), variant = WandIconButtonVariant.Chrome)
-            Box(Modifier.fillMaxWidth().padding(horizontal = 56.dp).heightIn(min = 48.dp).focusRequester(titleTrigger).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (detail?.kind == "group") "查看群成员" else "查看员工资料") {
+        Box(Modifier.fillMaxWidth().heightIn(min = if (privateChat) topCompanionClearance() else 56.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+            if (showBack) WandIconButton(WandIcons.back, "返回", onBack, modifier = Modifier.align(if (privateChat) Alignment.TopStart else Alignment.CenterStart), variant = WandIconButtonVariant.Chrome)
+            if (privateChat) {
+                val active = protocols.values.firstOrNull { it.isResponding }
+                val avatarActivity = avatarFileActivity(active?.messages.orEmpty(), active != null && active.pendingEscalation == null && active.legacyPermissionPrompt == null)
+                TopChatCompanion(employee?.id, employee?.name, employee?.avatar,
+                    when { voice.voice.pressed -> "正在听 · 上滑取消"; voice.voice.processing -> "转写中…"
+                        active?.pendingEscalation != null || active?.legacyPermissionPrompt != null -> "等待确认"
+                        else -> companionWorkStatus(active != null, avatarActivity, false) },
+                    avatarActivity, companionThinking(active?.messages.orEmpty(), active != null, avatarActivity), false,
+                    onEdit = inputPresentation::edit, gesture = draftVoice)
+            }
+            if (!privateChat) Box(Modifier.fillMaxWidth().padding(horizontal = 56.dp).heightIn(min = 48.dp).focusRequester(titleTrigger).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (detail?.kind == "group") "查看群成员" else "查看员工资料") {
                 if (employee != null) onOpenEmployee(employee.id) else { members = !members; taskDetails = false; invite = false }
             }, contentAlignment = Alignment.Center) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -567,7 +598,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         modifier = Modifier.weight(1f, fill = false))
                 }
             }
-            Box(Modifier.align(Alignment.CenterEnd)) {
+            Box(Modifier.align(if (privateChat) Alignment.TopEnd else Alignment.CenterEnd)) {
                 WandIconButton(WandIcons.more, "聊天菜单", { headerMenu = true }, variant = WandIconButtonVariant.Chrome,
                     modifier = Modifier.focusRequester(memberTrigger).then(layer.region("member-trigger")))
                 DropdownMenu(headerMenu, onDismissRequest = { headerMenu = false }) {
@@ -706,7 +737,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 }
             }
             Box(Modifier.fillMaxSize()) {
-            LazyColumn(state = messageList, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)) {
+            LazyColumn(state = messageList, modifier = Modifier.fillMaxSize().pointerInput(inputPresentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (privateChat) inputPresentation.dismiss() } }, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)) {
                 if (state.error != null) item { ErrorState(state.error.orEmpty(), onRetry = state::retry) }
                 if (turns.isEmpty() && state.error == null) item {
                     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -766,7 +797,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 finally { restoring = false }
             } }) { Text(if (restoring) "正在恢复…" else "恢复群聊", textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline) }
             restoreError?.let { Text(it, color = WandColors.danger) }
-        } else Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        } else Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = if (privateChat) 0.dp else 16.dp, vertical = 4.dp)) {
             val feedback = actionOperation.feedback.ifBlank { state.feedback[key] ?: detail?.unavailableReason.orEmpty() }.takeUnless { it == "已发送" }.orEmpty()
             if (feedback.isNotBlank()) Text(feedback, Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
                 .background(WandColors.surface).padding(horizontal = 14.dp, vertical = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
@@ -810,7 +841,11 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 onMenuDismissFocus = { runCatching { menuTrigger.requestFocus() } },
                 onPickPhoto = pickers.pickPhoto, onPickFile = pickers.pickFile, canSubmit = canSubmit, onSend = ::send,
                 allowRefocus = true, voicePressed = voice.voice.pressed, voiceProcessing = voice.voice.processing, onExpandedChange = {},
-                editorOverlayOpen = pickers.open,
+                editorOverlayOpen = pickers.open || defaultsOpen || headerMenu || taskDetails || members || invite,
+                presentation = if (privateChat) inputPresentation else null,
+                capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling) },
+                deliveryPhase = if (unknown != null) SendPhase.Failed else composer.sendPhase,
+                voiceCommitSignal = voiceCommitSignal,
                 inlineControls = true,
                 menuActionModifier = Modifier.focusRequester(menuTrigger).then(layer.region("menu-trigger")),
                 menuPanelModifier = layer.region("menu").heightIn(max = menuPanelHeight).verticalScroll(rememberScrollState()),
@@ -834,8 +869,20 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         Text("${detail?.team?.members?.joinToString { it.name } ?: employee?.name.orEmpty()} · ${if (detail?.team?.requirePlanApproval == false) "自动开工" else "需批准计划"}", fontSize = 12.sp, color = WandColors.textSecondary)
                         WandButton("取消派发", { applyComposer(ConversationComposerEvent.DispatchCancel) }, variant = WandButtonVariant.Text)
                     }
-                }, controls = {}, trailingActions = { requestFocus, sendAndRefocus ->
-                    ComposerSendStopActions(voiceAction = { VoiceMicButton(voice.voice, false, requestFocus, voice.onMicDown) }, visual = visual,
+                }, controls = {
+                    if (privateChat) {
+                        val defaults = employeeComposerDefaults(employee?.agents.orEmpty())
+                        ComposerSettingsRow(defaults.model, defaults.permission, defaults.thinking,
+                            onModel = { defaultsOpen = true }, onMode = { defaultsOpen = true }, onThinking = { defaultsOpen = true })
+                    }
+                }, trailingActions = { requestFocus, sendAndRefocus ->
+                    if (privateChat && composer.draft.isBlank() && composer.attachments.isEmpty() && !running &&
+                        composer.sendPhase == SendPhase.Idle && actionPhase == null && unknown == null) {
+                        CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling)
+                    } else ComposerSendStopActions(voiceAction = {
+                        if (privateChat) CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling)
+                        else VoiceMicButton(voice.voice, false, requestFocus, voice.onMicDown)
+                    }, visual = visual,
                         stopDescription = if (target != null) "停止选中的本轮" else "停止当前回复", sendDescription = if (taskMode) "确认派发任务" else "发送消息",
                         onSend = sendAndRefocus, onStop = ::stop, busy = composer.sendPhase == SendPhase.Sending || !actionOperation.canSubmit,
                         canSubmit = canSubmit, failureDescription = if (unknown != null) "送达未确认，请先核对" else "操作失败")

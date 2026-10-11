@@ -308,12 +308,12 @@ internal fun PendingAttachmentsPreview(
                         modifier = Modifier.widthIn(max = 190.dp),
                     )
                 }
-                // 触控区扩到 44dp（可见圆点仍为 22dp），避免缩略图右上角难点中。
+                // 触控区扩到 48dp（可见圆点仍为 22dp），避免缩略图右上角难点中。
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .size(44.dp)
-                        .clickable(onClickLabel = "移除附件") { onRemove(file) },
+                        .size(48.dp)
+                        .clickable(onClickLabel = "移除附件：${file.originalName}") { onRemove(file) },
                 ) {
                     Box(
                         contentAlignment = Alignment.Center,

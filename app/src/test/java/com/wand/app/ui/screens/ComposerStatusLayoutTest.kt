@@ -9,7 +9,7 @@ class ComposerStatusLayoutTest {
 
     @Test fun progressOwnsItsUsageAndTheGenericStatusDoesNotCreateASecondDock() {
         val screen = source("ChatScreen")
-        assertTrue(screen.contains("TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage)"))
+        assertTrue(screen.contains("TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage, detailsInSheet = true"))
         assertTrue(screen.contains("visible = activityDockVisible && (subagentActivities.isNotEmpty() || progressTodos.isEmpty())"))
         assertTrue(screen.contains("showUsage = progressTodos.isEmpty()"))
         assertTrue(screen.contains("hasDetailedProgress = progressTodos.isNotEmpty() || subagentActivities.isNotEmpty()"))
@@ -27,16 +27,17 @@ class ComposerStatusLayoutTest {
         assertFalse(progress.contains("rememberInfiniteTransition"))
     }
 
-    @Test fun captionDoesNotChangeTheActionsCenterlineOrOwnTheReceiptIcon() {
-        val dock = source("FloatingComposerCompanion")
-        assertTrue(dock.contains("height(dockHeight)"))
-        assertTrue(dock.contains("Modifier.align(Alignment.CenterStart).padding(start = 12.dp)"))
-        assertFalse(dock.contains("height(16.dp + reservedHeadSize + statusHeight)"))
-        assertTrue(dock.contains("SubmitMorphButton("))
-        assertFalse(dock.contains("FilledComposerAction("))
-        assertTrue(dock.contains("maxLines = if (onPauseSpeech == null) 4 else 2"))
-        assertFalse(dock.contains("statusHeight"))
-        assertTrue(dock.contains(".width(ComposerActionTouchSize * 3)"))
-        assertTrue(dock.contains("val actionWidth = ComposerActionTouchSize * 3"))
+    @Test fun topSceneHasStableGeometryWhileTheCapsuleOwnsTheReceipt() {
+        val scene = source("TopChatCompanion")
+        assertTrue(scene.contains("height(topCompanionClearance())"))
+        assertTrue(scene.contains("animated = true"))
+        assertFalse(scene.contains("SendPhase"))
+        assertFalse(scene.contains("SubmitMorphButton("))
+        assertTrue(scene.contains("CustomAccessibilityAction"))
+        val capsule = source("FocusCapsuleComposer")
+        assertTrue(capsule.contains("state = state.submit()"))
+        assertTrue(capsule.contains("state.accepted(draft.isNotEmpty() || attachments.isNotEmpty())"))
+        assertTrue(capsule.contains("state = state.failed()"))
+
     }
 }

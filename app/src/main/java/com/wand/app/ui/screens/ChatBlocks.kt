@@ -220,6 +220,7 @@ fun TurnView(
     initiallyCollapsed: Boolean = false,
     currentReplyExpandedOverride: Boolean? = null,
     showHeader: Boolean = true,
+    showIdentity: Boolean = true,
     showContent: Boolean = true,
     onUserExpand: () -> Unit = {},
     onCurrentReplyExpandedChange: (Boolean) -> Unit = {},
@@ -280,6 +281,7 @@ fun TurnView(
                 preview = preview,
                 copyText = copyText,
                 author = turn.author,
+                showIdentity = showIdentity || turn.author != null,
                 employeeId = employeeId,
                 employeeName = employeeName,
                 employeeAvatar = employeeAvatar,
@@ -341,6 +343,7 @@ private fun AssistantReplyHeader(
     preview: String,
     copyText: String,
     author: TurnAuthor?,
+    showIdentity: Boolean,
     employeeId: String?,
     employeeName: String?,
     employeeAvatar: String?,
@@ -375,36 +378,38 @@ private fun AssistantReplyHeader(
             .heightIn(min = 48.dp)
             .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
-        if (employeeReply) {
-            EmployeeAvatar(employeeId, employeeName, employeeAvatar,
-                size = 28.dp, provider = employeeProvider)
-        } else {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(WandColors.brand.copy(alpha = 0.14f)),
-            ) {
-                Icon(
-                    WandIcons.sparkle,
-                    contentDescription = null,
-                    tint = WandColors.brand,
-                    modifier = Modifier.size(14.dp),
-                )
+        if (showIdentity) {
+            if (employeeReply) {
+                EmployeeAvatar(employeeId, employeeName, employeeAvatar,
+                    size = 28.dp, provider = employeeProvider)
+            } else {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(WandColors.brand.copy(alpha = 0.14f)),
+                ) {
+                    Icon(
+                        WandIcons.sparkle,
+                        contentDescription = null,
+                        tint = WandColors.brand,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
             }
-        }
-        Text(
-            author?.name?.takeIf { it.isNotBlank() }
-                ?: employeeName?.takeIf { employeeReply && it.isNotBlank() }
-                ?: if (employeeReply) "硅基员工" else "Wand",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = WandColors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+            Text(
+                author?.name?.takeIf { it.isNotBlank() }
+                    ?: employeeName?.takeIf { employeeReply && it.isNotBlank() }
+                    ?: if (employeeReply) "硅基员工" else "Wand",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = WandColors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        } else if (!collapsed || preview.isBlank()) Spacer(Modifier.weight(1f))
         when {
             author?.leader == true -> ChatAuthorBadge("负责人")
             !author?.provider.isNullOrBlank() -> Text(

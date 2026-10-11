@@ -6,6 +6,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -124,11 +127,15 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
         },
         cancel = { fixture.voiceCancels++; voicePressed = false; voiceCancel = false; notice = "录音已取消，原草稿保留" },
     )
+    val presentation = remember { ChatInputPresentation() }
+    var settingsOpen by remember { mutableStateOf<String?>(null) }
     var attachmentsOpen by remember { mutableStateOf(false) }
     var modelOpen by remember { mutableStateOf(false) }
     var model by remember { mutableStateOf("model-a") }
     val nativePickers = rememberAttachmentPickerActions { /* Cancel/selection never uploads in this fixture. */ }
-    SideEffect { fixture.modelSheetOpen = modelOpen; fixture.modelForTest = model }
+    val observedModelOpen = modelOpen
+    val observedModel = model
+    SideEffect { fixture.modelSheetOpen = observedModelOpen; fixture.modelForTest = observedModel }
     var callPhase by remember { mutableStateOf(VoiceCallPhase.Off) }
     var contextOpen by remember { mutableStateOf(false) }
     val orange = mode == "orange"
@@ -156,7 +163,8 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
             Column(Modifier.navigationBarsPadding().imePadding().widthIn(max = 840.dp).fillMaxWidth()) {
                 if (progressTodos.isNotEmpty()) Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                     TodoProgressBar(progressTodos, usage = TurnUsage(inputTokens = 469, outputTokens = 85, cacheReadInputTokens = null,
-                        cacheCreationInputTokens = null, reasoningOutputTokens = null, totalCostUsd = 0.13, estimated = false))
+                        cacheCreationInputTokens = null, reasoningOutputTokens = null, totalCostUsd = 0.13, estimated = false),
+                        detailsInSheet = true, onDetailsOpenChange = { presentation.overlayOpen = it })
                 }
                 if (mode == "call" || callPhase != VoiceCallPhase.Off) VoiceCallPanel(callPhase, "$name · /workspace/demo",
                     when (callPhase) { VoiceCallPhase.Speaking -> "正在播报，点击插话可立即停止"; VoiceCallPhase.Processing -> "等待员工回复"; VoiceCallPhase.Paused -> "通话已暂停，点击继续"; else -> "正在聆听，停顿后自动发送" },
@@ -170,12 +178,40 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
                     onPickFile = if (mode == "composer-focus") nativePickers.pickFile else {
                         { composer.upload { listOf(UploadedFile("设计说明.txt", "/mock/design.txt", 128, "text/plain")) }; Unit }
                     },
-                    editorOverlayOpen = modelOpen || nativePickers.open,
+                    editorOverlayOpen = modelOpen || settingsOpen != null || nativePickers.open,
                     canSubmit = composer.canSubmit, onSend = { composer.submit() }, compactAfterAcknowledgement = true, deliveryPhase = delivery,
-                    allowRefocus = true, voicePressed = voicePressed, voiceProcessing = voiceProcessing, voiceCommitSignal = voiceCommitSignal, onExpandedChange = {},
-                    minimalCompanion = { controls, content ->
-                        SideEffect { fixture.editorVisible = controls.editing }
-                        FloatingComposerCompanion(id, name, "", when {
+                    allowRefocus = true, voicePressed = voicePressed, voiceProcessing = voiceProcessing, voiceCommitSignal = voiceCommitSignal, onExpandedChange = { fixture.editorVisible = it },
+                    presentation = presentation,
+                    capsuleMicrophone = { CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel) },
+                    trailingActions = { _, send ->
+                        if (draft.isBlank() && composer.attachments.isEmpty() && !running && delivery == SendPhase.Idle)
+                            CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel)
+                        else ComposerSendStopActions(
+                        voiceAction = { CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel) },
+                        visual = com.wand.app.ui.sendActionVisual(delivery, running, draft.isNotBlank() || composer.attachments.isNotEmpty()),
+                        stopDescription = "停止当前任务", sendDescription = if (draft.isBlank() && composer.attachments.isNotEmpty()) "发送附件" else "发送消息",
+                        onSend = send, onStop = { running = false }) },
+                    controls = {
+                        ComposerSettingsRow(if (model == "model-a") "示例模型 A" else "示例模型 B", "标准", "自动",
+                            onModel = { attachmentsOpen = false; modelOpen = true },
+                            onMode = { settingsOpen = "权限" }, onThinking = { settingsOpen = "思考" })
+                    })
+                if (settingsOpen != null) ComposerChoiceSheet(settingsOpen!!,
+                    listOf("default" to "当前档位（离线示例）", "alternative" to "另一档（离线示例，不更改会话）"), "default",
+                    onSelect = { settingsOpen = null }, onDismiss = { settingsOpen = null })
+                // Same stable owner as production InputBar, outside the conditionally mounted editor.
+                if (modelOpen) ComposerChoiceSheet("模型", listOf("model-a" to "示例模型 A", "model-b" to "示例模型 B"),
+                    model, onSelect = { model = it; modelOpen = false }, onDismiss = { modelOpen = false }, searchable = true)
+            }
+        }) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+            LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight().padding(top = topCompanionClearance()).pointerInput(presentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); presentation.dismiss() } }, contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (mode == "empty") item { Text("向员工描述你想完成的事情", style = MaterialTheme.typography.bodyLarge) }
+                else if (mode == "error") item { Text("示例：网络暂不可用，输入保留", color = WandColors.danger); TextButton(onClick = {}) { Text("重新加载") } }
+                else if (mode == "loading") item { CircularProgressIndicator(Modifier.size(24.dp)) }
+                else items(turns) { TurnView(it, employeeId = id, employeeName = name, employeeAvatar = "", isLastTurn = it.role == "assistant", showIdentity = false) }
+            }
+            TopChatCompanion(id, name, "", when {
                             voiceCancel && voicePressed -> "松开取消"
                             voicePressed -> "示例录音 · 上滑取消"
                             voiceProcessing -> "转写中…"
@@ -186,29 +222,8 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
                             mode == "streaming" -> "回复中"
                             running -> companionWorkStatus(true, activity, progressTodos.isNotEmpty())
                             else -> ""
-                        }, activity, mode == "thinking" || mode == "progress", false, controls, running,
-                            onStop = { running = false }, previewGesture = voiceGesture, content = content)
-                    },
-                    trailingActions = { _, send -> ComposerSendStopActions(voiceAction = {},
-                        visual = if (draft.isBlank()) SendActionVisual.Blocked else SendActionVisual.Send,
-                        stopDescription = "停止", onSend = send, onStop = { running = false }) },
-                    controls = {
-                        ControlChip(WandIcons.sparkle, "${if (model == "model-a") "示例模型 A" else "示例模型 B"} · 自动",
-                            WandColors.textSecondary, "选择示例模型", modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                            onClick = { attachmentsOpen = false; modelOpen = true })
-                    })
-                // Same stable owner as production InputBar, outside the conditionally mounted editor.
-                if (modelOpen) ComposerChoiceSheet("模型", listOf("model-a" to "示例模型 A", "model-b" to "示例模型 B"),
-                    model, onSelect = { model = it; modelOpen = false }, onDismiss = { modelOpen = false }, searchable = true)
-            }
-        }) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
-            LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight().padding(top = ChatFloatingControlsClearance), contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (mode == "empty") item { Text("向员工描述你想完成的事情", style = MaterialTheme.typography.bodyLarge) }
-                else if (mode == "error") item { Text("示例：网络暂不可用，输入保留", color = WandColors.danger); TextButton(onClick = {}) { Text("重新加载") } }
-                else if (mode == "loading") item { CircularProgressIndicator(Modifier.size(24.dp)) }
-                else items(turns) { TurnView(it, employeeId = id, employeeName = name, employeeAvatar = "", isLastTurn = it.role == "assistant") }
-            }
+                        }, activity, mode == "thinking", false,
+                onEdit = presentation::edit, gesture = voiceGesture)
             FloatingChatControls(showBack = true, onBack = {}, onCall = { callPhase = VoiceCallPhase.Listening },
                 identity = name, cwd = "/workspace/demo", onTarget = { contextOpen = true },
                 gitEnabled = true, onGit = {}, onStop = { running = false }.takeIf { running }, modifier = Modifier.align(Alignment.TopCenter),

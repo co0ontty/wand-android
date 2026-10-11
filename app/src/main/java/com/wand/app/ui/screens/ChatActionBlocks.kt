@@ -969,8 +969,10 @@ internal fun activeTodoIndex(todos: List<TodoEntry>): Int? {
 }
 
 /** 当前事项为主，步数为辅；任务与用量向上展开，底部触发点和输入操作不位移。 */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null, usage: TurnUsage? = null) {
+fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null, usage: TurnUsage? = null,
+    detailsInSheet: Boolean = false, onDetailsOpenChange: (Boolean) -> Unit = {}) {
     if (todos.isEmpty()) return
     val completed = todos.count { it.status == "completed" }
     val activeIndex = activeTodoIndex(todos)
@@ -980,8 +982,8 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null, usa
     var expanded by remember { mutableStateOf(false) }
     val motionEnabled = !reduceMotionEnabled()
 
-    WandCard(shape = WandShapes.lg, contentPadding = PaddingValues(0.dp)) {
-        WandInlinePanel(visible = expanded, growFrom = Alignment.Bottom) {
+    LaunchedEffect(expanded) { onDetailsOpenChange(expanded) }
+    val details: @Composable () -> Unit = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
@@ -1024,7 +1026,13 @@ fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null, usa
                     UsageSummaryRow(usage, isLive = false)
                 }
             }
-        }
+    }
+    if (detailsInSheet && expanded) com.wand.app.ui.components.WandBottomSheet(onDismissRequest = { expanded = false }) {
+        Text("任务进度", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
+        details()
+    }
+    WandCard(shape = WandShapes.lg, contentPadding = PaddingValues(0.dp)) {
+        if (!detailsInSheet) WandInlinePanel(visible = expanded, growFrom = Alignment.Bottom) { details() }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),

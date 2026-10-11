@@ -841,6 +841,8 @@ fun ChatScreen(
     // 液态玻璃：内容区是 backdrop 捕获源，顶栏/输入栏/FAB 悬浮其上采样模糊+折射。
     val glassBackdrop = rememberGlassBackdrop()
     val activeBackdrop = if (chromeSettled) glassBackdrop else null
+    val inputPresentation = remember(sessionId) { ChatInputPresentation() }
+    val draftVoiceGesture = DraftVoiceGesture(onMicDown, voice::updateCancel, voice::endPress, voice::cancelPress)
     var composerExpanded by remember(sessionId) { mutableStateOf(false) }
     var stopRequest by remember(sessionId) { mutableIntStateOf(0) }
     // ＋ 展开的动作面板：就地展开，返回键/发送/换会话时收起（规则 2）。
@@ -872,29 +874,7 @@ fun ChatScreen(
             store = store,
             progressTodos = progressTodos,
             stopRequest = stopRequest,
-            companion = { controls, onStop, content ->
-                FloatingComposerCompanion(employeeId, liveEmployee?.name ?: store.snapshot?.employeeName,
-                    liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
-                    status = when {
-                        voice.canceling -> "松开取消"
-                        voice.pressed -> "正在听 · 上滑取消"
-                        voice.processing -> "转写中…"
-                        call.phase == VoiceCallPhase.Listening -> "正在聆听"
-                        call.audioPlaying -> "正在朗读"
-                        controls.deliveryPhase == SendPhase.Sending -> "正在发送"
-                        controls.deliveryPhase == SendPhase.Failed -> "请核对发送结果，草稿已保留"
-                        controls.deliveryPhase == SendPhase.Sent -> "已送达"
-                        store.pendingEscalation != null || store.legacyPermissionPrompt != null -> "等待确认"
-                        !store.connected -> "连接已断开"
-                        else -> companionWorkStatus(store.isResponding, avatarActivity,
-                            hasDetailedProgress = progressTodos.isNotEmpty() || subagentActivities.isNotEmpty())
-                    }, activity = avatarActivity,
-                    thinking = companionThinking(store.messages, store.isResponding && store.status == "running" &&
-                        store.pendingEscalation == null && store.legacyPermissionPrompt == null, avatarActivity),
-                    speaking = call.audioPlaying, controls = controls.copy(onEdit = { call.pause("已切换为文字输入"); controls.onEdit() }),
-                    voice = voice, onMicDown = onMicDown, running = store.isResponding, onStop = onStop,
-                    onPauseSpeech = { call.pause("声音已暂停，任务继续") }.takeIf { call.audioPlaying }, content = content)
-            },
+            presentation = inputPresentation,
             callPanel = {
                 if (callOpen || call.active) VoiceCallPanel(call.phase,
                     target = "${liveEmployee?.name ?: store.snapshot?.employeeName ?: "请选择员工"} · ${store.snapshot?.cwd.orEmpty()}",
@@ -934,7 +914,7 @@ fun ChatScreen(
         val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
         val chatPadding = PaddingValues(
             start = padding.calculateStartPadding(direction), end = padding.calculateEndPadding(direction),
-            top = padding.calculateTopPadding() + ChatFloatingControlsClearance, bottom = padding.calculateBottomPadding(),
+            top = padding.calculateTopPadding() + topCompanionClearance(), bottom = padding.calculateBottomPadding(),
         )
         // 消息视口避让状态栏和悬浮按钮，滚动正文不会进入触控区。
         Box(
@@ -945,6 +925,7 @@ fun ChatScreen(
                         awaitFirstDown(requireUnconsumed = false)
                         attachOpen = false
                         resources.dismiss()
+                        inputPresentation.dismiss()
                         focusManager.clearFocus()
                     }
                 }
@@ -1035,6 +1016,7 @@ fun ChatScreen(
                                         compactUser = false,
                                         initiallyCollapsed = collapseReply,
                                         showHeader = true,
+                                        showIdentity = false,
                                         onUserExpand = { scrollReplyToTop(absoluteTurnIndex) },
                                         onCurrentReplyExpandToBottom = {
                                             if (isCurrentReply) expandCurrentReplyToBottom()
@@ -1164,6 +1146,28 @@ fun ChatScreen(
             }
         }
         Box(Modifier.fillMaxSize().padding(padding)) {
+            TopChatCompanion(employeeId, liveEmployee?.name ?: store.snapshot?.employeeName,
+                liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
+                    status = when {
+                        voice.canceling -> "松开取消"
+                        voice.pressed -> "正在听 · 上滑取消"
+                        voice.processing -> "转写中…"
+                        call.phase == VoiceCallPhase.Listening -> "正在聆听"
+                        call.audioPlaying -> "正在朗读"
+                        composer.sendPhase == SendPhase.Sending -> "正在发送"
+                        composer.sendPhase == SendPhase.Failed -> "请核对发送结果，草稿已保留"
+                        composer.sendPhase == SendPhase.Sent -> "已送达"
+                        store.pendingEscalation != null || store.legacyPermissionPrompt != null -> "等待确认"
+                        !store.connected -> "连接已断开"
+                        else -> companionWorkStatus(store.isResponding, avatarActivity,
+                            hasDetailedProgress = progressTodos.isNotEmpty() || subagentActivities.isNotEmpty())
+                    }, activity = avatarActivity,
+                    thinking = companionThinking(store.messages, store.isResponding && store.status == "running" &&
+                        store.pendingEscalation == null && store.legacyPermissionPrompt == null, avatarActivity),
+                speaking = call.audioPlaying,
+                onEdit = { call.pause("已切换为文字输入"); inputPresentation.edit() }, gesture = draftVoiceGesture,
+                onPauseSpeech = { call.pause("声音已暂停，任务继续") }.takeIf { call.audioPlaying })
+
             FloatingChatControls(showBack = showBack, onBack = onBack, onCall = { callOpen = !callOpen },
                 identity = liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel ?: "当前会话",
                 cwd = store.snapshot?.cwd, onTarget = { callTargetOpen = true },
@@ -1847,7 +1851,7 @@ private fun thinkingLevels(store: ChatStore): List<ThinkingEffortOption> =
 private fun thinkingLabel(store: ChatStore, id: String): String {
     val levels = thinkingLevels(store)
     return levels.firstOrNull { it.id == id }?.label
-        ?: levels.firstOrNull()?.label
+        ?: id.takeIf { it.isNotBlank() }
         ?: "自动"
 }
 
@@ -2119,7 +2123,7 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
 private fun BottomBar(
     backdrop: GlassBackdrop?,
     callPanel: @Composable () -> Unit = {},
-    companion: (@Composable (CompanionComposerControls, () -> Unit, @Composable () -> Unit) -> Unit)? = null,
+    presentation: ChatInputPresentation,
     stopRequest: Int = 0,
     store: ChatStore,
     composer: ChatComposer,
@@ -2168,7 +2172,8 @@ private fun BottomBar(
         // 用 session.status 而不是 inFlight 判定，避免流式间隙闪烁）。
         if (progressTodos.isNotEmpty()) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage)
+                TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage, detailsInSheet = true,
+                    onDetailsOpenChange = { presentation.overlayOpen = it })
             }
         }
         // 权限审批卡：底部滑入 + 淡入；退场期间用缓存内容避免闪空。
@@ -2205,7 +2210,7 @@ private fun BottomBar(
         // 结构化会话没有「会话已结束 / 恢复会话」的概念：一个回合结束后只是回到 idle，
         // 直接继续输入即可（服务端 sendMessage 自动 --resume 续接）。不再渲染结束态横幅。
         // 按住说话实时转写气泡（按住期间悬浮在输入栏上方）。
-        if (companion == null && (voice.pressed || voice.processing)) {
+        if (voice.pressed || voice.processing) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 VoiceTranscriptBubble(backdrop, voice)
             }
@@ -2238,7 +2243,7 @@ private fun BottomBar(
             canSubmit = composer.canSubmit && resources.phase != "saving",
             resources = resources,
             sendPhase = composer.sendPhase,
-            companion = companion,
+            presentation = presentation,
             stopRequest = stopRequest,
             draft = draft,
             onDraftChange = onDraftChange,
@@ -2277,7 +2282,7 @@ private fun InputBar(
     canSubmit: Boolean,
     resources: com.wand.app.ui.PiResourcesController,
     sendPhase: SendPhase,
-    companion: (@Composable (CompanionComposerControls, () -> Unit, @Composable () -> Unit) -> Unit)?,
+    presentation: ChatInputPresentation,
     stopRequest: Int,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -2301,10 +2306,9 @@ private fun InputBar(
     var modeOpen by remember(store.sessionId) { mutableStateOf(false) }
     var modelOpen by remember(store.sessionId) { mutableStateOf(false) }
     val menuTriggerFocus = remember(store.sessionId) { FocusRequester() }
-    val menuStopVisible = if (companion != null) store.isResponding else composerMenuHasStop(
-        store.isResponding,
-        sendActionVisual(sendPhase, store.isResponding, canSend),
-    )
+    val menuStopVisible = store.isResponding
+    var thinkingOpen by remember(store.sessionId) { mutableStateOf(false) }
+    val draftVoice = DraftVoiceGesture(onMicDown, voice::updateCancel, voice::endPress, voice::cancelPress)
     SharedMessageComposer(
         backdrop = backdrop,
         sessionKey = store.sessionId,
@@ -2321,16 +2325,14 @@ private fun InputBar(
         canSubmit = canSubmit,
         onSend = onSend,
         allowRefocus = !store.sessionEnded,
-        minimalCompanion = companion?.let { render ->
-            { controls, content -> render(controls,
-                { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true }, content) }
-        },
+        presentation = presentation,
+        capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling) },
         compactAfterAcknowledgement = true,
         deliveryPhase = sendPhase,
         voicePressed = voice.pressed,
         voiceProcessing = voice.processing,
         voiceCommitSignal = voiceCommitSignal,
-        editorOverlayOpen = modelOpen || modeOpen || showStopConfirm || attachmentPickerOpen,
+        editorOverlayOpen = modelOpen || modeOpen || thinkingOpen || showStopConfirm || attachmentPickerOpen,
         onExpandedChange = onExpandedChange,
         resourcePanel = { PiResourcesPanel(resources) { runCatching { menuTriggerFocus.requestFocus() } } },
         resourcePanelOpen = resources.open,
@@ -2364,40 +2366,36 @@ private fun InputBar(
                 )
             }
         },
-        trailingActions = { requestFocus, sendAndRefocus ->
-            TrailingSendStop(
+        trailingActions = { _, sendAndRefocus ->
+            if (!canSend && !store.isResponding && sendPhase == SendPhase.Idle) {
+                CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling)
+            } else TrailingSendStop(
                 store = store,
                 sendPhase = sendPhase,
                 canSend = canSend,
                 canSubmit = canSubmit,
                 onStop = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
                 voiceAction = {
-                    if (companion == null) VoiceMicButton(
-                        voice = voice, voiceMode = false, onToggleMode = requestFocus, onMicDown = onMicDown,
-                    )
+                    CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling)
                 },
                 onSend = sendAndRefocus,
             )
         },
         controls = {
-            Row(
-                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (store.isStructured) {
-                    ModelThinkingChip(store, onClick = {
-                        onAttachOpenChange(false)
-                        resources.dismiss()
-                        modelOpen = true
-                    }, modifier = Modifier.weight(1f))
-                }
-            }
+            ComposerSettingsRow(
+                model = shortModelLabel(store), mode = SESSION_MODE_OPTIONS.firstOrNull { it.id == store.mode }?.label ?: store.mode, thinking = thinkingLabel(store, store.thinkingEffort),
+                enabled = store.isStructured && !store.providerSwitching && !store.directoryChanging,
+                onModel = { resources.dismiss(); modelOpen = true },
+                onMode = { resources.dismiss(); modeOpen = true },
+                onThinking = { resources.dismiss(); thinkingOpen = true },
+            )
         },
     )
     // This scope survives IME changes and editor collapse; no selector is owned by a chip.
     if (modelOpen) {
-        ModelThinkingChoiceSheet(store, onDismiss = { modelOpen = false })
+        ModelThinkingChoiceSheet(store, onDismiss = { modelOpen = false }, showThinking = false)
     }
+    if (thinkingOpen) ComposerThinkingChoiceSheet(store) { thinkingOpen = false }
     if (modeOpen) {
         ComposerModeChoiceSheet(store, onDismiss = { modeOpen = false })
     }
@@ -2702,22 +2700,46 @@ internal fun ComposerChoiceSheet(
     }
 }
 
-/** 执行模式从加号面板进入；弹层状态由输入栏持有，关闭面板不会销毁选择器。 */
+/** Settings mutate only this session through the original store and its rollback guards. */
 @Composable
 private fun ComposerModeChoiceSheet(store: ChatStore, onDismiss: () -> Unit) {
-    val supportedModeIds = supportedSessionModeIds(store.snapshot?.provider)
-    ComposerChoiceSheet(
-        title = "执行模式",
-        options = SESSION_MODE_OPTIONS
-            .filter { it.id in supportedModeIds }
+    val provider = store.snapshot?.provider
+    if (provider == "codex") {
+        ComposerSettingExplanation("权限 · ${sessionModeLabel(store.mode)}", "当前 Codex 会话的权限由启动配置固定，此入口不能修改。", onDismiss)
+        return
+    }
+    var pending by remember { mutableStateOf<String?>(null) }
+    if (pending == null) ComposerChoiceSheet(
+        title = "当前会话权限",
+        options = SESSION_MODE_OPTIONS.filter { it.id in supportedSessionModeIds(provider) }
             .map { it.id to "${it.label} · ${it.description}" },
         selected = store.mode,
-        onSelect = { id ->
-            store.chooseMode(id)
-            onDismiss()
-        },
+        onSelect = { id -> if (id == store.mode) onDismiss() else pending = id },
         onDismiss = onDismiss,
-    )
+    ) else WandDialog(title = "更改当前会话权限", onDismissRequest = { pending = null },
+        confirm = WandDialogAction("确认更改", { pending?.let(store::chooseMode); onDismiss() }),
+        dismiss = WandDialogAction("取消", { pending = null })) {
+        val option = SESSION_MODE_OPTIONS.firstOrNull { it.id == pending }
+        Text("${option?.label}：${option?.description}。仅作用于当前 ${store.snapshot?.providerLabel ?: provider.orEmpty()} 会话后续的工具执行；不会修改员工默认配置，也不会批准当前待确认的请求。", color = WandColors.textSecondary)
+    }
+}
+
+@Composable
+private fun ComposerSettingExplanation(title: String, detail: String, onDismiss: () -> Unit) {
+    WandDialog(title = title, onDismissRequest = onDismiss,
+        confirm = WandDialogAction("知道了", onDismiss)) { Text(detail, color = WandColors.textSecondary) }
+}
+
+@Composable
+private fun ComposerThinkingChoiceSheet(store: ChatStore, onDismiss: () -> Unit) {
+    val options = com.wand.app.ui.dynamicThinkingEffortOptions(store.snapshot?.provider.orEmpty(),
+        store.selectedModel, store.defaultModel, store.availableModels, store.availableThinkingEfforts)
+    if (options == null) ComposerSettingExplanation("思考能力待确认",
+        "服务端尚未返回此模型的可选思考档位。当前保存值：${store.thinkingEffort}。保留当前选择，不猜测支持范围。", onDismiss)
+    else if (options.size <= 1) ComposerSettingExplanation("思考设置不可调",
+        "当前模型没有可调的思考档位，使用模型默认行为。", onDismiss)
+    else ComposerChoiceSheet("当前会话思考深度", options.map { it.id to it.menuLabel }, store.thinkingEffort,
+        onSelect = { store.chooseThinkingEffort(it); onDismiss() }, onDismiss = onDismiss)
 }
 
 /** 模型与思考深度合体弹层：上方思考深度横向快捷切换，下方模型搜索与列表。 */
@@ -2726,6 +2748,7 @@ private fun ComposerModeChoiceSheet(store: ChatStore, onDismiss: () -> Unit) {
 internal fun ModelThinkingChoiceSheet(
     store: ChatStore,
     onDismiss: () -> Unit,
+    showThinking: Boolean = true,
 ) {
     var query by remember { mutableStateOf("") }
     val thinkingOptions = thinkingLevels(store)
@@ -2762,6 +2785,7 @@ internal fun ModelThinkingChoiceSheet(
                     .imePadding()
                     .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
             ) {
+                if (showThinking) {
                 // 顶部：思考深度分段快捷切换
                 Text(
                     "思考深度",
@@ -2817,6 +2841,7 @@ internal fun ModelThinkingChoiceSheet(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
                 )
 
+                }
                 // 中间：模型搜索
                 Text(
                     "模型",

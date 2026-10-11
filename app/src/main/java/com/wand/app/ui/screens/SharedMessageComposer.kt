@@ -79,7 +79,17 @@ internal fun SharedMessageComposer(
     compactAfterAcknowledgement: Boolean = false,
     deliveryPhase: SendPhase = SendPhase.Idle,
     minimalCompanion: MinimalCompanion? = null,
+    presentation: ChatInputPresentation? = null,
+    capsuleMicrophone: @Composable () -> Unit = {},
 ) {
+    if (presentation != null) {
+        FocusCapsuleComposer(presentation, sessionKey, draft, onDraftChange, attachments, baseUrl,
+            onRemoveAttachment, uploading, attachOpen, onAttachOpenChange, onPickPhoto, onPickFile,
+            canSubmit, onSend, deliveryPhase, voicePressed, voiceProcessing, voiceCommitSignal,
+            editorOverlayOpen, resourcePanelOpen, onExpandedChange, trailingActions, controls,
+            resourcePanel, menuContent, capsuleMicrophone)
+        return
+    }
     val focusRequester = remember(sessionKey) { FocusRequester() }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var refocusAfterSend by remember(sessionKey) { mutableStateOf(false) }

@@ -108,7 +108,7 @@ class ConversationEntryFirstScreenTest {
         val chat = screen("ConversationScreens")
         val header = chat.substringAfter("internal fun ConversationChatScreen(").substringBefore("WandInlinePanel(titleOpen")
         assertTrue(header.contains("if (showBack) WandIconButton(WandIcons.back, \"返回\", onBack"))
-        assertTrue(header.contains("Modifier.align(Alignment.CenterStart), variant = WandIconButtonVariant.Chrome"))
+        assertTrue(header.contains("Modifier.align(if (privateChat) Alignment.TopStart else Alignment.CenterStart), variant = WandIconButtonVariant.Chrome"))
         assertFalse("「返回」不再挤进 48dp 窄槽折成两行", chat.contains("WandButton(\"返回\", onBack, modifier = Modifier.width(48.dp)"))
         // 抽屉式「打开列表」不是首屏：列表自己是根屏，详情只需要回到来源。
         assertFalse(chat.contains("打开列表"))
