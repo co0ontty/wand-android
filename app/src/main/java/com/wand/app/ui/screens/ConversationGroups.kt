@@ -73,7 +73,7 @@ internal fun ConversationGroupEditor(
         selectedEmployees.associate { it.id to (duties[it.id] ?: it.duty) }
     val invalidDuty = dutyValues.values.any { it.trim().length > 2000 }
     LaunchedEffect(invalid, invalidDuty) { if (invalid || invalidDuty) settingsExpanded = true }
-    BoxWithConstraints(Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+    Box(Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
         if (event.key == Key.Escape && event.type == KeyEventType.KeyUp) {
             if (replacement != null) replacement = null else onClose(); true
         } else false

@@ -107,6 +107,13 @@ fun sessionCwdLeaf(cwd: String?): String? {
     return leaf.takeIf { it.isNotEmpty() }
 }
 
+/** 顶栏只投影会话实际 cwd 的末级目录，不使用服务器别名或工作区显示名。 */
+fun sessionWorkingDirectoryLabel(cwd: String?): String {
+    val path = cwd?.trim()?.replace('\\', '/')?.takeIf { it.isNotEmpty() }
+        ?: return "目录未就绪"
+    return sessionCwdLeaf(path) ?: "/"
+}
+
 fun isGenericSessionTitle(
     title: String,
     blockedTitles: Collection<String> = emptyList(),

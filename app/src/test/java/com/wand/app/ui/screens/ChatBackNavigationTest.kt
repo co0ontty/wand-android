@@ -11,9 +11,10 @@ class ChatBackNavigationTest {
         File("src/main/java/com/wand/app/ui/screens/$name.kt").readText()
 
     @Test
-    fun toolbarBackCallsPageNavigationDirectlyWithoutDispatchingToCards() {
+    fun floatingBackCallsPageNavigationDirectlyWithoutDispatchingToCards() {
         val source = screen("ChatScreen")
-        assertTrue(Regex("WandDetailBackButton\\(\\s*onClick = onBack").containsMatchIn(source))
+        assertTrue(source.contains("FloatingChatControls(showBack = showBack, onBack = onBack"))
+        assertTrue(screen("FloatingChatControls").contains("FloatingChatIconButton(WandIcons.back, \"返回\", onBack)"))
         assertFalse(source.contains("rememberChatBackAction"))
         assertFalse(source.contains("dispatchChatBack"))
         assertFalse(source.contains("onBackPressedDispatcher"))

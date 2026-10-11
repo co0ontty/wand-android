@@ -417,6 +417,14 @@ class ActivityGroupingTest {
     }
 
     @Test
+    fun missingThinkingTextDoesNotClaimDeliveryFailureOrPromiseItWillArrive() {
+        assertEquals("正在思考，暂无可显示的摘要。", thinkingDetailText("", live = true))
+        assertEquals("模型未提供可显示的思考摘要。", thinkingDetailText("   ", live = false))
+        assertEquals("完整正文\n下一行", thinkingDetailText("完整正文\n下一行", live = true))
+        assertEquals("完整正文", thinkingDetailText("完整正文", live = false))
+    }
+
+    @Test
     fun atMostOneRowIsLiveSoTheLoadingEffectNeverRepeats() {
         val todo = tool("todo", "Pi/todo")
         val command = tool("run", "Bash", "run_command")

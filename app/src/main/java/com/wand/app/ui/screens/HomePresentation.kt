@@ -8,7 +8,6 @@ import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.withLiveTitle
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 
 /**
@@ -285,7 +284,7 @@ internal fun sessionRelativeTime(
         minutes < 60 * 24 -> "${delta.toHours()} 小时前"
         minutes < 60 * 24 * 2 -> "昨天"
         minutes < 60 * 24 * 7 -> "${delta.toDays()} 天前"
-        else -> LocalDate.ofInstant(start, zone).let { "${it.monthValue} 月 ${it.dayOfMonth} 日" }
+        else -> start.atZone(zone).toLocalDate().let { "${it.monthValue} 月 ${it.dayOfMonth} 日" }
     }
 }
 

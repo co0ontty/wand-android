@@ -287,7 +287,14 @@ object ChatSessionEventReducer {
                     leadingBlockTotal = incoming.content.size
                     leadingVisibleCount = 0
                 }
-                current.messages.dropLast(1) + mergeOverlappingTurns(last, incoming)
+                val merged = mergeOverlappingTurns(last, incoming)
+                if (current.messages.size == 1) {
+                    leadingBlockTotal = maxOf(
+                        leadingBlockOffset + merged.content.size,
+                        leadingBlockTotal + merged.content.size - (if (keepLocal) last.content.size else incoming.content.size),
+                    )
+                }
+                current.messages.dropLast(1) + merged
             }
             current.loadedOffset + current.messages.size < expected || expected == 0 ->
                 current.messages + incoming
@@ -330,12 +337,20 @@ object ChatSessionEventReducer {
         changes.providerCliExitCode?.let { next = next.copy(providerCliExitCode = it) }
         changes.currentTaskTitle?.let { next = next.copy(currentTaskTitle = it) }
         if (changes.cwd != null || changes.workspaceId != null || changes.title != null || changes.description != null || changes.summary != null
+            || changes.employeeId != null || changes.employeeName != null || changes.employeeAvatar != null
+            || changes.provider != null || changes.runner != null || changes.structuredState != null
             || changes.titleGenerating != null || changes.providerCliActive != null
             || changes.providerCliExitCode != null || changes.ptyBusy != null
             || changes.completionRevision != null || changes.viewedCompletionRevision != null
         ) {
             next.snapshot?.let { snapshot ->
                 next = next.copy(snapshot = snapshot.copy(
+                    employeeId = changes.employeeId ?: snapshot.employeeId,
+                    employeeName = changes.employeeName ?: snapshot.employeeName,
+                    employeeAvatar = changes.employeeAvatar ?: snapshot.employeeAvatar,
+                    provider = changes.provider ?: snapshot.provider,
+                    runner = changes.runner ?: snapshot.runner,
+                    structuredState = changes.structuredState ?: snapshot.structuredState,
                     cwd = changes.cwd ?: snapshot.cwd,
                     workspaceId = changes.workspaceId ?: snapshot.workspaceId,
                     title = changes.title ?: snapshot.title,
@@ -424,8 +439,39 @@ internal fun shouldKeepLocalTurn(local: ConversationTurn, incoming: Conversation
         incoming.role == "assistant" &&
         turnContentVolume(local) > turnContentVolume(incoming)
 
+/** 空思考是流式占位，不是可以靠字节体积永久保留的历史。 */
+private fun ContentBlock.isEmptyThinkingPlaceholder(): Boolean =
+    this is ContentBlock.Thinking && thinking.isBlank()
+
+/** 只有同一位置仍指向同一块时才能逐块合并，不能把尾窗误认成完整前缀。 */
+private fun sameContentBlock(local: ContentBlock, incoming: ContentBlock): Boolean = when {
+    local.isEmptyThinkingPlaceholder() -> true
+    local is ContentBlock.ToolUse && incoming is ContentBlock.ToolUse -> local.id == incoming.id
+    local is ContentBlock.ToolResult && incoming is ContentBlock.ToolResult -> local.toolUseId == incoming.toolUseId
+    local is ContentBlock.Thinking && incoming is ContentBlock.Thinking -> local.subagent == incoming.subagent
+    local is ContentBlock.Text && incoming is ContentBlock.Text -> local.subagent == incoming.subagent
+    else -> false
+}
+
+private fun mergeMatchingTurnBlocks(local: List<ContentBlock>, incoming: List<ContentBlock>): List<ContentBlock>? {
+    if (incoming.isEmpty()) return null // 空快照不是清空历史的指令。
+    val overlap = minOf(local.size, incoming.size)
+    if ((0 until overlap).any { !sameContentBlock(local[it], incoming[it]) }) return null
+    return (0 until maxOf(local.size, incoming.size)).mapNotNull { index ->
+        val old = local.getOrNull(index)
+        val fresh = incoming.getOrNull(index)
+        when {
+            fresh == null -> old?.takeUnless { it.isEmptyThinkingPlaceholder() }
+            old == null || old.isEmptyThinkingPlaceholder() -> fresh
+            contentBlockVolume(fresh) >= contentBlockVolume(old) -> fresh
+            else -> old
+        }
+    }
+}
+
 /**
- * 两版 turn 重叠时，内容更完整的一版胜出；时代戳逐字段互补，不因为换内容丢掉时间。
+ * 短工具回执不应吞掉同一版里的新思考；同一块保留更完整正文，窗口前缀继续保留。
+ * 不可对齐的尾窗仍沿用整 turn 保护，时间戳逐字段互补。
  */
 internal fun mergeOverlappingTurns(
     local: ConversationTurn,
@@ -433,7 +479,8 @@ internal fun mergeOverlappingTurns(
 ): ConversationTurn =
     if (shouldKeepLocalTurn(local, incoming)) {
         mergeConversationTurnTimes(local, incoming)
-            .copy(content = local.content, usage = incoming.usage ?: local.usage)
+            .copy(content = mergeMatchingTurnBlocks(local.content, incoming.content) ?: local.content,
+                usage = incoming.usage ?: local.usage)
     } else {
         mergeConversationTurnTimes(local, incoming)
     }
@@ -468,7 +515,14 @@ internal fun mergeLeadingAssistantTurn(
     if (incomingStart > localEnd || localStart > incomingEnd) return null
 
     val mergedStart = minOf(localStart, incomingStart)
-    val mergedEnd = maxOf(localEnd, incomingEnd)
+    // Pi 会在一轮结束且没有正文时撤回段尾占位。旧窗口的真实前缀仍保留，
+    // 但不能把服务端已撤回的空尾块重新拼回去。
+    var mergedEnd = maxOf(localEnd, incomingEnd)
+    while (mergedEnd > incomingEnd &&
+        local.content.getOrNull(mergedEnd - 1 - localStart)?.isEmptyThinkingPlaceholder() == true) {
+        mergedEnd--
+    }
+    val removedPlaceholders = maxOf(localEnd - mergedEnd, 0)
     val blocks = ArrayList<ContentBlock>(mergedEnd - mergedStart)
     for (absoluteIndex in mergedStart until mergedEnd) {
         val localBlock = local.content.getOrNull(absoluteIndex - localStart)
@@ -490,7 +544,7 @@ internal fun mergeLeadingAssistantTurn(
         turn = mergeConversationTurnTimes(local, incoming)
             .copy(content = blocks, usage = incoming.usage ?: local.usage),
         blockOffset = mergedStart,
-        blockTotal = maxOf(localTotal, incomingTotal, mergedEnd),
+        blockTotal = maxOf(localTotal - removedPlaceholders, incomingTotal, mergedEnd),
         // 剩余可见条数跟窗口起点走：谁的前缀更早，就用谁的计数。
         visibleCount = if (mergedStart == localStart) localVisible else incomingVisible,
     )

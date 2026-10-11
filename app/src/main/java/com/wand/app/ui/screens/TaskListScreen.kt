@@ -429,6 +429,7 @@ fun TaskListScreen(
                 newTaskTarget.raw, newTaskModel,
                 loadedModels?.defaultModelFor(newTaskTarget.raw),
                 loadedModels?.modelsFor(newTaskTarget.raw).orEmpty(),
+                loadedModels?.thinkingEffortsFor(newTaskTarget.raw).orEmpty(),
             )
             if (available.none { it.id == newTaskThinkingEffort }) newTaskThinkingEffort = "off"
         }
@@ -746,6 +747,7 @@ fun TaskListScreen(
                     val available = com.wand.app.ui.thinkingEffortOptions(
                         option.provider.orEmpty(), "default", newTaskModels?.defaultModelFor(option.provider.orEmpty()),
                         newTaskModels?.modelsFor(option.provider.orEmpty()).orEmpty(),
+                        newTaskModels?.thinkingEffortsFor(option.provider.orEmpty()).orEmpty(),
                     )
                     newTaskThinkingEffort = state.defaultThinkingEffort.takeIf { effort ->
                         available.any { it.id == effort }
@@ -776,6 +778,7 @@ fun TaskListScreen(
                     newTaskTarget.raw, chosen,
                     newTaskModels?.defaultModelFor(newTaskTarget.raw),
                     newTaskModels?.modelsFor(newTaskTarget.raw).orEmpty(),
+                    newTaskModels?.thinkingEffortsFor(newTaskTarget.raw).orEmpty(),
                 )
                 if (available.none { it.id == newTaskThinkingEffort }) newTaskThinkingEffort = "off"
             },

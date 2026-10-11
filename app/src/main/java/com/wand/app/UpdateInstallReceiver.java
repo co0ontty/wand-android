@@ -8,11 +8,13 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInstaller;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.widget.Toast;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 
 /**
  * PackageInstaller.commit 的状态回调。系统会先送来 STATUS_PENDING_USER_ACTION，
@@ -157,7 +159,8 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
         try {
             NotificationHelper helper = new NotificationHelper(context);
             helper.createChannels();
-            if (!helper.hasPostNotificationPermission()) {
+            if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
                 WandLog.w(TAG, "没有通知权限，无法提示用户回到应用", null);
                 return;
             }

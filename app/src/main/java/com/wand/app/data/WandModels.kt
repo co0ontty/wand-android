@@ -803,11 +803,7 @@ data class ModelInfo(
                         id = id,
                         label = o.str("label") ?: id,
                         alias = o.bool("alias"),
-                        reasoningEfforts = o.arr("reasoningEfforts")?.parseEach { level ->
-                            level.str("effort")?.let { effort ->
-                                ReasoningEffortInfo(effort, level.str("description"))
-                            }
-                        } ?: emptyList(),
+                        reasoningEfforts = ReasoningEffortInfo.parseList(o.arr("reasoningEfforts")),
                         defaultReasoningEffort = o.str("defaultReasoningEffort"),
                         group = o.str("group"),
                     )
@@ -819,7 +815,14 @@ data class ModelInfo(
 data class ReasoningEffortInfo(
     val effort: String,
     val description: String?,
-)
+) {
+    companion object {
+        fun parseList(arr: JSONArray?): List<ReasoningEffortInfo> =
+            arr?.parseEach { level ->
+                level.str("effort")?.let { effort -> ReasoningEffortInfo(effort, level.str("description")) }
+            } ?: emptyList()
+    }
+}
 
 private fun legacyDefaultModelFor(
     provider: String,
@@ -852,7 +855,10 @@ data class ModelsResponse(
     val modelGroups: List<ModelGroup> = emptyList(),
     val freeModels: List<ModelInfo> = emptyList(),
     val modelGroupsSupported: Boolean = false,
+    val thinkingEfforts: Map<String, List<ReasoningEffortInfo>> = emptyMap(),
 ) {
+    fun thinkingEffortsFor(provider: String): List<ReasoningEffortInfo> = thinkingEfforts[provider].orEmpty()
+
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
             ?: legacyDefaultModelFor(
@@ -897,6 +903,9 @@ data class ModelsResponse(
             modelGroups = ModelGroup.parseList(o.arr("modelGroups")),
             freeModels = ModelInfo.parseList(o.arr("freeModels")),
             modelGroupsSupported = o.arr("modelGroups") != null,
+            thinkingEfforts = o.obj("thinkingEfforts")?.let { catalog ->
+                catalog.keys().asSequence().associateWith { ReasoningEffortInfo.parseList(catalog.arr(it)) }
+            } ?: emptyMap(),
         )
     }
 }
@@ -1041,6 +1050,9 @@ internal data class WsData(
     val providerCliExitCode: Int?,
     val workspaceId: String? = null,
     val workspaceTaskId: String? = null,
+    val employeeId: String? = null,
+    val employeeName: String? = null,
+    val employeeAvatar: String? = null,
     // —— output 事件增量字段 ——
     val lastMessage: ConversationTurn?,
     val messageCount: Int?,
@@ -1079,6 +1091,7 @@ internal data class WsData(
             ptyBusy = ptyBusy,
             providerCliActive = providerCliActive, providerCliExitCode = providerCliExitCode,
             workspaceId = workspaceId, workspaceTaskId = workspaceTaskId,
+            employeeId = employeeId, employeeName = employeeName, employeeAvatar = employeeAvatar,
             directoryLocked = directoryLocked,
             completionRevision = completionRevision, viewedCompletionRevision = viewedCompletionRevision,
         )
@@ -1130,6 +1143,9 @@ internal data class WsData(
             isResponding = o.bool("isResponding"),
             permissionRequest = PermissionRequestInfo.parse(o.obj("permissionRequest")),
             taskTitle = o.str("title"),
+            employeeId = o.str("employeeId"),
+            employeeName = o.str("employeeName"),
+            employeeAvatar = o.str("employeeAvatar"),
             directoryLocked = sessionDirectoryLocked(o),
             chunk = o.str("chunk"),
             output = o.str("output"),

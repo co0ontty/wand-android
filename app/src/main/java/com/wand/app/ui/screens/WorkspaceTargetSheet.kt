@@ -94,7 +94,7 @@ fun WorkspaceTargetSheet(
                     .weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (selectedKind == WorkspaceSessionKind.Structured && employees.isNotEmpty()) {
+                if (employees.isNotEmpty()) {
                     item {
                         Text("硅基员工", color = WandColors.textSecondary,
                             style = MaterialTheme.typography.labelMedium,

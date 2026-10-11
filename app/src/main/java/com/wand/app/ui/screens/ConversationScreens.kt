@@ -561,7 +561,11 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             Box(Modifier.fillMaxWidth().padding(horizontal = 56.dp).heightIn(min = 48.dp).focusRequester(titleTrigger).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (detail?.kind == "group") "查看群成员" else "查看员工资料") {
                 if (employee != null) onOpenEmployee(employee.id) else { members = !members; taskDetails = false; invite = false }
             }, contentAlignment = Alignment.Center) {
-                Text(displayTitle ?: employee?.name ?: "消息", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (employee != null) EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 40.dp, floating = true)
+                    Text(displayTitle ?: employee?.name ?: "消息", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f, fill = false))
+                }
             }
             Box(Modifier.align(Alignment.CenterEnd)) {
                 WandIconButton(WandIcons.more, "聊天菜单", { headerMenu = true }, variant = WandIconButtonVariant.Chrome,
@@ -805,7 +809,8 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 },
                 onMenuDismissFocus = { runCatching { menuTrigger.requestFocus() } },
                 onPickPhoto = pickers.pickPhoto, onPickFile = pickers.pickFile, canSubmit = canSubmit, onSend = ::send,
-                allowRefocus = true, voicePressed = voice.voice.pressed, voice = voice.voice, onMicDown = voice.onMicDown, onExpandedChange = {},
+                allowRefocus = true, voicePressed = voice.voice.pressed, voiceProcessing = voice.voice.processing, onExpandedChange = {},
+                editorOverlayOpen = pickers.open,
                 inlineControls = true,
                 menuActionModifier = Modifier.focusRequester(menuTrigger).then(layer.region("menu-trigger")),
                 menuPanelModifier = layer.region("menu").heightIn(max = menuPanelHeight).verticalScroll(rememberScrollState()),

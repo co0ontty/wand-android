@@ -75,6 +75,12 @@ sealed interface MessageUpdate {
 
 /** 多种事件都可能携带的会话字段变化。null 表示服务端没有更新该字段。 */
 data class SessionChanges(
+    val employeeId: String? = null,
+    val employeeName: String? = null,
+    val employeeAvatar: String? = null,
+    val provider: String? = null,
+    val runner: String? = null,
+    val structuredState: StructuredSessionState? = null,
     val cwd: String? = null,
     val workspaceId: String? = null,
     val status: String? = null,
@@ -180,6 +186,12 @@ private fun WsData.toMessageUpdate(): MessageUpdate = when {
 }
 
 private fun WsData.toChanges() = SessionChanges(
+    employeeId = employeeId,
+    employeeName = employeeName,
+    employeeAvatar = employeeAvatar,
+    provider = provider,
+    runner = runner,
+    structuredState = structuredState,
     cwd = cwd,
     workspaceId = workspaceId,
     status = status,

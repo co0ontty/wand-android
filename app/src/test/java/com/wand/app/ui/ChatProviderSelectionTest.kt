@@ -79,6 +79,42 @@ class ChatProviderSelectionTest {
     }
 
     @Test
+    fun employeeSelectionUsesTheCurrentSessionEndpointAndOnlySendsStableEmployeeId() = runBlocking {
+        val server = ServerSocket(0)
+        val requests = LinkedBlockingQueue<Pair<String, JSONObject>>()
+        val worker = thread {
+            server.accept().use { socket ->
+                val reader = socket.getInputStream().bufferedReader()
+                val requestLine = reader.readLine()
+                var length = 0
+                while (true) {
+                    val line = reader.readLine()
+                    if (line.isEmpty()) break
+                    if (line.startsWith("Content-Length:", true)) length = line.substringAfter(':').trim().toInt()
+                }
+                val body = CharArray(length)
+                var offset = 0
+                while (offset < length) offset += reader.read(body, offset, length - offset)
+                requests.add(requestLine to JSONObject(String(body)))
+                val response = """{"id":"session-1","employeeId":"employee-next","employeeName":"新员工","provider":"codex","sessionKind":"structured","runner":"codex-cli-exec","status":"idle"}"""
+                socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Length: ${response.toByteArray().size}\r\n" +
+                    "Connection: close\r\n\r\n$response").toByteArray())
+            }
+        }
+        try {
+            val api = WandApi("http://127.0.0.1:${server.localPort}", null)
+            val selected = api.setSessionEmployee("session-1", "employee-next")
+            assertEquals("session-1", selected.id)
+            assertEquals("employee-next", selected.employeeId)
+            assertEquals("新员工", selected.employeeName)
+            val request = requests.poll(5, TimeUnit.SECONDS)!!
+            assertEquals("POST /api/sessions/session-1/employee HTTP/1.1", request.first)
+            assertEquals(setOf("employeeId"), request.second.keys().asSequence().toSet())
+            assertEquals("employee-next", request.second.getString("employeeId"))
+        } finally { server.close(); worker.join(5_000) }
+    }
+
+    @Test
     fun engineLabelsRemainExactForSessionsAuthorsAndEmployeeCandidates() {
         assertEquals("pi", blank().toolId)
         assertEquals("Pi", blank().providerLabel)

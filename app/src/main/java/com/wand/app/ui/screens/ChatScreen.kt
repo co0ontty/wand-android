@@ -1,5 +1,20 @@
 package com.wand.app.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.wand.app.speech.CallSpeechEngine
+import com.wand.app.speech.VoiceCallController
+import com.wand.app.speech.VoiceCallPhase
+import com.wand.app.speech.LocalTextSpeaker
+import com.wand.app.speech.SystemSpeechEngine
+import com.wand.app.speech.SherpaSpeechEngine
+import com.wand.app.speech.SttModelManager
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -27,6 +42,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -146,9 +167,7 @@ import com.wand.app.data.WandApi
 import com.wand.app.data.SESSION_MODE_OPTIONS
 import com.wand.app.data.sessionModeLabel
 import com.wand.app.data.supportedSessionModeIds
-import com.wand.app.speech.SherpaSpeechEngine
 import com.wand.app.speech.SpeechNativeLibrary
-import com.wand.app.speech.SttModelManager
 import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.ChatComposer
@@ -159,6 +178,7 @@ import com.wand.app.ui.SessionDraftStore
 import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.latestUserInputText
 import com.wand.app.ui.sessionChromeTitle
+import com.wand.app.ui.sessionWorkingDirectoryLabel
 import com.wand.app.ui.sessionTopicBlocklist
 import com.wand.app.ui.ThinkingEffortOption
 import com.wand.app.ui.parseUserAttachmentText
@@ -192,6 +212,9 @@ import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.data.AGENT_TOOL_OPTIONS
 import com.wand.app.data.agentToolOption
+import com.wand.app.ui.components.companionThinking
+import com.wand.app.ui.components.avatarFileActivity
+import com.wand.app.ui.components.AvatarFileActivity
 import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.AmbientBackground
@@ -210,7 +233,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import com.wand.app.data.WandApiException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -462,16 +484,88 @@ fun ChatScreen(
     val haptic = LocalHapticFeedback.current
 
     val context = LocalContext.current
+    var voiceCommitSignal by remember(sessionId) { mutableIntStateOf(0) }
     val voiceInput = rememberVoiceInputHandle(
         isHapticEnabled = isHapticEnabled,
         onToast = { store.toast = it },
         onCommit = composer::appendVoice,
         sessionKey = composer,
-        onCommitForPress = composer::voiceCommitForCurrentDraft,
+        onCommitForPress = {
+            val commit = composer.voiceCommitForCurrentDraft();
+            { text: String ->
+                val before = composer.draftRevision
+                commit(text)
+                if (composer.draftRevision != before) voiceCommitSignal++
+            }
+        },
         api = api,
     )
     val voice = voiceInput.voice
-    val onMicDown = voiceInput.onMicDown
+
+    var callOpen by remember(sessionId) { mutableStateOf(false) }
+    var callTargetOpen by remember(sessionId) { mutableStateOf(false) }
+    var callDirectoryOpen by remember(sessionId) { mutableStateOf(false) }
+    val call = remember(sessionId, api, composer) {
+        lateinit var controller: VoiceCallController
+        val speaker = LocalTextSpeaker(context) { controller.pause("系统音频被打断，点击继续") }
+        controller = VoiceCallController(composerScope,
+            engineFactory = {
+                val engine = when {
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED -> null
+                    SttModelManager.isReady(context) -> SherpaSpeechEngine(context)
+                    SystemSpeechEngine.isUsable(context) -> SystemSpeechEngine(context)
+                    else -> null
+                }
+                engine?.let { CallSpeechEngine(context, it) { controller.pause("系统音频被打断，点击继续") } }
+            }, speaker = speaker,
+            send = { text ->
+                // Original send lock, draft revisions and unknown-delivery policy.
+                composer.editDraft(text)
+                if (!composer.submit()) false else withTimeout(30_000) {
+                    androidx.compose.runtime.snapshotFlow { composer.sendPhase }.first { it != SendPhase.Sending } == SendPhase.Sent
+                }
+            },
+            ready = { !store.loading && store.snapshot?.employeeId != null && store.isStructured &&
+                !store.providerSwitching && !store.directoryChanging && !store.isResponding && store.connected &&
+                store.pendingEscalation == null && store.legacyPermissionPrompt == null &&
+                composer.draft.isBlank() && composer.attachments.isEmpty() && !composer.uploading && composer.sendPhase != SendPhase.Sending },
+            messageCount = { store.messages.size },
+        )
+        controller
+    }
+    val onMicDown: () -> Unit = { call.pause("已切换为按住说话"); voiceInput.onMicDown() }
+    val callPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) call.start() else { call.start(); call.pause("麦克风权限被拒绝，请在系统设置中允许后继续") }
+    }
+    val startCall: () -> Unit = {
+        voice.cancelPress()
+        if (store.snapshot?.employeeId == null || !store.isStructured) callTargetOpen = true
+        else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) call.start()
+        else callPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    DisposableEffect(call, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) call.pause("应用进入后台，点击继续通话")
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); call.destroy() }
+    }
+    LaunchedEffect(call, store.messages, store.isResponding, store.pendingEscalation, store.legacyPermissionPrompt, store.connected, call.phase) {
+        call.agentUpdate(store.messages, store.isResponding,
+            store.pendingEscalation != null || store.legacyPermissionPrompt != null, store.connected)
+    }
+    LaunchedEffect(employeeId, store.snapshot?.cwd, store.snapshot?.provider) {
+        if (call.active) call.end()
+    }
+    if (callTargetOpen) WandDialog(title = "会话对象与目录", onDismissRequest = { callTargetOpen = false },
+        confirm = WandDialogAction("完成", { callTargetOpen = false })) {
+        LaunchProviderPicker(store)
+        Text(store.snapshot?.cwd.orEmpty(), style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+        TextButton(enabled = store.canChangeDirectory, onClick = { callDirectoryOpen = true }) { Text("选择运行目录") }
+        if (!store.canChangeDirectory) Text("当前会话目录已固定；新目录请创建新会话", style = MaterialTheme.typography.bodySmall)
+    }
+    if (callDirectoryOpen) WorkspaceDirectoryPicker(api = api, currentCwd = store.snapshot?.cwd.orEmpty(),
+        onSelect = { callDirectoryOpen = false; store.chooseWorkingDirectory(it.cwd) }, onDismiss = { callDirectoryOpen = false })
 
     val focusManager = LocalFocusManager.current
 
@@ -491,6 +585,9 @@ fun ChatScreen(
     }
     val subagentActivities = remember(store.messages, store.isResponding) {
         subagentDockActivities(collectSubagentActivities(store.messages, store.isResponding))
+    }
+    val progressTodos = remember(store.messages, store.status) {
+        if (store.status == "running") currentTodos(store.messages) else emptyList()
     }
     val showActivityDock = shouldShowStructuredActivityDock(
         isStructured = store.isStructured,
@@ -745,6 +842,7 @@ fun ChatScreen(
     val glassBackdrop = rememberGlassBackdrop()
     val activeBackdrop = if (chromeSettled) glassBackdrop else null
     var composerExpanded by remember(sessionId) { mutableStateOf(false) }
+    var stopRequest by remember(sessionId) { mutableIntStateOf(0) }
     // ＋ 展开的动作面板：就地展开，返回键/发送/换会话时收起（规则 2）。
     var attachOpen by remember(sessionId) { mutableStateOf(false) }
     BackHandler(enabled = attachOpen) { attachOpen = false }
@@ -761,95 +859,53 @@ fun ChatScreen(
         LocalActivityTrafficTimelineMode provides trafficTimelineMode(),
         LocalChatViewportHeightPx provides listViewportHeightPx,
     ) {
+    val avatarActivity = remember(store.messages, store.isResponding, store.status, store.pendingEscalation, store.legacyPermissionPrompt) {
+        avatarFileActivity(store.messages, store.isResponding && store.status == "running" &&
+            store.pendingEscalation == null && store.legacyPermissionPrompt == null)
+    }
     Scaffold(
-        containerColor = Color.Transparent,
+        containerColor = WandColors.bgPrimary,
+        contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
         snackbarHost = { WandSnackbarHost(snackbarHostState) },
-        topBar = {
-            // 稳定标题 + 简明会话上下文；避免流式任务名和长路径持续跳动、抢占操作区。
-            // 顶栏使用稳定页底，避免滚动文字透进状态栏形成残影。
-            WandDetailTopBar(
-                title = "对话详情",
-                backdrop = activeBackdrop,
-                contentHeight = 56.dp,
-                leading = if (showBack) {
-                    {
-                        WandDetailBackButton(
-                            onClick = onBack,
-                            icon = WandIcons.back,
-                        )
-                    }
-                } else {
-                    null
-                },
-                titleContent = {
-                    if (employeeId != null) {
-                        EmployeeAvatar(employeeId,
-                            liveEmployee?.name ?: store.snapshot?.employeeName,
-                            liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
-                            provider = store.snapshot?.provider)
-                    } else WandProviderMark(store.snapshot?.provider)
-                    Column(
-                        horizontalAlignment = Alignment.Start,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
-                        val blockedTitles = sessionTopicBlocklist(
-                            taskName = taskName,
-                            workspaceName = workspaceName,
-                            cwd = store.snapshot?.cwd,
-                        )
-                        val topicTitle = sessionChromeTitle(
-                                title = store.snapshot?.title,
-                                latestUserInput = latestUserInputText(store.messages),
-                                liveTitle = SessionTitleStore.titleOf(sessionId),
-                                blockedTitles = blockedTitles,
-                                fallback = "对话详情",
-                            )
-                        ChatTopicTitle(
-                            text = if (employeeId != null) {
-                                liveEmployee?.name ?: store.snapshot?.employeeName ?: "硅基员工"
-                            } else topicTitle,
-                            generating = store.snapshot?.titleGenerating == true ||
-                                SessionTitleStore.isGenerating(sessionId),
-                        )
-                        val workingPath = chatWorkingPath(store.snapshot?.cwd)
-                        TailMarqueePathText(
-                            path = if (employeeId != null) {
-                                "$topicTitle · $serverDisplayName"
-                            } else if (workspaceTitle != null) {
-                                "$serverDisplayName · $workspaceTitle"
-                            } else if (workingPath == null) {
-                                serverDisplayName
-                            } else {
-                                "$serverDisplayName · $workingPath"
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            fontSize = 11.sp,
-                            color = WandColors.textMuted,
-                            fallback = serverDisplayName,
-                            initialDelayMillis = 1_800L,
-                            velocity = 28.dp,
-                            revealOnce = true,
-                        )
-                    }
-                },
-                actions = {
-                    SessionFilesButton(api, sessionId, store.snapshot?.cwd) {
-                        resources.dismiss()
-                        quickCommit.closePanel()
-                        attachOpen = false
-                        focusManager.clearFocus()
-                    }
-                    GitChangesButton(quickCommit, compact = true) { resources.dismiss(); quickCommit.openPanel() }
-                },
-            )
-        },
         bottomBar = { BottomBar(
             backdrop = activeBackdrop,
             store = store,
+            progressTodos = progressTodos,
+            stopRequest = stopRequest,
+            companion = { controls, onStop, content ->
+                FloatingComposerCompanion(employeeId, liveEmployee?.name ?: store.snapshot?.employeeName,
+                    liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
+                    status = when {
+                        voice.canceling -> "松开取消"
+                        voice.pressed -> "正在听 · 上滑取消"
+                        voice.processing -> "转写中…"
+                        call.phase == VoiceCallPhase.Listening -> "正在聆听"
+                        call.audioPlaying -> "正在朗读"
+                        controls.deliveryPhase == SendPhase.Sending -> "正在发送"
+                        controls.deliveryPhase == SendPhase.Failed -> "请核对发送结果，草稿已保留"
+                        controls.deliveryPhase == SendPhase.Sent -> "已送达"
+                        store.pendingEscalation != null || store.legacyPermissionPrompt != null -> "等待确认"
+                        !store.connected -> "连接已断开"
+                        else -> companionWorkStatus(store.isResponding, avatarActivity,
+                            hasDetailedProgress = progressTodos.isNotEmpty() || subagentActivities.isNotEmpty())
+                    }, activity = avatarActivity,
+                    thinking = companionThinking(store.messages, store.isResponding && store.status == "running" &&
+                        store.pendingEscalation == null && store.legacyPermissionPrompt == null, avatarActivity),
+                    speaking = call.audioPlaying, controls = controls.copy(onEdit = { call.pause("已切换为文字输入"); controls.onEdit() }),
+                    voice = voice, onMicDown = onMicDown, running = store.isResponding, onStop = onStop,
+                    onPauseSpeech = { call.pause("声音已暂停，任务继续") }.takeIf { call.audioPlaying }, content = content)
+            },
+            callPanel = {
+                if (callOpen || call.active) VoiceCallPanel(call.phase,
+                    target = "${liveEmployee?.name ?: store.snapshot?.employeeName ?: "请选择员工"} · ${store.snapshot?.cwd.orEmpty()}",
+                    notice = call.notice, transcript = call.transcript,
+                    onStart = startCall, onInterrupt = call::interrupt, onFinishUtterance = call::finishListening,
+                    onPause = { call.pause() }, onEnd = { call.end(); callOpen = false }, onChooseTarget = { callTargetOpen = true })
+            },
             resources = resources,
             composer = composer,
             voice = voice,
+            voiceCommitSignal = voiceCommitSignal,
             onMicDown = onMicDown,
             uploading = composer.uploading,
             pendingAttachments = composer.attachments,
@@ -857,6 +913,7 @@ fun ChatScreen(
             onRemoveAttachment = composer::removeAttachment,
             onPickPhoto = attachmentPickers.pickPhoto,
             onPickFile = attachmentPickers.pickFile,
+            attachmentPickerOpen = attachmentPickers.open,
             onExpandedChange = { composerExpanded = it },
             attachOpen = attachOpen,
             onAttachOpenChange = { attachOpen = it; if (it) resources.dismiss() },
@@ -865,6 +922,7 @@ fun ChatScreen(
             lastAssistantUsage = lastAssistantUsage,
             onActivityDockExpandedChange = { activityDockExpanded = it },
         ) {
+            call.pause("已切换为文本输入")
             resources.dismiss()
             if (composer.submit()) {
                 attachOpen = false
@@ -873,8 +931,12 @@ fun ChatScreen(
             }
         } },
     ) { padding ->
-        // 捕获层：环境渐变背景全幅铺开，消息流只在顶栏与输入栏之间滚动，
-        // 避免正文被玻璃栏遮挡或透进状态栏。
+        val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
+        val chatPadding = PaddingValues(
+            start = padding.calculateStartPadding(direction), end = padding.calculateEndPadding(direction),
+            top = padding.calculateTopPadding() + ChatFloatingControlsClearance, bottom = padding.calculateBottomPadding(),
+        )
+        // 消息视口避让状态栏和悬浮按钮，滚动正文不会进入触控区。
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -888,23 +950,27 @@ fun ChatScreen(
                 }
                 .then(if (chromeSettled) Modifier.glassBackdropSource(glassBackdrop) else Modifier),
         ) {
-            AmbientBackground(Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(WandColors.bgPrimary))
             when {
                 store.loading -> LoadingState(
-                    modifier = Modifier.padding(padding),
+                    modifier = Modifier.padding(chatPadding),
                     text = "正在加载会话…",
                 )
                 store.loadError != null ->
-                    ErrorState(store.loadError ?: "加载失败", modifier = Modifier.padding(padding))
+                    Column(Modifier.padding(chatPadding).fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center) {
+                        ErrorState(store.loadError ?: "加载失败", modifier = Modifier.weight(1f))
+                        TextButton(onClick = { store.handleEnterForeground() }) { Text("重新加载") }
+                    }
                 store.isStructured && store.messages.isEmpty() && !store.isResponding ->
-                    Box(Modifier.padding(padding)) {
+                    Box(Modifier.padding(chatPadding)) {
                         SessionLaunchPanel(store, showSettings = !composerExpanded)
                     }
                 else -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(padding),
+                            .padding(chatPadding),
                     ) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -926,7 +992,7 @@ fun ChatScreen(
                             top = 12.dp,
                             bottom = 4.dp,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         // key 基于绝对 turn 位置/稳定工具 id：prepend 分页不会重建所有卡片。
                         // 同一个 item key 同时充当卡片的 fold scope（设计规格 v2 §8.2）：
@@ -1040,7 +1106,7 @@ fun ChatScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(chatPadding),
         ) {
             // 断线提示条：贴顶，安全区内显示。恢复连接后滑出消失。
             ConnectionBanner(
@@ -1097,6 +1163,18 @@ fun ChatScreen(
                 )
             }
         }
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            FloatingChatControls(showBack = showBack, onBack = onBack, onCall = { callOpen = !callOpen },
+                identity = liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel ?: "当前会话",
+                cwd = store.snapshot?.cwd, onTarget = { callTargetOpen = true },
+                gitEnabled = quickCommit.status?.isGit == true,
+                onGit = { resources.dismiss(); quickCommit.openPanel() },
+                onStop = { stopRequest++; Unit }.takeIf { store.isResponding },
+                modifier = Modifier.align(Alignment.TopCenter),
+                files = { SessionFilesButton(api, sessionId, store.snapshot?.cwd) {
+                    resources.dismiss(); quickCommit.closePanel(); attachOpen = false; focusManager.clearFocus()
+                } })
+        }
     }
     }
 }
@@ -1133,14 +1211,6 @@ internal fun ChatTopicTitle(text: String, generating: Boolean) {
         overflow = TextOverflow.Ellipsis,
     )
 }
-
-/** 顶栏副标题只展示完整工作目录；空间不足时由路径文本负责延迟滚动。 */
-private fun chatWorkingPath(path: String?): String? =
-    path
-        ?.trim()
-        ?.replace('\\', '/')
-        ?.trimEnd('/')
-        ?.takeIf { it.isNotEmpty() }
 
 internal fun conversationTurnPreview(turn: ConversationTurn): String {
     val rawText = turn.content
@@ -1349,10 +1419,7 @@ private fun ConversationTurnScrubber(
 
 @Composable
 private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
-    // apple-design §7/§16 Familiarity & Spatial consistency:
-    // 头部品牌标随 provider 切换（Claude/Codex/Grok/OpenCode/Qoder 各自的原生 logo），
-    // 让用户从会话列表进入聊天页时视觉连续——之前的 WandBrandMark 对所有 provider 都显示同一星芒标，
-    // 与标题文字（如 "Codex"）对不上，是 logo 对应关系的根因。
+    // 员工是对话身份，工具是执行方式；欢迎页与会话标题使用相同身份。
     var directoryOpen by remember(store) { mutableStateOf(false) }
     LaunchedEffect(store.canChangeDirectory) {
         if (!store.canChangeDirectory) directoryOpen = false
@@ -1378,7 +1445,7 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                 // apple-design §15 Typography：大字号配负 tracking、SemiBold 而非 Bold，
                 // 让 provider 名既有存在感又不喧宾夺主。
                 Text(
-                    store.snapshot?.providerLabel ?: "结构化会话",
+                    store.snapshot?.employeeName ?: store.snapshot?.providerLabel ?: "结构化会话",
                     fontSize = 21.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = (-0.35).sp,
@@ -1386,7 +1453,9 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    "输入消息，让它帮你完成任务 · 点 Logo 更换工具",
+                    if (store.snapshot?.employeeId != null)
+                        "输入消息，交给员工完成 · 点头像选择员工或工具"
+                    else "输入消息，让它帮你完成任务 · 点 Logo 选择员工或工具",
                     fontSize = 13.5.sp,
                     lineHeight = 19.sp,
                     color = WandColors.textSecondary,
@@ -1463,10 +1532,27 @@ private fun SessionLaunchPanel(store: ChatStore, showSettings: Boolean) {
     )
 }
 
-/** 空白对话的 Logo 原位打开工具菜单；切换保留同一会话和同一个输入 composer。 */
+/** 空白对话展示真实身份；员工和工具选择均保留同一会话与输入 composer。 */
 @Composable
 private fun LaunchProviderPicker(store: ChatStore) {
     var menuOpen by remember(store) { mutableStateOf(false) }
+    var employees by remember(store) { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
+    var employeesLoading by remember(store) { mutableStateOf(false) }
+    var employeesError by remember(store) { mutableStateOf<String?>(null) }
+    var employeesReload by remember(store) { mutableStateOf(0) }
+    LaunchedEffect(menuOpen, employeesReload, store) {
+        if (!menuOpen) return@LaunchedEffect
+        employeesLoading = true
+        employeesError = null
+        try {
+            employees = store.api.listSiliconEmployees(false).filter { !it.archived && it.agents.isNotEmpty() }
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            employeesError = failure.message ?: "无法加载员工"
+        } finally {
+            employeesLoading = false
+        }
+    }
     BackHandler(enabled = menuOpen) { menuOpen = false }
     LaunchedEffect(store.canSwitchProvider) {
         if (!store.canSwitchProvider) menuOpen = false
@@ -1475,12 +1561,17 @@ private fun LaunchProviderPicker(store: ChatStore) {
         Box {
             Box(
                 modifier = Modifier.size(52.dp).semantics {
-                    contentDescription = "更换执行工具，当前 ${store.snapshot?.providerLabel.orEmpty()}"
+                    contentDescription = "选择员工或执行工具，当前 ${store.snapshot?.employeeName ?: store.snapshot?.providerLabel.orEmpty()}"
                     role = Role.Button
                 }.clickable(enabled = store.canSwitchProvider, role = Role.Button) { menuOpen = !menuOpen },
             ) {
-                WandInPlaceSwap(contentKey = store.snapshot?.toolId, enterScale = 1f, exitScale = 1f) { shown ->
-                    ProviderBrandMark(provider = agentToolOption(shown as? String)?.provider, size = 52)
+                if (store.snapshot?.employeeId != null) {
+                    EmployeeAvatar(store.snapshot?.employeeId, store.snapshot?.employeeName,
+                        store.snapshot?.employeeAvatar, size = 52.dp)
+                } else {
+                    WandInPlaceSwap(contentKey = store.snapshot?.toolId, enterScale = 1f, exitScale = 1f) { shown ->
+                        ProviderBrandMark(provider = agentToolOption(shown as? String)?.provider, size = 52)
+                    }
                 }
                 WandStatusIconSlot(
                     running = store.providerSwitching,
@@ -1497,6 +1588,37 @@ private fun LaunchProviderPicker(store: ChatStore) {
                 onDismissRequest = { menuOpen = false },
                 containerColor = WandColors.bgElevated,
             ) {
+                DropdownMenuItem(
+                    text = { Text("员工身份", color = WandColors.textMuted) },
+                    enabled = false, onClick = {},
+                )
+                when {
+                    employeesLoading -> DropdownMenuItem(
+                        text = { Text("正在加载员工…") }, enabled = false, onClick = {},
+                    )
+                    employeesError != null -> DropdownMenuItem(
+                        text = { Text("加载员工失败，点击重试", color = WandColors.danger) },
+                        onClick = { employeesReload += 1 },
+                    )
+                    employees.isEmpty() -> DropdownMenuItem(
+                        text = { Text("暂无可用员工") }, enabled = false, onClick = {},
+                    )
+                    else -> employees.forEach { employee ->
+                        DropdownMenuItem(
+                            text = { Text(employee.name) },
+                            leadingIcon = { EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 28.dp) },
+                            trailingIcon = if (store.snapshot?.employeeId == employee.id) {
+                                { Icon(WandIcons.check, contentDescription = "当前员工", tint = WandColors.brand) }
+                            } else null,
+                            onClick = { menuOpen = false; store.chooseEmployee(employee.id) },
+                        )
+                    }
+                }
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text("执行工具（保留员工身份）", color = WandColors.textMuted) },
+                    enabled = false, onClick = {},
+                )
                 AGENT_TOOL_OPTIONS.forEach { tool ->
                     DropdownMenuItem(
                         text = { Text(tool.label) },
@@ -1515,7 +1637,7 @@ private fun LaunchProviderPicker(store: ChatStore) {
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                store.providerSwitchError ?: if (store.providerSwitching) "正在切换工具…"
+                store.providerSwitchError ?: if (store.providerSwitching) "正在切换…"
                     else store.providerSwitchResult.orEmpty(),
                 color = if (store.providerSwitchError != null) WandColors.danger else WandColors.textSecondary,
                 style = MaterialTheme.typography.bodySmall,
@@ -1719,6 +1841,7 @@ private fun thinkingLevels(store: ChatStore): List<ThinkingEffortOption> =
         selectedModel = store.selectedModel,
         defaultModel = store.defaultModel,
         models = store.availableModels,
+        providerEfforts = store.availableThinkingEfforts,
     )
 
 private fun thinkingLabel(store: ChatStore, id: String): String {
@@ -1995,10 +2118,16 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
 @Composable
 private fun BottomBar(
     backdrop: GlassBackdrop?,
+    callPanel: @Composable () -> Unit = {},
+    companion: (@Composable (CompanionComposerControls, () -> Unit, @Composable () -> Unit) -> Unit)? = null,
+    stopRequest: Int = 0,
     store: ChatStore,
     composer: ChatComposer,
+    progressTodos: List<TodoEntry>,
+    attachmentPickerOpen: Boolean,
     resources: com.wand.app.ui.PiResourcesController,
     voice: VoiceInputController,
+    voiceCommitSignal: Int,
     onMicDown: () -> Unit,
     uploading: Boolean,
     pendingAttachments: List<UploadedFile>,
@@ -2037,11 +2166,9 @@ private fun BottomBar(
         // 漏发最后一条全 completed 的 TodoWrite，否则进度条会卡在最后一项 in_progress
         // 直到下一次发消息才被刷新，看着像「永远执行中」（对齐 Web updateTodoProgress
         // 用 session.status 而不是 inFlight 判定，避免流式间隙闪烁）。
-        val todos = remember(store.messages) { currentTodos(store.messages) }
-        val todoSessionActive = store.status == "running"
-        if (todos.isNotEmpty() && todoSessionActive) {
+        if (progressTodos.isNotEmpty()) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                TodoProgressBar(todos, backdrop)
+                TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage)
             }
         }
         // 权限审批卡：底部滑入 + 淡入；退场期间用缓存内容避免闪空。
@@ -2078,14 +2205,14 @@ private fun BottomBar(
         // 结构化会话没有「会话已结束 / 恢复会话」的概念：一个回合结束后只是回到 idle，
         // 直接继续输入即可（服务端 sendMessage 自动 --resume 续接）。不再渲染结束态横幅。
         // 按住说话实时转写气泡（按住期间悬浮在输入栏上方）。
-        if (voice.pressed || voice.processing) {
+        if (companion == null && (voice.pressed || voice.processing)) {
             Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 VoiceTranscriptBubble(backdrop, voice)
             }
         }
         // Agent 状态坞排在待办/权限/队列之后，作为输入栏上方的最后一项贴着输入框。
         AnimatedVisibility(
-            visible = activityDockVisible,
+            visible = activityDockVisible && (subagentActivities.isNotEmpty() || progressTodos.isEmpty()),
             enter = fadeIn(WandMotion.tweenFast()) +
                 slideInVertically(WandMotion.settleSpringSpec()) { height -> height / 3 },
             exit = fadeOut(WandMotion.tweenFast()) +
@@ -2098,19 +2225,25 @@ private fun BottomBar(
                     activities = subagentActivities,
                     usage = lastAssistantUsage,
                     sessionRunning = store.isResponding,
+                    showUsage = progressTodos.isEmpty(),
                     onExpandedChange = onActivityDockExpandedChange,
                 )
             }
         }
+        callPanel()
         InputBar(
             backdrop = backdrop,
             store = store,
+            attachmentPickerOpen = attachmentPickerOpen,
             canSubmit = composer.canSubmit && resources.phase != "saving",
             resources = resources,
             sendPhase = composer.sendPhase,
+            companion = companion,
+            stopRequest = stopRequest,
             draft = draft,
             onDraftChange = onDraftChange,
             voice = voice,
+            voiceCommitSignal = voiceCommitSignal,
             onMicDown = onMicDown,
             uploading = uploading,
             pendingAttachments = pendingAttachments,
@@ -2140,12 +2273,16 @@ internal val ComposerExpandedInputMaxHeight = 132.dp
 private fun InputBar(
     backdrop: GlassBackdrop?,
     store: ChatStore,
+    attachmentPickerOpen: Boolean,
     canSubmit: Boolean,
     resources: com.wand.app.ui.PiResourcesController,
     sendPhase: SendPhase,
+    companion: (@Composable (CompanionComposerControls, () -> Unit, @Composable () -> Unit) -> Unit)?,
+    stopRequest: Int,
     draft: String,
     onDraftChange: (String) -> Unit,
     voice: VoiceInputController,
+    voiceCommitSignal: Int,
     onMicDown: () -> Unit,
     uploading: Boolean,
     pendingAttachments: List<UploadedFile>,
@@ -2160,9 +2297,11 @@ private fun InputBar(
 ) {
     val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
     var showStopConfirm by remember(store.sessionId) { mutableStateOf(false) }
+    LaunchedEffect(stopRequest) { if (stopRequest > 0) showStopConfirm = true }
     var modeOpen by remember(store.sessionId) { mutableStateOf(false) }
+    var modelOpen by remember(store.sessionId) { mutableStateOf(false) }
     val menuTriggerFocus = remember(store.sessionId) { FocusRequester() }
-    val menuStopVisible = composerMenuHasStop(
+    val menuStopVisible = if (companion != null) store.isResponding else composerMenuHasStop(
         store.isResponding,
         sendActionVisual(sendPhase, store.isResponding, canSend),
     )
@@ -2182,9 +2321,16 @@ private fun InputBar(
         canSubmit = canSubmit,
         onSend = onSend,
         allowRefocus = !store.sessionEnded,
+        minimalCompanion = companion?.let { render ->
+            { controls, content -> render(controls,
+                { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true }, content) }
+        },
+        compactAfterAcknowledgement = true,
+        deliveryPhase = sendPhase,
         voicePressed = voice.pressed,
-        voice = voice,
-        onMicDown = onMicDown,
+        voiceProcessing = voice.processing,
+        voiceCommitSignal = voiceCommitSignal,
+        editorOverlayOpen = modelOpen || modeOpen || showStopConfirm || attachmentPickerOpen,
         onExpandedChange = onExpandedChange,
         resourcePanel = { PiResourcesPanel(resources) { runCatching { menuTriggerFocus.requestFocus() } } },
         resourcePanelOpen = resources.open,
@@ -2226,11 +2372,8 @@ private fun InputBar(
                 canSubmit = canSubmit,
                 onStop = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
                 voiceAction = {
-                    VoiceMicButton(
-                        voice = voice,
-                        voiceMode = false,
-                        onToggleMode = requestFocus,
-                        onMicDown = onMicDown,
+                    if (companion == null) VoiceMicButton(
+                        voice = voice, voiceMode = false, onToggleMode = requestFocus, onMicDown = onMicDown,
                     )
                 },
                 onSend = sendAndRefocus,
@@ -2242,14 +2385,19 @@ private fun InputBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (store.isStructured) {
-                    ModelThinkingChip(store, beforeOpen = {
+                    ModelThinkingChip(store, onClick = {
                         onAttachOpenChange(false)
                         resources.dismiss()
+                        modelOpen = true
                     }, modifier = Modifier.weight(1f))
                 }
             }
         },
     )
+    // This scope survives IME changes and editor collapse; no selector is owned by a chip.
+    if (modelOpen) {
+        ModelThinkingChoiceSheet(store, onDismiss = { modelOpen = false })
+    }
     if (modeOpen) {
         ComposerModeChoiceSheet(store, onDismiss = { modeOpen = false })
     }
@@ -2383,6 +2531,7 @@ internal fun ControlChip(
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
+                alpha = if (enabled) 1f else 0.38f
             }
             .semantics(mergeDescendants = true) {
                 this.contentDescription = contentDescription
@@ -2579,9 +2728,7 @@ internal fun ModelThinkingChoiceSheet(
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val thinkingOptions = remember(store.snapshot?.provider, store.selectedModel, store.thinkingEffort) {
-        thinkingLevels(store)
-    }
+    val thinkingOptions = thinkingLevels(store)
     val selectedModelId = store.selectedModel?.takeUnless { it == "default" } ?: "default"
     val modelOptions = remember(store.availableModels, store.selectedModel, selectedModelId) {
         val base = buildList {
@@ -2633,17 +2780,24 @@ internal fun ModelThinkingChoiceSheet(
                 ) {
                     thinkingOptions.forEach { option ->
                         val isSelected = option.id == store.thinkingEffort
-                        val chipBg = if (isSelected) WandColors.brandSoft else WandColors.surface
+                        val chipBg by animateColorAsState(
+                            if (isSelected) WandColors.brandSoft else WandColors.surface,
+                            WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()),
+                            label = "thinkingChoiceBackground",
+                        )
                         val chipBorder = if (isSelected) WandColors.brand else WandColors.border.copy(alpha = 0.6f)
                         val chipTint = if (isSelected) WandColors.brand else WandColors.textSecondary
                         Box(
                             modifier = Modifier
+                                .heightIn(min = ComposerActionTouchSize)
                                 .clip(WandShapes.full)
                                 .background(chipBg)
                                 .border(0.8.dp, chipBorder, WandShapes.full)
-                                .clickable {
-                                    store.chooseThinkingEffort(option.id)
-                                }
+                                .selectable(
+                                    selected = isSelected,
+                                    role = Role.RadioButton,
+                                    enabled = !store.providerSwitching && !store.directoryChanging,
+                                ) { store.chooseThinkingEffort(option.id) }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -2709,8 +2863,7 @@ internal fun ModelThinkingChoiceSheet(
 
 /** 模型与思考深度合体徽标：Logo +「模型名 · 思考程度」。 */
 @Composable
-private fun ModelThinkingChip(store: ChatStore, beforeOpen: () -> Unit, modifier: Modifier = Modifier) {
-    var open by remember { mutableStateOf(false) }
+private fun ModelThinkingChip(store: ChatStore, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val thinkingTint = when (store.thinkingEffort) {
         "standard" -> WandColors.success
         "deep" -> WandColors.warning
@@ -2726,13 +2879,9 @@ private fun ModelThinkingChip(store: ChatStore, beforeOpen: () -> Unit, modifier
             tint = thinkingTint,
             contentDescription = "模型与思考深度：模型 ${modelDisplayLabel(store, store.selectedModel)}，思考深度 ${thinkingLabel(store, store.thinkingEffort)}",
             showText = true,
-        ) { beforeOpen(); open = true }
-        if (open) {
-            ModelThinkingChoiceSheet(
-                store = store,
-                onDismiss = { open = false },
-            )
-        }
+            enabled = !store.providerSwitching && !store.directoryChanging,
+            onClick = onClick,
+        )
     }
 }
 
@@ -2788,12 +2937,8 @@ internal fun ComposerActionsMenu(
 
 // MARK: - 按住说话（端侧语音识别）
 
-/**
- * 轻点 vs 按住的分界：按住超过该时长进入录音，否则按轻点处理。
- * 0.18s 仍足以区分轻点/长按，但比 0.3s 让识别框出现快 ~40%，减少「按下去没反应」的感知延迟
- * （对位 iOS ChatView.voiceHoldThreshold = 0.18）。
- */
-private const val VOICE_HOLD_THRESHOLD_MS = 180L
+/** Shared cat/microphone boundary. A hold never also dispatches a tap. */
+internal const val VOICE_HOLD_THRESHOLD_MS = 300L
 
 /**
  * 轻点 / 按住二分手势：
@@ -2807,9 +2952,17 @@ internal suspend fun PointerInputScope.voiceTapOrHoldGesture(
     onTap: () -> Unit,
     onHoldStart: () -> Unit,
 ) {
+    voiceTapOrHoldGesture(onTap, onHoldStart, voice::updateCancel, voice::endPress, voice::cancelPress)
+}
+
+/** The same timed pointer adapter is also exercised by the isolated native fixture. */
+internal suspend fun PointerInputScope.voiceTapOrHoldGesture(
+    onTap: () -> Unit, onHoldStart: () -> Unit, onHoldMove: (Boolean) -> Unit,
+    onHoldEnd: () -> Unit, onHoldCancel: () -> Unit,
+) {
     val cancelThresholdPx = 60.dp.toPx()
     awaitEachGesture {
-        val down = awaitFirstDown()
+        val down = awaitFirstDown(requireUnconsumed = false)
         down.consume()
         var recording = false
         var released = false
@@ -2833,11 +2986,11 @@ internal suspend fun PointerInputScope.voiceTapOrHoldGesture(
                 }
                 if (!recording && (change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
                 change.consume()
-                if (recording) voice.updateCancel(down.position.y - change.position.y > cancelThresholdPx)
+                if (recording) onHoldMove(down.position.y - change.position.y > cancelThresholdPx)
             }
         } finally {
             if (recording) {
-                if (released) voice.endPress() else voice.cancelPress()
+                if (released) onHoldEnd() else onHoldCancel()
             }
         }
     }

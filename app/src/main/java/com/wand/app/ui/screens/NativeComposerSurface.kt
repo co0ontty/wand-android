@@ -36,11 +36,8 @@ import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.reduceMotionEnabled
 import androidx.compose.material3.ripple
 import com.wand.app.ui.theme.GlassBackdrop
-import com.wand.app.ui.theme.WandGlass
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.glassSurface
-import com.wand.app.ui.theme.isWandDarkTheme
 
 /** 紧凑视觉尺寸配合独立触控区，图标在浅色和深色底上都清晰可辨。 */
 internal val ComposerActionVisualSize = 34.dp
@@ -59,6 +56,7 @@ fun NativeComposerSurface(
     controls: @Composable RowScope.() -> Unit,
     inlineControls: Boolean = false,
     leadingControl: @Composable RowScope.() -> Unit = {},
+    inputTrailing: @Composable RowScope.() -> Unit = {},
     /** 就地展开的工具面板（＋ 展开的相册/文件行）：从输入行上方长出来、收回时缩回去。 */
     panelVisible: Boolean = false,
     panelModifier: Modifier = Modifier,
@@ -69,15 +67,6 @@ fun NativeComposerSurface(
     val motionEnabled = !reduceMotionEnabled()
     // 同一条底部操作行持续挂载，输入和附件只向上生长。
     val composerShape = if (inlineControls) androidx.compose.foundation.shape.RoundedCornerShape(24.dp) else WandShapes.lg
-    val darkGlass = isWandDarkTheme()
-    val composerGlass = WandGlass.regular.copy(
-        tintAlpha = if (darkGlass) 0.68f else 0.80f,
-        fallbackAlpha = if (darkGlass) 0.93f else 0.95f,
-        blurRadius = 11.dp,
-        refractionHeight = 0.dp,
-        refractionAmount = 0.dp,
-        shadowElevation = 2.dp,
-    )
 
     val animatedBorderColor by animateColorAsState(
         targetValue = if (focused) WandColors.focusRing else WandColors.border,
@@ -94,16 +83,9 @@ fun NativeComposerSurface(
             Modifier.fillMaxWidth().clip(composerShape).background(WandColors.surface)
                 .border(0.6.dp, animatedBorderColor, composerShape).padding(horizontal = 4.dp)
         } else if (drawSurface) {
-            Modifier
-                .fillMaxWidth()
-                .glassSurface(
-                    backdrop = backdrop,
-                    shape = composerShape,
-                    style = composerGlass,
-                    drawRim = false,
-                )
+            Modifier.fillMaxWidth().clip(composerShape).background(WandColors.surface)
                 .border(1.dp, animatedBorderColor, composerShape)
-                .padding(horizontal = 6.dp, vertical = 6.dp)
+                .padding(horizontal = 4.dp, vertical = 4.dp)
         } else {
             Modifier.fillMaxWidth()
         }
@@ -135,6 +117,7 @@ fun NativeComposerSurface(
             ) {
                 if (inlineControls) leadingControl()
                 inputContent()
+                inputTrailing()
                 if (inlineControls) controls()
             }
             if (!inlineControls) Row(

@@ -124,6 +124,15 @@ android {
         jvmTarget = '17'
     }
 
+    // Opt-in native fixture preview; excluded from ordinary and distribution builds.
+    if (project.hasProperty('WAND_UI_PREVIEW')) {
+        buildTypes.debug.applicationIdSuffix = '.preview'
+        sourceSets.debug {
+            java.srcDirs += 'src/preview/java'
+            manifest.srcFile 'src/preview/AndroidManifest.xml'
+        }
+    }
+
     buildFeatures {
         compose true
     }

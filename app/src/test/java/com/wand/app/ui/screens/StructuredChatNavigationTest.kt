@@ -12,8 +12,8 @@ class StructuredChatNavigationTest {
         val screen = source("screens/ChatScreen.kt")
         assertFalse(screen.contains("TaskSessionTabStrip("))
         assertFalse(screen.contains("StandaloneSessionTabStrip("))
-        assertTrue(screen.contains("WandDetailTopBar("))
-        assertTrue(screen.contains("WandDetailBackButton("))
+        assertFalse(screen.contains("WandDetailTopBar("))
+        assertTrue(screen.contains("FloatingChatControls(showBack = showBack, onBack = onBack"))
     }
 
     @Test

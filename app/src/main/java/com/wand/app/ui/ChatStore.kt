@@ -13,6 +13,7 @@ import com.wand.app.data.EscalationRequest
 import com.wand.app.data.ModelInfo
 import com.wand.app.data.PendingSessionSettings
 import com.wand.app.data.PermissionRequestInfo
+import com.wand.app.data.ReasoningEffortInfo
 import com.wand.app.data.SessionEvent
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
@@ -120,6 +121,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         canChangeBlankConversationDirectory(snapshot, messageTotal)
 
     var availableModels by mutableStateOf<List<ModelInfo>>(emptyList())
+        private set
+    var availableThinkingEfforts by mutableStateOf<List<ReasoningEffortInfo>>(emptyList())
         private set
     var defaultModel by mutableStateOf<String?>(null)
         private set
@@ -385,6 +388,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                         apply(snap)
                         availableModels = emptyList()
                         defaultModel = null
+                        availableThinkingEfforts = emptyList()
                         loadModels()
                         if (active) providerSwitchResult = "已切换为 ${snap.providerLabel}"
                     }
@@ -392,6 +396,38 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure
                 if (active) providerSwitchError = failure.message ?: "切换工具失败，请重试"
+            } finally {
+                providerSwitching = false
+            }
+        }
+    }
+
+    /** 员工身份只在发送前修改；发送锁、设置串行与草稿继续属于当前会话。 */
+    fun chooseEmployee(employeeId: String) {
+        if (!canSwitchProvider || employeeId.isBlank() || snapshot?.employeeId == employeeId) return
+        providerSwitching = true
+        providerSwitchError = null
+        providerSwitchResult = null
+        scope.launch {
+            try {
+                settingsMutationMutex.withLock {
+                    val snap = api.setSessionEmployee(sessionId, employeeId)
+                    check(snap.id == sessionId && snap.isStructured && snap.employeeId == employeeId) {
+                        "未收到有效的员工切换回执"
+                    }
+                    currentCoroutineContext().ensureActive()
+                    if (active) {
+                        apply(snap)
+                        availableModels = emptyList()
+                        defaultModel = null
+                        availableThinkingEfforts = emptyList()
+                        loadModels()
+                        if (active) providerSwitchResult = "已切换为 ${snap.employeeName ?: "所选员工"}"
+                    }
+                }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                if (active) providerSwitchError = failure.message ?: "切换员工失败，请重试"
             } finally {
                 providerSwitching = false
             }
@@ -485,15 +521,15 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     /** 模型切换后若当前档位已不可用，立即把真实状态与服务端一起收敛到自动。 */
     private fun normalizeThinkingEffortFor(model: String?) {
         val provider = snapshot?.provider ?: "claude"
-        // Codex 的动态元数据尚未返回时不能用 legacy fallback 误判并覆盖服务端值。
-        if (provider == "codex" && availableModels.isEmpty()) return
-        val supported = thinkingEffortOptions(
+        // 未知能力不能用 legacy fallback 误判并覆盖 Pi 等会话的原生档位。
+        val levels = dynamicThinkingEffortOptions(
             provider = provider,
             selectedModel = model,
             defaultModel = defaultModel,
             models = availableModels,
-        ).any { it.id == thinkingEffort }
-        if (!supported) chooseThinkingEffort("off")
+            providerEfforts = availableThinkingEfforts,
+        ) ?: return
+        if (levels.none { it.id == thinkingEffort }) chooseThinkingEffort("off")
     }
 
     /** 中途切换执行模式（乐观更新 + 失败回滚）。codex 会话固定 full-access，调用方负责拦。 */
@@ -528,6 +564,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
         currentCoroutineContext().ensureActive()
         if (!active || generation != modelCatalogGeneration || provider != (snapshot?.provider ?: "claude")) return
         availableModels = response.modelsFor(provider)
+        availableThinkingEfforts = response.thinkingEffortsFor(provider)
         defaultModel = response.defaultModelFor(provider)
         // Background group reorder/rename refreshes labels, never rewrites a user's model/depth choice.
         if (normalizeThinking) normalizeThinkingEffortFor(selectedModel)

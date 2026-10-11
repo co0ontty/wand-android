@@ -30,7 +30,7 @@ SKIP_INSTALL=1 ./debug.sh
 dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 ```
 
-其中 `X.Y.Z` 来自当前仓库最新的 `v*` tag，和线上 GitHub Action 的正式版本基准保持一致。
+其中 `X.Y.Z` 取 Android 仓库与所在主仓库的最高正式语义 tag（`vX.Y.Z`），避免子仓标签晚于主仓发布时生成更低版本、被旧 Beta 包遮蔽。独立检出只取 Android 自身标签；不创建或推送标签。
 
 2. 在 wand 服务端 `config.json` 中打开 Android APK 分发，并把目录指向本子模块的 `dist/apk/`：
 

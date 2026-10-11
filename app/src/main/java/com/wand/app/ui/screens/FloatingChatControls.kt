@@ -1,0 +1,70 @@
+package com.wand.app.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Call
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.theme.WandColors
+
+internal val ChatFloatingControlsClearance = 56.dp
+
+/** Floating controls have 48dp targets; the reading viewport clears them without a toolbar. */
+@Composable
+internal fun FloatingChatControls(
+    showBack: Boolean, onBack: () -> Unit, onCall: () -> Unit,
+    identity: String, cwd: String?, onTarget: () -> Unit,
+    gitEnabled: Boolean, onGit: () -> Unit,
+    onStop: (() -> Unit)? = null,
+    modifier: Modifier = Modifier, files: @Composable () -> Unit,
+) {
+    var moreOpen by remember { mutableStateOf(false) }
+    Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        if (showBack) FloatingChatIconButton(WandIcons.back, "返回", onBack)
+        else Spacer(Modifier.size(48.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            FloatingChatIconButton(Icons.Outlined.Call, "通话", onCall)
+            // 「文件」自己持有点击与形变动画，所以圆底画在它身后：可见 40dp、触控仍是 48dp，和另两枚同一套几何。
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(40.dp).clip(CircleShape).background(WandColors.surface))
+                files()
+            }
+            Box {
+                FloatingChatIconButton(WandIcons.more, "更多：会话对象、工作目录与变更", { moreOpen = !moreOpen })
+                DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                    DropdownMenuItem(text = {
+                        Column(Modifier.widthIn(max = 240.dp)) {
+                            Text(identity, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(cwd?.takeIf { it.isNotBlank() } ?: "未选择工作目录",
+                                style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text("查看或切换对象与目录", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }, onClick = { moreOpen = false; onTarget() })
+                    DropdownMenuItem(text = { Text("查看变更与提交") }, enabled = gitEnabled,
+                        onClick = { moreOpen = false; onGit() })
+                    if (onStop != null) DropdownMenuItem(text = { Text("停止当前任务") },
+                        onClick = { moreOpen = false; onStop() })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun FloatingChatIconButton(icon: ImageVector, description: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+        Box(Modifier.size(40.dp).clip(CircleShape).background(WandColors.surface), contentAlignment = Alignment.Center) {
+            Icon(icon, description, tint = WandColors.textPrimary, modifier = Modifier.size(20.dp))
+        }
+    }
+}

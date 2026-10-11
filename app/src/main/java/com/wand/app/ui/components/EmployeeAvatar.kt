@@ -31,12 +31,20 @@ fun EmployeeAvatar(
     modifier: Modifier = Modifier,
     size: Dp = 32.dp,
     provider: String? = null,
+    floating: Boolean = false,
+    animated: Boolean = false,
+    fileActivity: AvatarFileActivity = AvatarFileActivity.Idle,
+    thinking: Boolean = false,
+    speaking: Boolean = false,
 ) {
-    // 同一套优先级（上传图 > 显式毛色 > 按身份生成），不在这儿另写一份口径。
+    // Web v1 毛绒身份优先；上传图和显式旧猫继续使用原有渲染器。
     val spec = chatAvatarSpec(id, name, avatar)
     val cli = employeeAvatarProvider(provider)
+    val plush = PlushAvatarIdentity.asset(id, name, avatar)
     Box(modifier = modifier.size(size)) {
-        TeamMessageAvatar(spec = spec, size = size)
+        if (plush != null && animated) SharedPlushScene(plush, size, fileActivity, thinking, speaking)
+        else if (plush != null) PlushAvatar(plush, size, floating)
+        else TeamMessageAvatar(spec = spec, size = size)
         if (cli != null) {
             val badgeSize = employeeCliBadgeSize(size)
             val shape = RoundedCornerShape(percent = 35)

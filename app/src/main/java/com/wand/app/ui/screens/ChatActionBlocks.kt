@@ -2,15 +2,15 @@ package com.wand.app.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,12 +60,15 @@ import androidx.compose.runtime.LaunchedEffect
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.ToolUseSemantic
+import com.wand.app.data.TurnUsage
 import com.wand.app.data.arrayField
 import com.wand.app.data.int
 import com.wand.app.data.str
 import com.wand.app.ui.AskUserSelectionState
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandButton
+import com.wand.app.ui.components.WandCard
+import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.components.WandStatusIconSlot
 import com.wand.app.ui.components.clickableWithoutRipple
 import com.wand.app.ui.theme.GlassBackdrop
@@ -963,159 +968,78 @@ internal fun activeTodoIndex(todos: List<TodoEntry>): Int? {
     return inferred.takeIf { it >= 0 }
 }
 
-/** 输入栏上方的悬浮任务状态：执行中 + 第 N/M 步 + 当前任务，点击展开任务列表。 */
+/** 当前事项为主，步数为辅；任务与用量向上展开，底部触发点和输入操作不位移。 */
 @Composable
-fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null) {
+fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null, usage: TurnUsage? = null) {
     if (todos.isEmpty()) return
     val completed = todos.count { it.status == "completed" }
     val activeIndex = activeTodoIndex(todos)
     val currentStep = activeIndex?.plus(1) ?: minOf(completed + 1, todos.size)
-    fun TodoEntry.label(): String? =
-        (activeForm?.ifEmpty { null } ?: content).ifEmpty { null }
-    val activeTask = activeIndex?.let { todos[it].label() }
-        ?: "准备中…"
+    val activeTask = activeIndex?.let { todos[it].activeForm?.takeIf(String::isNotBlank) ?: todos[it].content }
+        ?.takeIf(String::isNotBlank) ?: "准备中…"
     var expanded by remember { mutableStateOf(false) }
-    // 「执行中」呼吸走全应用统一的 reduceMotion，而不是另一套 ValueAnimator 开关。
     val motionEnabled = !reduceMotionEnabled()
-    val activityAlpha = if (motionEnabled) {
-        val transition = rememberInfiniteTransition(label = "todoActivityBreath")
-        val alpha by transition.animateFloat(
-            initialValue = 0.72f,
-            targetValue = 1f,
-            animationSpec = WandMotion.breath(),
-            label = "todoActivityAlpha",
-        )
-        alpha
-    } else {
-        1f
-    }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(backdrop, WandShapes.lg, WandGlass.regular)
-            .animateContentSize(WandMotion.tweenNormal()),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickableWithoutRipple { expanded = !expanded }
-                .semantics(mergeDescendants = true) {
-                    stateDescription = "已完成 $completed 项，共 ${todos.size} 项；正在执行第 $currentStep 步：$activeTask"
-                }
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.graphicsLayer { alpha = activityAlpha },
-            ) {
-                Box(
-                    Modifier
-                        .size(7.dp)
-                        .background(WandColors.brand, CircleShape),
-                )
-                Text(
-                    "执行中",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WandColors.brand,
-                )
-            }
-            Text(
-                "· 第 $currentStep/${todos.size} 步",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = FontFamily.Monospace,
-                color = WandColors.brand,
-            )
-            Text(
-                activeTask,
-                fontSize = 12.sp,
-                color = WandColors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            ExpandChevron(
-                expanded = expanded,
-                tint = WandColors.textMuted,
-                size = 18.dp,
-            )
-        }
-        if (expanded) {
+    WandCard(shape = WandShapes.lg, contentPadding = PaddingValues(0.dp)) {
+        WandInlinePanel(visible = expanded, growFrom = Alignment.Bottom) {
             Column(
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                    .verticalScroll(rememberScrollState()).padding(12.dp),
             ) {
                 todos.forEachIndexed { index, todo ->
                     val isActive = index == activeIndex
                     val rowBackground by animateColorAsState(
-                        targetValue = if (isActive) WandColors.brandSoft else Color.Transparent,
-                        animationSpec = WandMotion.tweenFast(),
+                        if (isActive) WandColors.brandSoft else Color.Transparent,
+                        WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
                         label = "todoRowBackground",
-                    )
-                    val rowTextColor by animateColorAsState(
-                        targetValue = if (isActive) WandColors.textPrimary else WandColors.textSecondary,
-                        animationSpec = WandMotion.tweenFast(),
-                        label = "todoRowText",
                     )
                     Row(
                         verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(rowBackground)
+                        modifier = Modifier.fillMaxWidth().clip(WandShapes.sm).background(rowBackground)
                             .semantics(mergeDescendants = true) {
                                 stateDescription = when {
                                     todo.status == "completed" -> "已完成：${todo.content}"
                                     isActive -> "进行中：${todo.content}"
                                     else -> "待处理：${todo.content}"
                                 }
-                            }
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            }.padding(8.dp),
                     ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.width(14.dp).height(17.dp),
-                        ) {
+                        Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
                             when {
-                                todo.status == "completed" -> Icon(
-                                    WandIcons.check,
-                                    contentDescription = null,
-                                    tint = WandColors.success,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                isActive -> Box(
-                                    Modifier
-                                        .size(7.dp)
-                                        .background(WandColors.brand, CircleShape),
-                                )
-                                else -> Box(
-                                    Modifier
-                                        .size(7.dp)
-                                        .border(1.dp, WandColors.textMuted, CircleShape),
-                                )
+                                todo.status == "completed" -> Icon(WandIcons.check, null,
+                                    tint = WandColors.success, modifier = Modifier.size(14.dp))
+                                isActive -> Box(Modifier.size(7.dp).background(WandColors.brand, CircleShape))
+                                else -> Box(Modifier.size(7.dp).border(1.dp, WandColors.textMuted, CircleShape))
                             }
                         }
-                        Text(
-                            todo.content,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = rowTextColor,
-                            textDecoration = if (todo.status == "completed") {
-                                TextDecoration.LineThrough
-                            } else {
-                                null
-                            },
-                        )
+                        Text(todo.content, style = MaterialTheme.typography.bodySmall,
+                            color = if (isActive) WandColors.textPrimary else WandColors.textSecondary,
+                            textDecoration = if (todo.status == "completed") TextDecoration.LineThrough else null)
                     }
                 }
+                if (usage != null) {
+                    HorizontalDivider(color = WandColors.border, modifier = Modifier.padding(vertical = 4.dp))
+                    UsageSummaryRow(usage, isLive = false)
+                }
             }
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+                .clickable(role = Role.Button, onClickLabel = if (expanded) "收起任务进度" else "展开任务进度") { expanded = !expanded }
+                .semantics(mergeDescendants = true) {
+                    stateDescription = "已完成 $completed 项，共 ${todos.size} 项；正在执行第 $currentStep 步：$activeTask；${if (expanded) "详情已展开" else "详情已收起"}"
+                }.heightIn(min = ComposerActionTouchSize).padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Box(Modifier.size(7.dp).background(WandColors.brand, CircleShape))
+            Text(activeTask, style = MaterialTheme.typography.labelLarge, color = WandColors.textPrimary,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text("$currentStep / ${todos.size}", style = MaterialTheme.typography.labelMedium,
+                color = WandColors.textSecondary, maxLines = 1)
+            ExpandChevron(expanded = expanded, tint = WandColors.textSecondary, size = 18.dp)
         }
     }
 }

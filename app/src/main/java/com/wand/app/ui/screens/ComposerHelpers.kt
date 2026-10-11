@@ -32,8 +32,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,12 +44,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.onLongClick
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -142,13 +138,27 @@ internal fun rememberVoiceInputHandle(
 internal data class AttachmentPickerActions(
     val pickPhoto: () -> Unit,
     val pickFile: () -> Unit,
+    val open: Boolean,
 )
 
 private class AttachmentPickerRequest {
-    var onResult: ((List<Uri>) -> Unit)? = null
+    private var onResult: ((List<Uri>) -> Unit)? = null
+    var open by mutableStateOf(false)
+        private set
+    fun launch(onResult: (List<Uri>) -> Unit, launchPicker: () -> Unit) {
+        if (open) return
+        this.onResult = onResult
+        open = true
+        try { launchPicker() } catch (error: Exception) {
+            this.onResult = null
+            open = false
+            throw error
+        }
+    }
     fun finish(uris: List<Uri>) {
         val destination = onResult
         onResult = null
+        open = false
         destination?.invoke(uris)
     }
 }
@@ -169,20 +179,21 @@ internal fun rememberAttachmentPickerActions(
 
     val pickPhoto = remember(photoPicker) {
         {
-            photoRequest.onResult = currentOnUris.value
-            photoPicker.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-            )
+            photoRequest.launch(currentOnUris.value) {
+                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }
         }
     }
     val pickFile = remember(attachmentPicker) {
         {
-            documentRequest.onResult = currentOnUris.value
-            attachmentPicker.launch(arrayOf("*/*"))
+            documentRequest.launch(currentOnUris.value) {
+                attachmentPicker.launch(arrayOf("*/*"))
+            }
         }
     }
 
-    return remember(pickPhoto, pickFile) { AttachmentPickerActions(pickPhoto, pickFile) }
+    val open = photoRequest.open || documentRequest.open
+    return remember(pickPhoto, pickFile, open) { AttachmentPickerActions(pickPhoto, pickFile, open) }
 }
 
 internal fun CoroutineScope.launchAttachmentUpload(
@@ -360,9 +371,6 @@ internal fun <T> prioritizeSelectedItem(
  * 书写区保持固定的文字宽度与清空触控槽，焦点变化只改变颜色。
  * 聊天使用外层统一描边；独立 PTY 输入保留自身表面。
  */
-internal fun composerHoldToTalkEligible(text: String, focused: Boolean, keyboardVisible: Boolean): Boolean =
-    text.isEmpty() && !focused && !keyboardVisible
-
 @Composable
 internal fun ComposerInputField(
     value: String,
@@ -385,19 +393,7 @@ internal fun ComposerInputField(
     ),
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     onTextLayout: (TextLayoutResult) -> Unit = {},
-    voice: VoiceInputController? = null,
-    onMicDown: (() -> Unit)? = null,
-    keyboardVisible: Boolean = false,
 ) {
-    val holdEnabled = voice != null && onMicDown != null && composerHoldToTalkEligible(value, isFocused, keyboardVisible)
-    val currentMicDown by rememberUpdatedState(onMicDown)
-    val displayedPlaceholder = when {
-        holdEnabled && voice?.canceling == true -> "松开取消"
-        holdEnabled && voice?.pressed == true -> "松开完成 · 上滑取消"
-        holdEnabled && voice?.processing == true -> "${voice.engineLabel}中…"
-        holdEnabled -> "发消息或按住说话"
-        else -> placeholder
-    }
     val motionEnabled = !reduceMotionEnabled()
     val dark = isWandDarkTheme()
     val shape = WandShapes.md
@@ -459,7 +455,7 @@ internal fun ComposerInputField(
                         ) {
                             if (value.isEmpty()) {
                                 Text(
-                                    displayedPlaceholder,
+                                    placeholder,
                                     fontSize = 16.sp,
                                     lineHeight = 24.sp,
                                     fontWeight = FontWeight.Normal,
@@ -477,20 +473,6 @@ internal fun ComposerInputField(
                         .focusRequester(focusRequester)
                         .onFocusChanged { onFocusChanged(it.isFocused) },
                 )
-                if (holdEnabled) {
-                    // A small adapter over the native text field: short tap focuses, hold doesn't summon IME.
-                    Box(Modifier.matchParentSize()
-                        .semantics {
-                            role = Role.Button
-                            contentDescription = displayedPlaceholder
-                            onClick("输入文字") { runCatching { focusRequester.requestFocus() }; true }
-                            onLongClick("语音输入") { currentMicDown?.invoke(); true }
-                        }
-                        .pointerInput(voice) {
-                            voiceTapOrHoldGesture(voice, onTap = { runCatching { focusRequester.requestFocus() } },
-                                onHoldStart = { currentMicDown?.invoke() })
-                        })
-                }
             }
             // 始终预留触控槽，清空按钮显隐不改变换行或光标位置。
             if (showClearAction) Box(modifier = Modifier.size(ComposerActionTouchSize), contentAlignment = Alignment.Center) {

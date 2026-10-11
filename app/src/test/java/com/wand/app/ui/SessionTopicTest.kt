@@ -16,6 +16,21 @@ class SessionTopicTest {
     }
 
     @Test
+    fun workingDirectoryLabelUsesOnlyTheActualFinalSegment() {
+        assertEquals("wand", sessionWorkingDirectoryLabel("/Users/me/projects/wand"))
+        assertEquals("wand", sessionWorkingDirectoryLabel(" /Users/me/projects/wand/// "))
+        assertEquals("运行目录", sessionWorkingDirectoryLabel("/一级/二级/三级/运行目录/"))
+        assertEquals("fix-login", sessionWorkingDirectoryLabel("/repo/.worktrees/fix-login"))
+        assertEquals("wand", sessionWorkingDirectoryLabel("C:\\Users\\me\\projects\\wand\\"))
+        assertEquals("目录 名称", sessionWorkingDirectoryLabel("/projects/目录 名称"))
+        assertEquals("home", sessionWorkingDirectoryLabel("/projects/home"))
+        assertEquals("/", sessionWorkingDirectoryLabel("/"))
+        assertEquals("C:", sessionWorkingDirectoryLabel("C:\\"))
+        assertEquals("目录未就绪", sessionWorkingDirectoryLabel(null))
+        assertEquals("目录未就绪", sessionWorkingDirectoryLabel(" \t "))
+    }
+
+    @Test
     fun composerChunksTagBothTextAndEnterSoServerCanSummarizeTheCommand() {
         val chunks = ptyComposerSubmitChunks("修权限弹窗的文案", "terminal")
         assertEquals(2, chunks.size)

@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
-import com.wand.app.speech.VoiceInputController
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,11 +23,24 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
+import com.wand.app.ui.SendPhase
 import com.wand.app.data.UploadedFile
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInlinePanelAction
 import com.wand.app.ui.theme.GlassBackdrop
+
+internal data class CompanionComposerControls(
+    val editing: Boolean, val hasText: Boolean, val hasAttachments: Boolean,
+    val canSubmit: Boolean, val deliveryPhase: SendPhase,
+    val onEdit: () -> Unit, val onSend: () -> Unit,
+)
+internal typealias MinimalCompanion = @Composable (CompanionComposerControls, @Composable () -> Unit) -> Unit
 
 /** The native chat input layout shared by a session and its AI Team group chat. */
 @Composable
@@ -49,8 +61,10 @@ internal fun SharedMessageComposer(
     onSend: () -> Unit,
     allowRefocus: Boolean,
     voicePressed: Boolean,
-    voice: VoiceInputController? = null,
-    onMicDown: (() -> Unit)? = null,
+    voiceCommitSignal: Int = 0,
+    voiceProcessing: Boolean = false,
+    /** Owned selectors live above the conditional editor and temporarily borrow its focus. */
+    editorOverlayOpen: Boolean = false,
     onExpandedChange: (Boolean) -> Unit,
     trailingActions: @Composable RowScope.(requestFocus: () -> Unit, sendAndRefocus: () -> Unit) -> Unit,
     controls: @Composable RowScope.() -> Unit,
@@ -62,26 +76,95 @@ internal fun SharedMessageComposer(
     onMenuDismissFocus: () -> Unit = {},
     fixedViewport: Boolean = false,
     inlineControls: Boolean = false,
+    compactAfterAcknowledgement: Boolean = false,
+    deliveryPhase: SendPhase = SendPhase.Idle,
+    minimalCompanion: MinimalCompanion? = null,
 ) {
     val focusRequester = remember(sessionKey) { FocusRequester() }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var refocusAfterSend by remember(sessionKey) { mutableStateOf(false) }
     var isFocused by remember(sessionKey) { mutableStateOf(false) }
     var draftNeedsExpanded by remember(sessionKey) { mutableStateOf(false) }
+    var acknowledged by remember(sessionKey) { mutableStateOf(false) }
+    var recoveryExpanded by remember(sessionKey) { mutableStateOf(false) }
+    var collapsePending by remember(sessionKey) { mutableStateOf(false) }
+    var minimal by remember(sessionKey) { mutableStateOf(MinimalComposerState()) }
+    var focusRequest by remember(sessionKey) { mutableStateOf(0) }
+    var handledFocusRequest by remember(sessionKey) { mutableStateOf(0) }
+    var restoreEditorFocus by remember(sessionKey) { mutableStateOf(false) }
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(deliveryPhase, draft, attachments.size) {
+        if (deliveryPhase == SendPhase.Failed) { recoveryExpanded = true; collapsePending = false; minimal = minimal.failed() }
+        if (deliveryPhase == SendPhase.Sent) {
+            minimal = minimal.accepted(draft.isNotEmpty() || attachments.isNotEmpty())
+            acknowledged = true
+            recoveryExpanded = false
+            if (compactAfterAcknowledgement && collapsePending && draft.isEmpty() && attachments.isEmpty()) {
+                collapsePending = false
+                focusManager.clearFocus()
+                keyboard?.hide()
+            }
+            collapsePending = false
+        }
+    }
+    val compactVisual = inlineControls || compactAfterAcknowledgement && acknowledged && !recoveryExpanded &&
+        !isFocused && !keyboardVisible && draft.isEmpty() && attachments.isEmpty() && !uploading &&
+        !voicePressed && !attachOpen && !resourcePanelOpen && !editorOverlayOpen && deliveryPhase != SendPhase.Sending
     LaunchedEffect(refocusAfterSend, allowRefocus) {
         if (refocusAfterSend && allowRefocus) {
             refocusAfterSend = false
             runCatching { focusRequester.requestFocus() }
         }
     }
-    val expanded = fixedViewport || shouldComposerExpand(
+    val expanded = fixedViewport || editorOverlayOpen || shouldComposerExpand(
         isFocused = isFocused,
         voicePressed = voicePressed,
         draftNeedsExpanded = draftNeedsExpanded,
         hasAttachments = attachments.isNotEmpty(),
     )
-    LaunchedEffect(expanded) { onExpandedChange(expanded) }
-    val requestFocus: () -> Unit = { runCatching { focusRequester.requestFocus() } }
+    val editorVisible = !voicePressed && !voiceProcessing && (minimal.editing || minimal.recovery || attachOpen || resourcePanelOpen || uploading)
+    val reportExpanded = if (minimalCompanion == null) expanded else editorVisible && expanded
+    LaunchedEffect(reportExpanded) { onExpandedChange(reportExpanded) }
+    val focusEditor: () -> Unit = {
+        focusRequest++
+        if (minimalCompanion == null) runCatching { focusRequester.requestFocus() }
+    }
+    val requestFocus: () -> Unit = {
+        minimal = minimal.edit()
+        focusEditor()
+    }
+    LaunchedEffect(editorOverlayOpen, windowFocused) {
+        if (editorOverlayOpen && (isFocused || minimal.editing)) restoreEditorFocus = true
+        if (!editorOverlayOpen && windowFocused && restoreEditorFocus) {
+            restoreEditorFocus = false
+            // Focus returning is not a new edit: preserve a pending ACK, and never reopen
+            // an empty editor that was accepted while its selector was still open.
+            if (minimalCompanion == null || minimal.editing || minimal.recovery) focusEditor()
+        }
+    }
+    LaunchedEffect(focusRequest, editorVisible, windowFocused, editorOverlayOpen) {
+        if (minimalCompanion != null && editorVisible && windowFocused && !editorOverlayOpen &&
+            focusRequest > handledFocusRequest) {
+            if (runCatching { focusRequester.requestFocus() }.getOrDefault(false)) {
+                handledFocusRequest = focusRequest
+                keyboard?.show()
+            }
+        }
+    }
+    val interactionSuspended = editorOverlayOpen || attachOpen || resourcePanelOpen || uploading ||
+        voicePressed || voiceProcessing || !windowFocused
+    LaunchedEffect(keyboardVisible, interactionSuspended) {
+        if (minimalCompanion != null) {
+            val wasEditing = minimal.editing
+            minimal = minimal.observeKeyboard(keyboardVisible, interactionSuspended)
+            if (wasEditing && !minimal.editing) focusManager.clearFocus()
+        }
+    }
+    LaunchedEffect(voiceCommitSignal) {
+        if (voiceCommitSignal > 0 && minimalCompanion != null) requestFocus()
+    }
     ConversationLayerBackHandler(attachOpen) { onAttachOpenChange(false); onMenuDismissFocus() }
     LaunchedEffect(voicePressed) {
         if (voicePressed) onAttachOpenChange(false)
@@ -89,14 +172,21 @@ internal fun SharedMessageComposer(
     val sendAndRefocus: () -> Unit = {
         if (canSubmit) {
             onAttachOpenChange(false)
+            if (minimalCompanion != null) minimal = minimal.submit()
+            if (compactAfterAcknowledgement) collapsePending = true else refocusAfterSend = true
             onSend()
-            refocusAfterSend = true
         }
     }
+    val editor: @Composable () -> Unit = {
     NativeComposerSurface(
         backdrop = backdrop,
         focused = isFocused,
-        inlineControls = inlineControls,
+        inlineControls = if (minimalCompanion != null) false else compactVisual,
+        inputTrailing = {
+            // Text-free capsule has no third action. Uploaded files still have an explicit route.
+            if (minimalCompanion != null && draft.isBlank() && attachments.isNotEmpty())
+                TextButton(onClick = sendAndRefocus, enabled = canSubmit) { Text("发送附件") }
+        },
         leadingControl = {
             ComposerActionsMenu(backdrop = backdrop, uploading = uploading, allowDuringUpload = true,
                 attachOpen = attachOpen || resourcePanelOpen, onAttachOpenChange = onAttachOpenChange, modifier = menuActionModifier)
@@ -113,11 +203,11 @@ internal fun SharedMessageComposer(
                 }
                 ComposerInputField(
                     value = draft,
-                    onValueChange = onDraftChange,
-                    placeholder = "发送消息",
+                    onValueChange = { collapsePending = false; minimal = minimal.edit(); onDraftChange(it) },
+                    placeholder = if (compactVisual) "继续输入" else "发送消息",
                     framed = false,
-                    compact = inlineControls,
-                    showClearAction = !inlineControls,
+                    compact = compactVisual,
+                    showClearAction = !compactVisual,
                     isFocused = isFocused,
                     onFocusChanged = { isFocused = it },
                     focusRequester = focusRequester,
@@ -134,9 +224,6 @@ internal fun SharedMessageComposer(
                         imeAction = ImeAction.Send,
                     ),
                     keyboardActions = KeyboardActions(onSend = { sendAndRefocus() }),
-                    voice = voice,
-                    onMicDown = onMicDown,
-                    keyboardVisible = keyboardVisible,
                 )
             }
         },
@@ -171,7 +258,7 @@ internal fun SharedMessageComposer(
             }
         },
         controls = {
-            if (!inlineControls) ComposerActionsMenu(
+            if (!compactVisual) ComposerActionsMenu(
                 backdrop = backdrop,
                 uploading = uploading,
                 allowDuringUpload = true,
@@ -179,8 +266,12 @@ internal fun SharedMessageComposer(
                 onAttachOpenChange = onAttachOpenChange,
                 modifier = menuActionModifier,
             )
-            controls()
-            trailingActions(requestFocus, sendAndRefocus)
+            if (!compactVisual) controls()
+            if (minimalCompanion == null) trailingActions(requestFocus, sendAndRefocus)
         },
     )
+    }
+    if (minimalCompanion == null) editor()
+    else minimalCompanion(CompanionComposerControls(editorVisible, draft.isNotBlank(), attachments.isNotEmpty(),
+        canSubmit, deliveryPhase, requestFocus, sendAndRefocus)) { if (editorVisible) editor() }
 }

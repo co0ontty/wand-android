@@ -268,14 +268,14 @@ fun TurnView(
         onCurrentReplyExpandedChange(!next)
     }
     Column(
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         if (showHeader && !activityOnly && !resourceOnly) {
-            ChatMessageTime(conversationTurnClock(turn), alignEnd = false)
             // 左上角：头像 + 名字 + 折叠开关；其下沿是「收起临界线」。
             // 用户手动展开时通知上层把这条的第一行滚到顶部区域来读（不被顶出屏幕上沿）。
             AssistantReplyHeader(
+                clock = conversationTurnClock(turn),
                 collapsed = collapsed,
                 preview = preview,
                 copyText = copyText,
@@ -336,6 +336,7 @@ fun TurnView(
  */
 @Composable
 private fun AssistantReplyHeader(
+    clock: String,
     collapsed: Boolean,
     preview: String,
     copyText: String,
@@ -376,7 +377,7 @@ private fun AssistantReplyHeader(
     ) {
         if (employeeReply) {
             EmployeeAvatar(employeeId, employeeName, employeeAvatar,
-                size = 26.dp, provider = employeeProvider)
+                size = 28.dp, provider = employeeProvider)
         } else {
             Box(
                 contentAlignment = Alignment.Center,
@@ -402,6 +403,7 @@ private fun AssistantReplyHeader(
             color = WandColors.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
         when {
             author?.leader == true -> ChatAuthorBadge("负责人")
@@ -422,19 +424,12 @@ private fun AssistantReplyHeader(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-        } else {
-            Spacer(modifier = Modifier.weight(1f))
         }
+        if (clock.isNotBlank() && !collapsed) Text(clock, style = MaterialTheme.typography.labelSmall,
+            color = WandColors.textMuted, maxLines = 1)
         if (copyText.isNotBlank()) {
             MessageCopyButton(copyText = copyText)
         }
-        Text(
-            if (collapsed) "展开" else "收起",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = WandColors.textPrimary,
-            maxLines = 1,
-        )
         ExpandChevron(
             expanded = !collapsed,
             tint = WandColors.textSecondary,
@@ -467,7 +462,7 @@ private fun replyPreview(content: List<ContentBlock>): String = conversationTurn
 
 /** Codex/Claude 单轮 token 与费用摘要；文本可换行，窄屏不会横向溢出。 */
 @Composable
-private fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
+internal fun UsageSummaryRow(usage: TurnUsage?, isLive: Boolean) {
     val parts = remember(usage) {
         buildList {
             usage?.inputTokens?.takeIf { it > 0 }?.let { add("输入 ${formatTokenCount(it)}") }
@@ -528,6 +523,7 @@ internal fun SubagentActivityDock(
     usage: TurnUsage?,
     sessionRunning: Boolean,
     modifier: Modifier = Modifier,
+    showUsage: Boolean = true,
     onExpandedChange: (Boolean) -> Unit = {},
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -653,8 +649,8 @@ internal fun SubagentActivityDock(
             }
         }
 
-        // 用量行排在摘要卡上方：卡是 Column 的最后一项，才能贴着输入框而不是被自己的状态行顶开。
-        if (sessionRunning) {
+        // 有任务进度时，用量归进度详情；不在底部再堆一个独立数字行。
+        if (sessionRunning && showUsage) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),

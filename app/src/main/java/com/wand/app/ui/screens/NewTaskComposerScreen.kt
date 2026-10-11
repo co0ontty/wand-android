@@ -142,7 +142,10 @@ internal fun NewTaskComposerDialog(
     val teamError = newTaskTeamSubmitError(prompt, teamSelected, teamAllowed)
     val defaultModel = models?.defaultModelFor(provider).orEmpty()
     val selectedModelLabel = modelOptions.firstOrNull { it.id == model }?.label ?: model
-    val effortOptions = thinkingEffortOptions(provider, model, defaultModel, models?.modelsFor(provider).orEmpty())
+    val effortOptions = thinkingEffortOptions(
+        provider, model, defaultModel, models?.modelsFor(provider).orEmpty(),
+        models?.thinkingEffortsFor(provider).orEmpty(),
+    )
     val effortLabel = effortOptions.firstOrNull { it.id == thinkingEffort }?.label ?: "自动"
     // 会话参数行与选择器可开性共用这份判定。
     val controlChips = newTaskComposerControlChips(namedSubjectSelected, startFirstSession, target.isShell)
@@ -371,7 +374,7 @@ internal fun NewTaskComposerDialog(
                                     },
                                 )
                             }
-                            if (kind == WorkspaceSessionKind.Structured && employees.isNotEmpty()) {
+                            if (employees.isNotEmpty()) {
                                 DropdownMenuItem(
                                     text = { Text("硅基员工", style = MaterialTheme.typography.labelSmall,
                                         color = WandColors.textMuted) },

@@ -72,9 +72,18 @@ repair_build_permissions() {
 }
 
 latest_tag_version() {
-  local tag
-  # 以 Android 仓库最高语义 tag 为版本基数，不能用最近可达的旧 tag。
-  tag="$(git tag --sort=-v:refname --list 'v[0-9]*' | head -1 | sed 's/^v//' || true)"
+  local tag superproject
+  # 子仓 tag 可能晚于主仓发布；取两者最高的正式语义 tag，独立检出仍只用自身。
+  # 不创建 tag、不依赖最近可达提交，也不把 prerelease 当作正式版本基数。
+  superproject="$(git rev-parse --show-superproject-working-tree 2>/dev/null || true)"
+  tag="$(
+    {
+      git tag --list 'v[0-9]*'
+      if [[ -n "$superproject" ]]; then git -C "$superproject" tag --list 'v[0-9]*'; fi
+    } | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' \
+      | sort -t. -k1.2,1nr -k2,2nr -k3,3nr \
+      | awk 'NR == 1 { sub(/^v/, ""); print }'
+  )"
   echo "${tag:-0.0.0}"
 }
 

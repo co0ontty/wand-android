@@ -106,6 +106,7 @@ internal fun SessionFilesButton(api: WandApi, sessionId: String, cwd: String?, o
             collapsedIcon = WandIcons.folder,
             expandedIcon = WandIcons.close,
             contentDescription = if (files.open) "关闭会话文件" else "会话文件",
+            tint = WandColors.textPrimary,
             touchSize = 48.dp,
             enabled = !cwd.isNullOrBlank(),
             onClick = {

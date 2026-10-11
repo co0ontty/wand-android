@@ -38,10 +38,11 @@ class SessionFilesPresentationTest {
         assertTrue(structured.contains("SessionFilesButton(api, sessionId, store.snapshot?.cwd)"))
         assertTrue(pty.contains("SessionFilesButton(api, sessionId, snapshot?.cwd, onOpen = onOpenFiles)"))
         assertTrue(pty.contains("onOpenFiles = {\n                    keyboardRequested = false"))
-        for (code in listOf(structured, pty)) {
-            val actions = code.substringAfterLast("actions = {")
-            assertTrue(actions.indexOf("SessionFilesButton(") < actions.indexOf("GitChangesButton("))
-        }
+        assertTrue(structured.contains("files = { SessionFilesButton("))
+        assertTrue(structured.contains("onGit = { resources.dismiss(); quickCommit.openPanel() }"))
+        assertTrue(source("FloatingChatControls").contains("Text(\"查看变更与提交\")"))
+        val ptyActions = pty.substringAfterLast("actions = {")
+        assertTrue(ptyActions.indexOf("SessionFilesButton(") < ptyActions.indexOf("GitChangesButton("))
         val panel = source("SessionFilesPanel")
         assertTrue(panel.contains("remember(sessionId, api)"))
         assertTrue(panel.contains("PopupProperties(focusable = true)"))

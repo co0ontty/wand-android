@@ -53,6 +53,7 @@ class VoiceInputController(private val context: Context, private val api: com.wa
 
     /** 手指按下（已确保有麦克风权限）。 */
     fun beginPress(onCommit: (String) -> Unit) {
+        if (!hasMicPermission()) { onToast?.invoke("需要麦克风权限才能语音输入"); return }
         if (pressed) return
         // 上一轮仍在等 final 时允许立即开始，但必须先废弃旧引擎及其迟到回调。
         if (session.phase != VoiceSessionPhase.IDLE) {
@@ -108,10 +109,11 @@ class VoiceInputController(private val context: Context, private val api: com.wa
                 resetSession()
             }
             VoiceSessionEffect.FinishEngine -> {
-                engine?.finish()
-                val fallback = Runnable { engine?.cancel(); deliver(null) }
+                val generation = listenerGeneration
+                val fallback = Runnable { if (generation == listenerGeneration) { engine?.cancel(); deliver(null) } }
                 finalTimeout = fallback
                 main.postDelayed(fallback, engine?.finalTimeoutMs ?: 1_500L)
+                engine?.finish()
             }
             else -> Unit
         }
@@ -134,7 +136,8 @@ class VoiceInputController(private val context: Context, private val api: com.wa
         val effect = transition(VoiceSessionEvent.Complete(text)) as? VoiceSessionEffect.Commit ?: return
         val onCommit = commit
         resetSession()
-        effect.text?.let { onCommit?.invoke(it) }
+        if (effect.text == null) onToast?.invoke("没有听到声音，再试一次；原草稿已保留")
+        else onCommit?.invoke(effect.text)
     }
 
     private fun resetSession() {

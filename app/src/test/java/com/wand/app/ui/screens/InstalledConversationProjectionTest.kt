@@ -23,6 +23,9 @@ class InstalledConversationProjectionTest {
         var available = 0
         var historical = 0
         var taskCards = 0
+        var linkedTurns = 0
+        var missingPreviews = 0
+        var unavailablePreviews = 0
         // Pinned/empty groups may occupy the first five rows; they are not evidence of missing history.
         val sample = rows.take(20)
         for (row in sample) {
@@ -30,7 +33,10 @@ class InstalledConversationProjectionTest {
             assertEquals(row.id, detail.id)
             val results = conversationSessionToolResults(detail)
             for (turn in detail.messages.filter { it.conversationLink != null }) {
+                linkedTurns++
+                if (turn.taskPreview == null) missingPreviews++
                 val preview = turn.taskPreview ?: continue // Older servers may lack the additive projection.
+                if (preview.status == "unavailable") unavailablePreviews++
                 assertTrue(preview.text.length <= 4000)
                 if (preview.status != "unavailable") {
                     val link = turn.conversationLink!!
@@ -60,6 +66,8 @@ class InstalledConversationProjectionTest {
             }
             assertTrue(conversationInteractiveSessions(detail).all { it.isNotBlank() })
         }
+        // Only aggregate coverage counts: never print user messages, identifiers or credentials.
+        println("Installed IM projection coverage: ${sample.size} of ${rows.size} conversations; $linkedTurns linked turns; $missingPreviews missing and $unavailablePreviews unavailable previews; $taskCards exact task cards; $bound source-bound messages; $available current and $historical historical sessions")
         assertTrue("At least one real assistant message has a source session", bound > 0)
         // DM dispatch no longer needs a live communication channel; retained channels may all be historical.
         assertTrue("Retained communication sources must be checked as readable or explicitly historical", available + historical > 0)

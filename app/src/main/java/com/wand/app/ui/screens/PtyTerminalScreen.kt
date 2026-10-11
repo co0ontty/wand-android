@@ -99,6 +99,7 @@ import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.applyProvisionalSessionTopic
 import com.wand.app.ui.ptyComposerSubmitChunks
 import com.wand.app.ui.sessionChromeTitle
+import com.wand.app.ui.sessionWorkingDirectoryLabel
 import com.wand.app.ui.sessionTopicBlocklist
 import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
@@ -546,15 +547,8 @@ private fun PtyTopBar(
                     generating = snapshot?.titleGenerating == true ||
                         SessionTitleStore.isGenerating(sessionId),
                 )
-                val workspaceTitle = workspaceName?.trim().takeUnless { it.isNullOrEmpty() }
                 TailMarqueePathText(
-                    path = if (workspaceTitle != null) {
-                        "$serverDisplayName · $workspaceTitle"
-                    } else {
-                        snapshot?.cwd?.takeIf { it.isNotBlank() }?.let {
-                            "$serverDisplayName · $it"
-                        } ?: serverDisplayName
-                    },
+                    path = sessionWorkingDirectoryLabel(snapshot?.cwd),
                     fontSize = 11.sp,
                     color = WandColors.textMuted,
                     modifier = Modifier.fillMaxWidth(),
@@ -1052,10 +1046,7 @@ private fun PtyInputDrawer(
                 ComposerInputField(
                     value = draft,
                     onValueChange = onDraftChange,
-                    placeholder = "整段文字、语音或附件",
-                    voice = voice,
-                    onMicDown = onMicDown,
-                    keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0,
+                    placeholder = "输入整段文字",
                     isFocused = isFocused,
                     onFocusChanged = { isFocused = it },
                     focusRequester = focusRequester,

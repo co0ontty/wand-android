@@ -8,6 +8,28 @@ import org.junit.Test
 
 class ChatSessionEventReducerTest {
     @Test
+    fun websocketInitAndStatusCarryEmployeeIdentityAndToolWithoutLosingSessionContext() {
+        val initial = WsIncoming.parse(org.json.JSONObject("""{"type":"init","sessionId":"s1","data":{"id":"s1","sessionKind":"structured","provider":"pi","runner":"pi-cli-json","status":"idle","employeeId":"employee-1","employeeName":"开发伙伴","employeeAvatar":"cat:1","cwd":"/repo","workspaceTaskId":"task-1","messages":[]}}"""))!!.toSessionEvent()!!
+        val initialized = ChatSessionEventReducer.reduce(ChatSessionEventState(), initial)
+        assertEquals("employee-1", initialized.snapshot?.employeeId)
+        assertEquals("开发伙伴", initialized.snapshot?.employeeName)
+        assertEquals("cat:1", initialized.snapshot?.employeeAvatar)
+        val status = WsIncoming.parse(org.json.JSONObject("""{"type":"status","sessionId":"s1","data":{"provider":"pi","runner":"pi-cli-json","employeeId":"employee-next","employeeName":"新员工","employeeAvatar":"cat:2","structuredState":{"provider":"pi","runner":"pi-cli-json","engine":"core","inFlight":false}}}"""))!!.toSessionEvent()!!
+        val changed = ChatSessionEventReducer.reduce(initialized, status)
+        assertEquals("s1", changed.snapshot?.id)
+        assertEquals("employee-next", changed.snapshot?.employeeId)
+        assertEquals("新员工", changed.snapshot?.employeeName)
+        assertEquals("cat:2", changed.snapshot?.employeeAvatar)
+        assertEquals("wand-agent", changed.snapshot?.toolId)
+        assertEquals("/repo", changed.snapshot?.cwd)
+        assertEquals("task-1", changed.snapshot?.workspaceTaskId)
+        // A later message-only status must retain identity, tool and binding.
+        val retained = ChatSessionEventReducer.reduce(changed,
+            SessionEvent.StatusChanged("s1", null, null, SessionChanges(status = "idle")))
+        assertEquals(changed.snapshot, retained.snapshot)
+    }
+
+    @Test
     fun initCreatesWindowedStateThroughOneInterface() {
         val turns = listOf(textTurn("user", "hello"), textTurn("assistant", "world"))
         val event = SessionEvent.Initialized(
@@ -488,6 +510,75 @@ class ChatSessionEventReducerTest {
         assertEquals(1, next.messages.size)
         assertEquals(60, next.messages.single().content.size)
         assertEquals(811, next.leadingBlockOffset)
+    }
+
+    @Test
+    fun fullRefreshRemovesAnEmptyThinkingPlaceholderThatPiHasSettled() {
+        val thought = ContentBlock.Thinking("已收到的思考", null)
+        val local = ConversationTurn("assistant", listOf(thought, ContentBlock.Thinking("", null)))
+        val next = ChatSessionEventReducer.reduce(
+            ChatSessionEventState(messages = listOf(local), messageTotal = 1,
+                leadingBlockTotal = 2, isResponding = true),
+            output(MessageUpdate.Full(listOf(local.copy(content = listOf(thought))),
+                offset = 0, total = 1, leadingOffset = 0, leadingTotal = 1)),
+        )
+        assertEquals(listOf(thought), next.messages.single().content)
+        assertEquals(1, next.leadingBlockTotal)
+    }
+
+    @Test
+    fun aShorterToolResultMustNotDiscardNewThinkingInAnIncrementalUpdate() {
+        val result = ContentBlock.ToolResult("read-1", "x".repeat(1_000), false, false, null)
+        val placeholder = ContentBlock.Thinking("", null)
+        val local = ConversationTurn("assistant", listOf(result, placeholder))
+        val arrived = ContentBlock.Thinking("这轮思考正文已到达", null)
+        val incoming = local.copy(content = listOf(result.copy(text = "compact", truncated = true), arrived))
+        val next = ChatSessionEventReducer.reduce(
+            ChatSessionEventState(messages = listOf(local), messageTotal = 1),
+            output(MessageUpdate.Incremental(incoming, expectedCount = 1)),
+        )
+        assertEquals(arrived, next.messages.single().content.last())
+        assertEquals(result, next.messages.single().content.first())
+    }
+
+    @Test
+    fun shorterToolSnapshotsCanAppendThinkingWithoutErasingTheFullResult() {
+        val result = ContentBlock.ToolResult("read-1", "x".repeat(1_000), false, false, null)
+        val local = ConversationTurn("assistant", listOf(result))
+        val arrived = ContentBlock.Thinking("新一轮已到达", null)
+        val incoming = local.copy(content = listOf(result.copy(text = "compact", truncated = true), arrived))
+        val next = ChatSessionEventReducer.reduce(
+            ChatSessionEventState(messages = listOf(local), messageTotal = 1, leadingBlockTotal = 1),
+            output(MessageUpdate.Incremental(incoming, expectedCount = 1)),
+        )
+        assertEquals(listOf(result, arrived), next.messages.single().content)
+        assertEquals(2, next.leadingBlockTotal)
+    }
+
+    @Test
+    fun settledEmptyThinkingIsRemovedFromATailWindowWithoutLosingItsLoadedPrefix() {
+        val first = ContentBlock.Thinking("第一轮", null)
+        val second = ContentBlock.Thinking("第二轮", null)
+        val local = ConversationTurn("assistant", listOf(first, second, ContentBlock.Thinking(" ", null)))
+        val next = ChatSessionEventReducer.reduce(
+            ChatSessionEventState(messages = listOf(local), loadedOffset = 3, messageTotal = 4,
+                leadingBlockOffset = 8, leadingBlockTotal = 11),
+            output(MessageUpdate.Full(listOf(local.copy(content = listOf(second))),
+                offset = 3, total = 4, leadingOffset = 9, leadingTotal = 10)),
+        )
+        assertEquals(listOf(first, second), next.messages.single().content)
+        assertEquals(8, next.leadingBlockOffset)
+        assertEquals(10, next.leadingBlockTotal)
+    }
+
+    @Test
+    fun differentlyIdentifiedToolTailMustNotOverwriteALocallyLoadedPrefix() {
+        val result = ContentBlock.ToolResult("first", "x".repeat(1_000), false, false, null)
+        val thought = ContentBlock.Thinking("第一轮", null)
+        val local = ConversationTurn("assistant", listOf(result, thought))
+        val incoming = local.copy(content = listOf(result.copy(toolUseId = "later", text = "tail"),
+            ContentBlock.Thinking("另一轮", null)))
+        assertEquals(local.content, mergeOverlappingTurns(local, incoming).content)
     }
 
     private fun blockTurn(role: String, startBlock: Int, count: Int) = ConversationTurn(

@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.outlined.MenuOpen
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Edit
@@ -176,6 +177,7 @@ object WandIcons {
 
     /** 停止。 */
     val stop: ImageVector = Icons.Outlined.Stop
+    val pause: ImageVector = Icons.Outlined.Pause
 
     /** 断线（断线提示条用）。 */
     val wifiOff: ImageVector = Icons.Outlined.WifiOff

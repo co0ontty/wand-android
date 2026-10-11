@@ -451,6 +451,11 @@ class WandApi(baseUrl: String, val token: String?,
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/${encode(id)}/provider",
             JSONObject().put("provider", provider).also { body -> engine?.let { body.put("engine", it.raw) } }))
 
+    /** 首次发送前原位选择员工；员工规则与执行候选由服务端读取。 */
+    suspend fun setSessionEmployee(id: String, employeeId: String): SessionSnapshot =
+        SessionSnapshot.parse(requestObject("POST", "/api/sessions/${encode(id)}/employee",
+            JSONObject().put("employeeId", employeeId)))
+
     /** 首次发送前原位改目录；服务端同时原子更新项目归属，员工和会话 ID 不变。 */
     suspend fun setSessionDirectory(id: String, cwd: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/${encode(id)}/directory",

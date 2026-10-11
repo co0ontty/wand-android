@@ -202,6 +202,11 @@ internal fun keepThinkingRound(
     return block.thinking.isNotBlank() || (running && position == lastPosition)
 }
 
+/** 没有正文不等于网络未送达；上游不保证每轮都提供可读摘要。 */
+internal fun thinkingDetailText(thinking: String?, live: Boolean): String =
+    thinking?.takeIf(String::isNotBlank)
+        ?: if (live) "正在思考，暂无可显示的摘要。" else "模型未提供可显示的思考摘要。"
+
 internal fun thinkingBlock(item: DisplayItem): ContentBlock.Thinking? =
     ((item as? DisplayItem.Plain)?.block as? ContentBlock.Thinking)
 
@@ -872,7 +877,7 @@ private fun ToolActivityEntryRow(
                 .padding(start = ACTIVITY_CONTENT_START, end = ACTIVITY_ROW_END, bottom = 8.dp)) {
                 if (tool != null) ToolActivitySingleDetail(item = tool, open = open && menuOpen)
                 else SelectionContainer {
-                    Text(thinking?.takeIf(String::isNotBlank) ?: "思考内容尚未到达。",
+                    Text(thinkingDetailText(thinking, live),
                         fontSize = 11.sp, lineHeight = 18.sp, color = WandColors.textSecondary)
                 }
             }
