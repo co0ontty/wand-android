@@ -12,6 +12,7 @@ import com.wand.app.data.TurnAuthor
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceSessionTeamChat
 import com.wand.app.data.WandApiException
+import com.wand.app.ui.components.PlushAvatarIdentity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -289,7 +290,7 @@ class TeamChatPresentationTest {
         )
     }
 
-    // MARK: - 头像（对齐 Web chatAvatarSpec / memberCoatIndex，设计 §5）
+    // MARK: - 头像取值（对齐 Web memberCoatIndex / displayChatTurn，设计 §5）
 
     @Test
     fun memberCoatIndexMatchesWebHashSamples() {
@@ -312,105 +313,30 @@ class TeamChatPresentationTest {
     }
 
     @Test
-    fun chatAvatarSpecFollowsWebRuleOrder() {
-        assertEquals(
-            "没自定义头像的成员按身份生成（不再是像素猫）",
-            ChatAvatarSpec.Generated(generatedAvatarFace("m_impl", "实现者")),
-            chatAvatarSpec(TurnAuthor(id = "m_impl", name = "实现者")),
+    fun employeeLinkedMemberWritesThePlushTokenIntoTheVisibleAuthor() {
+        // 绑定通讯录身份的成员：群聊消息必须和通讯录同一张脸，所以按 employeeId 编码毛绒 token 写回。
+        val linked = ConversationTurn("assistant", listOf(ContentBlock.Text("报告", null)),
+            author = TurnAuthor(id = "m_impl", name = "实现者", avatar = ""))
+        val team = AiTeam("t", "群", "", listOf(
+            AiTeamMember("m_impl", "实现者", "实现", emptyList(), false, avatar = "", employeeId = "e_impl"),
+        ))
+        val detail = AiTeamRunDetail(
+            AiTeamRun("run", "t", team, "task", "目标", "running", "", 1, 20, "chat"), emptyList(),
+            chatTurns = listOf(linked), displayTeam = team,
         )
+        val displayed = displayTeamTurn(linked, detail)
+        assertEquals("实现者", displayed.author?.name)
+        assertEquals(PlushAvatarIdentity.token("e_impl", "实现者", ""), displayed.author?.avatar)
         assertEquals(
-            ChatAvatarSpec.Cat(3),
-            chatAvatarSpec(TurnAuthor(id = "m_impl", name = "实现者", avatar = "cat:3")),
-        )
-        assertEquals(
-            ChatAvatarSpec.Upload("data:image/png;base64,AAA"),
-            chatAvatarSpec(TurnAuthor(id = "m", name = "成员", avatar = "data:image/png;base64,AAA")),
-        )
-        assertEquals(
-            "没有署名的发言（我）用默认 APP logo",
-            ChatAvatarSpec.Brand,
-            chatAvatarSpec(null),
-        )
-        assertEquals(
-            "非法 avatar 且定位不到身份也不渲染空图",
-            ChatAvatarSpec.Brand,
-            chatAvatarSpec(TurnAuthor(id = "", name = "", avatar = "说不清的取值")),
-        )
-        assertEquals(
-            "非法 avatar 但能定位身份 → 按身份生成",
-            ChatAvatarSpec.Generated(generatedAvatarFace("", "实现者")),
-            chatAvatarSpec(TurnAuthor(id = "", name = "实现者", avatar = "说不清的取值")),
+            "未绑定员工的成员保留原取值，不替用户编造造型",
+            "cat:1", displayTeamTurn(
+                linked.copy(author = TurnAuthor(id = "plain", name = "成员", avatar = "cat:1")),
+                detail.copy(displayTeam = team.copy(members = listOf(
+                    team.members[0].copy(id = "plain", employeeId = null, avatar = "cat:1"),
+                ))),
+            ).author?.avatar,
         )
     }
-
-    @Test
-    fun generatedAvatarGlyphAndSeedMatchWeb() {
-        assertEquals("A", generatedAvatarGlyph(null, "Ada"))
-        assertEquals("实", generatedAvatarGlyph("m_impl", "实现者"))
-        assertEquals("E", generatedAvatarGlyph("emp-7", ""))
-        assertEquals("?", generatedAvatarGlyph(null, null))
-        assertEquals("?", generatedAvatarGlyph("", "  "))
-        // 按码点取首字符：emoji 代理对不被切半，与 Web Array.from(source)[0] 一致。
-        assertEquals("😀", generatedAvatarGlyph(null, "😀猫"))
-
-        assertEquals("m1", generatedAvatarSeed("m1", "Ada"))
-        assertEquals("Ada", generatedAvatarSeed("  ", "Ada"))
-        assertEquals("member", generatedAvatarSeed(null, null))
-        // 换名字不换底色（配色种子只认稳定 id），字形才跟着名字走。
-        assertEquals(generatedAvatarFace("m1", "Ada").from, generatedAvatarFace("m1", "鲍勃").from)
-        assertEquals(generatedAvatarFace("m1", "Ada").to, generatedAvatarFace("m1", "鲍勃").to)
-        assertEquals("A", generatedAvatarFace("m1", "Ada").glyph)
-        assertEquals("鲍", generatedAvatarFace("m1", "鲍勃").glyph)
-        assertEquals(
-            8,
-            GENERATED_AVATAR_COATS.size,
-        )
-        assertEquals(
-            "白字固定",
-            0xFFFFFFFF.toInt(),
-            GENERATED_AVATAR_TEXT,
-        )
-    }
-
-    @Test
-    fun generatedAvatarCoatsKeepWhiteTextReadable() {
-        // 与 Web tests/web-ui-ai-teams.test.ts 同一组断言：两端与中点对白字都得 ≥4.5:1。
-        fun channel(value: Int): Double {
-            val c = value / 255.0
-            return if (c <= 0.03928) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4)
-        }
-
-        fun luminance(argb: Int): Double {
-            val r = (argb shr 16) and 0xFF
-            val g = (argb shr 8) and 0xFF
-            val b = argb and 0xFF
-            return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-        }
-
-        fun contrast(a: Int, b: Int): Double {
-            val la = luminance(a)
-            val lb = luminance(b)
-            val hi = maxOf(la, lb)
-            val lo = minOf(la, lb)
-            return (hi + 0.05) / (lo + 0.05)
-        }
-
-        fun mix(a: Int, b: Int): Int {
-            fun ch(shift: Int): Int = (((a shr shift) and 0xFF) + ((b shr shift) and 0xFF)) / 2
-            return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
-        }
-
-        for (coat in GENERATED_AVATAR_COATS) {
-            for (stop in listOf(coat.from, mix(coat.from, coat.to), coat.to)) {
-                val ratio = contrast(GENERATED_AVATAR_TEXT, stop)
-                assertTrue(
-                    "${coat.name} #$stop 对白字只有 %.2f:1".format(ratio),
-                    ratio >= 4.5,
-                )
-            }
-        }
-    }
-
     @Test
     fun pixelCatGridIsPixelForPixelTheSameAsWeb() {
         // 逐格照抄 Web catCoatGrid（T 透明 / b 底 / d 深 / l 亮 / w 白 / k 瞳 / p 鼻）。

@@ -29,12 +29,17 @@ class ComposerStatusLayoutTest {
 
     @Test fun topSceneHasStableGeometryWhileTheCapsuleOwnsTheReceipt() {
         val scene = source("TopChatCompanion")
+        val screen = source("ChatScreen")
         assertTrue(scene.contains("height(topCompanionClearance())"))
+        assertFalse(scene.contains("CompanionStatusLabel"))
+        assertFalse(screen.contains("topCompanionClearance()"))
+        val capsule = source("FocusCapsuleComposer")
+        assertTrue(capsule.contains("Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)"))
+        assertFalse(capsule.contains("220.dp"))
         assertTrue(scene.contains("animated = true"))
         assertFalse(scene.contains("SendPhase"))
         assertFalse(scene.contains("SubmitMorphButton("))
         assertTrue(scene.contains("CustomAccessibilityAction"))
-        val capsule = source("FocusCapsuleComposer")
         assertTrue(capsule.contains("state = state.submit()"))
         assertTrue(capsule.contains("state.accepted(draft.isNotEmpty() || attachments.isNotEmpty())"))
         assertTrue(capsule.contains("state = state.failed()"))

@@ -44,5 +44,10 @@ class AvatarFileActivityTest {
         assertEquals("plush_cat_orange", PlushAvatarIdentity.asset("e_wand_ops", "改名", "cat:0"))
         assertEquals("silver", plushSceneConfig("plush_cat_silver")!!.getString("coat"))
         assertEquals("heart", plushSceneConfig("plush_heart_coral_gold_beret")!!.getString("shape"))
+        // 柴犬走同一个共享场景，config 与 Web `plush-dog:v1:shiba:red-scarf` 同字段。
+        val dog = plushSceneConfig(PlushAvatarIdentity.dogAsset)!!
+        assertEquals("dog", dog.getString("kind"))
+        assertEquals("shiba", dog.getString("breed"))
+        assertEquals("red", dog.getString("scarf"))
     }
 }

@@ -14,6 +14,7 @@ import com.wand.app.data.TurnAuthor
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.ui.components.PlushAvatarIdentity
 import com.wand.app.data.isDefiniteRequestRejection
 import com.wand.app.data.aiTeamRunActive
 import com.wand.app.data.boardAgentModelName
@@ -21,7 +22,6 @@ import com.wand.app.data.boardTaskAgentLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -38,8 +38,11 @@ const val CHAT_COLLAPSE_AFTER_CHARS = 420
 fun displayTeamTurn(turn: ConversationTurn, detail: AiTeamRunDetail): ConversationTurn {
     val author = turn.author ?: return turn
     val member = detail.presentationTeam?.members?.find { it.id == author.id } ?: return turn
-    if (member.name == author.name && member.avatar == author.avatar) return turn
-    return turn.copy(author = author.copy(name = member.name, avatar = member.avatar))
+    // 绑定通讯录身份的成员写回毛绒 token，群聊消息与通讯录才是同一张脸（Web displayChatTurn 同口径）；
+    // 上传图和显式旧猫不编码，保留原值。
+    val avatar = member.employeeId?.let { PlushAvatarIdentity.token(it, member.name, member.avatar) } ?: member.avatar
+    if (member.name == author.name && avatar == author.avatar) return turn
+    return turn.copy(author = author.copy(name = member.name, avatar = avatar))
 }
 
 fun chatTurnText(turn: ConversationTurn): String = turn.content
@@ -580,7 +583,7 @@ fun newestRunOnSameChat(current: AiTeamRun, runs: List<AiTeamRun>): String? {
 fun groupChatRunId(session: WorkspaceSessionSummary): String? =
     session.teamChat?.runId?.takeIf { it.isNotBlank() }
 
-// ---------- 头像：谁的脸（设计 §5，纯函数与 Web avatarFace / chatAvatarSpec / memberCoatIndex 同名同算法） ----------
+// ---------- 头像取值（设计 §5）：毛色与旧猫 token 的纯函数，脸只在 components/EmployeeAvatar.kt 一处解析 ----------
 
 /**
  * 像素猫毛色（逐字照拄 Web `cat-coats.ts`）。`light` / `eye` 缺省时用 base / 瞳色默认值，
@@ -667,8 +670,7 @@ private val CAT_AVATAR_MARK = Regex("^cat:(\\d+)$")
  * 哈希。**不能**用 [memberAvatarVariant] 那套种子/取模代替，同一成员两端会算出不同的毛色。
  */
 fun memberCoatIndex(authorId: String?, name: String?, avatar: String?): Int {
-    val explicit = CAT_AVATAR_MARK.find(avatar.orEmpty())
-    val explicitIndex = explicit?.groupValues?.get(1)?.toIntOrNull()
+    val explicitIndex = explicitCatAvatarIndex(avatar)
     if (explicitIndex != null) return explicitIndex % CAT_COATS.size
     val seed = authorId?.takeIf { it.isNotBlank() }
         ?: name?.takeIf { it.isNotBlank() }
@@ -676,71 +678,9 @@ fun memberCoatIndex(authorId: String?, name: String?, avatar: String?): Int {
     return (coatHashAbs(coatHash(seed)) % CAT_COATS.size).toInt()
 }
 
-/**
- * 生成头像配色（逐字照拄 Web `generated-avatar.ts` 的 `GENERATED_AVATAR_COATS`）。
- * 两端与中点对白字都不低于 4.5:1；顺序固定，改顺序会换掉所有人的底色。
- */
-data class GeneratedAvatarCoat(val name: String, val from: Int, val to: Int)
-
-val GENERATED_AVATAR_TEXT: Int = 0xFFFFFFFF.toInt()
-
-val GENERATED_AVATAR_COATS: List<GeneratedAvatarCoat> = listOf(
-    GeneratedAvatarCoat("赭橙", 0xFFA8471F.toInt(), 0xFF7E3214.toInt()),
-    GeneratedAvatarCoat("湖蓝", 0xFF2F6DB5.toInt(), 0xFF1F4E8A.toInt()),
-    GeneratedAvatarCoat("松绿", 0xFF2E7D5B.toInt(), 0xFF1C5B41.toInt()),
-    GeneratedAvatarCoat("紫棠", 0xFF6B4EA8.toInt(), 0xFF4F3883.toInt()),
-    GeneratedAvatarCoat("靛青", 0xFF2C6E7F.toInt(), 0xFF1B4F5E.toInt()),
-    GeneratedAvatarCoat("绛红", 0xFFB03A48.toInt(), 0xFF872633.toInt()),
-    GeneratedAvatarCoat("芥黄", 0xFF8A6A16.toInt(), 0xFF674D0D.toInt()),
-    GeneratedAvatarCoat("石青", 0xFF4A5B8C.toInt(), 0xFF34426A.toInt()),
-)
-
-/** 一张生成头像的脸：渐变两端色 + 白字色 + 字形。 */
-data class GeneratedAvatar(val from: Int, val to: Int, val text: Int, val glyph: String)
-
-/** 配色种子：稳定 id 优先，最后才落到同一张 "member" 底，空身份不会随机漂。 */
-fun generatedAvatarSeed(id: String?, name: String?): String =
-    id?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() } ?: "member"
-
-/**
- * 字形：名字首字（拉丁字母大写），没名字就用 id 首字，都没有给 `?`。
- * 按码点取首字符，与 Web 的 `Array.from(source)[0]` 一致（含代理对的 emoji 不被切半）。
- */
-fun generatedAvatarGlyph(id: String?, name: String?): String {
-    val source = name?.takeIf { it.isNotBlank() } ?: id?.takeIf { it.isNotBlank() } ?: ""
-    if (source.isEmpty()) return "?"
-    val glyph = String(Character.toChars(source.codePointAt(0)))
-    return if (glyph.length == 1 && glyph[0] in 'a'..'z') glyph.uppercase(Locale.ROOT) else glyph
-}
-
-/** 生成头像：与 Web `generatedAvatarFace` 同种子、同哈希，涂一样的底、一样的字。 */
-fun generatedAvatarFace(id: String?, name: String?): GeneratedAvatar {
-    val seed = generatedAvatarSeed(id, name)
-    val coat = GENERATED_AVATAR_COATS[(coatHashAbs(coatHash(seed)) % GENERATED_AVATAR_COATS.size).toInt()]
-    return GeneratedAvatar(coat.from, coat.to, GENERATED_AVATAR_TEXT, generatedAvatarGlyph(id, name))
-}
-
-/** 一条发言的头像来源（设计 §5.2）：上传图 > 显式毛色 > 按身份生成 > 默认 APP logo。 */
-sealed interface ChatAvatarSpec {
-    data class Upload(val src: String) : ChatAvatarSpec
-    data class Cat(val coat: Int) : ChatAvatarSpec
-    data class Generated(val face: GeneratedAvatar) : ChatAvatarSpec
-    data object Brand : ChatAvatarSpec
-}
-
-fun chatAvatarSpec(author: TurnAuthor?): ChatAvatarSpec =
-    author?.let { chatAvatarSpec(it.id, it.name, it.avatar) } ?: ChatAvatarSpec.Brand
-
-/** 能定位到成员身份才给脸（`cat:<n>` 是用户挑过的毛色，仍然是猫）；「我」才回落成默认 APP logo。 */
-fun chatAvatarSpec(id: String?, name: String?, avatar: String?): ChatAvatarSpec {
-    val value = avatar.orEmpty()
-    if (value.startsWith("data:image/")) return ChatAvatarSpec.Upload(value)
-    if (id.isNullOrBlank() && name.isNullOrBlank()) return ChatAvatarSpec.Brand
-    if (CAT_AVATAR_MARK.matches(value)) {
-        return ChatAvatarSpec.Cat(memberCoatIndex(id, name, value))
-    }
-    return ChatAvatarSpec.Generated(generatedAvatarFace(id, name))
-}
+/** 旧的 `cat:<n>` 显式毛色取值；不是这个格式返回 null。 */
+fun explicitCatAvatarIndex(avatar: String?): Int? =
+    CAT_AVATAR_MARK.find(avatar.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
 
 /** 全文快照：列表 key/owner 共用 scoped 本地句柄；关闭期间正文/名单保持原值。 */
 data class TeamChatDoc(
@@ -751,7 +691,8 @@ data class TeamChatDoc(
     val clock: String,
     val typeLabel: String,
     val chip: String = "",
-    val avatar: ChatAvatarSpec = ChatAvatarSpec.Brand,
+    /** 头像位只带发言身份，脸由 `EmployeeAvatar` 一处解析。 */
+    val author: TurnAuthor? = null,
     /** 明确来源，自己的正式/临时消息传空名单；打开后 roster 更新不改层内内容。 */
     val mentionNames: List<String> = emptyList(),
 )

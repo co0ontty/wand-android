@@ -115,10 +115,9 @@ internal fun FocusCapsuleComposer(
     }
     BackHandler(expanded && !borrowed && !imeVisible) { dismiss() }
     ConversationLayerBackHandler(attachOpen) { onAttachOpenChange(false) }
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        // No width animation during IME composition: the same native field retains selection.
-        Surface(
-            modifier = Modifier.align(Alignment.CenterEnd).width(if (expanded) maxWidth else minOf(maxWidth, 220.dp)),
+    // No width animation during IME composition: the same native field retains selection.
+    Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             shape = RoundedCornerShape(if (expanded) 22.dp else 28.dp),
             color = WandColors.surface,
             tonalElevation = 0.dp,
@@ -150,7 +149,6 @@ internal fun FocusCapsuleComposer(
                 if (expanded) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = controls)
             }
         }
-    }
     // Panels are modal focus owners, never stacked above the input and IME.
     if (attachOpen) WandBottomSheet(onDismissRequest = { onAttachOpenChange(false) }) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

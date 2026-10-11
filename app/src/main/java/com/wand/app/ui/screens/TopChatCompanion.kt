@@ -11,18 +11,22 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.components.*
 import com.wand.app.ui.theme.WandColors
 import kotlin.math.roundToInt
 
+/** 只给猫头定位留高度，不拿这块当正文避让带。正文可以从控件下穿过。 */
 @Composable
-internal fun topCompanionClearance() = if (LocalConfiguration.current.screenHeightDp < 420) 112.dp else
-    maxOf(if (LocalConfiguration.current.screenWidthDp < 344) 112.dp else 136.dp,
-        (if (LocalConfiguration.current.screenWidthDp < 344) 84.dp else 108.dp) + with(LocalDensity.current) { MaterialTheme.typography.labelSmall.lineHeight.toDp() * 2 })
+internal fun topCompanionClearance(): Dp {
+    val compact = LocalConfiguration.current.screenHeightDp < 420
+    val narrow = LocalConfiguration.current.screenWidthDp < 344
+    val size = if (compact || narrow) 64.dp else 88.dp
+    val top = FloatingControlCenter - size / 2
+    return top + size + 8.dp
+}
 
 /** The scene's safe slot is independent of the composer/IME and live execution state. */
 @Composable
@@ -50,39 +54,36 @@ internal fun TopChatCompanion(
         // inside the same reserved top viewport instead of moving it below the controls.
         val size = if (compact || narrow) 64.dp else 88.dp
         val left = 60.dp
-        val right = maxWidth - 164.dp - size
+        val iconRowStart = maxWidth - 164.dp
+        val right = iconRowStart - size
         val start = (left + right) / 2
         val end = maxOf(start, right)
         val base = if (side == CompanionSide.Left) start else end
         val x = with(density) { (base.toPx() + drag).coerceIn(left.toPx().coerceAtMost(end.toPx()), end.toPx()) }
-        val top = 12.dp
+        val top = FloatingControlCenter - size / 2
         val snap: () -> Unit = {
             side = if (drag > 0) CompanionSide.Right else CompanionSide.Left
             preference.write(side); drag = 0f
         }
         val currentSnap by rememberUpdatedState(snap)
-        Column(Modifier.offset { IntOffset(x.roundToInt(), with(density) { top.roundToPx() }) }.width(size),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(size).semantics(mergeDescendants = true) {
-                role = Role.Button
-                contentDescription = "${name ?: "员工"}，点按编辑，长按说话，拖动左右换边"
-                stateDescription = if (side == CompanionSide.Left) "角色在左侧" else "角色在右侧"
-                onClick("编辑消息") { currentEdit(); true }
-                customActions = listOf(CustomAccessibilityAction("切换角色位置") {
-                    side = if (side == CompanionSide.Left) CompanionSide.Right else CompanionSide.Left
-                    preference.write(side); true
-                })
-            }.focusable().pointerInput(Unit) {
-                companionGesture(true, { currentEdit() }, { currentGesture.start() },
-                    { currentGesture.move(it) }, { currentGesture.end() }, { currentGesture.cancel() },
-                    { drag = it }, { currentSnap() }, { drag = 0f })
-            }) {
-                EmployeeAvatar(employeeId ?: "e_wand_default", name, avatar, size = size, animated = true,
-                    fileActivity = activity, thinking = thinking && activity == AvatarFileActivity.Idle, speaking = speaking)
-            }
-            if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.labelSmall,
-                color = WandColors.textSecondary, textAlign = TextAlign.Center, maxLines = 2,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.width(144.dp).semantics { liveRegion = LiveRegionMode.Polite })
+        Box(Modifier.offset { IntOffset(x.roundToInt(), with(density) { top.roundToPx() }) }.size(size).semantics(mergeDescendants = true) {
+            role = Role.Button
+            contentDescription = "${name ?: "员工"}，点按编辑，长按说话，拖动左右换边"
+            val place = if (side == CompanionSide.Left) "角色在左侧" else "角色在右侧"
+            stateDescription = if (status.isBlank()) place else "$place，$status"
+            if (status.isNotBlank()) liveRegion = LiveRegionMode.Polite
+            onClick("编辑消息") { currentEdit(); true }
+            customActions = listOf(CustomAccessibilityAction("切换角色位置") {
+                side = if (side == CompanionSide.Left) CompanionSide.Right else CompanionSide.Left
+                preference.write(side); true
+            })
+        }.focusable().pointerInput(Unit) {
+            companionGesture(true, { currentEdit() }, { currentGesture.start() },
+                { currentGesture.move(it) }, { currentGesture.end() }, { currentGesture.cancel() },
+                { drag = it }, { currentSnap() }, { drag = 0f })
+        }) {
+            EmployeeAvatar(employeeId ?: "e_wand_default", name, avatar, size = size, animated = true,
+                fileActivity = activity, thinking = thinking && activity == AvatarFileActivity.Idle, speaking = speaking)
         }
         if (onPauseSpeech != null) IconButton(onClick = onPauseSpeech,
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).size(48.dp)) {

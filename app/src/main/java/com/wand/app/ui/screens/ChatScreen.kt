@@ -435,6 +435,9 @@ fun ChatScreen(
             }
         }
     }
+    // 进屏无条件拉一次 git 状态：会话可能是「打开时正在运行」，下面按 isResponding
+    // 门控的刷新在整段运行期间都不会触发，入口会一直灰着直到这一轮结束才补上。
+    LaunchedEffect(sessionId) { quickCommit.loadStatus(force = true) }
     QuickCommitStatusRefreshEffect(
         quickCommit = quickCommit,
         sessionId = sessionId,
@@ -914,9 +917,9 @@ fun ChatScreen(
         val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
         val chatPadding = PaddingValues(
             start = padding.calculateStartPadding(direction), end = padding.calculateEndPadding(direction),
-            top = padding.calculateTopPadding() + topCompanionClearance(), bottom = padding.calculateBottomPadding(),
+            top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding(),
         )
-        // 消息视口避让状态栏和悬浮按钮，滚动正文不会进入触控区。
+        // 正文从状态栏下开始，可以穿到悬浮按钮和猫头下面。遮挡只来自这些控件自己的形状。
         Box(
             modifier = Modifier
                 .fillMaxSize()

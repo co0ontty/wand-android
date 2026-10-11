@@ -34,6 +34,9 @@ object PlushAvatarIdentity {
     val colors = listOf("coral", "sage", "lavender", "cream", "blue", "ochre")
     val glasses = listOf("none", "gold", "ink")
     val hats = listOf("none", "beanie", "beret")
+    /** 系统 HR 嘟嘟的柴犬造型：token 与资产名逐字对齐 Web `plush-dog:v1:shiba:red-scarf`。 */
+    const val dogToken = "plush-dog:v1:shiba:red-scarf"
+    const val dogAsset = "plush_dog_shiba_red"
     private fun hash(seed: String): UInt {
         var value = 0x811c9dc5u
         seed.forEach { value = (value xor it.code.toUInt()) * 0x01000193u }
@@ -42,25 +45,59 @@ object PlushAvatarIdentity {
         return value xor (value shr 16)
     }
     fun asset(id: String?, name: String?, avatar: String?): String? {
-        // Fixed system IDs never inherit an uploaded or stale legacy avatar.
-        if (id == "e_wand_default") return "plush_cat_silver"
-        if (id == "e_wand_ops") return "plush_cat_orange"
+        fixedAsset(id)?.let { return it }
         val raw = avatar.orEmpty()
         if (raw.startsWith("data:image/") || Regex("^cat:[0-9]+$").matches(raw)) return null
-        if (raw == "plush-cat:v1:silver") return "plush_cat_silver"
-        if (raw == "plush-cat:v1:orange") return "plush_cat_orange"
+        return tokenAsset(raw) ?: defaultAsset(id, name)
+    }
+
+    /** 两个锁定系统身份的猫：改名、上传图或过期取值都不换脸（对齐 Web `fixedEmployeeAvatar`）。 */
+    fun fixedAsset(id: String?): String? = when (id) {
+        "e_wand_default" -> "plush_cat_silver"
+        "e_wand_ops" -> "plush_cat_orange"
+        else -> null
+    }
+
+    /** 显式毛绒 token → 资产名；柴犬、猫毛色和六段捏脸都在这一处认。 */
+    fun tokenAsset(avatar: String?): String? {
+        val raw = avatar.orEmpty()
+        explicitAsset(raw)?.let { return it }
         val fields = raw.split(":")
         val options = listOf(shapes, colors, glasses, hats)
-        if (fields.size == 6 && fields[0] == "plush" && fields[1] == "v1" &&
-            options.indices.all { fields[it + 2] in options[it] }) {
-            return "plush_" + fields.drop(2).joinToString("_")
-        }
+        if (fields.size != 6 || fields[0] != "plush" || fields[1] != "v1") return null
+        if (!options.indices.all { fields[it + 2] in options[it] }) return null
+        return "plush_" + fields.drop(2).joinToString("_")
+    }
+
+    /** 没有任何可认取值时按身份生成的默认毛绒（与 Web `defaultPlushAvatar` 同种子、同哈希）。 */
+    fun defaultAsset(id: String?, name: String?): String {
         val identity = id?.trim()?.takeIf { it.isNotEmpty() }
             ?: name?.trim()?.takeIf { it.isNotEmpty() } ?: "member"
         val keys = listOf("shape", "color", "glasses", "hat")
+        val options = listOf(shapes, colors, glasses, hats)
         return "plush_" + options.mapIndexed { index, choices ->
             choices[(hash("plush:v1:$identity:${keys[index]}") % choices.size.toUInt()).toInt()]
         }.joinToString("_")
+    }
+
+    /** 显式毛绒 token（柴犬 / 猫毛色）对应的资产名；六段捏脸 token 由 [tokenAsset] 一起解析。 */
+    private fun explicitAsset(raw: String): String? = when (raw) {
+        dogToken -> dogAsset
+        "plush-cat:v1:silver" -> "plush_cat_silver"
+        "plush-cat:v1:orange" -> "plush_cat_orange"
+        else -> null
+    }
+
+    /**
+     * 身份的规范毛绒 token，格式与 Web `encodePlushDogAvatar` / `encodePlushCatAvatar` /
+     * `encodePlushAvatar` 一致；上传图和显式旧猫不编码（返回 null，调用方保留原值）。
+     */
+    fun token(id: String?, name: String?, avatar: String?): String? = asset(id, name, avatar)?.let { portrait ->
+        when {
+            portrait == dogAsset -> dogToken
+            portrait.startsWith("plush_cat_") -> "plush-cat:v1:${portrait.removePrefix("plush_cat_")}"
+            else -> "plush:v1:" + portrait.removePrefix("plush_").split("_").joinToString(":")
+        }
     }
 }
 

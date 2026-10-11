@@ -132,7 +132,7 @@ private fun TeamMessageDocIdentity(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        TeamMessageAvatar(doc.avatar, size = 24.dp)
+        EmployeeAvatar(doc.author?.id, doc.author?.name, doc.author?.avatar, size = 24.dp)
         Column(modifier = Modifier.weight(1f)) {
             if (withName) {
                 Text(

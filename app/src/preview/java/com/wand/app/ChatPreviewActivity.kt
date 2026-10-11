@@ -205,7 +205,7 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
             }
         }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
-            LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight().padding(top = topCompanionClearance()).pointerInput(presentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); presentation.dismiss() } }, contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight().pointerInput(presentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); presentation.dismiss() } }, contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (mode == "empty") item { Text("向员工描述你想完成的事情", style = MaterialTheme.typography.bodyLarge) }
                 else if (mode == "error") item { Text("示例：网络暂不可用，输入保留", color = WandColors.danger); TextButton(onClick = {}) { Text("重新加载") } }
                 else if (mode == "loading") item { CircularProgressIndicator(Modifier.size(24.dp)) }

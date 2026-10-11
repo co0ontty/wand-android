@@ -20,10 +20,38 @@ class EmployeeAvatarTest {
         assertNull(PlushAvatarIdentity.asset("e1", "A", "cat:7"))
         assertEquals("plush_cat_silver", PlushAvatarIdentity.asset("e1", "A", "plush-cat:v1:silver"))
         assertEquals("plush_cat_orange", PlushAvatarIdentity.asset("e1", "A", "plush-cat:v1:orange"))
+        assertEquals(PlushAvatarIdentity.dogAsset, PlushAvatarIdentity.asset("e_wand_hr", "嘟嘟", PlushAvatarIdentity.dogToken))
         val default = PlushAvatarIdentity.asset("e1", "A", "")
         listOf("plush:v2:round:blue:none:none", "plush:v1:wrong:blue:none:none", "plush-cat:v1:unknown").forEach {
             assertEquals(default, PlushAvatarIdentity.asset("e1", "A", it))
         }
+    }
+
+    @Test fun tokenRoundTripsEveryPlushFamilyBackToTheSameAsset() {
+        listOf("plush-cat:v1:silver", "plush-cat:v1:orange", PlushAvatarIdentity.dogToken,
+            "plush:v1:heart:coral:gold:beret").forEach { token ->
+            val asset = PlushAvatarIdentity.asset("e1", "A", token)
+            assertEquals(token, PlushAvatarIdentity.token("e1", "A", token))
+            assertEquals(asset, PlushAvatarIdentity.token("e1", "A", token)?.let { PlushAvatarIdentity.asset("e1", "A", it) })
+        }
+        // 上传图和显式旧猫不编码，保留用户原值。
+        assertNull(PlushAvatarIdentity.token("e1", "A", "data:image/png;base64,eA=="))
+        assertNull(PlushAvatarIdentity.token("e1", "A", "cat:7"))
+    }
+
+    @Test fun oneResolverGivesEverySurfaceTheSameFace() {
+        assertEquals(EmployeeAvatarFace.Plush(PlushAvatarIdentity.dogAsset),
+            employeeAvatarFace("e_wand_hr", "嘟嘟", PlushAvatarIdentity.dogToken))
+        assertEquals(EmployeeAvatarFace.Plush("plush_cat_silver"),
+            employeeAvatarFace("e_wand_default", "改名", "data:image/png;base64,eA=="))
+        assertEquals(EmployeeAvatarFace.Upload("data:image/png;base64,AAA"),
+            employeeAvatarFace("e1", "成员", "data:image/png;base64,AAA"))
+        assertEquals(EmployeeAvatarFace.PixelCat(3), employeeAvatarFace("e1", "成员", "cat:3"))
+        assertEquals(EmployeeAvatarFace.Brand, employeeAvatarFace(null, null, null))
+        assertEquals(EmployeeAvatarFace.Brand, employeeAvatarFace("", "", "说不清的取值"))
+        // 同一个人换了页面也换不了脸：没自定义头像时按身份生成，取值不认识同样按身份。
+        assertEquals(employeeAvatarFace("e_impl", "实现者", ""), employeeAvatarFace("e_impl", "改名后", "future:v2"))
+        assertEquals(EmployeeAvatarFace.PixelCat(0), employeeAvatarFace("e1", "成员", "cat:8"))
     }
 
     @Test fun everySupportedPlushConfigurationHasAnOfflinePortrait() {
@@ -34,7 +62,10 @@ class EmployeeAvatarTest {
                 assertEquals("plush_${shape}_${color}_${glasses}_${hat}", asset)
                 org.junit.Assert.assertTrue(File(assets, "$asset.png").isFile)
             }
-        assertEquals(326, assets.listFiles()?.count { it.extension == "png" })
+        listOf("plush_cat_silver", "plush_cat_orange", PlushAvatarIdentity.dogAsset).forEach {
+            org.junit.Assert.assertTrue("缺少离线肖像 $it", File(assets, "$it.png").isFile)
+        }
+        assertEquals(327, assets.listFiles()?.count { it.extension == "png" })
     }
     @Test
     fun eachSupportedCliKeepsItsOwnLogoIdentity() {

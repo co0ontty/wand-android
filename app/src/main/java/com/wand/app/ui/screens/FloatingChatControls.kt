@@ -17,6 +17,10 @@ import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 
 internal val ChatFloatingControlsClearance = 56.dp
+internal val FloatingControlTouch = 48.dp
+internal val FloatingControlRowInset = 4.dp
+/** Shared center line for the back button, the three logos, and the companion. */
+internal val FloatingControlCenter = FloatingControlRowInset + FloatingControlTouch / 2
 
 /** Floating controls have 48dp targets; the reading viewport clears them without a toolbar. */
 @Composable
@@ -28,14 +32,14 @@ internal fun FloatingChatControls(
     modifier: Modifier = Modifier, files: @Composable () -> Unit,
 ) {
     var moreOpen by remember { mutableStateOf(false) }
-    Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+    Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = FloatingControlRowInset),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         if (showBack) FloatingChatIconButton(WandIcons.back, "返回", onBack)
-        else Spacer(Modifier.size(48.dp))
+        else Spacer(Modifier.size(FloatingControlTouch))
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             FloatingChatIconButton(Icons.Outlined.Call, "通话", onCall)
             // 「文件」自己持有点击与形变动画，所以圆底画在它身后：可见 40dp、触控仍是 48dp，和另两枚同一套几何。
-            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(FloatingControlTouch), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(40.dp).clip(CircleShape).background(WandColors.surface))
                 files()
             }
@@ -62,7 +66,7 @@ internal fun FloatingChatControls(
 
 @Composable
 internal fun FloatingChatIconButton(icon: ImageVector, description: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+    IconButton(onClick = onClick, modifier = Modifier.size(FloatingControlTouch)) {
         Box(Modifier.size(40.dp).clip(CircleShape).background(WandColors.surface), contentAlignment = Alignment.Center) {
             Icon(icon, description, tint = WandColors.textPrimary, modifier = Modifier.size(20.dp))
         }

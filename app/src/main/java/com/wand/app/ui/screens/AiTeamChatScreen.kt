@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.ConversationTurn
 import com.wand.app.data.TurnAuthor
-import com.wand.app.ui.components.TeamMessageAvatar
+import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTeamReportFileCard
 import com.wand.app.ui.theme.WandColors
@@ -81,14 +81,9 @@ fun TeamOfficeStrip(detail: AiTeamRunDetail, onOpenSession: (String) -> Unit) {
                         } else Modifier)
                         .padding(8.dp),
                 ) {
-                    // 与消息署名行同一张脸（§5.3 最小对齐）：工位条不再画字母圈，
-                    // 否则同一成员在工位条与消息里会是两张不同的头像。
-                    TeamMessageAvatar(
-                        spec = chatAvatarSpec(
-                            TurnAuthor(id = entry.member.id, name = entry.member.name, avatar = entry.member.avatar),
-                        ),
-                        size = 26.dp,
-                    )
+                    // 与消息署名行、通讯录同一张脸：只传身份，解析只在 EmployeeAvatar 一处。
+                    EmployeeAvatar(entry.member.employeeId ?: entry.member.id, entry.member.name,
+                        entry.member.avatar, size = 26.dp)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(entry.member.name, style = MaterialTheme.typography.labelMedium,
                             color = WandColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -155,7 +150,7 @@ internal fun ConversationInstanceTurn(turn: ConversationTurn, baseUrl: String, o
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
     val bubbleWidth = minOf(560.dp, if (own) maxWidth * .86f else maxWidth)
-    TeamMessageRow(own, if (own) ChatAvatarSpec.Brand else chatAvatarSpec(visibleAuthor),
+    TeamMessageRow(own, if (own) null else visibleAuthor,
         showAvatar = !own && !joined, reserveAvatar = !own, onAvatarClick = onAvatarClick, alignAvatarTop = true) {
         Column(Modifier.widthIn(max = bubbleWidth), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (!own && !joined) {
@@ -209,7 +204,7 @@ internal fun conversationMessageKey(turn: ConversationTurn): String = turn.messa
 @Composable
 private fun TeamMessageRow(
     own: Boolean,
-    avatar: ChatAvatarSpec,
+    author: TurnAuthor?,
     modifier: Modifier = Modifier,
     showAvatar: Boolean = true,
     reserveAvatar: Boolean = false,
@@ -218,7 +213,7 @@ private fun TeamMessageRow(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val avatarSlot: @Composable () -> Unit = {
-        if (showAvatar) Box((if (reserveAvatar) Modifier.size(48.dp) else Modifier).then(if (onAvatarClick != null) Modifier.size(48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "查看员工资料", onClick = onAvatarClick) else Modifier), contentAlignment = Alignment.TopCenter) { TeamMessageAvatar(avatar, size = if (alignAvatarTop) 34.dp else 32.dp) }
+        if (showAvatar) Box((if (reserveAvatar) Modifier.size(48.dp) else Modifier).then(if (onAvatarClick != null) Modifier.size(48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "查看员工资料", onClick = onAvatarClick) else Modifier), contentAlignment = Alignment.TopCenter) { EmployeeAvatar(author?.id, author?.name, author?.avatar, size = if (alignAvatarTop) 34.dp else 32.dp) }
         else if (reserveAvatar) Spacer(Modifier.size(48.dp))
     }
     Row(

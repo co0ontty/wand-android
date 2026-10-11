@@ -119,6 +119,9 @@ internal fun SharedPlushScene(asset: String, size: Dp, activity: AvatarFileActiv
 }
 
 internal fun plushSceneConfig(asset: String): JSONObject? {
+    if (asset == PlushAvatarIdentity.dogAsset) {
+        return JSONObject().put("version", 1).put("kind", "dog").put("breed", "shiba").put("scarf", "red")
+    }
     if (asset == "plush_cat_silver" || asset == "plush_cat_orange") {
         return JSONObject().put("version", 1).put("kind", "cat").put("coat", asset.removePrefix("plush_cat_"))
     }
