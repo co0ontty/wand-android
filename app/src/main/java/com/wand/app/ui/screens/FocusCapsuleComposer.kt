@@ -42,6 +42,7 @@ internal fun FocusCapsuleComposer(
     controls: @Composable RowScope.() -> Unit,
     resourcePanel: @Composable () -> Unit, menuContent: @Composable () -> Unit,
     microphone: @Composable () -> Unit,
+    exteriorAction: (@Composable (send: () -> Unit) -> Unit)? = null,
 ) {
     var state by remember(sessionKey) { mutableStateOf(MinimalComposerState()) }
     var focusRevision by remember(sessionKey) { mutableIntStateOf(0) }
@@ -116,8 +117,10 @@ internal fun FocusCapsuleComposer(
     BackHandler(expanded && !borrowed && !imeVisible) { dismiss() }
     ConversationLayerBackHandler(attachOpen) { onAttachOpenChange(false) }
     // No width animation during IME composition: the same native field retains selection.
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
     Surface(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier.weight(1f),
             shape = RoundedCornerShape(if (expanded) 22.dp else 28.dp),
             color = WandColors.surface,
             tonalElevation = 0.dp,
@@ -144,11 +147,15 @@ internal fun FocusCapsuleComposer(
                         color = WandColors.textSecondary, style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     ) else Spacer(Modifier.weight(1f))
-                    if (expanded) trailingActions(edit, send) else microphone()
+                    if (exteriorAction != null) microphone()
+                    else if (expanded) trailingActions(edit, send) else microphone()
                 }
                 if (expanded) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = controls)
             }
         }
+        if (exteriorAction != null) Box(Modifier.size(ComposerActionTouchSize).align(Alignment.Bottom).offset(y = (-2).dp),
+            contentAlignment = Alignment.Center) { exteriorAction(send) }
+    }
     // Panels are modal focus owners, never stacked above the input and IME.
     if (attachOpen) WandBottomSheet(onDismissRequest = { onAttachOpenChange(false) }) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -4,6 +4,10 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import com.wand.app.ui.components.WandMorphingIcon
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -34,8 +38,12 @@ internal fun ComposerSendStopActions(
     busy: Boolean = false,
     canSubmit: Boolean = true,
     failureDescription: String = "发送失败，可重试",
+    visible: Boolean = true,
 ) {
     voiceAction()
+    val opacity by animateFloatAsState(if (visible) 1f else 0f,
+        WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()), label = "composerActionVisibility")
+    Box(Modifier.alpha(opacity).semantics { if (!visible) hideFromAccessibility() }) {
     SubmitMorphButton(
         visual = visual,
         contentDescription = when (visual) {
@@ -47,11 +55,11 @@ internal fun ComposerSendStopActions(
             SendActionVisual.Send -> sendDescription
         },
         onClick = if (visual == SendActionVisual.Stop) onStop else onSend,
-        enabled = !busy && (visual == SendActionVisual.Stop || (visual == SendActionVisual.Send && canSubmit)),
+        enabled = visible && !busy && (visual == SendActionVisual.Stop || (visual == SendActionVisual.Send && canSubmit)),
         fillColor = when (visual) {
             SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
             SendActionVisual.Failed -> WandColors.dangerSoft
-            SendActionVisual.Stop -> WandColors.brand
+            SendActionVisual.Stop -> WandColors.danger
             SendActionVisual.Blocked -> WandColors.textSecondary.copy(alpha = 0.16f)
         },
         contentTint = when (visual) {
@@ -61,6 +69,7 @@ internal fun ComposerSendStopActions(
             SendActionVisual.Blocked -> WandColors.textSecondary
         },
     )
+    }
 }
 
 /**

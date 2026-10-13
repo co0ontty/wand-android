@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.focusRequester
@@ -736,7 +737,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                     } else unseen += added.size
                 }
             }
-            Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().clipToBounds()) {
             LazyColumn(state = messageList, modifier = Modifier.fillMaxSize().pointerInput(inputPresentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (privateChat) inputPresentation.dismiss() } }, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)) {
                 if (state.error != null) item { ErrorState(state.error.orEmpty(), onRetry = state::retry) }
                 if (turns.isEmpty() && state.error == null) item {
@@ -831,7 +832,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             if (run?.run?.status == "waiting_user" && run.run.statusDetail.contains("步数上限")) WandButton("明确增加本轮步数", { action("continue") }, enabled = actionOperation.canSubmit)
             if (voice.voice.pressed || voice.voice.processing) VoiceTranscriptBubble(backdrop = null, voice = voice.voice)
             val canSubmit = composer.canSubmit && id.isNotBlank() && detail != null && detail.unavailableReason == null && unknown == null && actionOperation.canSubmit
-            val visual = actionPhase ?: if (unknown != null) SendActionVisual.Failed else sendActionVisual(composer.sendPhase, running && !taskMode, composer.draft.isNotBlank() || composer.attachments.isNotEmpty())
+            val visual = actionPhase ?: if (unknown != null) SendActionVisual.Failed else sendActionVisual(composer.sendPhase, false, composer.draft.isNotBlank() || composer.attachments.isNotEmpty())
             SharedMessageComposer(backdrop = null, sessionKey = composer.sessionId, draft = composer.draft, onDraftChange = composer::editDraft,
                 attachments = composer.attachments, baseUrl = state.api.baseUrl, onRemoveAttachment = composer::removeAttachment,
                 uploading = composer.uploading, attachOpen = menu, onAttachOpenChange = { open ->
@@ -844,6 +845,16 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 editorOverlayOpen = pickers.open || defaultsOpen || headerMenu || taskDetails || members || invite,
                 presentation = if (privateChat) inputPresentation else null,
                 capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling) },
+                exteriorAction = { send -> ComposerSendStopActions(voiceAction = {},
+                    visual = if (running && !taskMode) SendActionVisual.Stop else visual,
+                    stopDescription = if (target != null) "停止选中的本轮" else "停止当前回复",
+                    sendDescription = if (taskMode) "确认派发任务" else "发送消息",
+                    onSend = send, onStop = ::stop,
+                    busy = !actionOperation.canSubmit || (!(running && !taskMode) && composer.sendPhase == SendPhase.Sending),
+                    canSubmit = canSubmit, failureDescription = if (unknown != null) "送达未确认，请先核对" else "操作失败",
+                    visible = running && !taskMode || composer.draft.isNotBlank() || composer.attachments.isNotEmpty() ||
+                        composer.sendPhase != SendPhase.Idle || actionPhase != null || unknown != null)
+                },
                 deliveryPhase = if (unknown != null) SendPhase.Failed else composer.sendPhase,
                 voiceCommitSignal = voiceCommitSignal,
                 inlineControls = true,
@@ -875,17 +886,9 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         ComposerSettingsRow(defaults.model, defaults.permission, defaults.thinking,
                             onModel = { defaultsOpen = true }, onMode = { defaultsOpen = true }, onThinking = { defaultsOpen = true })
                     }
-                }, trailingActions = { requestFocus, sendAndRefocus ->
-                    if (privateChat && composer.draft.isBlank() && composer.attachments.isEmpty() && !running &&
-                        composer.sendPhase == SendPhase.Idle && actionPhase == null && unknown == null) {
-                        CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling)
-                    } else ComposerSendStopActions(voiceAction = {
-                        if (privateChat) CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling)
-                        else VoiceMicButton(voice.voice, false, requestFocus, voice.onMicDown)
-                    }, visual = visual,
-                        stopDescription = if (target != null) "停止选中的本轮" else "停止当前回复", sendDescription = if (taskMode) "确认派发任务" else "发送消息",
-                        onSend = sendAndRefocus, onStop = ::stop, busy = composer.sendPhase == SendPhase.Sending || !actionOperation.canSubmit,
-                        canSubmit = canSubmit, failureDescription = if (unknown != null) "送达未确认，请先核对" else "操作失败")
+                }, trailingActions = { requestFocus, _ ->
+                    if (privateChat) CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling)
+                    else VoiceMicButton(voice.voice, false, requestFocus, voice.onMicDown)
                 })
         }
     }

@@ -1,6 +1,7 @@
 package com.wand.app
 
 import android.os.Bundle
+import android.graphics.Rect
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,6 +17,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.platform.LocalDensity
@@ -42,10 +46,13 @@ class ChatPreviewActivity : ComponentActivity() {
     var voiceCancels = 0
     var voiceCommits = 0
     var sendCount = 0
+    var stopCount = 0
+    var runningForTest = false
     var editorVisible = false
     var modelSheetOpen = false
     var modelForTest = "model-a"
     var composerForTest: ChatComposer? = null
+    var messageViewportForTest: Rect? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val dark = intent.getBooleanExtra("dark", false)
@@ -72,23 +79,26 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
     var activity by remember { mutableStateOf(AvatarFileActivity.Idle) }
     val scope = rememberCoroutineScope()
     var notice by remember { mutableStateOf("") }
-    var running by remember { mutableStateOf(mode in setOf("stop", "running-empty", "thinking", "reading", "writing", "streaming", "progress")) }
+    var running by remember { mutableStateOf(mode in setOf("stop", "running-empty", "running-unknown", "thinking", "reading", "writing", "streaming", "progress")) }
     var voicePressed by remember { mutableStateOf(false) }
     var voiceProcessing by remember { mutableStateOf(false) }
     var voiceCancel by remember { mutableStateOf(false) }
     var voiceCommitSignal by remember { mutableIntStateOf(0) }
     var commitVoice by remember { mutableStateOf<(String) -> Unit>({}) }
-    val drafts = remember { SessionDraftStore(mapOf("fixture" to if (mode in setOf("send", "stop", "failure", "unknown", "draft", "voice-draft")) "继续检查键盘遮挡" else "")) }
+    val drafts = remember { SessionDraftStore(mapOf("fixture" to if (mode in setOf("send", "stop", "failure", "unknown", "draft", "voice-draft", "running-unknown")) "继续检查键盘遮挡" else "")) }
+    val sentTurns = remember { mutableStateListOf<ConversationTurn>() }
     val composer = remember {
-        ChatComposer("fixture", drafts, scope, { true }, send = {
+        ChatComposer("fixture", drafts, scope, { true }, send = { prompt ->
             fixture.sendCount++
             delay(1000)
             if (mode == "failure") throw WandApiException(422, "示例：明确拒绝，草稿与附件保留")
-            if (mode == "unknown") throw WandApiException(500, "示例：送达未知，请核对，不能自动重发")
+            if (mode == "unknown" || mode == "running-unknown") throw WandApiException(500, "示例：送达未知，请核对，不能自动重发")
+            if (mode == "viewport") sentTurns.add(ConversationTurn("user", listOf(ContentBlock.Text(prompt, null)), createdAt = "2026-10-12T09:00:00Z"))
             running = true
         }, notice = { notice = it })
     }
-    SideEffect { fixture.composerForTest = composer }
+    val observedRunning = running
+    SideEffect { fixture.composerForTest = composer; fixture.runningForTest = observedRunning }
     DisposableEffect(composer) { onDispose { composer.shutdown() } }
     LaunchedEffect(mode) {
         if (mode in setOf("attachment", "failure", "unknown")) composer.upload { listOf(UploadedFile("设计说明.txt", "/mock/design.txt", 128, "text/plain")) }
@@ -153,10 +163,12 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
         }
         if (mode == "call") { callPhase = VoiceCallPhase.Listening; delay(3000); callPhase = VoiceCallPhase.Processing; delay(3000); callPhase = VoiceCallPhase.Speaking }
     }
-    val turns = remember { listOf(
+    val exampleTurns = remember { listOf(
         ConversationTurn("user", listOf(ContentBlock.Text("帮我整理这次聊天页面调整，保留现有功能，并核对键盘遮挡。", null)), createdAt = "2026-10-11T08:30:00Z"),
         ConversationTurn("assistant", listOf(ContentBlock.Text("已整理页面布局。消息内容保持清晰，附件、语音和模型设置继续沿用现有入口。\n\n### 当前检查\n- 长回复和代码块可以正常阅读、复制。\n- 键盘打开后，输入区随系统上移。\n- 执行过程按真实工具状态展示。\n\n```typescript\nconst status = tool.finished ? \"idle\" : \"reading\";\n// 横向滚动保留完整的长代码：doNotTruncateImportantOutput();\n```\n\n这是原生 Compose 预览的示例内容，没有调用 AI，也没有修改任何用户会话。", null)), createdAt = "2026-10-11T08:30:12Z", completedAt = "2026-10-11T08:30:20Z")
     ) }
+    val turns = if (mode == "viewport") sentTurns.toList() else exampleTurns
+    val topClearance = topCompanionClearance()
     Scaffold(containerColor = WandColors.bgPrimary,
         contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
         bottomBar = {
@@ -183,14 +195,12 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
                     allowRefocus = true, voicePressed = voicePressed, voiceProcessing = voiceProcessing, voiceCommitSignal = voiceCommitSignal, onExpandedChange = { fixture.editorVisible = it },
                     presentation = presentation,
                     capsuleMicrophone = { CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel) },
-                    trailingActions = { _, send ->
-                        if (draft.isBlank() && composer.attachments.isEmpty() && !running && delivery == SendPhase.Idle)
-                            CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel)
-                        else ComposerSendStopActions(
-                        voiceAction = { CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel) },
-                        visual = com.wand.app.ui.sendActionVisual(delivery, running, draft.isNotBlank() || composer.attachments.isNotEmpty()),
+                    exteriorAction = { send -> ComposerSendStopActions(voiceAction = {},
+                        visual = if (running) SendActionVisual.Stop else com.wand.app.ui.sendActionVisual(delivery, false, draft.isNotBlank() || composer.attachments.isNotEmpty()),
                         stopDescription = "停止当前任务", sendDescription = if (draft.isBlank() && composer.attachments.isNotEmpty()) "发送附件" else "发送消息",
-                        onSend = send, onStop = { running = false }) },
+                        onSend = send, onStop = { fixture.stopCount++; running = false }, canSubmit = composer.canSubmit,
+                        visible = running || draft.isNotBlank() || composer.attachments.isNotEmpty() || delivery != SendPhase.Idle) },
+                    trailingActions = { _, _ -> CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel) },
                     controls = {
                         ComposerSettingsRow(if (model == "model-a") "示例模型 A" else "示例模型 B", "标准", "自动",
                             onModel = { attachmentsOpen = false; modelOpen = true },
@@ -205,7 +215,11 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
             }
         }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
-            LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight().pointerInput(presentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); presentation.dismiss() } }, contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight()
+                .padding(top = topClearance).clipToBounds().onGloballyPositioned {
+                    val bounds = it.boundsInWindow()
+                    fixture.messageViewportForTest = Rect(bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt())
+                }.pointerInput(presentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); presentation.dismiss() } }, contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (mode == "empty") item { Text("向员工描述你想完成的事情", style = MaterialTheme.typography.bodyLarge) }
                 else if (mode == "error") item { Text("示例：网络暂不可用，输入保留", color = WandColors.danger); TextButton(onClick = {}) { Text("重新加载") } }
                 else if (mode == "loading") item { CircularProgressIndicator(Modifier.size(24.dp)) }

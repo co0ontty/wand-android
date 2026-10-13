@@ -18,14 +18,14 @@ import com.wand.app.ui.components.*
 import com.wand.app.ui.theme.WandColors
 import kotlin.math.roundToInt
 
-/** 只给猫头定位留高度，不拿这块当正文避让带。正文可以从控件下穿过。 */
+/** 顶部伙伴和按钮共同持有阅读上边界，正文不能进入任一控件的触控区域。 */
 @Composable
 internal fun topCompanionClearance(): Dp {
     val compact = LocalConfiguration.current.screenHeightDp < 420
     val narrow = LocalConfiguration.current.screenWidthDp < 344
     val size = if (compact || narrow) 64.dp else 88.dp
     val top = FloatingControlCenter - size / 2
-    return top + size + 8.dp
+    return maxOf(ChatFloatingControlsClearance, top + size + 8.dp)
 }
 
 /** The scene's safe slot is independent of the composer/IME and live execution state. */

@@ -16,9 +16,9 @@ import androidx.compose.ui.unit.dp
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 
-internal val ChatFloatingControlsClearance = 56.dp
 internal val FloatingControlTouch = 48.dp
 internal val FloatingControlRowInset = 4.dp
+internal val ChatFloatingControlsClearance = FloatingControlTouch + FloatingControlRowInset * 2
 /** Shared center line for the back button, the three logos, and the companion. */
 internal val FloatingControlCenter = FloatingControlRowInset + FloatingControlTouch / 2
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
@@ -81,13 +82,15 @@ internal fun SharedMessageComposer(
     minimalCompanion: MinimalCompanion? = null,
     presentation: ChatInputPresentation? = null,
     capsuleMicrophone: @Composable () -> Unit = {},
+    /** Fixed exterior slot, independent of the editor's visibility and send feedback. */
+    exteriorAction: (@Composable (send: () -> Unit) -> Unit)? = null,
 ) {
     if (presentation != null) {
         FocusCapsuleComposer(presentation, sessionKey, draft, onDraftChange, attachments, baseUrl,
             onRemoveAttachment, uploading, attachOpen, onAttachOpenChange, onPickPhoto, onPickFile,
             canSubmit, onSend, deliveryPhase, voicePressed, voiceProcessing, voiceCommitSignal,
             editorOverlayOpen, resourcePanelOpen, onExpandedChange, trailingActions, controls,
-            resourcePanel, menuContent, capsuleMicrophone)
+            resourcePanel, menuContent, capsuleMicrophone, exteriorAction)
         return
     }
     val focusRequester = remember(sessionKey) { FocusRequester() }
@@ -281,7 +284,12 @@ internal fun SharedMessageComposer(
         },
     )
     }
-    if (minimalCompanion == null) editor()
+    if (minimalCompanion == null && exteriorAction != null) Row(Modifier.fillMaxWidth(),
+        verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
+        androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { editor() }
+        androidx.compose.foundation.layout.Box(Modifier.size(ComposerActionTouchSize)) { exteriorAction(sendAndRefocus) }
+    }
+    else if (minimalCompanion == null) editor()
     else minimalCompanion(CompanionComposerControls(editorVisible, draft.isNotBlank(), attachments.isNotEmpty(),
         canSubmit, deliveryPhase, requestFocus, sendAndRefocus)) { if (editorVisible) editor() }
 }

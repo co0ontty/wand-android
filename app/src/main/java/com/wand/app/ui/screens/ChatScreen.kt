@@ -109,6 +109,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -917,9 +918,9 @@ fun ChatScreen(
         val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
         val chatPadding = PaddingValues(
             start = padding.calculateStartPadding(direction), end = padding.calculateEndPadding(direction),
-            top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding(),
+            top = padding.calculateTopPadding() + topCompanionClearance(), bottom = padding.calculateBottomPadding(),
         )
-        // 正文从状态栏下开始，可以穿到悬浮按钮和猫头下面。遮挡只来自这些控件自己的形状。
+        // 整个阅读视口避让顶部伙伴和按钮；不是只给首条消息补内距，滚动/定位后也不穿入控件区。
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -954,7 +955,8 @@ fun ChatScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(chatPadding),
+                            .padding(chatPadding)
+                            .clipToBounds(),
                     ) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -2330,6 +2332,9 @@ private fun InputBar(
         allowRefocus = !store.sessionEnded,
         presentation = presentation,
         capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling) },
+        exteriorAction = { send -> TrailingSendStop(store, sendPhase, canSend, canSubmit,
+            onStop = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
+            voiceAction = {}, onSend = send) },
         compactAfterAcknowledgement = true,
         deliveryPhase = sendPhase,
         voicePressed = voice.pressed,
@@ -2369,21 +2374,7 @@ private fun InputBar(
                 )
             }
         },
-        trailingActions = { _, sendAndRefocus ->
-            if (!canSend && !store.isResponding && sendPhase == SendPhase.Idle) {
-                CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling)
-            } else TrailingSendStop(
-                store = store,
-                sendPhase = sendPhase,
-                canSend = canSend,
-                canSubmit = canSubmit,
-                onStop = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
-                voiceAction = {
-                    CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling)
-                },
-                onSend = sendAndRefocus,
-            )
-        },
+        trailingActions = { _, _ -> CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling) },
         controls = {
             ComposerSettingsRow(
                 model = shortModelLabel(store), mode = SESSION_MODE_OPTIONS.firstOrNull { it.id == store.mode }?.label ?: store.mode, thinking = thinkingLabel(store, store.thinkingEffort),
@@ -2428,8 +2419,8 @@ private fun InputBar(
 
 /**
  * 发送 / 停止按钮组（对齐 iOS trailingButtons）：
- * - 运行中且无草稿 → 唯一按钮是黑底停止（对齐 Codex collapsed composer）；
- * - 有草稿 → 发送按钮（运行中排队，停止入口收进加号面板）。
+ * - 语音留在胶囊内，发送/停止在右侧独立圆形槽；
+ * - 运行优先停止；空闲有草稿发送，空闲空草稿隐藏（反馈停留除外）。
  *
  * 动效（`docs/motion-design.md` 规则 3 / 4）：
  * - 提交后按钮**原地**依次显示 发送中 → 已送达 / 失败，不弹 Toast、不换位置；
@@ -2445,11 +2436,11 @@ private fun TrailingSendStop(
     voiceAction: @Composable () -> Unit,
     onSend: () -> Unit,
 ) {
-    val visual = sendActionVisual(
+    val visual = (if (store.isResponding) SendActionVisual.Stop else sendActionVisual(
         phase = sendPhase,
-        turnRunning = store.isResponding,
+        turnRunning = false,
         hasDraft = canSend,
-    ).let { visual ->
+    )).let { visual ->
         if (visual == SendActionVisual.Send && !canSubmit) SendActionVisual.Blocked else visual
     }
     ComposerSendStopActions(
@@ -2459,6 +2450,7 @@ private fun TrailingSendStop(
         sendDescription = if (store.isResponding) "排队发送消息" else "发送消息",
         onSend = onSend,
         onStop = onStop,
+        visible = store.isResponding || canSend || sendPhase != SendPhase.Idle,
     )
 }
 
