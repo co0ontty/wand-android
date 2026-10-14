@@ -116,11 +116,12 @@ internal fun FocusCapsuleComposer(
     }
     BackHandler(expanded && !borrowed && !imeVisible) { dismiss() }
     ConversationLayerBackHandler(attachOpen) { onAttachOpenChange(false) }
-    // No width animation during IME composition: the same native field retains selection.
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    // Only the bottom toolbar reserves the send slot while editing. The editor
+    // remains mounted and uses the entire surface width, without IME-time resizing.
+    val actionInset = if (exteriorAction != null) ComposerActionTouchSize + 4.dp else 0.dp
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
     Surface(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth().padding(end = if (expanded) 0.dp else actionInset),
             shape = RoundedCornerShape(if (expanded) 22.dp else 28.dp),
             color = WandColors.surface,
             tonalElevation = 0.dp,
@@ -136,7 +137,9 @@ internal fun FocusCapsuleComposer(
                         maxLines = 4, maxHeight = 112.dp,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default))
                 }
-                Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (expanded) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = controls)
+                Row(Modifier.fillMaxWidth().padding(end = if (expanded) actionInset else 0.dp)
+                    .heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
                     ComposerActionsMenu(null, uploading, allowDuringUpload = true,
                         attachOpen = attachOpen || resourcePanelOpen,
                         onAttachOpenChange = { state = state.edit(); onAttachOpenChange(it) })
@@ -150,10 +153,9 @@ internal fun FocusCapsuleComposer(
                     if (exteriorAction != null) microphone()
                     else if (expanded) trailingActions(edit, send) else microphone()
                 }
-                if (expanded) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = controls)
             }
         }
-        if (exteriorAction != null) Box(Modifier.size(ComposerActionTouchSize).align(Alignment.Bottom).offset(y = (-2).dp),
+        if (exteriorAction != null) Box(Modifier.size(ComposerActionTouchSize).align(Alignment.BottomEnd).offset(y = (-2).dp),
             contentAlignment = Alignment.Center) { exteriorAction(send) }
     }
     // Panels are modal focus owners, never stacked above the input and IME.

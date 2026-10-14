@@ -30,6 +30,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.components.WandInlinePanel
 import com.wand.app.ui.theme.WandColors
@@ -63,6 +64,8 @@ fun NativeComposerSurface(
     panelContent: @Composable RowScope.() -> Unit = {},
     /** Optional session-scoped resources, expanding upwards with the same bottom toolbar anchor. */
     resourcePanel: @Composable () -> Unit = {},
+    /** Reserve an exterior action only beside the toolbar, never beside the text. */
+    controlsEndPadding: Dp = 0.dp,
 ) {
     val motionEnabled = !reduceMotionEnabled()
     // 同一条底部操作行持续挂载，输入和附件只向上生长。
@@ -123,7 +126,7 @@ fun NativeComposerSurface(
             if (!inlineControls) Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ComposerActionSpacing),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(end = controlsEndPadding),
                 content = controls,
             )
         }

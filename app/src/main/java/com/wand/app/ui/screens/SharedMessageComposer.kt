@@ -122,7 +122,7 @@ internal fun SharedMessageComposer(
             collapsePending = false
         }
     }
-    val compactVisual = inlineControls || compactAfterAcknowledgement && acknowledged && !recoveryExpanded &&
+    val compactVisual = inlineControls && draft.isEmpty() && attachments.isEmpty() || compactAfterAcknowledgement && acknowledged && !recoveryExpanded &&
         !isFocused && !keyboardVisible && draft.isEmpty() && attachments.isEmpty() && !uploading &&
         !voicePressed && !attachOpen && !resourcePanelOpen && !editorOverlayOpen && deliveryPhase != SendPhase.Sending
     LaunchedEffect(refocusAfterSend, allowRefocus) {
@@ -190,9 +190,12 @@ internal fun SharedMessageComposer(
             onSend()
         }
     }
+    val exteriorInset = if (minimalCompanion == null && exteriorAction != null) ComposerActionTouchSize else 0.dp
     val editor: @Composable () -> Unit = {
     NativeComposerSurface(
         backdrop = backdrop,
+        modifier = Modifier.fillMaxWidth().padding(end = if (compactVisual) exteriorInset else 0.dp),
+        controlsEndPadding = if (compactVisual) 0.dp else exteriorInset,
         focused = isFocused,
         inlineControls = if (minimalCompanion != null) false else compactVisual,
         inputTrailing = {
@@ -220,7 +223,7 @@ internal fun SharedMessageComposer(
                     placeholder = if (compactVisual) "继续输入" else "发送消息",
                     framed = false,
                     compact = compactVisual,
-                    showClearAction = !compactVisual,
+                    showClearAction = !compactVisual && exteriorAction == null,
                     isFocused = isFocused,
                     onFocusChanged = { isFocused = it },
                     focusRequester = focusRequester,
@@ -284,10 +287,10 @@ internal fun SharedMessageComposer(
         },
     )
     }
-    if (minimalCompanion == null && exteriorAction != null) Row(Modifier.fillMaxWidth(),
-        verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
-        androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { editor() }
-        androidx.compose.foundation.layout.Box(Modifier.size(ComposerActionTouchSize)) { exteriorAction(sendAndRefocus) }
+    if (minimalCompanion == null && exteriorAction != null) androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth()) {
+        editor()
+        androidx.compose.foundation.layout.Box(Modifier.size(ComposerActionTouchSize)
+            .align(androidx.compose.ui.Alignment.BottomEnd)) { exteriorAction(sendAndRefocus) }
     }
     else if (minimalCompanion == null) editor()
     else minimalCompanion(CompanionComposerControls(editorVisible, draft.isNotBlank(), attachments.isNotEmpty(),

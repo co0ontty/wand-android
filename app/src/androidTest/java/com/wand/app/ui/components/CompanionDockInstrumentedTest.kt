@@ -222,11 +222,28 @@ class CompanionDockInstrumentedTest {
             val initial = point(activity)
             click("展开键盘输入")
             waitFor("native editor focused") { imeVisible(activity) && field(activity, "EditorVisible") == true }
+            val emptyBounds = Rect(); editable(instrumentation.uiAutomation.rootInActiveWindow)!!.getBoundsInScreen(emptyBounds)
             val text = "第一行中文，正在编辑\n第二行保留光标与附件"
+            for (draft in listOf("单行文字", text, "")) {
+                type(draft)
+                waitFor("draft retained") { composer(activity).draft == draft }
+                val fieldBounds = Rect(); editable(instrumentation.uiAutomation.rootInActiveWindow)!!.getBoundsInScreen(fieldBounds)
+                val metrics = context.resources.displayMetrics
+                assertTrue("Editor has only the surface's left inset", fieldBounds.left <= 31 * metrics.density)
+                assertTrue("Send no longer takes a full-height right lane",
+                    metrics.widthPixels - fieldBounds.right <= 23 * metrics.density)
+                assertEquals("Typing and clearing never resize the editor", emptyBounds.left, fieldBounds.left)
+                assertEquals(emptyBounds.right, fieldBounds.right)
+                if (draft.isNotEmpty()) {
+                    val sendBounds = Rect()
+                    val send = find(instrumentation.uiAutomation.rootInActiveWindow, "发送消息")
+                    assertNotNull("Send is still accessible", send)
+                    send!!.getBoundsInScreen(sendBounds)
+                    assertTrue("Send never covers the editing area", fieldBounds.bottom <= sendBounds.top)
+                }
+            }
             type(text)
-            waitFor("multiline draft retained") { composer(activity).draft == text }
-            val fieldBounds = Rect(); editable(instrumentation.uiAutomation.rootInActiveWindow)!!.getBoundsInScreen(fieldBounds)
-            assertTrue("Text uses the full width without icon lanes", fieldBounds.width() > context.resources.displayMetrics.widthPixels * .8f)
+            waitFor("multiline draft restored") { composer(activity).draft == text }
             assertEquals("IME never moves top scene", initial.second, point(activity).second, 2f)
             for (setting in listOf("选择权限", "选择思考")) {
                 val node = find(instrumentation.uiAutomation.rootInActiveWindow, setting)

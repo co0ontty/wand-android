@@ -27,6 +27,28 @@ class ComposerStatusLayoutTest {
         assertFalse(progress.contains("rememberInfiniteTransition"))
     }
 
+    @Test fun editingReservesTheSendSlotOnlyInTheBottomToolbar() {
+        val capsule = source("FocusCapsuleComposer")
+        val surface = capsule.substringAfter("Surface(").substringBefore("// Panels are modal")
+        assertTrue(surface.contains("Modifier.fillMaxWidth().padding(end = if (expanded) 0.dp else actionInset)"))
+        assertTrue(surface.contains("padding(end = if (expanded) actionInset else 0.dp)"))
+        assertTrue(surface.contains("align(Alignment.BottomEnd)"))
+        assertTrue(surface.indexOf("content = controls") < surface.indexOf("ComposerActionsMenu("))
+        assertFalse(capsule.contains("horizontalArrangement = Arrangement.spacedBy(4.dp)"))
+        assertEquals(1, Regex("ComposerInputField\\(").findAll(capsule).count())
+    }
+
+    @Test fun groupDraftAlsoSeparatesTextFromTheExteriorActionAndInlineIcons() {
+        val shared = source("SharedMessageComposer")
+        val surface = source("NativeComposerSurface")
+        assertTrue(shared.contains("inlineControls && draft.isEmpty() && attachments.isEmpty()"))
+        assertTrue(shared.contains("padding(end = if (compactVisual) exteriorInset else 0.dp)"))
+        assertTrue(shared.contains("controlsEndPadding = if (compactVisual) 0.dp else exteriorInset"))
+        assertTrue(shared.contains("showClearAction = !compactVisual && exteriorAction == null"))
+        assertTrue(shared.contains("align(androidx.compose.ui.Alignment.BottomEnd)"))
+        assertTrue(surface.contains("Modifier.fillMaxWidth().padding(end = controlsEndPadding)"))
+    }
+
     @Test fun topSceneHasStableGeometryWhileTheCapsuleOwnsTheReceipt() {
         val scene = source("TopChatCompanion")
         val screen = source("ChatScreen")
