@@ -4,10 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import com.wand.app.ui.components.WandMorphingIcon
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Box
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -16,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.SendActionVisual
+import com.wand.app.ui.SendPhase
+import com.wand.app.ui.sendActionVisual
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.theme.WandColors
@@ -26,11 +25,32 @@ import com.wand.app.ui.theme.reduceMotionEnabled
 internal fun composerMenuHasStop(running: Boolean, primary: SendActionVisual): Boolean =
     running && primary != SendActionVisual.Stop
 
-/** 单聊与群聊共用固定的语音槽和主操作槽，发送时不再额外插入第三枚按钮。 */
+/** Project the real draft and receipt; a running turn must not swallow the next send. */
+internal fun composerPrimaryVisual(
+    phase: SendPhase, running: Boolean, hasDraft: Boolean, canSubmit: Boolean,
+): SendActionVisual = sendActionVisual(phase, running, hasDraft).let {
+    if (it == SendActionVisual.Send && !canSubmit) SendActionVisual.Blocked else it
+}
+
+/** Sending feedback and stopping execution have independent visibility and locks. */
+internal data class ComposerActionPresentation(val send: SendActionVisual?, val stop: Boolean) {
+    val slotCount: Int get() = (if (send != null) 1 else 0) + (if (stop) 1 else 0)
+}
+
+internal fun composerActionPresentation(
+    phase: SendPhase, running: Boolean, hasDraft: Boolean, canSubmit: Boolean,
+    feedback: SendActionVisual? = null,
+): ComposerActionPresentation = ComposerActionPresentation(
+    send = if (hasDraft || phase != SendPhase.Idle || feedback != null)
+        feedback ?: composerPrimaryVisual(phase, false, hasDraft, canSubmit) else null,
+    stop = running,
+)
+
+/** Compact mode has no empty slot; the same actions move inside the expanded surface. */
 @Composable
 internal fun ComposerSendStopActions(
     voiceAction: @Composable () -> Unit,
-    visual: SendActionVisual,
+    presentation: ComposerActionPresentation,
     stopDescription: String,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -38,24 +58,30 @@ internal fun ComposerSendStopActions(
     busy: Boolean = false,
     canSubmit: Boolean = true,
     failureDescription: String = "发送失败，可重试",
-    visible: Boolean = true,
 ) {
     voiceAction()
-    val opacity by animateFloatAsState(if (visible) 1f else 0f,
-        WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()), label = "composerActionVisibility")
-    Box(Modifier.alpha(opacity).semantics { if (!visible) hideFromAccessibility() }) {
+    Row {
+    if (presentation.stop) SubmitMorphButton(
+        visual = SendActionVisual.Stop,
+        contentDescription = stopDescription,
+        onClick = onStop,
+        enabled = !busy,
+        fillColor = WandColors.danger,
+        contentTint = WandColors.onBrand,
+    )
+    presentation.send?.let { visual ->
     SubmitMorphButton(
         visual = visual,
         contentDescription = when (visual) {
             SendActionVisual.Sending -> "发送中"
             SendActionVisual.Sent -> "已发送"
             SendActionVisual.Failed -> failureDescription
-            SendActionVisual.Blocked -> "当前没有可发送内容"
+            SendActionVisual.Blocked -> "暂时无法发送"
             SendActionVisual.Stop -> stopDescription
             SendActionVisual.Send -> sendDescription
         },
-        onClick = if (visual == SendActionVisual.Stop) onStop else onSend,
-        enabled = visible && !busy && (visual == SendActionVisual.Stop || (visual == SendActionVisual.Send && canSubmit)),
+        onClick = onSend,
+        enabled = !busy && visual == SendActionVisual.Send && canSubmit,
         fillColor = when (visual) {
             SendActionVisual.Send, SendActionVisual.Sending, SendActionVisual.Sent -> WandColors.brand
             SendActionVisual.Failed -> WandColors.dangerSoft
@@ -69,6 +95,7 @@ internal fun ComposerSendStopActions(
             SendActionVisual.Blocked -> WandColors.textSecondary
         },
     )
+    }
     }
 }
 

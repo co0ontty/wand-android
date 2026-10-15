@@ -46,7 +46,7 @@ internal fun createEmployeeWorkspaceTaskWindowRequest(
 }
 
 internal fun structuredRunnerFor(provider: String): String =
-    WandProvider.fromId(provider)?.structuredRunner ?: WandProvider.Claude.structuredRunner
+    requireNotNull(WandProvider.fromId(provider)) { "不支持的执行工具：$provider" }.structuredRunner
 
 internal fun createWorkspaceTaskWindowRequest(
     target: WorkspaceSessionTarget,

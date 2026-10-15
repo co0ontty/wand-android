@@ -195,11 +195,16 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
                     allowRefocus = true, voicePressed = voicePressed, voiceProcessing = voiceProcessing, voiceCommitSignal = voiceCommitSignal, onExpandedChange = { fixture.editorVisible = it },
                     presentation = presentation,
                     capsuleMicrophone = { CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel) },
+                    actionCount = composerActionPresentation(delivery, running, draft.isNotBlank() || composer.attachments.isNotEmpty(), composer.canSubmit).slotCount,
                     exteriorAction = { send -> ComposerSendStopActions(voiceAction = {},
-                        visual = if (running) SendActionVisual.Stop else com.wand.app.ui.sendActionVisual(delivery, false, draft.isNotBlank() || composer.attachments.isNotEmpty()),
-                        stopDescription = "停止当前任务", sendDescription = if (draft.isBlank() && composer.attachments.isNotEmpty()) "发送附件" else "发送消息",
-                        onSend = send, onStop = { fixture.stopCount++; running = false }, canSubmit = composer.canSubmit,
-                        visible = running || draft.isNotBlank() || composer.attachments.isNotEmpty() || delivery != SendPhase.Idle) },
+                        presentation = composerActionPresentation(delivery, running, draft.isNotBlank() || composer.attachments.isNotEmpty(), composer.canSubmit),
+                        stopDescription = "停止当前任务", sendDescription = if (running) "继续发送（排队）" else if (draft.isBlank() && composer.attachments.isNotEmpty()) "发送附件" else "发送消息",
+                        onSend = send, onStop = { fixture.stopCount++; running = false }, canSubmit = composer.canSubmit) },
+                    menuContent = {
+                        if (running) WandInlinePanelAction(WandIcons.stop, "停止当前任务",
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            onClick = { attachmentsOpen = false; fixture.stopCount++; running = false })
+                    },
                     trailingActions = { _, _ -> CapsuleMicrophone(voiceGesture, voicePressed, voiceCancel) },
                     controls = {
                         ComposerSettingsRow(if (model == "model-a") "示例模型 A" else "示例模型 B", "标准", "自动",

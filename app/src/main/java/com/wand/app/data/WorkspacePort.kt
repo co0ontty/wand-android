@@ -1,5 +1,13 @@
 package com.wand.app.data
 
+/** 按标题归类的结果。不确定的项留在 reason，不会被静默移动。 */
+data class TitleOrganizeResult(
+    val movedSessions: Int,
+    val categorizedTasks: Int,
+    val label: String,
+    val reason: String,
+)
+
 /** 工作空间接口。WandApi 实现该端口；测试用 fake 实现。 */
 interface WorkspacePort : TaskChangeSource {
     suspend fun listSiliconEmployees(includeArchived: Boolean): List<SiliconEmployee> = emptyList()
@@ -136,6 +144,14 @@ interface WorkspacePort : TaskChangeSource {
      */
     suspend fun archiveWorkspaceTask(taskId: String): WorkspaceTask {
         throw UnsupportedOperationException("归档任务接口不可用")
+    }
+
+    /**
+     * POST /api/tasks/organize-by-title —— 按标题归类所选任务，并处理这些任务下的会话归属。
+     * 不确定的不移动。选中任务时，其会话即使没有被逐条勾选也在范围内。
+     */
+    suspend fun organizeTasksByTitle(taskIds: List<String>, sessionIds: List<String>): TitleOrganizeResult {
+        throw UnsupportedOperationException("当前服务不支持按标题归类，请更新服务端")
     }
 
     /** 删除任务内全部会话，但保留任务与 worktree。 */

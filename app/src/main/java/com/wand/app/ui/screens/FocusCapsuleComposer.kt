@@ -12,12 +12,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Constraints
 import com.wand.app.data.UploadedFile
 import com.wand.app.ui.SendPhase
 import com.wand.app.ui.components.*
@@ -43,6 +45,7 @@ internal fun FocusCapsuleComposer(
     resourcePanel: @Composable () -> Unit, menuContent: @Composable () -> Unit,
     microphone: @Composable () -> Unit,
     exteriorAction: (@Composable (send: () -> Unit) -> Unit)? = null,
+    actionCount: Int = 0,
 ) {
     var state by remember(sessionKey) { mutableStateOf(MinimalComposerState()) }
     var focusRevision by remember(sessionKey) { mutableIntStateOf(0) }
@@ -116,17 +119,16 @@ internal fun FocusCapsuleComposer(
     }
     BackHandler(expanded && !borrowed && !imeVisible) { dismiss() }
     ConversationLayerBackHandler(attachOpen) { onAttachOpenChange(false) }
-    // Only the bottom toolbar reserves the send slot while editing. The editor
-    // remains mounted and uses the entire surface width, without IME-time resizing.
-    val actionInset = if (exteriorAction != null) ComposerActionTouchSize + 4.dp else 0.dp
-    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+    val actionWidth = if (exteriorAction != null) ComposerActionTouchSize * actionCount else 0.dp
+    val actionInset = if (actionWidth > 0.dp) actionWidth + 4.dp else 0.dp
+    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
     Surface(
             modifier = Modifier.fillMaxWidth().padding(end = if (expanded) 0.dp else actionInset),
             shape = RoundedCornerShape(if (expanded) 22.dp else 28.dp),
             color = WandColors.surface,
             tonalElevation = 0.dp,
         ) {
-            Column(Modifier.padding(horizontal = 4.dp)) {
+            Column {
                 if (expanded && attachments.isNotEmpty()) PendingAttachmentsPreview(
                     attachments, baseUrl, onRemoveAttachment, Modifier.padding(8.dp))
                 // Keep the original field mounted, including selection and IME composition.
@@ -137,25 +139,26 @@ internal fun FocusCapsuleComposer(
                         maxLines = 4, maxHeight = 112.dp,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default))
                 }
-                if (expanded) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = controls)
-                Row(Modifier.fillMaxWidth().padding(end = if (expanded) actionInset else 0.dp)
-                    .heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                ComposerCapsuleToolbar(expanded, if (expanded) actionInset else 0.dp,
+                    add = {
                     ComposerActionsMenu(null, uploading, allowDuringUpload = true,
                         attachOpen = attachOpen || resourcePanelOpen,
                         onAttachOpenChange = { state = state.edit(); onAttachOpenChange(it) })
-                    if (!expanded) Text(
+                    }, controls = { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = controls) },
+                    entry = { Text(
                         when { attachments.isNotEmpty() -> "草稿 · ${attachments.size} 附件"; draft.isNotEmpty() -> "草稿 · ${draft.length} 字"; else -> "发消息…" },
-                        Modifier.weight(1f).heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "展开键盘输入", onClick = edit)
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "展开键盘输入", onClick = edit)
                             .wrapContentHeight(Alignment.CenterVertically),
                         color = WandColors.textSecondary, style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    ) else Spacer(Modifier.weight(1f))
+                    ) }, voice = {
                     if (exteriorAction != null) microphone()
-                    else if (expanded) trailingActions(edit, send) else microphone()
-                }
+                    else if (expanded) Row { trailingActions(edit, send) } else microphone()
+                    })
             }
         }
-        if (exteriorAction != null) Box(Modifier.size(ComposerActionTouchSize).align(Alignment.BottomEnd).offset(y = (-2).dp),
+        if (exteriorAction != null && actionCount > 0) Box(Modifier.width(actionWidth).height(ComposerActionTouchSize)
+            .align(Alignment.BottomEnd).offset(y = (-2).dp),
             contentAlignment = Alignment.Center) { exteriorAction(send) }
     }
     // Panels are modal focus owners, never stacked above the input and IME.
@@ -173,4 +176,37 @@ internal fun FocusCapsuleComposer(
         }
     }
     resourcePanel()
+}
+
+/** Native layout keeps controls mounted when a narrow dual-action toolbar wraps. */
+@Composable
+private fun ComposerCapsuleToolbar(
+    expanded: Boolean, actionInset: androidx.compose.ui.unit.Dp,
+    add: @Composable () -> Unit, controls: @Composable () -> Unit,
+    entry: @Composable () -> Unit, voice: @Composable () -> Unit,
+) {
+    Layout(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), content = {
+        Box { add() }
+        Box(Modifier.clipToBounds().then(if (expanded) Modifier else Modifier.clearAndSetSemantics { })) { controls() }
+        Box(Modifier.clipToBounds().then(if (expanded) Modifier.clearAndSetSemantics { } else Modifier)) { entry() }
+        Box { voice() }
+    }) { children, constraints ->
+        val width = constraints.maxWidth
+        val touch = ComposerActionTouchSize.roundToPx()
+        val inset = actionInset.roundToPx()
+        val stacked = expanded && width - inset < touch * 5
+        val addPlace = children[0].measure(Constraints.fixed(touch, touch))
+        val voicePlace = children[3].measure(Constraints.fixed(touch, touch))
+        val settingsWidth = if (stacked) width else (width - inset - touch * 2).coerceAtLeast(0)
+        val settingsPlace = children[1].measure(if (expanded) Constraints.fixedWidth(settingsWidth) else Constraints.fixed(0, 0))
+        val entryPlace = children[2].measure(if (expanded) Constraints.fixed(0, 0) else Constraints.fixed((width - touch * 2).coerceAtLeast(0), touch))
+        val rowHeight = maxOf(52.dp.roundToPx(), if (expanded && !stacked) settingsPlace.height else 0)
+        val settingsHeight = if (stacked) settingsPlace.height else 0
+        layout(width, settingsHeight + rowHeight) {
+            addPlace.placeRelative(0, settingsHeight + (rowHeight - touch) / 2)
+            settingsPlace.placeRelative(if (stacked) 0 else touch, if (stacked) 0 else (rowHeight - settingsPlace.height) / 2)
+            entryPlace.placeRelative(touch, (rowHeight - touch) / 2)
+            voicePlace.placeRelative(if (stacked) touch else width - inset - touch, settingsHeight + (rowHeight - touch) / 2)
+        }
+    }
 }

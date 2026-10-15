@@ -197,7 +197,6 @@ import com.wand.app.ui.components.WandMorphingIcon
 
 import androidx.activity.compose.BackHandler
 import com.wand.app.ui.SendActionVisual
-import com.wand.app.ui.sendActionVisual
 import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandInlinePanelAction
 import com.wand.app.ui.components.WandIcons
@@ -2161,8 +2160,7 @@ private fun BottomBar(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .imePadding()
-            .padding(bottom = 4.dp),
+            .imePadding(),
     ) {
     Column(
         modifier = Modifier
@@ -2311,7 +2309,8 @@ private fun InputBar(
     var modeOpen by remember(store.sessionId) { mutableStateOf(false) }
     var modelOpen by remember(store.sessionId) { mutableStateOf(false) }
     val menuTriggerFocus = remember(store.sessionId) { FocusRequester() }
-    val menuStopVisible = store.isResponding
+    val menuStopVisible = composerMenuHasStop(store.isResponding,
+        composerPrimaryVisual(sendPhase, store.isResponding, canSend, canSubmit))
     var thinkingOpen by remember(store.sessionId) { mutableStateOf(false) }
     val draftVoice = DraftVoiceGesture(onMicDown, voice::updateCancel, voice::endPress, voice::cancelPress)
     SharedMessageComposer(
@@ -2332,6 +2331,7 @@ private fun InputBar(
         allowRefocus = !store.sessionEnded,
         presentation = presentation,
         capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling) },
+        actionCount = composerActionPresentation(sendPhase, store.isResponding, canSend, canSubmit).slotCount,
         exteriorAction = { send -> TrailingSendStop(store, sendPhase, canSend, canSubmit,
             onStop = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
             voiceAction = {}, onSend = send) },
@@ -2420,7 +2420,7 @@ private fun InputBar(
 /**
  * 发送 / 停止按钮组（对齐 iOS trailingButtons）：
  * - 语音留在胶囊内，发送/停止在右侧独立圆形槽；
- * - 运行优先停止；空闲有草稿发送，空闲空草稿隐藏（反馈停留除外）。
+ * - 草稿发送和运行停止独立显示，展开时移入输入框右下角。
  *
  * 动效（`docs/motion-design.md` 规则 3 / 4）：
  * - 提交后按钮**原地**依次显示 发送中 → 已送达 / 失败，不弹 Toast、不换位置；
@@ -2436,21 +2436,13 @@ private fun TrailingSendStop(
     voiceAction: @Composable () -> Unit,
     onSend: () -> Unit,
 ) {
-    val visual = (if (store.isResponding) SendActionVisual.Stop else sendActionVisual(
-        phase = sendPhase,
-        turnRunning = false,
-        hasDraft = canSend,
-    )).let { visual ->
-        if (visual == SendActionVisual.Send && !canSubmit) SendActionVisual.Blocked else visual
-    }
     ComposerSendStopActions(
         voiceAction = voiceAction,
-        visual = visual,
+        presentation = composerActionPresentation(sendPhase, store.isResponding, canSend, canSubmit),
         stopDescription = "停止任务",
-        sendDescription = if (store.isResponding) "排队发送消息" else "发送消息",
+        sendDescription = if (store.isResponding) "继续发送（排队）" else "发送消息",
         onSend = onSend,
         onStop = onStop,
-        visible = store.isResponding || canSend || sendPhase != SendPhase.Idle,
     )
 }
 

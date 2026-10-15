@@ -53,7 +53,6 @@ import com.wand.app.ui.acceptedConversationTask
 import com.wand.app.ui.conversationStartupLabel
 import com.wand.app.ui.SendActionVisual
 import com.wand.app.ui.SendPhase
-import com.wand.app.ui.sendActionVisual
 import com.wand.app.ui.components.*
 import com.wand.app.ui.theme.*
 import kotlinx.coroutines.delay
@@ -738,7 +737,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 }
             }
             Box(Modifier.fillMaxSize().clipToBounds()) {
-            LazyColumn(state = messageList, modifier = Modifier.fillMaxSize().pointerInput(inputPresentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (privateChat) inputPresentation.dismiss() } }, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)) {
+            LazyColumn(state = messageList, modifier = Modifier.fillMaxSize().pointerInput(inputPresentation) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); inputPresentation.dismiss() } }, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)) {
                 if (state.error != null) item { ErrorState(state.error.orEmpty(), onRetry = state::retry) }
                 if (turns.isEmpty() && state.error == null) item {
                     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -798,7 +797,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 finally { restoring = false }
             } }) { Text(if (restoring) "正在恢复…" else "恢复群聊", textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline) }
             restoreError?.let { Text(it, color = WandColors.danger) }
-        } else Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = if (privateChat) 0.dp else 16.dp, vertical = 4.dp)) {
+        } else Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = if (privateChat) 0.dp else 16.dp, vertical = if (privateChat) 0.dp else 4.dp)) {
             val feedback = actionOperation.feedback.ifBlank { state.feedback[key] ?: detail?.unavailableReason.orEmpty() }.takeUnless { it == "已发送" }.orEmpty()
             if (feedback.isNotBlank()) Text(feedback, Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
                 .background(WandColors.surface).padding(horizontal = 14.dp, vertical = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
@@ -832,7 +831,9 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             if (run?.run?.status == "waiting_user" && run.run.statusDetail.contains("步数上限")) WandButton("明确增加本轮步数", { action("continue") }, enabled = actionOperation.canSubmit)
             if (voice.voice.pressed || voice.voice.processing) VoiceTranscriptBubble(backdrop = null, voice = voice.voice)
             val canSubmit = composer.canSubmit && id.isNotBlank() && detail != null && detail.unavailableReason == null && unknown == null && actionOperation.canSubmit
-            val visual = actionPhase ?: if (unknown != null) SendActionVisual.Failed else sendActionVisual(composer.sendPhase, false, composer.draft.isNotBlank() || composer.attachments.isNotEmpty())
+            val actions = composerActionPresentation(composer.sendPhase, running && !taskMode,
+                composer.draft.isNotBlank() || composer.attachments.isNotEmpty(), canSubmit,
+                feedback = actionPhase ?: if (unknown != null) SendActionVisual.Failed else null)
             SharedMessageComposer(backdrop = null, sessionKey = composer.sessionId, draft = composer.draft, onDraftChange = composer::editDraft,
                 attachments = composer.attachments, baseUrl = state.api.baseUrl, onRemoveAttachment = composer::removeAttachment,
                 uploading = composer.uploading, attachOpen = menu, onAttachOpenChange = { open ->
@@ -843,17 +844,16 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 onPickPhoto = pickers.pickPhoto, onPickFile = pickers.pickFile, canSubmit = canSubmit, onSend = ::send,
                 allowRefocus = true, voicePressed = voice.voice.pressed, voiceProcessing = voice.voice.processing, onExpandedChange = {},
                 editorOverlayOpen = pickers.open || defaultsOpen || headerMenu || taskDetails || members || invite,
-                presentation = if (privateChat) inputPresentation else null,
+                presentation = inputPresentation,
                 capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling) },
+                actionCount = actions.slotCount,
                 exteriorAction = { send -> ComposerSendStopActions(voiceAction = {},
-                    visual = if (running && !taskMode) SendActionVisual.Stop else visual,
+                    presentation = actions,
                     stopDescription = if (target != null) "停止选中的本轮" else "停止当前回复",
-                    sendDescription = if (taskMode) "确认派发任务" else "发送消息",
+                    sendDescription = if (taskMode) "确认派发任务" else if (running) "继续发送" else "发送消息",
                     onSend = send, onStop = ::stop,
-                    busy = !actionOperation.canSubmit || (!(running && !taskMode) && composer.sendPhase == SendPhase.Sending),
-                    canSubmit = canSubmit, failureDescription = if (unknown != null) "送达未确认，请先核对" else "操作失败",
-                    visible = running && !taskMode || composer.draft.isNotBlank() || composer.attachments.isNotEmpty() ||
-                        composer.sendPhase != SendPhase.Idle || actionPhase != null || unknown != null)
+                    busy = !actionOperation.canSubmit,
+                    canSubmit = canSubmit, failureDescription = if (unknown != null) "送达未确认，请先核对" else "操作失败")
                 },
                 deliveryPhase = if (unknown != null) SendPhase.Failed else composer.sendPhase,
                 voiceCommitSignal = voiceCommitSignal,

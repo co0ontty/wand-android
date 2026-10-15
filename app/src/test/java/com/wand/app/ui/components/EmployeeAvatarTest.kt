@@ -69,7 +69,7 @@ class EmployeeAvatarTest {
     }
     @Test
     fun eachSupportedCliKeepsItsOwnLogoIdentity() {
-        listOf("claude", "codex", "opencode", "grok", "qoder", "pi", "gemini").forEach {
+        listOf("claude", "codex", "opencode", "grok", "qoder", "pi").forEach {
             assertEquals(it, employeeAvatarProvider(it))
         }
         assertEquals("pi", employeeAvatarProvider(" Pi "))

@@ -629,7 +629,6 @@ private val STRUCTURED_RUNNERS = setOf(
     "grok-cli-headless",
     "qoder-cli-print",
     "pi-cli-json",
-    "gemini-cli-json",
     "structured",
 )
 
@@ -832,8 +831,7 @@ private fun legacyDefaultModelFor(
     qoder: String? = null,
     grok: String? = null,
     pi: String? = null,
-    gemini: String? = null,
-): String = ProviderDefaultModels(claude, codex, opencode, qoder, grok, pi, gemini)
+): String = ProviderDefaultModels(claude, codex, opencode, qoder, grok, pi)
     .defaultFor(provider).orEmpty()
 
 data class ModelsResponse(
@@ -850,8 +848,6 @@ data class ModelsResponse(
     val defaultGrokModel: String? = null,
     val piModels: List<ModelInfo> = emptyList(),
     val defaultPiModel: String? = null,
-    val geminiModels: List<ModelInfo> = emptyList(),
-    val defaultGeminiModel: String? = null,
     val modelGroups: List<ModelGroup> = emptyList(),
     val freeModels: List<ModelInfo> = emptyList(),
     val modelGroupsSupported: Boolean = false,
@@ -869,7 +865,6 @@ data class ModelsResponse(
                 defaultQoderModel,
                 defaultGrokModel,
                 defaultPiModel,
-                defaultGeminiModel,
             )
 
     /** 当前 provider 的模型目录；调用方不再自己挑字段。 */
@@ -879,8 +874,8 @@ data class ModelsResponse(
         WandProvider.Grok -> grokModels
         WandProvider.Qoder -> qoderModels
         WandProvider.Pi -> piModels
-        WandProvider.Gemini -> geminiModels
-        else -> models
+        WandProvider.Claude -> models
+        null -> if (provider == null) models else emptyList()
     }
 
     companion object {
@@ -898,8 +893,6 @@ data class ModelsResponse(
             defaultGrokModel = o.str("defaultGrokModel"),
             piModels = ModelInfo.parseList(o.arr("piModels")),
             defaultPiModel = o.str("defaultPiModel"),
-            geminiModels = ModelInfo.parseList(o.arr("geminiModels")),
-            defaultGeminiModel = o.str("defaultGeminiModel"),
             modelGroups = ModelGroup.parseList(o.arr("modelGroups")),
             freeModels = ModelInfo.parseList(o.arr("freeModels")),
             modelGroupsSupported = o.arr("modelGroups") != null,
@@ -917,7 +910,6 @@ data class ProviderDefaultModels(
     val qoder: String? = null,
     val grok: String? = null,
     val pi: String? = null,
-    val gemini: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): ProviderDefaultModels? =
@@ -929,7 +921,6 @@ data class ProviderDefaultModels(
                     qoder = it.str("qoder"),
                     grok = it.str("grok"),
                     pi = it.str("pi"),
-                    gemini = it.str("gemini"),
                 )
             }
     }
@@ -1277,7 +1268,6 @@ data class ServerConfigInfo(
     val defaultQoderModel: String? = null,
     val defaultGrokModel: String? = null,
     val defaultPiModel: String? = null,
-    val defaultGeminiModel: String? = null,
 ) {
     fun defaultModelFor(provider: String): String =
         defaultModels?.defaultFor(provider)
@@ -1289,7 +1279,6 @@ data class ServerConfigInfo(
                 defaultQoderModel,
                 defaultGrokModel,
                 defaultPiModel,
-                defaultGeminiModel,
             )
 
     companion object {
@@ -1310,7 +1299,6 @@ data class ServerConfigInfo(
             defaultQoderModel = o.str("defaultQoderModel"),
             defaultGrokModel = o.str("defaultGrokModel"),
             defaultPiModel = o.str("defaultPiModel"),
-            defaultGeminiModel = o.str("defaultGeminiModel"),
         )
     }
 }

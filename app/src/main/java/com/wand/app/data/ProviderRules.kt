@@ -40,22 +40,21 @@ enum class WandProvider(
     Grok("grok", "Grok", "grok-cli-headless", "grok"),
     Qoder("qoder", "Qoder", "qoder-cli-print", "qodercli"),
     Pi("pi", "Pi", "pi-cli-json", "pi"),
-    Gemini("gemini", "Gemini", "gemini-cli-json", "gemini"),
     ;
 
     companion object {
         fun fromId(provider: String?): WandProvider? =
             entries.firstOrNull { it.id == provider }
 
-        /** PTY / 命令类接口用的可执行文件名；未识别的 provider 原样透传。 */
+        /** PTY / 命令类接口只允许已支持的 provider。 */
         fun cliCommandFor(provider: String): String =
-            fromId(provider)?.cliCommand ?: provider
+            requireNotNull(fromId(provider)) { "不支持的执行工具：$provider" }.cliCommand
     }
 }
 
 fun providerDisplayName(provider: String?): String = when (provider) {
     null, "terminal" -> "终端"
-    else -> WandProvider.fromId(provider)?.displayName ?: WandProvider.Claude.displayName
+    else -> WandProvider.fromId(provider)?.displayName ?: provider
 }
 
 /**
@@ -100,7 +99,6 @@ val AGENT_TOOL_OPTIONS: List<AgentToolOption> = listOf(
     AgentToolOption("qoder", "qoder", null, "Qoder", "Qoder CLI"),
     AgentToolOption("pi", "pi", WandAgentEngine.Cli, "Pi", "Pi CLI：结构化 JSON 或 PTY 终端"),
     AgentToolOption(WAND_AGENT_TOOL_ID, "pi", WandAgentEngine.Sdk, "Wand Agent", "Wand 自带 Agent：进程内 SDK 执行，只支持结构化会话"),
-    AgentToolOption("gemini", "gemini", null, "Gemini", "Gemini CLI"),
 )
 
 fun agentToolOption(id: String?): AgentToolOption? =
@@ -123,14 +121,13 @@ fun ProviderDefaultModels.defaultFor(provider: String?): String? = when (WandPro
     WandProvider.Grok -> grok
     WandProvider.Qoder -> qoder
     WandProvider.Pi -> pi
-    WandProvider.Gemini -> gemini
-    else -> claude
+    WandProvider.Claude -> claude
+    null -> if (provider == null) claude else null
 }
 
 fun supportedSessionModeIds(provider: String?): Set<String> = when (provider) {
     "codex" -> setOf("full-access")
     "opencode", "grok", "pi" -> setOf("default", "full-access", "managed")
-    // gemini 有 default / auto_edit / yolo（托管、全权限同走 yolo），与 qoder 同组。
-    "qoder", "gemini" -> setOf("default", "full-access", "auto-edit", "managed")
+    "qoder" -> setOf("default", "full-access", "auto-edit", "managed")
     else -> ALL_SESSION_MODE_IDS
 }

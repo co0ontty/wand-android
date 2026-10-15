@@ -27,7 +27,7 @@ class ComposerHoldToTalkTest {
         assertTrue(chat.contains("capsuleMicrophone = { CapsuleMicrophone"))
         val capsule = File(root, "FocusCapsuleComposer.kt").readText()
         assertTrue(capsule.contains("if (exteriorAction != null) microphone()"))
-        assertTrue(capsule.contains("else if (expanded) trailingActions(edit, send) else microphone()"))
+        assertTrue(capsule.contains("else if (expanded) Row { trailingActions(edit, send) } else microphone()"))
         assertTrue(File(root, "FloatingComposerCompanion.kt").readText().contains("currentMic()"))
         assertTrue(File(root, "PtyTerminalScreen.kt").readText().contains("VoiceMicButton("))
         assertTrue(File(root, "ConversationScreens.kt").readText().contains("VoiceMicButton("))

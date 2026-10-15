@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
@@ -82,15 +84,16 @@ internal fun SharedMessageComposer(
     minimalCompanion: MinimalCompanion? = null,
     presentation: ChatInputPresentation? = null,
     capsuleMicrophone: @Composable () -> Unit = {},
-    /** Fixed exterior slot, independent of the editor's visibility and send feedback. */
+    /** Only visible actions reserve space; the expanded editor always has full width. */
     exteriorAction: (@Composable (send: () -> Unit) -> Unit)? = null,
+    actionCount: Int = 0,
 ) {
     if (presentation != null) {
         FocusCapsuleComposer(presentation, sessionKey, draft, onDraftChange, attachments, baseUrl,
             onRemoveAttachment, uploading, attachOpen, onAttachOpenChange, onPickPhoto, onPickFile,
             canSubmit, onSend, deliveryPhase, voicePressed, voiceProcessing, voiceCommitSignal,
             editorOverlayOpen, resourcePanelOpen, onExpandedChange, trailingActions, controls,
-            resourcePanel, menuContent, capsuleMicrophone, exteriorAction)
+            resourcePanel, menuContent, capsuleMicrophone, exteriorAction, actionCount)
         return
     }
     val focusRequester = remember(sessionKey) { FocusRequester() }
@@ -190,7 +193,8 @@ internal fun SharedMessageComposer(
             onSend()
         }
     }
-    val exteriorInset = if (minimalCompanion == null && exteriorAction != null) ComposerActionTouchSize else 0.dp
+    val exteriorWidth = if (minimalCompanion == null && exteriorAction != null) ComposerActionTouchSize * actionCount else 0.dp
+    val exteriorInset = if (exteriorWidth > 0.dp) exteriorWidth + 4.dp else 0.dp
     val editor: @Composable () -> Unit = {
     NativeComposerSurface(
         backdrop = backdrop,
@@ -289,7 +293,7 @@ internal fun SharedMessageComposer(
     }
     if (minimalCompanion == null && exteriorAction != null) androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth()) {
         editor()
-        androidx.compose.foundation.layout.Box(Modifier.size(ComposerActionTouchSize)
+        if (actionCount > 0) androidx.compose.foundation.layout.Box(Modifier.width(exteriorWidth).height(ComposerActionTouchSize)
             .align(androidx.compose.ui.Alignment.BottomEnd)) { exteriorAction(sendAndRefocus) }
     }
     else if (minimalCompanion == null) editor()

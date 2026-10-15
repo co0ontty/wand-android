@@ -17,6 +17,7 @@ import com.wand.app.data.WorkspacePort
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.WorkspaceTask
+import com.wand.app.data.TitleOrganizeResult
 import com.wand.app.data.WorkspaceTaskCreation
 import com.wand.app.data.addSessionWindow
 import com.wand.app.data.reconcileTaskWindowLayout
@@ -329,6 +330,14 @@ class TaskListState(
             load(silent = true)
             true
         } ?: false
+
+    /** 多选任务后按标题归类，并处理这些任务下的会话归属。不确定的不移动。 */
+    suspend fun organizeByTitle(taskIds: List<String>, sessionIds: List<String>): TitleOrganizeResult? =
+        mutate("无法按标题归类") {
+            val result = port.organizeTasksByTitle(taskIds, sessionIds)
+            load(silent = true)
+            result
+        }
 
     suspend fun createTaskWindow(
         taskId: String,

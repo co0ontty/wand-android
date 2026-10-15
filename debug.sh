@@ -18,6 +18,15 @@
 
 set -euo pipefail
 
+# Local opt-in storage policy; unconfigured machines and CI retain normal paths.
+NATIVE_BUILD_ENV="${WAND_NATIVE_BUILD_ENV:-$HOME/.config/wand-build/environment.sh}"
+if [[ -f "$NATIVE_BUILD_ENV" ]]; then
+  source "$NATIVE_BUILD_ENV"
+elif [[ -n "${WAND_NATIVE_BUILD_ENV:-}" ]]; then
+  echo "Native build environment file not found: $NATIVE_BUILD_ENV" >&2
+  exit 1
+fi
+
 cd "$(dirname "$0")"
 
 # JAVA_HOME：优先用环境已设的；否则按 brew openjdk@21 → @17 兜底。
@@ -36,8 +45,19 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:
 
 AVD_NAME="${AVD_NAME:-wand_debug}"
 APP_ID="com.wand.app"
-APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-APK_DIST_DIR="${APK_DIST_DIR:-dist/apk}"
+APP_BUILD_DIR="app/build"
+DEFAULT_APK_DIST_DIR="dist/apk"
+if [[ -n "${WAND_BUILD_STORAGE_ROOT:-}" ]]; then
+  PROJECT_KEY="$(printf "%s" "$(pwd -P)" | shasum -a 256 | awk '{print $1}')"
+  APP_BUILD_DIR="$WAND_BUILD_STORAGE_ROOT/android/$PROJECT_KEY/app"
+  DEFAULT_APK_DIST_DIR="$WAND_BUILD_STORAGE_ROOT/android/$PROJECT_KEY/dist"
+fi
+APK_PATH="$APP_BUILD_DIR/outputs/apk/debug/app-debug.apk"
+APK_DIST_DIR="${APK_DIST_DIR:-$DEFAULT_APK_DIST_DIR}"
+if type wand_assert_external_build_path >/dev/null 2>&1; then
+  wand_assert_external_build_path "$APP_BUILD_DIR"
+  wand_assert_external_build_path "$APK_DIST_DIR"
+fi
 STAMP_FILE="$APK_DIST_DIR/.last-debug-version"
 
 if [[ -z "${JAVA_HOME:-}" || ! -x "$JAVA_HOME/bin/java" ]]; then
@@ -89,7 +109,7 @@ latest_tag_version() {
 
 # 1. 编译
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
-  repair_build_permissions "app/build"
+  repair_build_permissions "$APP_BUILD_DIR"
   STAMP="$(latest_tag_version)-debug.$(date +%m%d%H%M)"
   echo "==> 编译 debug APK（${STAMP}）"
   ./gradlew assembleDebug -PAPP_VERSION_NAME="$STAMP"

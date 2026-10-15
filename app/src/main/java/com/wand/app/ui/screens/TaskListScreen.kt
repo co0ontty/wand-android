@@ -236,6 +236,7 @@ fun TaskListScreen(
     var selectedTaskIds by remember { mutableStateOf(setOf<String>()) }
     var selectedSessionIds by remember { mutableStateOf(setOf<String>()) }
     var confirmManagedAction by remember { mutableStateOf(false) }
+    var confirmOrganize by remember { mutableStateOf(false) }
     var reviewTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     var deleteDirectoryTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -1042,6 +1043,39 @@ fun TaskListScreen(
         }
     }
 
+    if (confirmOrganize) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        WandDialog(
+            title = "按标题归类？",
+            onDismissRequest = { if (!state.mutationBusy) confirmOrganize = false },
+            confirm = WandDialogAction(
+                label = if (state.mutationBusy) "正在归类…" else "确认按标题归类",
+                enabled = !state.mutationBusy && selectedTaskIds.isNotEmpty(),
+                onClick = {
+                    scope.launch {
+                        val result = state.organizeByTitle(selectedTaskIds.toList(), selectedSessionIds.toList())
+                        if (result != null) {
+                            val message = if (result.reason.isBlank()) result.label else "${result.label}。${result.reason}"
+                            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+                            selecting = false
+                            selectedTaskIds = emptySet()
+                            selectedSessionIds = emptySet()
+                            confirmOrganize = false
+                        }
+                    }
+                },
+            ),
+            dismiss = WandDialogAction("取消", onClick = { confirmOrganize = false }),
+        ) {
+            Text(
+                "按标题把所选任务归成同类，并把这些任务里的会话归入标题对应的任务。只共享关键词的不移动。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = WandColors.textSecondary,
+            )
+            MutationErrorText(state.mutationError)
+        }
+    }
+
     deleteDirectoryTarget?.let { group ->
         WandDialog(
             title = "删除工作区「${group.workspaceName}」？",
@@ -1327,6 +1361,9 @@ fun TaskListScreen(
                                 actionLabel = describeManagedAction(resolvedManagedAction),
                                 actionDestructive = managedSelectionIsDestructive(resolvedManagedAction),
                                 onAction = { if (managedSelection.count > 0) confirmManagedAction = true },
+                                onOrganize = if (selectedTaskIds.isNotEmpty()) {
+                                    { confirmOrganize = true }
+                                } else null,
                                 onDone = {
                                     selecting = false
                                     selectedTaskIds = emptySet()
@@ -1631,6 +1668,7 @@ private fun SidebarManageBar(
     onSelectAll: () -> Unit,
     onAction: () -> Unit,
     onDone: () -> Unit,
+    onOrganize: (() -> Unit)? = null,
 ) {
     WandCard(
         modifier = Modifier.fillMaxWidth(),
@@ -1652,6 +1690,11 @@ private fun SidebarManageBar(
             )
             TextButton(onClick = onSelectAll, enabled = !busy) {
                 Text(if (allSelected) "取消全选" else "全选")
+            }
+            if (onOrganize != null) {
+                TextButton(onClick = onOrganize, enabled = !busy) {
+                    Text("按标题归类")
+                }
             }
             TextButton(onClick = onAction, enabled = !busy && count > 0) {
                 // 纯归档不是破坏性操作，不渲染成红色（对齐 web 端 managedSelectionIsDestructive）。

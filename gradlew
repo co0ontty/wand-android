@@ -86,6 +86,15 @@ APP_BASE_NAME=${0##*/}
 # Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
 APP_HOME=$( cd "${APP_HOME:-./}" > /dev/null && pwd -P ) || exit
 
+# Optional local native-storage policy; CI/standalone checkouts without it are unchanged.
+native_build_env=${WAND_NATIVE_BUILD_ENV:-$HOME/.config/wand-build/environment.sh}
+if [ -f "$native_build_env" ]; then
+    . "$native_build_env" || exit 1
+elif [ -n "${WAND_NATIVE_BUILD_ENV:-}" ]; then
+    echo "Native build environment file not found: $native_build_env" >&2
+    exit 1
+fi
+
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD=maximum
 
@@ -207,6 +216,41 @@ DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 #     and any embedded shellness will be escaped.
 #   * For example: A user cannot expect ${Hostname} to be expanded, as it is an environment variable and will be
 #     treated as '${Hostname}' itself on the command line.
+
+# Keep project-local Gradle state external as well as GRADLE_USER_HOME/build outputs.
+if [ -n "${WAND_BUILD_STORAGE_ROOT:-}" ]; then
+    project_key=$( printf '%s' "$APP_HOME" | shasum -a 256 | awk '{print $1}' )
+    project_cache="$WAND_BUILD_STORAGE_ROOT/android/$project_key/project-cache"
+    if command -v wand_assert_external_build_path >/dev/null 2>&1; then
+        wand_assert_external_build_path "$project_cache" || exit 1
+    fi
+    cache_argument_pending=false
+    has_cache_argument=false
+    for gradle_argument do
+        if "$cache_argument_pending"; then
+            if command -v wand_assert_external_build_path >/dev/null 2>&1; then
+                wand_assert_external_build_path "$gradle_argument" || exit 1
+            fi
+            cache_argument_pending=false
+            has_cache_argument=true
+        else
+            case "$gradle_argument" in
+                --project-cache-dir) cache_argument_pending=true ;;
+                --project-cache-dir=*)
+                    if command -v wand_assert_external_build_path >/dev/null 2>&1; then
+                        wand_assert_external_build_path "${gradle_argument#*=}" || exit 1
+                    fi
+                    has_cache_argument=true ;;
+            esac
+        fi
+    done
+    if "$cache_argument_pending"; then
+        die "--project-cache-dir requires a path"
+    fi
+    if ! "$has_cache_argument"; then
+        set -- --project-cache-dir "$project_cache" "$@"
+    fi
+fi
 
 set -- \
         "-Dorg.gradle.appname=$APP_BASE_NAME" \

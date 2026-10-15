@@ -18,7 +18,6 @@ private val GENERIC_SESSION_TITLES = setOf(
     "grok",
     "qoder",
     "pi",
-    "gemini",
     "终端",
 )
 

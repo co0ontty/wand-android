@@ -272,7 +272,7 @@ internal fun listSessionLabel(
 }
 
 private val PROVIDER_SEQUENCE_TITLE =
-    Regex("^(claude|codex|opencode|grok|qoder|pi|gemini|终端)\\s+\\d+$", RegexOption.IGNORE_CASE)
+    Regex("^(claude|codex|opencode|grok|qoder|pi|终端)\\s+\\d+$", RegexOption.IGNORE_CASE)
 
 /** 系统自己生成的占位标题，不是会话标题。 */
 internal fun isPlaceholderSessionTitle(title: String): Boolean =

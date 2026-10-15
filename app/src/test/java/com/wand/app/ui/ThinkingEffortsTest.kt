@@ -42,7 +42,7 @@ class ThinkingEffortsTest {
 
     @Test
     fun nonReasoningModelsOnlyOfferAutomatic() {
-        for (provider in listOf("pi", "codex", "opencode", "gemini")) {
+        for (provider in listOf("pi", "codex", "opencode")) {
             assertEquals(listOf("off"), options(provider, "off").map { it.id })
         }
     }
@@ -97,7 +97,6 @@ class ThinkingEffortsTest {
                 options(provider, "low", "medium", "high", "max", "ultracode").map { it.id })
         }
         assertEquals(listOf("off", "standard", "deep", "max"), options("grok", "low", "high", "xhigh").map { it.id })
-        assertEquals(listOf("off"), options("gemini", "off").map { it.id })
     }
 
     @Test

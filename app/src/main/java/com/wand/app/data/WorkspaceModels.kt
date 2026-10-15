@@ -31,7 +31,6 @@ enum class WorkspaceSessionTarget(val raw: String, val label: String, val descri
     Qoder("qoder", "Qoder", "Qoder CLI"),
     Pi("pi", "Pi", "Pi CLI：结构化 JSON 或 PTY 终端"),
     WandAgent("wand-agent", "Wand Agent", "Wand 自带 Agent：进程内 SDK 执行，只支持结构化会话"),
-    Gemini("gemini", "Gemini", "Gemini CLI"),
     Shell("shell", "空白终端", "仅启动系统 Shell");
 
     val isShell: Boolean get() = this == Shell

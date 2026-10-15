@@ -560,8 +560,8 @@ class WandApi(baseUrl: String, val token: String?,
                 "qoder" -> "defaultQoderModel" to "qoder"
                 "grok" -> "defaultGrokModel" to "grok"
                 "pi" -> "defaultPiModel" to "pi"
-                "gemini" -> "defaultGeminiModel" to "gemini"
-                else -> "defaultModel" to "claude"
+                "claude" -> "defaultModel" to "claude"
+                else -> throw IllegalArgumentException("不支持的执行工具：$modelProvider")
             }
             body.put(legacyKey, model)
             body.put("defaultModels", JSONObject().put(canonicalProvider, model))
@@ -1076,6 +1076,33 @@ class WandApi(baseUrl: String, val token: String?,
         WorkspaceTask.parse(
             requestObject("POST", "/api/workspace-tasks/${encode(taskId)}/archive"),
         ) ?: throw WandApiException(500, "归档任务响应无效。")
+
+    override suspend fun organizeTasksByTitle(taskIds: List<String>, sessionIds: List<String>): TitleOrganizeResult {
+        val response = requestObject(
+            "POST",
+            "/api/tasks/organize-by-title",
+            JSONObject().put("taskIds", JSONArray(taskIds)).put("sessionIds", JSONArray(sessionIds)),
+            timeoutSec = 90,
+        )
+        val moved = response.optJSONArray("movedSessions")?.length() ?: 0
+        val categorized = response.optJSONArray("categorizedTasks")?.length() ?: 0
+        val refused = response.optJSONArray("refused")
+        val firstReason = refused?.optJSONObject(0)?.optString("reason").orEmpty()
+        val label = if (moved == 0 && categorized == 0) {
+            firstReason.ifBlank { "所选标题已归类" }
+        } else {
+            buildString {
+                append("已")
+                if (categorized > 0) append("归类 $categorized 个任务")
+                if (categorized > 0 && moved > 0) append("、")
+                if (moved > 0) append("归属 $moved 个会话")
+            }
+        }
+        val reason = if (moved + categorized > 0 && refused != null && refused.length() > 0) {
+            "另有 ${refused.length()} 项未处理：$firstReason"
+        } else firstReason
+        return TitleOrganizeResult(moved, categorized, label, reason)
+    }
 
     override suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
         val sessionIds = workspaceTask(taskId).sessions.map { it.id }.distinct()

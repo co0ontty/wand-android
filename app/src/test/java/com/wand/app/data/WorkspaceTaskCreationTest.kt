@@ -222,10 +222,9 @@ class WorkspaceTaskCreationTest {
         assertTrue("grok" in raws)
         assertTrue("qoder" in raws)
         assertTrue("pi" in raws)
-        assertTrue("gemini" in raws)
         assertTrue("shell" in raws)
         // Wand Agent（进程内 SDK）与 Pi CLI 是两条独立选项。
         assertTrue("wand-agent" in raws)
-        assertEquals(9, raws.size)
+        assertEquals(8, raws.size)
     }
 }
