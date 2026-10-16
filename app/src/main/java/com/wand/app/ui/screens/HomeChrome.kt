@@ -86,6 +86,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
+import com.wand.app.data.WandApi
+import com.wand.app.data.conversationOrganizationTarget
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
@@ -650,6 +652,9 @@ internal fun HomeWorkspaceCard(
     onMoveSession: (WorkspaceSessionSummary) -> Unit,
     onNewTask: () -> Unit,
     onRenameDirectory: () -> Unit,
+    organizationApi: WandApi? = null,
+    searchQuery: String = "",
+    onOrganizationFinished: suspend () -> Unit = {},
     onNewWindow: (WorkspaceTaskSummary) -> Unit,
     onRename: (WorkspaceTaskSummary) -> Unit,
     onClear: (WorkspaceTaskSummary) -> Unit,
@@ -663,6 +668,21 @@ internal fun HomeWorkspaceCard(
     val counts = homeSessionCounts(sessions)
     val reduceMotion = reduceMotionEnabled()
     var menuOpen by remember { mutableStateOf(false) }
+    var organizationPanelOpen by remember(group.id) { mutableStateOf(false) }
+    val organizationScope = androidx.compose.runtime.rememberCoroutineScope()
+    val organizationTarget = group.conversationOrganizationTarget()
+    val organizationController = remember(organizationApi, organizationTarget) {
+        if (organizationApi != null && organizationTarget != null)
+            ConversationOrganizationController(organizationApi, organizationTarget, organizationScope, onOrganizationFinished)
+        else null
+    }
+    androidx.compose.runtime.DisposableEffect(organizationController) {
+        onDispose { organizationController?.stopPolling() }
+    }
+    androidx.compose.runtime.LaunchedEffect(selecting, fold, dragging, searchQuery) {
+        organizationPanelOpen = false
+        menuOpen = false
+    }
     // 空工作区没有可折叠的内容：渲染成一行紧凑条目，点它直接去建任务，
     // 而不是留一张带折叠控制、点了没反应的卡片。
     val isEmpty = group.tasks.isEmpty() && group.standaloneSessions.isEmpty()
@@ -759,6 +779,13 @@ internal fun HomeWorkspaceCard(
                             onClick = { menuOpen = false; onReview() },
                         )
                     }
+                    if (organizationApi != null && group.conversationOrganizationTarget() != null) {
+                        DropdownMenuItem(
+                            text = { Text("根据会话内容自动分组") },
+                            leadingIcon = { Icon(WandIcons.sparkle, contentDescription = null) },
+                            onClick = { menuOpen = false; organizationPanelOpen = !organizationPanelOpen },
+                        )
+                    }
                     if (group.workspaceId != GLOBAL_WORKSPACE_ID) {
                         DropdownMenuItem(
                             text = { Text("重命名工作区") },
@@ -776,6 +803,13 @@ internal fun HomeWorkspaceCard(
                     }
                 }
             }
+        }
+        WandInlinePanel(visible = organizationPanelOpen && organizationController != null, growFrom = Alignment.Top) {
+            if (organizationController != null) ConversationOrganizationPanel(
+                controller = organizationController,
+                group = group,
+                onClose = { organizationPanelOpen = false },
+            )
         }
         // 抓起时不再组合正文：即使 AnimatedVisibility 正在退场，也不能让其残影
         // 透过悬浮标题行。普通点按收起仍保留完整的反向动画。
@@ -1160,7 +1194,7 @@ private fun HomeTaskBlock(
 
 /**
  * 首页「最近对话」的一张分组卡：一级行交代「谁」和「几件事」，二级行是该员工/团队/终端下的会话。
- * 员工单条在全局展开时直接显示；收起/在跑时保留标题以便临时展开。团队与终端始终保留一级入口。
+ * 员工、团队与终端始终保留一级身份；筛选和数量变化只改变二级会话。
  */
 @Composable
 internal fun HomeGroupCard(
@@ -1278,7 +1312,7 @@ internal fun HomeGroupCard(
         shape = WandShapes.lg,
         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
     ) {
-        // 团队与终端始终是「一级 = 分组、二级 = 会话」；员工单条在全局展开时直接显示会话。
+        // 所有会话保留「一级 = 身份、二级 = 会话」，不因单条或筛选改变结构。
         // 例外：在跑档下这一组一条都没露出来时，仍然画一级行（只是没有二级内容），
         // 否则「员工/工作区这些还是保留」就落空了。
         if (!showsHeader) {

@@ -70,13 +70,24 @@ fun SessionSnapshot.activityStatus(): String = effectiveSessionStatus(
     viewedCompletionRevision = viewedCompletionRevision,
 )
 
-fun WorkspaceSessionSummary.activityStatus(): String = effectiveSessionStatus(
-    sessionKind = sessionKind,
-    status = status,
-    provider = provider,
-    ptyBusy = ptyBusy,
-    providerCliActive = providerCliActive,
-    inFlight = inFlight,
-    completionRevision = if (archived == true || (providerCliExitCode ?: 0) != 0) 0 else completionRevision,
-    viewedCompletionRevision = viewedCompletionRevision,
-)
+fun WorkspaceSessionSummary.activityStatus(): String {
+    val effective = effectiveSessionStatus(
+        sessionKind = sessionKind,
+        status = status,
+        provider = provider,
+        ptyBusy = ptyBusy,
+        providerCliActive = providerCliActive,
+        inFlight = inFlight,
+        completionRevision = if (archived == true || ptyCommandRunning == true || (providerCliExitCode ?: 0) != 0) 0 else completionRevision,
+        viewedCompletionRevision = viewedCompletionRevision,
+    )
+    if (status in setOf("permission", "permission-blocked", "waiting-input", "waiting_input", "failed", "reconnecting")) return effective
+    // 工作区摘要与 Web 侧栏同源：运行标记独立于 provider 进程是否仍在提示符。
+    if (archived != true && (ptyBusy == true || inFlight == true || status == "thinking")) {
+        return if (status == "thinking") "thinking" else "running"
+    }
+    if (!isStructured && !isProviderCliSession(provider) && status == "running") {
+        return if (ptyCommandRunning == true) "running" else if (effective == "just-completed") effective else "idle"
+    }
+    return effective
+}

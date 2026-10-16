@@ -68,7 +68,7 @@ internal fun recentHomeConversations(
     group.tasks.flatMap { task ->
         task.sessions.map { session -> HomeRecentConversation(group, task, session) }
     } + group.standaloneSessions.map { session -> HomeRecentConversation(group, null, session) }
-}.distinctBy { it.session.id }
+}.filter { it.session.archived != true }.distinctBy { it.session.id }
     .sortedWith(homeRecentConversationOrder)
     .take(limit.coerceAtLeast(0))
 
@@ -112,7 +112,7 @@ internal fun homeGroupKeyOf(session: WorkspaceSessionSummary): String =
 
 /**
  * 一级分组：员工 / 团队 / PTY 终端 / 空白终端。
- * 团队与终端保留一级入口；员工只有一条会话时一级行本身就是那条会话。
+ * 所有身份保留一级入口，会话始终在二级显示。
  */
 internal data class HomeGroup(
     val key: String,
@@ -129,16 +129,16 @@ internal data class HomeGroup(
 }
 
 /**
- * 团队与终端始终渲染一级行：终端数量与筛选档位不能改变快捷新增入口的位置。
- * 员工在只有一条会话时一级行就是那张会话卡，不套空壳。
+ * 所有非空身份组始终渲染一级行：数量与筛选档位不改变身份和快捷入口。
  */
 internal fun homeGroupShowsHeader(group: HomeGroup): Boolean =
-    group.kind == HomeGroupKind.Team || group.kind.isTerminal || group.isCollapsible
+    group.conversations.isNotEmpty() || group.kind.isTerminal
 
 /**
- * 员工/团队按最近窗口分组；终端不受这个窗口截断，放在末尾。
+ * 员工/团队按最近窗口分组（limit）；终端不受这个窗口截断，放在末尾。
+ * 工作区首页与 Web 侧栏都传全量（Int.MAX_VALUE）：一个员工展开的是完整会话列表，
+ * 不能被全局八条窗口静默截掉旧会话——否则整组或旧会话会从首页消失。
  * 只有空白终端入口常驻，PTY 分组必须有真实会话，不能凭空多画一个「0 会话」入口。
- * 调用方传全量会话，避免旧终端或正在跑的终端被「最近 N 条」提前丢掉。
  */
 internal fun recentHomeGroups(
     conversations: List<HomeRecentConversation>,

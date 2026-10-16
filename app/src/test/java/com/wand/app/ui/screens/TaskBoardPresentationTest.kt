@@ -6,6 +6,8 @@ import com.wand.app.data.BoardTaskAgent
 import com.wand.app.data.BoardTaskMilestone
 import com.wand.app.data.BoardTaskSession
 import com.wand.app.data.BoardTaskWorkspace
+import com.wand.app.data.TaskDirectoryGroup
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.boardTaskAgentLabel
 import com.wand.app.data.groupBoardSessionsByAgent
 import com.wand.app.data.boardTaskStatusLabel
@@ -431,6 +433,59 @@ class TaskBoardPresentationTest {
     )
 
     @Test
+    fun standaloneBoardGroupsFilterAndDeduplicateSafely() {
+        val alpha = TaskDirectoryGroup(
+            "alpha", "自定义 Alpha", "/repo/alpha", false, emptyList(), listOf(
+                workspaceSession("s1", "修登录"),
+                workspaceSession("s2", "写文档"),
+                workspaceSession("archived", "旧会话", archived = true),
+                workspaceSession("chat", "群聊", teamChat = com.wand.app.data.WorkspaceSessionTeamChat("run", "组", 2)),
+            ),
+        )
+        val beta = TaskDirectoryGroup("beta", "Beta", "/repo/beta", true, emptyList(), listOf(workspaceSession("s3", "部署")))
+        val formal = task(id = "formal", sessions = listOf(session("s2")))
+        assertEquals(listOf("自定义 Alpha - 未分组任务", "Beta - 未分组任务"),
+            boardStandaloneGroups(listOf(alpha, beta), listOf(formal), "", "").map { it.title })
+        assertEquals(listOf("s1"), boardStandaloneGroups(listOf(alpha, beta), listOf(formal), "修登录", "").single().sessions.map { it.id })
+        assertEquals(listOf("s1", "s2"), boardStandaloneGroups(listOf(alpha), emptyList(), "alpha", "").single().sessions.map { it.id })
+        assertTrue(boardStandaloneGroups(listOf(alpha, beta), emptyList(), "", "alpha").single().sessions.none { it.id == "s3" })
+    }
+
+    @Test
+    fun standaloneBoardGroupsRetainEmployeeStepsButDropTeamChatAndArchives() {
+        val group = TaskDirectoryGroup("a", "A", "/a", false, emptyList(), listOf(
+            workspaceSession("employee", "正常工作", employeeName = "工程师"),
+            workspaceSession("step", "成员步骤", workspaceTaskId = null,
+                teamStep = com.wand.app.data.WorkspaceSessionTeamStep("run", "step", "work", "标题", "m", "成员", "组", "running", "running", false)),
+            workspaceSession("bound", "任务会话", workspaceTaskId = "task"),
+            workspaceSession("arch", "归档", archived = true),
+            workspaceSession("chat", "群聊", teamChat = com.wand.app.data.WorkspaceSessionTeamChat("run", "组", 2)),
+        ))
+        assertEquals(listOf("employee", "step"), boardStandaloneGroups(listOf(group), emptyList(), "", "").single().sessions.map { it.id })
+    }
+
+    @Test
+    fun standaloneGroupsDisappearAfterClassificationAndKeepExactWorkspaceScope() {
+        val alpha = TaskDirectoryGroup("alpha", "wand", "/repo", false, emptyList(), listOf(workspaceSession("a", "正常工作", employeeName = "虎妞")))
+        val beta = TaskDirectoryGroup("beta", "同目录另项目", "/repo", false, emptyList(), listOf(workspaceSession("b", "别的工作")))
+        val global = TaskDirectoryGroup(com.wand.app.data.GLOBAL_WORKSPACE_ID, "全局", "/scratch", false, emptyList(), listOf(workspaceSession("g", "全局工作")), global = true)
+        val groups = listOf(alpha, beta, global)
+        assertEquals(listOf("a"), boardStandaloneGroups(groups, emptyList(), "", "alpha").flatMap { it.sessions }.map { it.id })
+        assertEquals(listOf("a"), boardStandaloneGroups(groups, emptyList(), "虎妞", "").flatMap { it.sessions }.map { it.id })
+        assertEquals(3, boardStandaloneGroups(groups, emptyList(), "未分组任务", "").size)
+        assertEquals("全局 - 未分组任务", boardStandaloneGroups(groups, emptyList(), "", com.wand.app.data.GLOBAL_WORKSPACE_ID).single().title)
+        val classified = task(id = "new-real-task", sessions = listOf(session("a")))
+        assertTrue(boardStandaloneGroups(groups, listOf(classified), "", "alpha").isEmpty())
+        assertEquals(listOf("a"), boardStandaloneGroups(groups, listOf(task(status = "archived", sessions = listOf(session("a")))), "", "alpha").single().sessions.map { it.id })
+    }
+
+    @Test
+    fun emptyStandaloneGroupsAreNotCreated() {
+        val empty = TaskDirectoryGroup("a", "A", "/a", false, emptyList(), emptyList())
+        assertTrue(boardStandaloneGroups(listOf(empty), emptyList(), "", "").isEmpty())
+    }
+
+    @Test
     fun createTeamChoiceOnlyVisibleForDispatchingCreateWithTeams() {
         val teams = listOf(
             com.wand.app.data.AiTeam(
@@ -536,6 +591,20 @@ class TaskBoardPresentationTest {
         assertFalse("没描述起不了 run", boardDispatchesToTeam(true, dispatches = true, hasDescription = false))
         assertFalse("CLI 目标永不复用团队旧卡", boardDispatchesToTeam(false, dispatches = true, hasDescription = true))
     }
+
+    private fun workspaceSession(
+        id: String,
+        title: String,
+        archived: Boolean? = null,
+        workspaceTaskId: String? = null,
+        employeeName: String? = null,
+        teamChat: com.wand.app.data.WorkspaceSessionTeamChat? = null,
+        teamStep: com.wand.app.data.WorkspaceSessionTeamStep? = null,
+    ) = WorkspaceSessionSummary(
+        id = id, provider = null, sessionKind = "structured", runner = null, title = title,
+        status = "idle", cwd = "/tmp", startedAt = "2026-01-01", archived = archived,
+        workspaceTaskId = workspaceTaskId, employeeName = employeeName, teamChat = teamChat, teamStep = teamStep,
+    )
 
     private fun session(
         id: String = "session-1",

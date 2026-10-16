@@ -52,6 +52,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
 
     private val baseUrl = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
+    private val feedback = ClientFeedback(this.baseUrl, appToken)
     private val handler = Handler(Looper.getMainLooper())
 
     private var webSocket: WebSocket? = null
@@ -78,6 +79,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                 SystemClock.elapsedRealtime() - lastMessageAt > WATCHDOG_TIMEOUT_MS
             ) {
                 lastMessageAt = SystemClock.elapsedRealtime()
+                feedback.report("websocket_error", "realtime", java.net.SocketTimeoutException("WebSocket heartbeat timeout"))
                 scheduleReconnect()
             }
             handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
@@ -260,6 +262,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                 handler.post {
                     if (gen != generation || closed) return@post
                     WandLog.w(TAG, "WebSocket 断开：${t.javaClass.simpleName} HTTP ${response?.code ?: 0}", t)
+                    feedback.report("websocket_error", "realtime", t, response?.code?.toString())
                     scheduleReconnect(authRequired = response?.code == 401)
                 }
             }
@@ -269,6 +272,9 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
                     if (gen != generation || closed) return@post
                     val unauthorized = code == 1008 && reason == "Unauthorized"
                     WandLog.w(TAG, "WebSocket 关闭 code=$code auth=$unauthorized")
+                    if (code != 1000 && code != 1001) {
+                        feedback.report("websocket_error", "realtime", java.io.IOException(reason), code.toString())
+                    }
                     scheduleReconnect(authRequired = unauthorized)
                 }
             }

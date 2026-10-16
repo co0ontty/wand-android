@@ -246,16 +246,19 @@ fun TaskListScreen(
     val reduceMotion = reduceMotionEnabled()
     val allGroups = directoryTreeGroups(state.groups)
     var attentionOnly by remember { mutableStateOf(false) }
+    var workspaceQuery by rememberSaveable { mutableStateOf("") }
     // 三段式折叠档位来自 state（按服务端持久化）：第三档是一道筛选，只列在跑的会话。
     // 两个小节各一个档位（控制长在各自表头文字的右边）：卡片与卡内所有层都跟随自己那一区。
     val recentFold = state.recentFold
     val workspaceFold = state.workspaceFold
     val runningOnly = recentFold.filtersRunning || workspaceFold.filtersRunning
     // 内容不由投影删减：一级行（员工、工作区）永远留着，卡片按区档位决定露哪几行。
-    val visibleGroups = if (attentionOnly) attentionOnlyGroups(allGroups) else allGroups
-    val recentGroups = recentHomeGroups(
-        recentHomeConversations(visibleGroups, limit = Int.MAX_VALUE), contactsEmployees,
-    )
+    val searchedGroups = searchHomeGroups(allGroups, workspaceQuery, contactsEmployees)
+    val visibleGroups = if (attentionOnly) attentionOnlyGroups(searchedGroups) else searchedGroups
+    val recentGroups = searchHomeRecentGroups(recentHomeGroups(
+        recentHomeConversations(allGroups, limit = Int.MAX_VALUE), contactsEmployees,
+        limit = Int.MAX_VALUE,
+    ), workspaceQuery, contactsEmployees, attentionOnly)
     val contactConversations = recentHomeConversations(allGroups, limit = Int.MAX_VALUE)
 
     /** 某个区的档位：在跑档同时让开「只看等你」（两道筛选互斥），并清掉列表多选态。 */
@@ -326,7 +329,7 @@ fun TaskListScreen(
         }
     }
     val managedSelection = SidebarManageSelection(selectedTaskIds, selectedSessionIds)
-    val resolvedManagedAction = resolveManagedAction(managedSelection, visibleGroups)
+    val resolvedManagedAction = resolveManagedAction(managedSelection, allGroups)
     val hasVisibleContent = visibleGroups.isNotEmpty()
     val hasAnyContent = allGroups.isNotEmpty()
     var refreshingSessions by remember { mutableStateOf(false) }
@@ -1231,6 +1234,18 @@ fun TaskListScreen(
                         { invalidateRecentConversationOpening(); collapse() }
                     },
                 )
+                if (homeListMode == HomeListMode.Sessions) {
+                    com.wand.app.ui.components.WandInlineSearchField(
+                        expanded = true,
+                        query = workspaceQuery,
+                        onQueryChange = { workspaceQuery = it; invalidateRecentConversationOpening() },
+                        onCollapse = null,
+                        placeholder = "搜索对话、员工、任务或目录",
+                        autoFocus = false,
+                        onClear = { workspaceQuery = "" },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
                 // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
                 // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
                 if (homeListMode != HomeListMode.Im && homeListMode != HomeListMode.Contacts &&
@@ -1395,6 +1410,13 @@ fun TaskListScreen(
                             // 独立圆角表面之间留出背景缝隙；卡片内部仍由各自的行布局管理。
                             verticalArrangement = Arrangement.spacedBy(WandSpacing.xs),
                         ) {
+                        if (workspaceQuery.isNotBlank() && visibleGroups.isEmpty() && recentGroups.isEmpty()) {
+                            item(key = "workspace-search-empty") {
+                                Text("没有匹配的会话，试试员工名、任务名或目录。",
+                                    color = WandColors.textMuted,
+                                    modifier = Modifier.padding(vertical = 12.dp))
+                            }
+                        }
                         item(key = "recent-conversation-header") {
                             HomeSectionHeaderRow(
                                 title = "最近对话",
@@ -1404,7 +1426,7 @@ fun TaskListScreen(
                             )
                         }
                         // 按一级归属（员工/团队/PTY 终端/空白终端）分组成卡片：
-                        // 员工单条直接显示；终端常驻，具体会话始终放在二级。
+                        // 身份头始终保留，具体会话放在二级。
                         items(recentGroups, key = { "recent:${it.key}" }) { group ->
                             val employee = homeGroupAssignableEmployee(group, contactsEmployees)
                             val conversation = group.employeeId?.let { recentConversations[it] }
@@ -1413,7 +1435,7 @@ fun TaskListScreen(
                             HomeGroupCard(
                                 group = group,
                                 employees = contactsEmployees,
-                                fold = state.groupFold(FOLD_SECTION_RECENT, group.key),
+                                fold = if (workspaceQuery.isNotBlank()) HomeFoldMode.Expand else state.groupFold(FOLD_SECTION_RECENT, group.key),
                                 onToggleFold = if (recentFold == HomeFoldMode.Expand) null else ({
                                     invalidateRecentConversationOpening()
                                     state.toggleTemporaryExpansion(FOLD_SECTION_RECENT, group.key)
@@ -1516,7 +1538,7 @@ fun TaskListScreen(
                                 )
                             }
                         }
-                    val canReorder = !selecting && !attentionOnly && visibleGroups.size > 1
+                    val canReorder = !selecting && !attentionOnly && workspaceQuery.isBlank() && visibleGroups.size > 1
                     itemsIndexed(visibleGroups, key = { _, group -> group.id }) { _, group ->
                         val dragging = dragState.isDragging(group.id)
                         HomeWorkspaceCard(
@@ -1539,7 +1561,7 @@ fun TaskListScreen(
                                     )
                                 },
                             ),
-                            fold = state.groupFold(FOLD_SECTION_WORKSPACE, group.id),
+                            fold = if (workspaceQuery.isNotBlank()) HomeFoldMode.Expand else state.groupFold(FOLD_SECTION_WORKSPACE, group.id),
                             onToggleFold = if (workspaceFold == HomeFoldMode.Expand) null else ({
                                 invalidateRecentConversationOpening()
                                 state.toggleTemporaryExpansion(FOLD_SECTION_WORKSPACE, group.id)
@@ -1577,6 +1599,9 @@ fun TaskListScreen(
                                 renameDirectoryTarget = group
                                 state.clearMutationError()
                             },
+                            organizationApi = directoryApi,
+                            searchQuery = workspaceQuery,
+                            onOrganizationFinished = { state.refreshAfterMutation() },
                             onNewWindow = { task ->
                                 invalidateRecentConversationOpening()
                                 selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
@@ -1603,7 +1628,7 @@ fun TaskListScreen(
                                 state.clearMutationError()
                             },
                             onClear = { task ->
-                                clearTarget = task
+                                clearTarget = allGroups.flatMap { it.tasks }.firstOrNull { it.id == task.id } ?: task
                                 state.clearMutationError()
                             },
                             onArchive = { task ->
@@ -1619,7 +1644,7 @@ fun TaskListScreen(
                                 state.clearMutationError()
                             },
                             onDeleteDirectory = {
-                                deleteDirectoryTarget = group
+                                deleteDirectoryTarget = allGroups.firstOrNull { it.id == group.id } ?: group
                                 state.clearMutationError()
                             },
                             onReview = { reviewTarget = group },

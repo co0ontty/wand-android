@@ -176,7 +176,7 @@ private fun ModelGroupEditor(group: ModelGroup, catalog: ModelsResponse?, busy: 
     var expanded by remember(group.provider, group.id) { mutableStateOf(!group.builtIn && group.models.isEmpty()) }
     var custom by remember(group.provider, group.id) { mutableStateOf("") }
     var remove by remember(group.provider, group.id) { mutableStateOf(false) }
-    val models = if (group.builtIn) catalog?.freeModels.orEmpty() else groupEditorModels(catalog, group.provider)
+    val models = if (group.openRouterFree) catalog?.freeModels.orEmpty() else groupEditorModels(catalog, group.provider)
     WandCard(contentPadding = PaddingValues(10.dp)) {
         Row(Modifier.fillMaxWidth().clickable(enabled = !busy) { expanded = !expanded; remove = false },
             verticalAlignment = Alignment.CenterVertically) {
@@ -205,7 +205,7 @@ private fun ModelGroupEditor(group: ModelGroup, catalog: ModelsResponse?, busy: 
                             enabled = !busy, onClick = { onChange(group.copy(models = group.models.filterNot { it == id })) })
                     }
                 }
-                if (group.models.isEmpty()) Text(if (group.builtIn) "尚无已验证的免费模型，请先在 Web 设置 OpenRouter Key 并同步。" else "请添加至少一个具体模型。",
+                if (group.models.isEmpty()) Text(if (group.openCodeFree) "服务端正在维护 OpenCode 免费分组；暂时没有实测可用模型。" else if (group.builtIn) "尚无已验证的免费模型，请先在 Web 设置 OpenRouter Key 并同步。" else "请添加至少一个具体模型。",
                     color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall)
                 if (!group.builtIn) {
                     val available = models.filterNot { it.id in group.models }

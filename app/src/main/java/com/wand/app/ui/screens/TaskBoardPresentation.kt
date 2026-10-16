@@ -4,6 +4,8 @@ import com.wand.app.data.BOARD_TASK_STATUSES
 import com.wand.app.data.AiTeam
 import com.wand.app.data.BoardTask
 import com.wand.app.data.BoardTaskSession
+import com.wand.app.data.TaskDirectoryGroup
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.boardTaskAgentLabels
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
@@ -56,6 +58,46 @@ internal fun filterBoardTasks(
     status: String = "",
 ): List<BoardTask> = tasks.filter { task ->
     boardTaskMatches(task, query, workspaceId) && (status.isBlank() || task.status == status)
+}
+
+/** 看板里的安全临时默认组：只投影真实目录会话，不创建 wand task。 */
+internal data class BoardStandaloneGroup(
+    val workspaceId: String,
+    val title: String,
+    val workspaceCwd: String,
+    val sessions: List<WorkspaceSessionSummary>,
+)
+
+/** 目录/路径命中时保留全部成员，否则只保留标题命中的成员。 */
+internal fun boardStandaloneGroups(
+    groups: List<TaskDirectoryGroup>,
+    formalTasks: List<BoardTask>,
+    query: String,
+    workspaceId: String,
+): List<BoardStandaloneGroup> {
+    val formalIds = (formalTasks.asSequence().filter { it.status != "archived" }
+        .flatMap { task -> task.sessionIds.asSequence() + task.sessions.asSequence().map { it.id } } +
+        groups.asSequence().flatMap { it.tasks.asSequence() }.flatMap { it.sessions.asSequence() }.map { it.id })
+        .toSet()
+    val needle = query.trim()
+    val seen = mutableSetOf<String>()
+    return groups.mapNotNull { group ->
+        if (workspaceId.isNotBlank() && group.workspaceId != workspaceId) return@mapNotNull null
+        val candidates = group.standaloneSessions.filter {
+            it.id !in formalIds && it.id !in seen && it.workspaceTaskId == null &&
+                it.archived != true && it.teamChat == null
+        }
+        if (candidates.isEmpty()) return@mapNotNull null
+        val directoryMatches = needle.isBlank() ||
+            "${group.workspaceName} - 未分组任务 ${group.workspaceCwd}".contains(needle, ignoreCase = true)
+        val visible = if (directoryMatches) candidates else candidates.filter { session ->
+            listOf(session.title, session.cwd, session.employeeName, com.wand.app.data.workspaceProviderLabel(session.provider))
+                .any { it?.contains(needle, ignoreCase = true) == true }
+        }
+        if (visible.isEmpty()) return@mapNotNull null
+        seen += visible.map { it.id }
+        BoardStandaloneGroup(group.workspaceId, "${group.workspaceName} - 未分组任务", group.workspaceCwd, visible)
+    }
 }
 
 /** 顺序以 GET /api/wand-tasks 返回为准，客户端不再本地排序。 */

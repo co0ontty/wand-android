@@ -8,6 +8,8 @@ const val MODEL_GROUP_PREFIX = "wand-model-group/"
 const val AUTO_ASSIGN_SELECTOR = "wand-auto-assign/auto"
 const val AUTO_ASSIGN_LABEL = "智能分配"
 const val FREE_MODEL_GROUP_ID = "openrouter-free"
+const val OPENCODE_FREE_GROUP_ID = "opencode-free"
+const val OPENCODE_FREE_GROUP_SELECTOR = "wand-model-group/opencode/opencode-free"
 const val FREE_MODEL_GROUP_SELECTOR = "wand-openrouter-free/auto"
 const val FREE_MODEL_GROUP_NAME = "免费分组"
 const val MODEL_GROUP_MAX_MEMBERS = 32
@@ -24,8 +26,10 @@ data class ModelGroup(
     val name: String,
     val models: List<String>,
 ) {
-    val builtIn: Boolean get() = id == FREE_MODEL_GROUP_ID && provider == "pi"
-    val selector: String get() = if (builtIn) FREE_MODEL_GROUP_SELECTOR else "$MODEL_GROUP_PREFIX$provider/$id"
+    val openRouterFree: Boolean get() = id == FREE_MODEL_GROUP_ID && provider == "pi"
+    val openCodeFree: Boolean get() = id == OPENCODE_FREE_GROUP_ID && provider == "opencode"
+    val builtIn: Boolean get() = openRouterFree || openCodeFree
+    val selector: String get() = if (openRouterFree) FREE_MODEL_GROUP_SELECTOR else "$MODEL_GROUP_PREFIX$provider/$id"
 
     fun toJson(): JSONObject = JSONObject().put("id", id).put("provider", provider)
         .put("name", name.trim()).put("models", JSONArray(models))
@@ -58,7 +62,8 @@ fun modelGroupListError(groups: List<ModelGroup>): String? {
             return "分组名称需为 1–40 个字符。"
         if (!identities.add("${group.provider}/${group.id}") || !names.add("${group.provider}/$name"))
             return "同一工具的分组名称不能重复。"
-        if (group.id == FREE_MODEL_GROUP_ID && (!group.builtIn || name != FREE_MODEL_GROUP_NAME))
+        if ((group.id == FREE_MODEL_GROUP_ID && (!group.openRouterFree || name != FREE_MODEL_GROUP_NAME))
+            || (group.id == OPENCODE_FREE_GROUP_ID && (!group.openCodeFree || name != FREE_MODEL_GROUP_NAME)))
             return "免费分组的工具与名称不可修改。"
         if (!group.builtIn && group.provider == "pi" && name == FREE_MODEL_GROUP_NAME)
             return "免费分组为内置分组，请直接调整它的顺序。"
@@ -71,7 +76,10 @@ fun modelGroupListError(groups: List<ModelGroup>): String? {
                 || isAutoAssignSelector(model) || model.startsWith("-"))
                 return "组内需为具体模型 ID，不能嵌套分组或使用默认值。"
             if (model.startsWith("wand-openrouter-free/") && group.provider != "pi") return "免费模型只属于 Pi。"
-            if (group.builtIn && !model.startsWith("wand-openrouter-free/")) return "免费分组只能包含免费池中的模型。"
+            if ((group.openRouterFree && !model.startsWith("wand-openrouter-free/"))
+                || (group.openCodeFree && (!Regex("^opencode/[a-z0-9][a-z0-9._-]*$").matches(model)
+                    || model in setOf("opencode/default", "opencode/auto"))))
+                return "免费分组只能包含对应免费池中的模型。"
         }
     }
     if (groups.filterNot { it.builtIn }.groupBy { it.provider }.any { it.value.size > MODEL_GROUP_MAX_PER_PROVIDER })
@@ -81,10 +89,10 @@ fun modelGroupListError(groups: List<ModelGroup>): String? {
 
 /** Free membership is server-owned; saved priority first, new verified members append. */
 fun modelGroupsDraft(saved: List<ModelGroup>, catalog: ModelsResponse): List<ModelGroup> {
-    val free = saved.firstOrNull { it.builtIn }
+    val free = saved.firstOrNull { it.openRouterFree }
     val members = catalog.freeModels.map { it.id }
     val ordered = (free?.models.orEmpty().filter { it in members } + members).distinct()
-    val draft = saved.filterNot { it.builtIn }
+    val draft = saved.filterNot { it.openRouterFree }
     return if (!catalog.modelGroupsSupported) draft else draft + ModelGroup(FREE_MODEL_GROUP_ID, "pi", FREE_MODEL_GROUP_NAME, ordered)
 }
 

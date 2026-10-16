@@ -38,6 +38,7 @@ internal fun homeSessionPulse(status: String?): HomeSessionPulse {
  * 所以先看实时 overlay，再退回由状态派生的活动态。
  */
 internal fun sessionPulse(session: WorkspaceSessionSummary): HomeSessionPulse {
+    if (session.archived == true) return HomeSessionPulse.Quiet
     if (SessionTitleStore.permissionBlockedOf(session.id) == true) return HomeSessionPulse.NeedsYou
     return homeSessionPulse(session.withLiveTitle().activityStatus())
 }
@@ -182,7 +183,8 @@ internal fun foldExpandsContent(fold: HomeFoldMode, visibleCount: Int): Boolean 
  * 空闲、已退出、停在提示符上的会话仍然藏起来。
  */
 internal fun sessionKeptByRunningFold(session: WorkspaceSessionSummary): Boolean =
-    sessionPulse(session) != HomeSessionPulse.Quiet || session.withLiveTitle().activityStatus() == "just-completed"
+    session.archived != true && (sessionPulse(session) != HomeSessionPulse.Quiet ||
+        session.withLiveTitle().activityStatus() == "just-completed")
 
 /**
  * 目录 peek：按档位只留在跑、失败和待处理的会话，整条筛空就不显示。

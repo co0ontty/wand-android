@@ -35,7 +35,7 @@ data class ToolContentDetail(
 class WandApi(baseUrl: String, val token: String?,
     private val readConversationRequests: () -> String = { "{}" },
     private val saveConversationRequests: (String) -> Unit = {},
-) : MissionsPort, WorkspacePort, TaskBoardPort, PiResourcesPort, SessionFilesPort {
+) : MissionsPort, WorkspacePort, TaskBoardPort, PiResourcesPort, SessionFilesPort, ConversationOrganizationPort {
 
     companion object {
         /**
@@ -47,6 +47,7 @@ class WandApi(baseUrl: String, val token: String?,
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
+    private val feedback = ClientFeedback(this.baseUrl, token)
     private val taskMutations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     override val taskChanges = taskMutations.asSharedFlow()
 
@@ -85,6 +86,7 @@ class WandApi(baseUrl: String, val token: String?,
         val startedAt = System.nanoTime()
         requestClient.newCall(request).execute().use { response ->
             val text = response.body?.string() ?: ""
+            feedback.httpFailure(request.url.encodedPath, response.code, text, response.message)
             val elapsed = (System.nanoTime() - startedAt) / 1_000_000
             // 带上响应体大小：会话首屏慢/卡大多能直接从这条日志看出来（长任务单条 turn
             // 上百块时曾是 MB 级），否则只能算时间猜原因。
@@ -180,7 +182,10 @@ class WandApi(baseUrl: String, val token: String?,
             override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                 try {
                     val result = response.use { it.code to (it.body?.string() ?: "") }
-                    if (continuation.isActive) continuation.resume(result)
+                    if (continuation.isActive) {
+                        feedback.httpFailure(request.url.encodedPath, result.first, result.second)
+                        continuation.resume(result)
+                    }
                 } catch (e: IOException) {
                     if (continuation.isActive) continuation.resumeWithException(e.toApiException())
                 }
@@ -712,6 +717,12 @@ class WandApi(baseUrl: String, val token: String?,
     override suspend fun getBoardTask(id: String): BoardTask? =
         BoardTask.parse(requestObject("GET", "/api/wand-tasks/${encode(id)}"))
 
+    override suspend fun listTaskComments(id: String): List<TaskComment> = try {
+        TaskComment.parseList(requestObject("GET", "/api/wand-tasks/${encode(id)}/comments"), id)
+    } catch (error: WandApiException) {
+        if (error.status == 404) emptyList() else throw error
+    }
+
     override suspend fun createBoardTask(
         title: String,
         description: String,
@@ -1103,6 +1114,65 @@ class WandApi(baseUrl: String, val token: String?,
         } else firstReason
         return TitleOrganizeResult(moved, categorized, label, reason)
     }
+
+    /** 读取目录完整会话正文的预览；服务端范围不受 Android 筛选/分页影响。 */
+    override suspend fun previewConversationOrganization(
+        target: ConversationOrganizationTarget,
+        mode: ConversationOrganizationMode,
+    ): ConversationOrganizationPreview {
+        val response = requestObject(
+            "POST",
+            "/api/sessions/auto-organize",
+            JSONObject()
+                .put("action", "preview")
+                .put("target", target.toJson())
+                .put("mode", mode.raw),
+            timeoutSec = 90,
+        )
+        return ConversationOrganizationPreview.parse(response.obj("preview") ?: JSONObject())
+            ?: throw WandApiException(null, "会话归组预览响应无效")
+    }
+
+    /** 只接受预览 token；任何未知回执都按 token 查原作业，不创建新的请求。 */
+    override suspend fun startConversationOrganization(
+        token: String,
+        force: Boolean,
+    ): ConversationOrganizationJob {
+        try {
+            val response = requestObject(
+                "POST",
+                "/api/sessions/auto-organize",
+                JSONObject().put("action", "start").put("token", token).put("force", force),
+            )
+            return parseConversationOrganizationJob(response)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (startError: Exception) {
+            return try {
+                conversationOrganizationJobByToken(token)
+            } catch (_: Exception) {
+                // Preserve the original start error: caller retains token and can query it later.
+                throw startError
+            }
+        }
+    }
+
+    override suspend fun conversationOrganizationJobByToken(token: String): ConversationOrganizationJob =
+        parseConversationOrganizationJob(
+            requestObject("GET", "/api/sessions/auto-organize/by-token/${encode(token)}"),
+        )
+
+    override suspend fun conversationOrganizationJob(id: String): ConversationOrganizationJob =
+        parseConversationOrganizationJob(requestObject("GET", "/api/sessions/auto-organize/${encode(id)}"))
+
+    override suspend fun cancelConversationOrganization(id: String): ConversationOrganizationJob =
+        parseConversationOrganizationJob(
+            requestObject("POST", "/api/sessions/auto-organize/${encode(id)}/cancel"),
+        )
+
+    private fun parseConversationOrganizationJob(response: JSONObject): ConversationOrganizationJob =
+        ConversationOrganizationJob.parse(response.obj("job") ?: JSONObject())
+            ?: throw WandApiException(null, "会话归组作业响应无效")
 
     override suspend fun clearWorkspaceTaskSessions(taskId: String): Int {
         val sessionIds = workspaceTask(taskId).sessions.map { it.id }.distinct()

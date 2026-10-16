@@ -248,6 +248,45 @@ class HomePresentationTest {
         assertEquals("4 个会话", workspaceSummaryLine(4, HomeSessionCounts()))
     }
 
+    @Test
+    fun activityUsesRuntimeFlagsAndNeverTreatsAnOpenShellAsWork() {
+        val base = session("runtime", "idle")
+        assertEquals(HomeSessionPulse.Running, sessionPulse(base.copy(ptyBusy = true)))
+        assertTrue(sessionKeptByRunningFold(base.copy(inFlight = true)))
+        assertEquals(HomeSessionPulse.Running, sessionPulse(base.copy(status = "thinking")))
+        val shell = base.copy(sessionKind = "pty", provider = null, status = "running")
+        assertEquals(HomeSessionPulse.Quiet, sessionPulse(shell))
+        assertEquals(HomeSessionPulse.Running, sessionPulse(shell.copy(ptyCommandRunning = true)))
+        assertEquals(HomeSessionPulse.Quiet, sessionPulse(shell.copy(status = "exited", ptyCommandRunning = true)))
+        assertFalse(sessionKeptByRunningFold(base.copy(archived = true, inFlight = true)))
+    }
+
+    @Test
+    fun searchCombinesIdentityTaskAndDirectoryWithoutChangingSource() {
+        val running = session("active", "running").copy(employeeId = "e", employeeName = "虎妞", inFlight = true)
+        val other = session("other", "idle")
+        val source = group(tasks = listOf(task("repair", listOf(running, other))))
+        val results = searchHomeGroups(listOf(source), "workspace-1 虎妞", emptyList())
+        assertEquals(listOf("active"), results.single().tasks.single().sessions.map { it.id })
+        assertEquals(2, source.tasks.single().sessions.size)
+        assertEquals(2, results.single().tasks.single().totalSessions)
+        assertTrue(searchHomeGroups(listOf(source), "不匹配", emptyList()).isEmpty())
+        val groups = recentHomeGroups(recentHomeConversations(listOf(source), Int.MAX_VALUE), limit = Int.MAX_VALUE)
+        val recent = searchHomeRecentGroups(groups, "workspace-1 虎妞", emptyList(), false).single()
+        assertEquals("employee:e", recent.key)
+        assertTrue(homeGroupShowsHeader(recent))
+        assertEquals(listOf("active"), foldVisibleConversations(HomeFoldMode.Running, recent.conversations).map { it.session.id })
+    }
+
+    @Test
+    fun taskSummaryParsesForegroundCommandMarker() {
+        val summary = WorkspaceSessionSummary.parse(org.json.JSONObject(
+            """{"id":"shell","sessionKind":"pty","status":"running","ptyCommandRunning":true}"""
+        ))!!
+        assertEquals(true, summary.ptyCommandRunning)
+        assertTrue(sessionKeptByRunningFold(summary))
+    }
+
     private fun List<com.wand.app.data.TaskDirectoryGroup>.sameAs(
         other: List<com.wand.app.data.TaskDirectoryGroup>,
     ): Boolean = this === other
