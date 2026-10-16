@@ -515,9 +515,6 @@ private fun TaskBoardList(
     // 就地展开的任务：点卡片在当前页展开详情，其他卡片顺势下移，不跳详情页（规则 7）。
     var expandedTaskId by remember { mutableStateOf<String?>(null) }
     var expandedStandaloneIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    androidx.activity.compose.BackHandler(enabled = expandedStandaloneIds.isNotEmpty()) {
-        expandedStandaloneIds = emptySet()
-    }
     fun setSwipedTaskId(id: String?) {
         swipedTaskId = id
     }
