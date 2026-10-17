@@ -318,8 +318,8 @@ class HistoryPresentationTest {
         assertEquals(SubagentStatus.Background, activity.status)
         assertEquals("72dddd42-dc49-4ba9-8dcb-45a0d07e3e01", activity.receipt?.runId)
         assertEquals("", activity.receipt?.outputPath)
-        assertEquals("后台运行中", subagentStatusLabel(activity.status, sessionRunning = true))
-        assertEquals("后台已结束", subagentStatusLabel(activity.status, sessionRunning = false))
+        assertEquals("运行状态未知", subagentStatusLabel(activity.status, sessionRunning = true))
+        assertEquals("运行状态未知", subagentStatusLabel(activity.status, sessionRunning = false))
     }
 
     @Test
@@ -330,6 +330,21 @@ class HistoryPresentationTest {
         // qoder 的 id 不是 uuid（`ageneral-purpose-ca16…`），只能从 `agentId:` 行取。
         assertEquals("ageneral-purpose-ca16580eee0d40fb", activity.receipt?.runId)
         assertEquals("/var/folders/tf/.../tasks/ab9dd6834d59e0307.output", activity.receipt?.outputPath)
+    }
+
+    @Test
+    fun nativeTerminalResultSupersedesQoderReceiptForTheSameTask() {
+        val meta = SubagentMeta("task-qoder", "worker", "检查状态")
+        for (failed in listOf(false, true)) {
+            val messages = listOf(
+                ConversationTurn("assistant", listOf(ContentBlock.ToolResult("task-qoder", qoderAck, false, false, meta))),
+                ConversationTurn("assistant", listOf(ContentBlock.ToolResult("task-qoder", "原生子任务通知；未提供结果正文。", failed, false, meta))),
+            )
+            val activity = collectSubagentActivities(messages, sessionRunning = false).single()
+            assertNull(activity.receipt)
+            assertEquals(if (failed) SubagentStatus.Failed else SubagentStatus.Completed, activity.status)
+            assertEquals(2, activity.blocks.size)
+        }
     }
 
     @Test

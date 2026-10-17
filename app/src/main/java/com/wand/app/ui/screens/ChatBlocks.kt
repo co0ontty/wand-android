@@ -1571,7 +1571,7 @@ internal data class SubagentActivity(
     val receipt: AsyncDispatchReceipt? = null,
     /** 卡内去重后的外观，避免同批次并行 Agent 撞成同一个颜色。 */
     val logoVariant: AgentLogoVariant = agentLogoVariant(id),
-    /** 会话当时在不在跑：回执要说「后台运行中」还是「后台已结束」，面板里也要能单独判定。 */
+    /** 父会话执行状态；仅有回执的子任务始终显示运行状态未知。 */
     val sessionRunning: Boolean = false,
 ) {
     val background: Boolean get() = receipt != null
@@ -1604,8 +1604,8 @@ internal data class SubagentActivity(
 internal fun subagentStatusLabel(status: SubagentStatus, sessionRunning: Boolean): String = when (status) {
     SubagentStatus.Failed -> "执行失败"
     SubagentStatus.Running -> "正在运行"
-    // 「后台已结束」不是第七种状态：回执证明不了后台跑完没有，所以不给绿色「已完成」。
-    SubagentStatus.Background -> if (sessionRunning) "后台运行中" else "后台已结束"
+    // 父会话是否运行不能证明子任务终态；启动回执不代表仍在执行。
+    SubagentStatus.Background -> "运行状态未知"
     SubagentStatus.Interrupted -> "已中断"
     SubagentStatus.Pending -> "未完成"
     SubagentStatus.Completed -> "已完成"
@@ -1683,7 +1683,7 @@ internal fun collectSubagentActivities(
 /**
  * 状态坞只承接「还要看一眼」的 run：正在运行、被中断、失败的才常驻底部。
  * 已完成和分页截断的历史 run 已经有自己的消息流卡片，再常驻就是一堆绿色的「已完成」；
- * 后台回执在会话停止后也只剩「后台已结束」这个既成事实，同样还给消息流。
+ * 后台回执不是运行事实；会话停止后仍可在消息流回看，不推断子任务终态。
  */
 internal fun subagentDockActivities(activities: List<SubagentActivity>): List<SubagentActivity> =
     activities.filter { activity ->
@@ -2269,7 +2269,7 @@ private fun SubagentReceiptSection(
         ) {
             SubagentStatusIcon(SubagentStatus.Background, size = 13.dp)
             Text(
-                "这只是派发回执，不是最终结论；子 Agent 仍在后台执行，结果会另行送达。",
+                "仅收到后台派发回执，尚无可关联的原生终态或结果；当前运行状态未知，主会话状态不能证明子任务仍在执行或已完成。",
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
                 color = WandColors.textSecondary,

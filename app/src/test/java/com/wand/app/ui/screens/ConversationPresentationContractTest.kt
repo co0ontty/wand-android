@@ -36,6 +36,16 @@ class ConversationPresentationContractTest {
         assertTrue(list.contains("homeActivityStripVisible(showingBoard, activityStats)"))
     }
 
+    @Test fun taskAndSessionPreviewsShareTheAssistantMarkdownRenderer() {
+        for (path in listOf("ui/screens/ConversationTaskPreviewCard.kt", "ui/screens/ConversationSessionReplyCard.kt")) {
+            val card = source(path)
+            assertTrue(card.contains("TurnView(ConversationTurn(\"assistant\""))
+            assertTrue(card.contains("showHeader = false"))
+            assertTrue(card.contains("verticalScroll(scroll)"))
+        }
+        assertFalse(source("ui/screens/ConversationTaskPreviewCard.kt").contains("Text(preview?.text"))
+    }
+
     @Test fun bodyContentChangesDoNotChangeMessageExpansionIdentity() {
         val original = ConversationTurn("assistant", listOf(ContentBlock.Text("short", null)), createdAt = "2026-10-06T00:00:00Z", messageId = "message")
         assertEquals(conversationMessageKey(original), conversationMessageKey(original.copy(content = listOf(ContentBlock.Text("updated", null)))))

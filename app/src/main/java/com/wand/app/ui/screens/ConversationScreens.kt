@@ -27,6 +27,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -304,7 +306,15 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 }
             }
             if (rows.isEmpty() && !state.loading && state.error == null) item {
-                EmptyState(icon = WandIcons.toolResult, title = if (query.isBlank()) "还没有聊天" else "没有匹配的聊天或任务", subtitle = "从通讯录选择员工，或发起群聊")
+                val empty = conversationListEmptyState(query, ConversationListTier.of(listTier))
+                EmptyState(icon = WandIcons.toolResult, title = empty.title, subtitle = empty.explanation,
+                    actionText = empty.action, onAction = {
+                        when (empty) {
+                            ConversationListEmptyState.Empty -> { create = true; keyboard?.hide() }
+                            ConversationListEmptyState.Search -> { query = ""; runCatching { searchTrigger.requestFocus() } }
+                            ConversationListEmptyState.Filtered -> { query = ""; listTier = ConversationListTier.All.storageValue; keyboard?.hide() }
+                        }
+                    })
             }
         }
     }
@@ -710,11 +720,37 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             LaunchedEffect(reducedMotion) { if (reducedMotion) arrivals.clear() }
             var unseen by remember(displayedId, displayedFilter) { mutableIntStateOf(0) }
             var following by remember(displayedId, displayedFilter) { mutableStateOf(true) }
+            suspend fun scrollToConversationTail() {
+                val last = messageList.layoutInfo.totalItemsCount - 1
+                if (last < 0) return
+                messageList.scrollToItem(last)
+                // A long final reply is taller than the viewport: align its end, not its start.
+                withFrameNanos { }
+                val layout = messageList.layoutInfo
+                val tail = layout.visibleItemsInfo.lastOrNull { it.index == last } ?: return
+                val overflow = (tail.offset + tail.size - layout.viewportEndOffset + layout.afterContentPadding).coerceAtLeast(0)
+                if (overflow > 0) messageList.scrollBy(overflow.toFloat())
+            }
+            val draggingMessages by messageList.interactionSource.collectIsDraggedAsState()
             LaunchedEffect(messageList) {
-                snapshotFlow { messageList.isScrollInProgress to messageList.canScrollForward }.collect { (scrolling, forward) ->
-                    if (scrolling) following = !forward
-                    if (!forward) { following = true; unseen = 0 }
+                var userScroll = false
+                snapshotFlow { Triple(messageList.isScrollInProgress, draggingMessages, messageList.canScrollForward) }.collect { (scrolling, dragging, forward) ->
+                    if (dragging) userScroll = true
+                    // Layout/programmatic changes are not evidence that the reader
+                    // chose to rejoin the tail. Only an actual drag (and its fling) is.
+                    if (userScroll) { following = !forward; if (!forward) unseen = 0 }
+                    if (!scrolling && !dragging) userScroll = false
                 }
+            }
+            // IME/composer height changes do not change message keys. Keep the tail
+            // visible only when following; an older-message reader retains their anchor.
+            LaunchedEffect(messageList, displayedId, displayedFilter) {
+                snapshotFlow { messageList.layoutInfo.let { it.viewportEndOffset - it.viewportStartOffset } }.collect { height ->
+                    if (height > 0 && following && !messageList.isScrollInProgress) scrollToConversationTail()
+                }
+            }
+            LaunchedEffect(messageList, turns.lastOrNull()?.sessionPreview?.text, turns.lastOrNull()?.taskPreview?.text) {
+                if (following && !messageList.isScrollInProgress) scrollToConversationTail()
             }
             LaunchedEffect(messageKeys, displayedDetail != null) {
                 if (displayedDetail == null) return@LaunchedEffect
@@ -724,10 +760,10 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 arrivals.keys.retainAll(messageKeys.toSet())
                 val own = turns.any { it.role == "user" && conversationMessageKey(it) in added }
                 if (initial && messageKeys.isNotEmpty() && messageList.firstVisibleItemIndex == 0 && messageList.firstVisibleItemScrollOffset == 0) {
-                    messageList.scrollToItem(messageKeys.lastIndex)
+                    scrollToConversationTail()
                 } else if (added.isNotEmpty()) {
                     if (following || own) {
-                        messageList.scrollToItem(messageKeys.lastIndex)
+                        scrollToConversationTail()
                         withFrameNanos { }
                         val visibleKeys = messageList.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
                         arrivals.clear()
@@ -741,9 +777,14 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 if (state.error != null) item { ErrorState(state.error.orEmpty(), onRetry = state::retry) }
                 if (turns.isEmpty() && state.error == null) item {
                     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(WandIcons.toolResult, null, Modifier.size(32.dp), tint = WandColors.textMuted)
-                        Text(if (displayedDetail?.dissolvedAt != null) "群聊已解散" else if (displayedId.isBlank()) "选择员工，开始聊天" else if (displayedDetail?.kind == "group") "群已建立" else "还没有消息", style = MaterialTheme.typography.bodyLarge)
-                        Text(if (displayedDetail?.dissolvedAt != null) "恢复后可继续聊天。" else if (displayedId.isBlank()) "可先写草稿，从通讯录选择接收对象后发送。" else if (displayedDetail?.kind == "group") "可以先沟通，也可以派任务。" else "直接说出你想做的事；执行过程和需要确认的内容会显示在这里。", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
+                        if (displayedId.isNotBlank() && displayedDetail == null) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                            Text("正在加载对话…", style = MaterialTheme.typography.bodyLarge)
+                        } else {
+                            Icon(WandIcons.toolResult, null, Modifier.size(32.dp), tint = WandColors.textMuted)
+                            Text(if (displayedDetail?.dissolvedAt != null) "群聊已解散" else if (displayedId.isBlank()) "选择员工，开始聊天" else if (displayedFilter.isNotBlank()) "此任务暂无消息" else if (displayedDetail?.kind == "group") "群已建立" else "还没有消息", style = MaterialTheme.typography.bodyLarge)
+                            Text(if (displayedDetail?.dissolvedAt != null) "恢复后可继续聊天。" else if (displayedId.isBlank()) "可先写草稿，从通讯录选择接收对象后发送。" else if (displayedDetail?.kind == "group") "可以先沟通，也可以派任务。" else "直接说出你想做的事；执行过程和需要确认的内容会显示在这里。", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
+                        }
                     }
                 }
                 itemsIndexed(turns, key = { _, turn -> conversationMessageKey(turn) }) { index, turn ->
@@ -782,7 +823,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 }
             }
             if (unseen > 0) WandButton("↓ $unseen 条新消息", {
-                scope.launch { if (messageKeys.isNotEmpty()) messageList.scrollToItem(messageKeys.lastIndex); following = true; unseen = 0 }
+                scope.launch { scrollToConversationTail(); following = true; unseen = 0 }
             }, modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp), variant = WandButtonVariant.Secondary)
             }
         }

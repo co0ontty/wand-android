@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
@@ -46,9 +48,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import coil.ImageLoader
-import coil.compose.AsyncImage
-import coil.compose.AsyncImagePainter
+import coil.compose.SubcomposeAsyncImage
+import coil.network.HttpException
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -129,18 +134,47 @@ object WandImage {
  * 内联缩略图与全屏预览共用，避免两处各拼一次请求。
  */
 @Composable
-private fun rememberRemoteImage(path: String, baseUrl: String): Pair<ImageLoader, ImageRequest> {
+private fun rememberRemoteImage(path: String, baseUrl: String, retry: Int = 0): Pair<ImageLoader, ImageRequest> {
     val context = LocalContext.current
-    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
-    val model = remember(baseUrl, path) {
-        ImageRequest.Builder(context).data(WandImage.fileRawUrl(baseUrl, path)).build()
+    // WandImage already caches by the real endpoint client; don't freeze an old
+    // loader across authentication/client resets with remember(baseUrl).
+    val loader = WandImage.imageLoader(context, baseUrl)
+    val model = remember(baseUrl, path, retry, loader) {
+        ImageRequest.Builder(context).data(WandImage.fileRawUrl(baseUrl, path))
+            .setParameter("wandImageRetry", retry).build()
     }
     return loader to model
 }
 
+internal fun wandImageFailureMessage(error: Throwable): String = when ((error as? HttpException)?.response?.code) {
+    401, 403 -> "没有图片访问权限，请核对连接。"
+    404 -> "图片未找到，请核对消息来源。"
+    else -> "图片加载失败，请检查连接后重试。"
+}
+
+@Composable
+private fun ImageLoadFeedback(message: String? = null, dark: Boolean = false, onRetry: () -> Unit = {}) {
+    val color = if (dark) Color.White else WandColors.textSecondary
+    if (message == null) {
+        Column(Modifier.widthIn(min = 96.dp).heightIn(min = 64.dp).padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            CircularProgressIndicator(Modifier.size(20.dp), color = color, strokeWidth = 2.dp)
+            Text("加载图片…", fontSize = 12.sp, color = color)
+        }
+    } else {
+        TextButton(onClick = onRetry, modifier = Modifier.heightIn(min = 64.dp),
+            colors = ButtonDefaults.textButtonColors(contentColor = color)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(message, fontSize = 12.sp)
+                Text("重试加载图片", fontSize = 11.sp)
+            }
+        }
+    }
+}
+
 /**
  * 内联图片缩略图：经对应 endpoint 的 WandHttp client 加载，圆角 + Fit，点击放大到全屏预览。
- * 加载失败时整块隐藏（对齐网页 onerror → display:none），绝不崩溃或留占位。
+ * 复用 Coil 原生 loading/error 槽；失败明确保留原因和重试，不无解释地消失。
  */
 @Composable
 fun WandAsyncImage(
@@ -151,23 +185,18 @@ fun WandAsyncImage(
     maxHeight: Int = 200,
     onFailure: (() -> Unit)? = null,
 ) {
-    val (loader, model) = rememberRemoteImage(path, baseUrl)
-    var failed by remember(baseUrl, path) { mutableStateOf(false) }
-    var showViewer by remember { mutableStateOf(false) }
+    var retry by remember(baseUrl, path) { mutableStateOf(0) }
+    val (loader, model) = rememberRemoteImage(path, baseUrl, retry)
+    var showViewer by remember(baseUrl, path) { mutableStateOf(false) }
 
-    if (failed) return
-
-    AsyncImage(
+    SubcomposeAsyncImage(
         model = model,
         imageLoader = loader,
         contentDescription = path.substringAfterLast('/'),
         contentScale = ContentScale.Fit,
-        onState = { state ->
-            if (state is AsyncImagePainter.State.Error) {
-                failed = true
-                onFailure?.invoke()
-            }
-        },
+        loading = { ImageLoadFeedback() },
+        error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), onRetry = { retry += 1 }) },
+        onError = { onFailure?.invoke() },
         modifier = modifier
             .widthIn(max = maxWidth.dp)
             .heightIn(max = maxHeight.dp)
@@ -187,7 +216,7 @@ fun WandAsyncImage(
 
 /**
  * 内联工具结果图片：服务端下发的站内取图 URL（/api/sessions/…/tool-images/…）
- * 或 data URI。只读缩略图，与网页 `inline-tool-image` 对齐（加载失败整块隐藏）。
+ * 或 data URI。加载、失败和重试反馈与普通图片一致；保留全屏查看入口。
  */
 @Composable
 fun WandAsyncToolImage(
@@ -197,9 +226,10 @@ fun WandAsyncToolImage(
     maxWidth: Int = 240,
     maxHeight: Int = 200,
 ) {
-    var failed by remember(source) { mutableStateOf(false) }
-    var decoded by remember(source) { mutableStateOf<ImageBitmap?>(null) }
-    var showViewer by remember(source) { mutableStateOf(false) }
+    var retry by remember(baseUrl, source) { mutableStateOf(0) }
+    var failed by remember(baseUrl, source, retry) { mutableStateOf(false) }
+    var decoded by remember(baseUrl, source, retry) { mutableStateOf<ImageBitmap?>(null) }
+    var showViewer by remember(baseUrl, source) { mutableStateOf(false) }
     val shapeModifier = modifier
         .widthIn(max = maxWidth.dp)
         .heightIn(max = maxHeight.dp)
@@ -207,12 +237,17 @@ fun WandAsyncToolImage(
         .border(1.dp, WandColors.border, WandShapes.sm)
 
     if (source.startsWith("data:")) {
-        LaunchedEffect(source) {
+        LaunchedEffect(baseUrl, source, retry) {
             decoded = withContext(Dispatchers.IO) { decodeDataUriImage(source) }
             if (decoded == null) failed = true
         }
-        if (failed) return
-        val bitmap = decoded ?: return
+        val bitmap = decoded
+        if (bitmap == null) {
+            Box(shapeModifier, contentAlignment = Alignment.Center) {
+                ImageLoadFeedback(if (failed) "图片格式不支持或内容无效。" else null, onRetry = { retry += 1 })
+            }
+            return
+        }
         Image(
             bitmap = bitmap,
             contentDescription = "工具返回图片",
@@ -225,20 +260,22 @@ fun WandAsyncToolImage(
 
     val context = LocalContext.current
     val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
-    val loader = remember(endpoint) { WandImage.imageLoader(context, endpoint) }
+    val loader = WandImage.imageLoader(context, endpoint)
     val absolute = if (source.startsWith("http://") || source.startsWith("https://")) {
         source
     } else {
         endpoint + if (source.startsWith("/")) source else "/$source"
     }
-    val model = remember(absolute) { ImageRequest.Builder(context).data(absolute).build() }
-    if (failed) return
-    AsyncImage(
+    val model = remember(absolute, retry, loader) {
+        ImageRequest.Builder(context).data(absolute).setParameter("wandImageRetry", retry).build()
+    }
+    SubcomposeAsyncImage(
         model = model,
         imageLoader = loader,
         contentDescription = "工具返回图片",
         contentScale = ContentScale.Fit,
-        onState = { state -> if (state is AsyncImagePainter.State.Error) failed = true },
+        loading = { ImageLoadFeedback() },
+        error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), onRetry = { retry += 1 }) },
         modifier = shapeModifier.clickable { showViewer = true },
     )
     if (showViewer) FullscreenImageViewer(absolute, baseUrl, { showViewer = false }, directUrl = true)
@@ -269,11 +306,12 @@ fun FullscreenImageViewer(
     bitmap: ImageBitmap? = null,
 ) {
     val context = LocalContext.current
-    val loader = remember(baseUrl) { WandImage.imageLoader(context, baseUrl) }
-    val model = remember(baseUrl, path, directUrl) {
+    val loader = WandImage.imageLoader(context, baseUrl)
+    var retry by remember(baseUrl, path, directUrl) { mutableStateOf(0) }
+    val model = remember(baseUrl, path, directUrl, retry, loader) {
         ImageRequest.Builder(context)
             .data(if (directUrl) path else WandImage.fileRawUrl(baseUrl, path))
-            .build()
+            .setParameter("wandImageRetry", retry).build()
     }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -321,9 +359,11 @@ fun FullscreenImageViewer(
                 Image(bitmap = bitmap, contentDescription = "工具返回图片",
                     contentScale = ContentScale.Fit, modifier = imageModifier)
             } else {
-                AsyncImage(model = model, imageLoader = loader,
+                SubcomposeAsyncImage(model = model, imageLoader = loader,
                     contentDescription = path.substringAfterLast('/'),
-                    contentScale = ContentScale.Fit, modifier = imageModifier)
+                    contentScale = ContentScale.Fit, modifier = imageModifier,
+                    loading = { ImageLoadFeedback(dark = true) },
+                    error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), dark = true, onRetry = { retry += 1 }) })
             }
             // 关闭按钮：右上角安全区内的半透明圆钮（对齐 iOS xmark）。
             Box(
@@ -332,9 +372,9 @@ fun FullscreenImageViewer(
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
                     .padding(top = 8.dp, end = 16.dp)
-                    .size(40.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.18f))
+                    .background(Color.Black.copy(alpha = 0.6f))
                     .clickable { onDismiss() },
             ) {
                 Icon(

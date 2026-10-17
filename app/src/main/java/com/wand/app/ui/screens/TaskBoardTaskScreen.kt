@@ -299,6 +299,7 @@ fun TaskBoardTaskScreen(
                 }
                 else -> TaskBoardDetailPane(
                     baseUrl = baseUrl,
+                    commentsApi = api,
                     task = current,
                     workspaces = workspaces,
                     models = models,

@@ -35,6 +35,18 @@ internal enum class ConversationListTier(val storageValue: String, val label: St
     }
 }
 
+internal enum class ConversationListEmptyState(val title: String, val explanation: String, val action: String) {
+    Empty("还没有对话", "从通讯录选择员工开始对话，或新建群聊。", "新建群聊"),
+    Search("未找到匹配的对话", "没有匹配当前关键词的对话或任务。清空搜索即可恢复当前列表。", "清空搜索"),
+    Filtered("此筛选下暂无对话", "可以切换其他分类，或查看全部对话。", "查看全部对话"),
+}
+
+internal fun conversationListEmptyState(query: String, tier: ConversationListTier): ConversationListEmptyState = when {
+    query.isNotBlank() -> ConversationListEmptyState.Search
+    tier != ConversationListTier.All -> ConversationListEmptyState.Filtered
+    else -> ConversationListEmptyState.Empty
+}
+
 /** 归档的对话：群聊解散后归档，或它的任务已经被归档。 */
 internal fun isConversationArchived(item: ConversationInstance): Boolean =
     item.dissolvedAt != null || item.tasks.any { it.task.status == "archived" }
@@ -50,9 +62,10 @@ internal fun filterConversationList(
         ConversationListTier.Active -> !isConversationArchived(item)
         ConversationListTier.Archived -> isConversationArchived(item)
     } }
-    if (query.isBlank()) return scoped
+    val term = query.trim()
+    if (term.isEmpty()) return scoped
     return scoped.filter { item ->
-        (item.title + item.preview + item.tasks.joinToString { it.task.title }).contains(query, ignoreCase = true)
+        (item.title + item.preview + item.tasks.joinToString { it.task.title }).contains(term, ignoreCase = true)
     }
 }
 

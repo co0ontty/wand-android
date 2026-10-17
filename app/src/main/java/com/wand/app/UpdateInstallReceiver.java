@@ -97,6 +97,8 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
             Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
             if (confirm == null) {
                 WandLog.w(TAG, "系统确认 Intent 为空，无法拉起安装界面", null);
+                com.wand.app.data.ClientFeedback.updateFailed(store.getLastUrl(), store.getAppToken(),
+                        new IllegalStateException("系统确认 Intent 为空，无法拉起安装界面"), null);
                 notifyStatus(PackageInstaller.STATUS_FAILURE, "无法打开系统安装界面");
                 return;
             }
@@ -107,6 +109,7 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
                 context.startActivity(confirm);
             } catch (Exception e) {
                 WandLog.e(TAG, "拉起系统安装界面失败", e);
+                com.wand.app.data.ClientFeedback.updateFailed(store.getLastUrl(), store.getAppToken(), e, null);
                 Toast.makeText(context, "无法打开系统安装界面", Toast.LENGTH_LONG).show();
                 notifyStatus(PackageInstaller.STATUS_FAILURE, "无法打开系统安装界面");
             }
@@ -128,6 +131,8 @@ public final class UpdateInstallReceiver extends BroadcastReceiver {
         WandLog.w(TAG, "安装未完成：" + message, null);
         notifyStatus(status, message);
         if (status != PackageInstaller.STATUS_FAILURE_ABORTED) {
+            com.wand.app.data.ClientFeedback.updateFailed(store.getLastUrl(), store.getAppToken(),
+                    new IllegalStateException(statusMessage != null ? statusMessage : message), Integer.toString(status));
             Toast.makeText(context, message, Toast.LENGTH_LONG).show();
         }
     }

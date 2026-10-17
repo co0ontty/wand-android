@@ -86,8 +86,11 @@ import com.wand.app.data.ExecutionSubject
 import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskBoardPort
+import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
+import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.data.dispatchStartBlockedReason
 import com.wand.app.data.boardAgentModelName
 import com.wand.app.data.boardParentTaskOptions
@@ -147,12 +150,15 @@ fun TaskBoardScreen(
     bottomClearance: Dp = 0.dp,
 ) {
     val scope = rememberCoroutineScope()
-    var tasks by remember { mutableStateOf<List<BoardTask>>(emptyList()) }
-    var workspaces by remember { mutableStateOf<List<Workspace>>(emptyList()) }
+    var tasks by remember(api, workspaceApi) { mutableStateOf<List<BoardTask>>(emptyList()) }
+    var workspaces by remember(api) { mutableStateOf<List<Workspace>>(emptyList()) }
+    var directoryGroups by remember(api, workspaceApi) { mutableStateOf<List<TaskDirectoryGroup>>(emptyList()) }
+    var directoryError by remember(api, workspaceApi) { mutableStateOf<String?>(null) }
     var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var loading by remember { mutableStateOf(true) }
     var refreshingBoard by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var refreshError by remember { mutableStateOf<String?>(null) }
     var internalQuery by remember { mutableStateOf("") }
     val query = internalQuery
     val onQueryChange: (String) -> Unit = { internalQuery = it }
@@ -178,7 +184,7 @@ fun TaskBoardScreen(
         createStatus = initialStatus
         showCreate = true
     }
-    val refreshMutex = remember(api) { kotlinx.coroutines.sync.Mutex() }
+    val refreshMutex = remember(api, workspaceApi) { kotlinx.coroutines.sync.Mutex() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
     fun openSession(id: String, structured: Boolean) {
@@ -194,10 +200,17 @@ fun TaskBoardScreen(
         if (showProgress) loading = true
         try {
             tasks = api.listBoardTasks()
-            error = null
+            refreshError = null
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            error = e.message ?: "无法加载任务。"
+            refreshError = e.message ?: "无法加载任务。"
+        }
+        try {
+            directoryGroups = workspaceApi.listTaskGroups()
+            directoryError = null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            directoryError = e.message ?: "无法加载未分组会话。"
         } finally {
             loading = false
         }
@@ -242,14 +255,14 @@ fun TaskBoardScreen(
         }
     }
 
-    LaunchedEffect(api, linkedWorkspaceId) {
+    LaunchedEffect(api, workspaceApi, linkedWorkspaceId) {
         if (!linkedWorkspaceId.isNullOrBlank() && filterWorkspaceId.isEmpty()) {
             filterWorkspaceId = linkedWorkspaceId
         }
         refreshBoardData(showProgress = tasks.isEmpty())
     }
 
-    LaunchedEffect(api, lifecycleOwner) {
+    LaunchedEffect(api, workspaceApi, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
             launch { api.taskChanges.collect { refresh() } }
             launch { while (true) { delay(6_000); refresh() } }
@@ -339,11 +352,14 @@ fun TaskBoardScreen(
                         }
                     },
                     onOpenSession = ::openSession,
+                    onOpenStandaloneSession = onOpenSession,
+                    standaloneGroups = if (statusFilter.isBlank()) boardStandaloneGroups(directoryGroups, tasks, query, filterWorkspaceId) else emptyList(),
+                    refreshing = refreshingBoard,
                     onCreateForStatus = { status -> openCreateDialog(status) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            error?.let { message ->
+            (error ?: refreshError ?: directoryError)?.let { message ->
                 Surface(
                     color = WandColors.dangerSoft,
                     shape = WandShapes.sm,
@@ -483,6 +499,9 @@ private fun TaskBoardList(
     onToggleComplete: (BoardTask) -> Unit,
     onSwipeAction: (BoardTask, BoardTaskSwipeAction) -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
+    onOpenStandaloneSession: (String, Boolean) -> Unit,
+    standaloneGroups: List<BoardStandaloneGroup> = emptyList(),
+    refreshing: Boolean = false,
     onCreateForStatus: (String) -> Unit,
     modifier: Modifier = Modifier,
     bottomClearance: Dp = 0.dp,
@@ -496,6 +515,7 @@ private fun TaskBoardList(
     var swipedTaskId by remember { mutableStateOf<String?>(null) }
     // 就地展开的任务：点卡片在当前页展开详情，其他卡片顺势下移，不跳详情页（规则 7）。
     var expandedTaskId by remember { mutableStateOf<String?>(null) }
+    var expandedStandaloneIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     fun setSwipedTaskId(id: String?) {
         swipedTaskId = id
     }
@@ -507,9 +527,10 @@ private fun TaskBoardList(
         if (listState.isScrollInProgress) setSwipedTaskId(null)
     }
     // 筛选条件变了就收起已划开的卡，避免隐藏卡片仍占用交互状态。
-    LaunchedEffect(statusFilter, filterWorkspaceId, query) {
+    LaunchedEffect(statusFilter, filterWorkspaceId, query, refreshing) {
         setSwipedTaskId(null)
         expandedTaskId = null
+        expandedStandaloneIds = emptySet()
     }
     // 任务详情的展开只由卡片点击控制，不拦截页面返回。
     val archiveOpen = !archiveCollapsed || query.isNotBlank() || statusFilter == "archived"
@@ -576,7 +597,7 @@ private fun TaskBoardList(
                 )
             }
         }
-        if (tasks.isNotEmpty()) {
+        if (tasks.isNotEmpty() || standaloneGroups.isNotEmpty()) {
             item(key = "create-task") {
                 WandButton(
                     label = "新建任务",
@@ -587,7 +608,21 @@ private fun TaskBoardList(
                 )
             }
         }
-        if (tasks.isEmpty()) {
+        if (statusFilter.isBlank()) {
+            items(standaloneGroups, key = { "standalone-${it.workspaceId}" }) { group ->
+                BoardStandaloneGroupCard(
+                    group = group,
+                    expanded = group.workspaceId in expandedStandaloneIds,
+                    onToggle = {
+                        expandedStandaloneIds = if (group.workspaceId in expandedStandaloneIds) expandedStandaloneIds - group.workspaceId
+                            else expandedStandaloneIds + group.workspaceId
+                    },
+                    onOpenSession = { id, structured -> expandedStandaloneIds = emptySet(); onOpenStandaloneSession(id, structured) },
+                    modifier = if (motionEnabled) Modifier.animateItem() else Modifier,
+                )
+            }
+        }
+        if (tasks.isEmpty() && standaloneGroups.isEmpty()) {
             item(key = "empty") {
                 EmptyState(
                     icon = WandIcons.todo,
@@ -604,7 +639,7 @@ private fun TaskBoardList(
                         .height(260.dp),
                 )
             }
-        } else if (statusFilter.isBlank()) {
+        } else if (tasks.isNotEmpty() && statusFilter.isBlank()) {
             grouped.forEach { (status, items) ->
                 val sectionArchived = if (status == "done") archived else emptyList()
                 if (items.isEmpty() && sectionArchived.isEmpty()) return@forEach
@@ -633,7 +668,7 @@ private fun TaskBoardList(
                     }
                 }
             }
-        } else {
+        } else if (tasks.isNotEmpty()) {
             items(tasks, key = { it.id }) { task -> taskRow(task) }
         }
     }
@@ -647,6 +682,67 @@ private fun TaskBoardList(
                 onSwipeAction(task, action)
             },
         )
+    }
+}
+
+/** 目录默认任务组：仅展开真实会话，不能操作伪任务本身。 */
+@Composable
+private fun BoardStandaloneGroupCard(
+    group: BoardStandaloneGroup,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onOpenSession: (String, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = WandColors.surfaceSoft,
+        shape = WandShapes.md,
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle)
+                    .semantics { stateDescription = if (expanded) "已展开" else "已收起" },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(group.title, color = WandColors.textPrimary,
+                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("${group.sessions.size} 个会话 · ${group.workspaceCwd}",
+                        color = WandColors.textMuted, style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                com.wand.app.ui.components.WandInPlaceSwap(contentKey = expanded, enterScale = 1f, exitScale = 1f) { state ->
+                    Text(if (state == true) "收起" else "展开", color = WandColors.brand,
+                        style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            WandInlinePanel(visible = expanded, growFrom = Alignment.Top) {
+                Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    group.sessions.forEach { session ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                onOpenSession(session.id, session.isStructured)
+                            }.padding(vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(session.title?.takeIf { it.isNotBlank() } ?: "未命名会话",
+                                    color = WandColors.textPrimary, style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                val identity = session.teamStep?.memberName?.takeIf { it.isNotBlank() }
+                                    ?: session.employeeName?.takeIf { it.isNotBlank() }
+                                    ?: workspaceProviderLabel(session.provider)
+                                Text(identity, color = WandColors.textMuted,
+                                    style = MaterialTheme.typography.labelSmall)
+                            }
+                            Text("打开", color = WandColors.brand,
+                                style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1354,6 +1450,7 @@ internal fun TaskBoardDetailPane(
     onOpenSession: (String, Boolean) -> Unit,
     onMoveSession: (com.wand.app.data.BoardTaskSession) -> Unit,
     baseUrl: String = "",
+    commentsApi: TaskBoardPort? = null,
     /** 「打开群聊」：参数是团队运行 id，由上层落到 IM 群聊页。 */
     onOpenTeamChat: (runId: String, taskIdentifier: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -1427,6 +1524,7 @@ internal fun TaskBoardDetailPane(
             Text(task.description, style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary, modifier = Modifier.padding(vertical = 8.dp))
         }
+        commentsApi?.let { TaskComments(it, task.id) }
         HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             WandChoice(

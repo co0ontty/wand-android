@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wand.app.data.ContentBlock
 import com.wand.app.data.ConversationTurn
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandShapes
@@ -37,7 +38,11 @@ internal fun ConversationTaskPreviewCard(turn: ConversationTurn, onOpen: () -> U
                 "unavailable" -> "任务不可用"
                 else -> conversationRunLabel(preview.status)
             }, style = MaterialTheme.typography.labelSmall, color = if (preview?.status == "failed") WandColors.danger else WandColors.textSecondary)
-            Text(preview?.text ?: "任务已接收，点击查看处理进展。", Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll), style = MaterialTheme.typography.bodyMedium)
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll)) {
+                TurnView(ConversationTurn("assistant", listOf(ContentBlock.Text(
+                    preview?.text?.takeIf { it.isNotBlank() } ?: "任务已接收，点击查看处理进展。", null
+                ))), showHeader = false)
+            }
             Text(if (unavailable) "原消息已保留" else "点击进入任务群 · 查看完整过程", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
         }
     }

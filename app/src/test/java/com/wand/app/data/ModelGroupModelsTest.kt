@@ -50,6 +50,23 @@ class ModelGroupModelsTest {
         assertNull(modelGroupListError(listOf(free.copy(models = emptyList()))))
     }
 
+    @Test fun openCodeFreeGroupKeepsNativeSelectorAndSavedServerMembership() {
+        val native = ModelGroup(OPENCODE_FREE_GROUP_ID, "opencode", FREE_MODEL_GROUP_NAME,
+            listOf("opencode/a-free", "opencode/b-free"))
+        assertTrue(native.builtIn)
+        assertEquals(OPENCODE_FREE_GROUP_SELECTOR, native.selector)
+        assertNull(modelGroupListError(listOf(native)))
+        assertNull(modelGroupListError(listOf(native.copy(models = emptyList()))))
+        assertNull(modelGroupListError(listOf(native.copy(models = listOf("opencode/big-pickle")))))
+        assertNotNull(modelGroupListError(listOf(native.copy(models = listOf("other/paid")))))
+        assertNotNull(modelGroupListError(listOf(native.copy(models = listOf("opencode/default")))))
+        assertNotNull(modelGroupListError(listOf(native.copy(provider = "pi"))))
+        assertNotNull(modelGroupListError(listOf(native.copy(name = "changed"))))
+        val catalog = ModelsResponse.parse(JSONObject().put("modelGroups", JSONArray().put(native.toJson())))
+        assertEquals(native, modelGroupsDraft(listOf(native), catalog).first { it.openCodeFree })
+        assertEquals(native.models.reversed(), moveGroupModel(native, 1, -1).models)
+    }
+
     @Test fun catalogProjectsGroupsAndConcreteFreeMembersIntoSeparateFields() {
         val parsed = ModelsResponse.parse(JSONObject().put("piModels", JSONArray().put(JSONObject()
             .put("id", group.selector).put("label", group.name).put("group", "模型分组")))

@@ -369,6 +369,9 @@ data class WorkspaceSessionSummary(
     val employeeAvatar: String? = null,
     val completionRevision: Int? = null,
     val viewedCompletionRevision: Int? = null,
+    /** 任务绑定标识；/api/tasks 的 standalone 投影通常不带，但任务摘要会带。 */
+    val workspaceTaskId: String? = null,
+    val ptyCommandRunning: Boolean? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -396,6 +399,8 @@ data class WorkspaceSessionSummary(
                 employeeAvatar = o.str("employeeAvatar")?.takeIf { it.isNotEmpty() },
                 completionRevision = o.int("completionRevision"),
                 viewedCompletionRevision = o.int("viewedCompletionRevision"),
+                workspaceTaskId = o.str("workspaceTaskId")?.takeIf { it.isNotBlank() },
+                ptyCommandRunning = o.bool("ptyCommandRunning"),
             )
         }
 

@@ -108,6 +108,15 @@ class ConversationImPresentationTest {
         dissolvedBy = null, deleting = false,
     )
 
+    @Test fun emptyListProjectionDistinguishesSearchFiltersAndNoData() {
+        assertEquals(ConversationListEmptyState.Empty, conversationListEmptyState("", ConversationListTier.All))
+        assertEquals(ConversationListEmptyState.Search, conversationListEmptyState("zzqa404", ConversationListTier.All))
+        assertEquals(ConversationListEmptyState.Search, conversationListEmptyState("zzqa404", ConversationListTier.Archived))
+        assertEquals(ConversationListEmptyState.Filtered, conversationListEmptyState(" \n ", ConversationListTier.Active))
+        assertEquals("清空搜索", ConversationListEmptyState.Search.action)
+        assertEquals("查看全部对话", ConversationListEmptyState.Filtered.action)
+    }
+
     @Test fun archiveTiersSplitArchivedTasksFromUnarchivedOnes() {
         val dissolved = conversation("a", "已解散的群", dissolvedAt = "2026-10-06T02:00:00Z", taskStatuses = listOf("archived"))
         val archivedTaskOnly = conversation("b", "任务被归档的群", taskStatuses = listOf("archived"))
@@ -117,6 +126,8 @@ class ConversationImPresentationTest {
         assertTrue(isConversationArchived(archivedTaskOnly))
         assertFalse(isConversationArchived(live))
         assertEquals(items, filterConversationList(items, ConversationListTier.All, ""))
+        assertEquals(listOf(live), filterConversationList(items, ConversationListTier.All, " 还在聊的群 "))
+        assertEquals(items, filterConversationList(items, ConversationListTier.All, " \n "))
         assertEquals(listOf(live), filterConversationList(items, ConversationListTier.Active, ""))
         assertEquals(listOf(dissolved, archivedTaskOnly), filterConversationList(items, ConversationListTier.Archived, ""))
         // 档位与查询是同一入口：搜索词仍能命中归档任务名，但不会把它们算进未归档档。

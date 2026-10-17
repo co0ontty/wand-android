@@ -95,6 +95,10 @@ class RecentTerminalConversationTest {
         assertEquals(listOf("old-pty"), groups[1].conversations.map { it.session.id })
         assertEquals(10, groups.last().conversations.size)
         assertEquals(10, groups.last().counts.running)
+        // 工作区首页（对齐 Web 侧栏）传全量、不限八条：员工展开的是完整会话列表。
+        val full = recentHomeGroups(employees + terminals, limit = Int.MAX_VALUE)
+        assertEquals(10, full.first().conversations.size)
+        assertEquals("employee-10", full.first().conversations.first().session.id)
     }
 
     @Test
@@ -326,7 +330,7 @@ class RecentTerminalConversationTest {
     @Test
     fun screenRetainsEmptyGroupActionsClosesMenusAndIgnoresLateNavigation() {
         val screen = File("src/main/java/com/wand/app/ui/screens/TaskListScreen.kt").readText()
-        assertTrue(screen.contains("recentHomeConversations(visibleGroups, limit = Int.MAX_VALUE)"))
+        assertTrue(screen.contains("recentHomeConversations(allGroups, limit = Int.MAX_VALUE)"))
         assertFalse(screen.contains("!hasAnyContent -> EmptyState("))
         assertFalse(screen.contains("!hasVisibleContent -> EmptyState("))
         assertFalse(screen.contains("if (recentGroups.isNotEmpty())"))

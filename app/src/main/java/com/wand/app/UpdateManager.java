@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.provider.Settings;
 
 import com.wand.app.data.WandHttp;
+import com.wand.app.data.ClientFeedback;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -126,6 +127,8 @@ final class UpdateManager {
                 int code = response.getCode();
                 if (code != 200) {
                     WandLog.w(TAG, "检查更新失败 HTTP " + code);
+                    new ClientFeedback(serverUrl, serverStore.getAppToken()).httpFailure(
+                            "/api/android-apk-update", code, response.getBody(), "HTTP " + code);
                     notifyNoUpdate(noUpdateCallback, "检查更新失败：服务器返回 " + code);
                     return;
                 }
@@ -248,6 +251,11 @@ final class UpdateManager {
                     }
                 }
             }
+            if (request.isCancelled()) {
+                postDownloadCancelled(listener);
+                return;
+            }
+            ClientFeedback.updateFailed(serverUrl, serverStore.getAppToken(), lastFailure, null);
             postDownloadFailure(listener, NetworkErrorHelper.describeError(lastFailure, "download"));
         });
         return request;
@@ -505,6 +513,8 @@ final class UpdateManager {
     private void doInstallApk(File apkFile) {
         if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
             WandLog.e(TAG, "安装包不存在或已损坏：" + apkFile);
+            ClientFeedback.updateFailed(serverUrl, serverStore.getAppToken(),
+                    new java.io.IOException("安装包不存在或已损坏"), null);
             showInstallFailure("安装包不存在或已损坏，请重新下载。");
             return;
         }
@@ -514,6 +524,7 @@ final class UpdateManager {
                 installWithViewIntent(apkFile);
             } catch (Exception e) {
                 WandLog.e(TAG, "VIEW Intent 安装失败", e);
+                ClientFeedback.updateFailed(serverUrl, serverStore.getAppToken(), e, null);
                 showInstallFailure(e.getMessage());
             }
             return;
@@ -524,12 +535,14 @@ final class UpdateManager {
                 installWithSession(apkFile);
             } catch (Exception sessionError) {
                 WandLog.w(TAG, "PackageInstaller 会话安装失败，回退到 VIEW Intent", sessionError);
+                ClientFeedback.updateFailed(serverUrl, serverStore.getAppToken(), sessionError, null);
                 activity.runOnUiThread(() -> {
                     if (activity.isDestroyed()) return;
                     try {
                         installWithViewIntent(apkFile);
                     } catch (Exception fallback) {
                         WandLog.e(TAG, "回退安装也失败", fallback);
+                        ClientFeedback.updateFailed(serverUrl, serverStore.getAppToken(), fallback, null);
                         showInstallFailure(fallback.getMessage());
                     }
                 });

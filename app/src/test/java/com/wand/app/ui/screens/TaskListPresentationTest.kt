@@ -697,7 +697,7 @@ class TaskListPresentationTest {
     }
 
     @Test
-    fun homeGroupShowsHeaderForTeamChatButNotForLoneEmployeeSession() {
+    fun homeGroupShowsHeaderForTeamChatAndLoneEmployeeSession() {
         val lone = session("structured", "codex").copy(id = "only", employeeId = "e-1",
             employeeName = "虎妞", startedAt = "2026-09-30T08:00:00.000Z")
         val chat = session("structured", "codex").copy(id = "chat",
@@ -712,7 +712,7 @@ class TaskListPresentationTest {
         assertFalse(groups[0].isCollapsible)
         assertTrue(homeGroupShowsHeader(groups[0]))
         // 员工单条：一级行就是那张会话卡，不套空壳。
-        assertFalse(homeGroupShowsHeader(groups[1]))
+        assertTrue(homeGroupShowsHeader(groups[1]))
     }
 
     private fun groupWithTasks(tasks: List<WorkspaceTaskSummary>) = TaskDirectoryGroup(

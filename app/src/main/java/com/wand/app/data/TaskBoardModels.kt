@@ -505,6 +505,8 @@ interface TaskBoardPort : TaskChangeSource {
     suspend fun listBoardTasks(workspaceId: String? = null): List<BoardTask>
     /** 单条任务：新建后用来确认后台自动标题是否已生成。 */
     suspend fun getBoardTask(id: String): BoardTask?
+    /** Read-only comments; older servers may not expose the endpoint. */
+    suspend fun listTaskComments(id: String): List<TaskComment> = emptyList()
     suspend fun createBoardTask(
         title: String,
         description: String,
