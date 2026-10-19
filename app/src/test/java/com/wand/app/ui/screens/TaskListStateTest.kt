@@ -100,6 +100,28 @@ class TaskListStateTest {
     }
 
     @Test
+    fun failedConfigurationLoadIsNotReadyAndCanBeRetried() = runTest {
+        val config = CompletableDeferred<ServerConfigInfo>().apply {
+            completeExceptionally(IllegalStateException("config unavailable"))
+        }
+        val port = FakeWorkspacePort().apply { pendingConfig = config }
+        val state = TaskListState(port)
+        try {
+            assertFalse(state.loadCreationDefaults())
+            assertFalse(state.creationDefaultsLoading)
+            assertEquals("config unavailable", state.mutationError)
+            port.pendingConfig = CompletableDeferred(ServerConfigInfo.parse(JSONObject()
+                .put("defaultProvider", "pi").put("defaultEngine", "sdk")))
+            assertTrue(state.loadCreationDefaults())
+            assertEquals("pi", state.defaultProvider)
+            assertEquals("sdk", state.defaultEngine)
+            assertFalse(state.creationDefaultsLoading)
+        } finally {
+            state.shutdown()
+        }
+    }
+
+    @Test
     fun pendingConversationRequestIsConsumedExactlyOnce() = runTest {
         val state = TaskListState(FakeWorkspacePort())
         try {

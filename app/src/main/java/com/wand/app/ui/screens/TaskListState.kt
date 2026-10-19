@@ -61,6 +61,8 @@ class TaskListState(
         private set
     var defaultMode by mutableStateOf("default")
         private set
+    var defaultTaskWorktree by mutableStateOf(false)
+        private set
     var creationDefaultsLoading by mutableStateOf(false)
         private set
     var pendingConversationRequest by mutableLongStateOf(0L)
@@ -235,10 +237,11 @@ class TaskListState(
             recentPaths = port.recentTaskPaths()
                 .filter { it.path.isNotBlank() }
                 .distinctBy { normalizeWorkspacePath(it.path) }
-            runCatching { port.serverConfig() }.getOrNull()?.let { config ->
+            port.serverConfig().let { config ->
                 defaultThinkingEffort = config.defaultThinkingEffort?.takeIf { it.isNotBlank() } ?: "off"
                 // A slow defaults request must not undo a choice made in the open dialog.
                 if (choiceRevision != creationChoiceRevision) return@let
+                defaultTaskWorktree = config.defaultTaskWorktree == true
                 defaultProvider = config.defaultProvider?.takeIf { it.isNotBlank() } ?: defaultProvider
                 defaultEngine = if (config.defaultProvider == "pi" && config.defaultEngine == WandAgentEngine.Sdk.raw) {
                     WandAgentEngine.Sdk.raw

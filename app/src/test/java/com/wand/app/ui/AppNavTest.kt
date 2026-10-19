@@ -93,9 +93,23 @@ class AppNavTest {
     fun roundTrip_pendingConversationPreservesDraftIdentityAndContext() {
         val expected = Screen.PendingConversation(
             "pending:server:1", "/repo", "ws-1", "task-1", "Task",
-            initialEmployeeId = "employee-7", initialCreateMode = true,
+            initialEmployeeId = "employee-7", initialCreateMode = true, taskWorktree = true,
         )
         assertEquals(expected, roundTrip(expected))
+    }
+
+    @Test
+    fun pendingConversationEntryScopeIsStableAndIndependentOfEmployeeChoice() {
+        val first = pendingConversationEntryScope("ws-1", null, "/repo")
+        val reopened = pendingConversationEntryScope("ws-1", null, "/repo")
+        assertEquals(first, reopened)
+        assertEquals(
+            pendingCreationScopeKey("server-1", first),
+            pendingCreationScopeKey("server-1", reopened),
+        )
+        assertTrue(first != pendingConversationEntryScope("ws-2", null, "/repo"))
+        assertTrue(first != pendingConversationEntryScope(null, "task-1", "/repo"))
+        assertEquals("global", pendingConversationEntryScope(null, null, ""))
     }
 
     @Test

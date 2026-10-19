@@ -216,24 +216,23 @@ private val ExpandedSidebarMinWidth = 280.dp
 private val ExpandedSidebarMaxWidth = 400.dp
 private val ExpandedDetailMinWidth = 560.dp
 
-internal fun pendingConversationDraftKey(serverId: String, entryKey: String): String =
-    "pending-conversation:$serverId:$entryKey"
+internal fun pendingConversationDraftKey(serverId: String, entryScope: String): String =
+    "pending-conversation:${PendingCreationStore.stableKey(serverId, entryScope)}"
 
 internal fun pendingCreationScopeKey(
     serverId: String,
-    cwd: String?,
+    entryScope: String,
+): String = PendingCreationStore.stableKey(serverId, entryScope)
+
+internal fun pendingConversationEntryScope(
     workspaceId: String?,
     workspaceTaskId: String?,
-    employeeId: String?,
-): String {
-    val routeScope = when {
-        !workspaceTaskId.isNullOrBlank() -> "task:$workspaceTaskId"
-        !workspaceId.isNullOrBlank() -> "workspace:$workspaceId"
-        !cwd.isNullOrBlank() -> "cwd:$cwd"
-        else -> "global"
-    }
-    val scope = if (employeeId.isNullOrBlank()) routeScope else "$routeScope:employee:$employeeId"
-    return PendingCreationStore.stableKey(serverId, scope)
+    cwd: String?,
+): String = when {
+    !workspaceTaskId.isNullOrBlank() -> "task:$workspaceTaskId"
+    !workspaceId.isNullOrBlank() -> "workspace:$workspaceId"
+    !cwd.isNullOrBlank() -> "cwd:$cwd"
+    else -> "global"
 }
 
 internal fun pendingConversationScreen(
@@ -244,6 +243,7 @@ internal fun pendingConversationScreen(
     taskName: String? = null,
     initialEmployeeId: String? = null,
     initialCreateMode: Boolean = false,
+    taskWorktree: Boolean = false,
 ): Screen.PendingConversation = Screen.PendingConversation(
     draftKey = entry,
     cwd = cwd,
@@ -252,10 +252,12 @@ internal fun pendingConversationScreen(
     taskName = taskName,
     initialEmployeeId = initialEmployeeId,
     initialCreateMode = initialCreateMode,
+    taskWorktree = taskWorktree,
 )
 
 private fun openPendingConversation(nav: NavState, entry: Long) {
-    nav.push(pendingConversationScreen("entry-$entry"))
+    val scope = "global"
+    nav.push(pendingConversationScreen(scope))
 }
 /**
  * 展开折叠屏与平板会在运行时反复跨越这个边界；只依据当前窗口尺寸，
@@ -401,9 +403,6 @@ private fun ReadyContent(
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     // 任务聚合是根导航的数据真源。通知走 SessionWatcher，快捷方式用当前任务树。
-    val pendingCreationStore = remember(api.baseUrl, context) {
-        PendingCreationStore(SharedPreferencesPendingCreationPersistence(context))
-    }
     val taskState = remember(api, context) {
         TaskListState(api, SharedTaskListExpansionStore(context, api.baseUrl))
     }
@@ -618,39 +617,47 @@ private fun SessionDetailScreen(
             showBack = showBack,
             onBack = { nav.pop() },
         )
-        is Screen.PendingConversation -> PendingConversationScreen(
-            api = api,
-            taskState = taskState,
-            draftKey = pendingConversationDraftKey(actions.connection.serverId, screen.draftKey),
-            cwd = screen.cwd ?: "",
-            workspaceId = screen.workspaceId,
-            workspaceTaskId = screen.workspaceTaskId,
-            taskName = screen.taskName,
-            initialEmployeeId = screen.initialEmployeeId,
-            initialCreateMode = screen.initialCreateMode,
-            creationStore = pendingCreationStore,
-            creationKey = pendingCreationScopeKey(actions.connection.serverId, screen.cwd, screen.workspaceId, screen.workspaceTaskId, screen.initialEmployeeId),
-            drafts = sessionDrafts,
-            onCancel = { nav.pop() },
-            onCreated = { created, submitDraft ->
-                if (!created.isStructured) {
-                    nav.replaceTop(Screen.PtyTerminal(
-                        created.id,
-                        taskName = screen.taskName,
-                        workspaceId = screen.workspaceId,
-                        taskId = screen.workspaceTaskId,
-                    ))
-                } else {
-                    nav.replaceTop(Screen.Chat(
-                        created.id,
-                        taskName = screen.taskName,
-                        workspaceId = screen.workspaceId,
-                        taskId = screen.workspaceTaskId,
-                        submitDraftOnOpen = submitDraft,
-                    ))
-                }
-            },
-        )
+        is Screen.PendingConversation -> {
+            val context = LocalContext.current
+            val pendingCreationStore = remember(api.baseUrl, context) {
+                PendingCreationStore(SharedPreferencesPendingCreationPersistence(context))
+            }
+            val entryScope = pendingConversationEntryScope(screen.workspaceId, screen.workspaceTaskId, screen.cwd)
+            PendingConversationScreen(
+                api = api,
+                taskState = taskState,
+                draftKey = pendingConversationDraftKey(actions.connection.serverId, entryScope),
+                cwd = screen.cwd ?: "",
+                workspaceId = screen.workspaceId,
+                workspaceTaskId = screen.workspaceTaskId,
+                taskName = screen.taskName,
+                initialEmployeeId = screen.initialEmployeeId,
+                initialCreateMode = screen.initialCreateMode,
+                taskWorktree = screen.taskWorktree,
+                creationStore = pendingCreationStore,
+                creationKey = pendingCreationScopeKey(actions.connection.serverId, entryScope),
+                drafts = sessionDrafts,
+                onCancel = { nav.pop() },
+                onCreated = { created, submitDraft ->
+                    if (!created.isStructured) {
+                        nav.replaceTop(Screen.PtyTerminal(
+                            created.id,
+                            taskName = screen.taskName,
+                            workspaceId = screen.workspaceId,
+                            taskId = screen.workspaceTaskId,
+                        ))
+                    } else {
+                        nav.replaceTop(Screen.Chat(
+                            created.id,
+                            taskName = screen.taskName,
+                            workspaceId = screen.workspaceId,
+                            taskId = screen.workspaceTaskId,
+                            submitDraftOnOpen = submitDraft,
+                        ))
+                    }
+                },
+            )
+        }
         is Screen.PtyTerminal -> PtyTerminalScreen(
             api = api,
             sessionId = screen.sessionId,
@@ -710,10 +717,11 @@ private fun SessionDetailScreen(
                 // 全屏工作台也走同一套详情页，列表与详情各占一屏，不再叠两条顶栏。
                 onOpenTaskDetail = { taskId -> nav.push(Screen.TaskBoard(taskId = taskId)) },
                 onNewConversation = { cwd, workspaceId, taskId, taskName, createMode ->
+                    val entryScope = pendingConversationEntryScope(workspaceId, taskId, cwd)
                     nav.push(pendingConversationScreen(
-                        entry = "entry-${System.currentTimeMillis()}", cwd = cwd,
+                        entry = entryScope, cwd = cwd,
                         workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
-                        initialCreateMode = createMode,
+                        initialCreateMode = createMode, taskWorktree = taskId == null && taskState.defaultTaskWorktree,
                     ))
                 },
                 linkedWorkspaceId = screen.workspaceId,
@@ -880,10 +888,12 @@ private fun SinglePaneContent(
                 onOpenTask = onOpenWorkspaceTask,
                 onOpenSession = onOpenSession,
                 onNewConversation = { cwd, workspaceId, taskId, taskName, employeeId, createMode ->
+                    val entryScope = pendingConversationEntryScope(workspaceId, taskId, cwd)
                     nav.push(pendingConversationScreen(
-                        entry = "entry-${System.currentTimeMillis()}", cwd = cwd,
+                        entry = entryScope, cwd = cwd,
                         workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
                         initialEmployeeId = employeeId, initialCreateMode = createMode,
+                        taskWorktree = taskId == null && taskState.defaultTaskWorktree,
                     ))
                 },
                 onOpenBoardSession = onOpenBoardSession,
@@ -1086,10 +1096,12 @@ private fun WideReadyContent(
                                 onOpenTask = onOpenWorkspaceTask,
                                 onOpenSession = onOpenSession,
                                 onNewConversation = { cwd, workspaceId, taskId, taskName, employeeId, createMode ->
+                                    val entryScope = pendingConversationEntryScope(workspaceId, taskId, cwd)
                                     nav.push(pendingConversationScreen(
-                                        entry = "entry-${System.currentTimeMillis()}", cwd = cwd,
+                                        entry = entryScope, cwd = cwd,
                                         workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
                                         initialEmployeeId = employeeId, initialCreateMode = createMode,
+                                        taskWorktree = taskId == null && taskState.defaultTaskWorktree,
                                     ))
                                 },
                                 onOpenBoardSession = onOpenBoardSession,

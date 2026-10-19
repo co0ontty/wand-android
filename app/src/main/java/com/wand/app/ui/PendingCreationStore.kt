@@ -11,7 +11,12 @@ data class PendingCreationState(
     val sessionId: String? = null,
     val unconfirmed: Boolean = false,
     val operation: PendingCreationOperation? = null,
-)
+    val taskCwd: String? = null,
+    val taskWorkspaceId: String? = null,
+) {
+    fun blocksCreation(volatileUnconfirmed: Boolean, hasKnownSession: Boolean): Boolean =
+        (unconfirmed || volatileUnconfirmed) && !hasKnownSession
+}
 
 class PendingCreationPersistenceException(message: String) : IllegalStateException(message)
 
@@ -36,10 +41,21 @@ class PendingCreationStore(private val persistence: PendingCreationPersistence) 
         )
     }
 
-    fun recordTaskAccepted(key: String, taskId: String) {
+    fun recordTaskAccepted(
+        key: String,
+        taskId: String,
+        taskCwd: String? = null,
+        taskWorkspaceId: String? = null,
+    ) {
         val current = state(key)
         requireSaved(
-            persistence.write(key, current.copy(taskId = taskId, unconfirmed = false, operation = null)),
+            persistence.write(key, current.copy(
+                taskId = taskId,
+                taskCwd = taskCwd,
+                taskWorkspaceId = taskWorkspaceId,
+                unconfirmed = false,
+                operation = null,
+            )),
             "任务已创建，但无法保存续接标识；请勿重复创建。",
         )
     }
@@ -49,6 +65,8 @@ class PendingCreationStore(private val persistence: PendingCreationPersistence) 
         requireSaved(
             persistence.write(key, current.copy(
                 sessionId = sessionId,
+                taskCwd = null,
+                taskWorkspaceId = null,
                 unconfirmed = false,
                 operation = null,
             )),
@@ -90,11 +108,15 @@ class SharedPreferencesPendingCreationPersistence(context: Context) : PendingCre
         sessionId = prefs.getString("$key.session", null),
         unconfirmed = prefs.getBoolean("$key.unknown", false),
         operation = prefs.getString("$key.operation", null)?.let { runCatching { PendingCreationOperation.valueOf(it) }.getOrNull() },
+        taskCwd = prefs.getString("$key.taskCwd", null),
+        taskWorkspaceId = prefs.getString("$key.taskWorkspaceId", null),
     )
 
     override fun write(key: String, state: PendingCreationState): Boolean = prefs.edit().apply {
         if (state.taskId == null) remove("$key.task") else putString("$key.task", state.taskId)
         if (state.sessionId == null) remove("$key.session") else putString("$key.session", state.sessionId)
+        if (state.taskCwd == null) remove("$key.taskCwd") else putString("$key.taskCwd", state.taskCwd)
+        if (state.taskWorkspaceId == null) remove("$key.taskWorkspaceId") else putString("$key.taskWorkspaceId", state.taskWorkspaceId)
         putBoolean("$key.unknown", state.unconfirmed)
         if (state.operation == null) remove("$key.operation") else putString("$key.operation", state.operation.name)
     }.commit()
@@ -102,6 +124,8 @@ class SharedPreferencesPendingCreationPersistence(context: Context) : PendingCre
     override fun remove(key: String): Boolean = prefs.edit()
         .remove("$key.task")
         .remove("$key.session")
+        .remove("$key.taskCwd")
+        .remove("$key.taskWorkspaceId")
         .remove("$key.unknown")
         .remove("$key.operation")
         .commit()

@@ -30,6 +30,7 @@ sealed class Screen {
         val taskName: String? = null,
         val initialEmployeeId: String? = null,
         val initialCreateMode: Boolean = false,
+        val taskWorktree: Boolean = false,
     ) : Screen()
     data class PtyTerminal(
         val sessionId: String,
@@ -328,6 +329,7 @@ class NavState {
                 PENDING_CONVERSATION_PREFIX, draftKey, cwd.orEmpty(), workspaceId.orEmpty(),
                 workspaceTaskId.orEmpty(), taskName.orEmpty(), initialEmployeeId.orEmpty(),
                 if (initialCreateMode) "create-task" else "conversation",
+                if (taskWorktree) "worktree" else "shared",
             ).joinToString(FIELD_SEP)
             is Screen.PtyTerminal -> buildSessionDetailKey(
                 PTY_TERMINAL_PREFIX,
@@ -389,7 +391,7 @@ class NavState {
                 )
             }
             startsWith(PENDING_CONVERSATION_PREFIX + FIELD_SEP) -> {
-                val parts = removePrefix(PENDING_CONVERSATION_PREFIX + FIELD_SEP).split(FIELD_SEP, limit = 7)
+                val parts = removePrefix(PENDING_CONVERSATION_PREFIX + FIELD_SEP).split(FIELD_SEP, limit = 8)
                 parts.firstOrNull()?.takeIf(String::isNotBlank)?.let { key ->
                     Screen.PendingConversation(
                         draftKey = key,
@@ -399,6 +401,7 @@ class NavState {
                         taskName = parts.getOrNull(4)?.takeIf(String::isNotBlank),
                         initialEmployeeId = parts.getOrNull(5)?.takeIf(String::isNotBlank),
                         initialCreateMode = parts.getOrNull(6) == "create-task",
+                        taskWorktree = parts.getOrNull(7) == "worktree",
                     )
                 }
             }
