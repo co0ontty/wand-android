@@ -191,6 +191,14 @@ class NewTaskComposerPresentationTest {
     }
 
     @Test
+    fun modeDefaultsNormalizeAgainstTheSelectedProvider() {
+        assertEquals("default", normalizedNewTaskMode("claude", "default"))
+        assertEquals("full-access", normalizedNewTaskMode("codex", "default"))
+        assertEquals("full-access", normalizedNewTaskMode("codex", "full-access"))
+        assertEquals("default", normalizedNewTaskMode("pi", "native"))
+    }
+
+    @Test
     fun ungroupedStartCopyNeverImpliesCardCreation() {
         val lines = listOf(
             newTaskUngroupedStartLabel(),

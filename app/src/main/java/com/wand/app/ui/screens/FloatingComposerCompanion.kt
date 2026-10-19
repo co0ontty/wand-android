@@ -20,7 +20,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.SendActionVisual
 import com.wand.app.ui.components.AvatarFileActivity
 import com.wand.app.ui.components.EmployeeAvatar
@@ -30,34 +29,24 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.reduceMotionEnabled
 import kotlin.math.roundToInt
 
-/** Fixture callbacks do not open an audio device or send a message. */
-internal data class DraftVoiceGesture(
-    val start: () -> Unit, val move: (Boolean) -> Unit,
-    val end: () -> Unit, val cancel: () -> Unit,
-)
-
 /** Reserved geometry does not depend on tool/streaming state. One scene moves; it is never mirrored. */
 @Composable
 internal fun FloatingComposerCompanion(
     employeeId: String?, name: String?, avatar: String?, status: String,
-    activity: AvatarFileActivity, thinking: Boolean, speaking: Boolean,
+    activity: AvatarFileActivity, thinking: Boolean,
     controls: CompanionComposerControls, running: Boolean,
-    voice: VoiceInputController? = null, onMicDown: () -> Unit = {}, onStop: () -> Unit = {},
-    onPauseSpeech: (() -> Unit)? = null, previewGesture: DraftVoiceGesture? = null,
+    onStop: () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val preference = remember(context.applicationContext) { CompanionSidePreference(context) }
     var side by remember(preference) { mutableStateOf(preference.read()) }
     var dragX by remember { mutableFloatStateOf(0f) }
-    var voiceHint by remember { mutableStateOf(false) }
     DisposableEffect(preference) {
         val unsubscribe = preference.observe { side = preference.read() }
         onDispose { unsubscribe() }
     }
     val currentControls by rememberUpdatedState(controls)
-    val currentMic by rememberUpdatedState(onMicDown)
-    val currentGesture by rememberUpdatedState(previewGesture)
     val density = LocalDensity.current
     val captionLineHeight = with(density) { MaterialTheme.typography.labelSmall.lineHeight.toDp() }
     val dockHeight = maxOf(COMPANION_SCENE_SLOT_DP.dp, captionLineHeight * 4,
@@ -78,31 +67,17 @@ internal fun FloatingComposerCompanion(
                 dragX = 0f
             }
             val latestSnap by rememberUpdatedState(snap)
-            // Reserve the third action's lane without drawing an empty button. Mic/keyboard
-            // stay anchored while the same capsule grows rightwards for text or a receipt.
+            // Reserve the send action's lane without drawing an empty button. The keyboard
+            // button stays anchored while the same capsule grows rightwards for text or a receipt.
             Box(Modifier.align(if (side == CompanionSide.Left) Alignment.CenterEnd else Alignment.CenterStart)
-                .padding(horizontal = 8.dp).width(ComposerActionTouchSize * 3).height(ComposerActionTouchSize)) {
+                .padding(horizontal = 8.dp).width(ComposerActionTouchSize * 2).height(ComposerActionTouchSize)) {
             Surface(shape = RoundedCornerShape(28.dp), color = WandColors.surface,
                 modifier = Modifier.align(Alignment.CenterStart).animateContentSize(
                     WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenNormal()),
                     alignment = Alignment.CenterStart,
                 )) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(48.dp).semantics {
-                        role = Role.Button
-                        contentDescription = "按住说话，松手转写，上滑取消"
-                        onClick("显示语音输入提示") { voiceHint = true; true }
-                    }.pointerInput(voice) {
-                        companionGesture(false, { voiceHint = true },
-                            { currentGesture?.start?.invoke() ?: currentMic() },
-                            { if (currentGesture != null) currentGesture?.move?.invoke(it) else voice?.updateCancel(it) },
-                            { if (currentGesture != null) currentGesture?.end?.invoke() else voice?.endPress() },
-                            { if (currentGesture != null) currentGesture?.cancel?.invoke() else voice?.cancelPress() }, {}, {}, {})
-                    }, contentAlignment = Alignment.Center) {
-                        Icon(WandIcons.mic, null, tint = if (voice?.pressed == true) WandColors.brand else WandColors.textPrimary,
-                            modifier = Modifier.size(22.dp))
-                    }
-                    IconButton(onClick = { voiceHint = false; controls.onEdit() }, modifier = Modifier.size(48.dp)) {
+                    IconButton(onClick = { controls.onEdit() }, modifier = Modifier.size(48.dp)) {
                         Icon(WandIcons.keyboard, "展开键盘输入", tint = WandColors.textPrimary, modifier = Modifier.size(22.dp))
                     }
                     if (action != null) SubmitMorphButton(
@@ -130,10 +105,9 @@ internal fun FloatingComposerCompanion(
                 }
             }
             }
-            val actionWidth = ComposerActionTouchSize * 3
+            val actionWidth = ComposerActionTouchSize * 2
             val hint = when {
                 status.isNotBlank() -> status
-                voiceHint -> "按住猫头或麦克风说话"
                 !controls.editing && (controls.hasText || controls.hasAttachments) -> "草稿已保留"
                 else -> ""
             }
@@ -150,31 +124,24 @@ internal fun FloatingComposerCompanion(
                     liveRegion = LiveRegionMode.Polite
                 }, style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary,
                     textAlign = if (side == CompanionSide.Right) TextAlign.End else TextAlign.Start,
-                    maxLines = if (onPauseSpeech == null) 4 else 2, overflow = TextOverflow.Ellipsis)
-                if (onPauseSpeech != null) IconButton(onClick = onPauseSpeech, modifier = Modifier.size(ComposerActionTouchSize)) {
-                    Icon(WandIcons.pause, "暂停朗读，任务继续", tint = WandColors.textSecondary, modifier = Modifier.size(ComposerActionIconSize))
-                }
+                    maxLines = 4, overflow = TextOverflow.Ellipsis)
             }
             Box(Modifier.align(Alignment.CenterStart).padding(start = 12.dp).offset { IntOffset(headX.roundToInt(), 0) }.zIndex(1f)
                 .size(headSize).semantics {
                     role = Role.Button
-                    contentDescription = "${name ?: "员工"}，点按编辑，长按说话，拖动左右换边"
+                    contentDescription = "${name ?: "员工"}，点按编辑，拖动左右换边"
                     stateDescription = if (side == CompanionSide.Left) "角色在左侧" else "角色在右侧"
                     onClick("编辑消息") { currentControls.onEdit(); true }
                     customActions = listOf(CustomAccessibilityAction("把角色移到${if (side == CompanionSide.Left) "右" else "左"}侧") {
                         side = if (side == CompanionSide.Left) CompanionSide.Right else CompanionSide.Left
                         preference.write(side); true
                     })
-                }.pointerInput(voice) {
-                    companionGesture(true, { currentControls.onEdit() },
-                        { currentGesture?.start?.invoke() ?: currentMic() },
-                        { if (currentGesture != null) currentGesture?.move?.invoke(it) else voice?.updateCancel(it) },
-                        { if (currentGesture != null) currentGesture?.end?.invoke() else voice?.endPress() },
-                        { if (currentGesture != null) currentGesture?.cancel?.invoke() else voice?.cancelPress() },
+                }.pointerInput(Unit) {
+                    companionGesture({ currentControls.onEdit() },
                         { dragX = it }, { latestSnap() }, { dragX = 0f })
                 }) {
                 EmployeeAvatar(employeeId ?: "e_wand_default", name, avatar, size = headSize, animated = true,
-                    fileActivity = activity, thinking = thinking && activity == AvatarFileActivity.Idle, speaking = speaking)
+                    fileActivity = activity, thinking = thinking && activity == AvatarFileActivity.Idle)
             }
         }
         content()

@@ -21,12 +21,13 @@ class WorkspaceTaskCreationTest {
         val request = createEmployeeWorkspaceTaskWindowRequest(
             "employee-1", WorkspaceBinding("ws-1", "task-1", "/repo"), "  继续工作  ",
         )
-        assertEquals("/api/structured-sessions", request.path)
+        assertEquals("/api/sessions", request.path)
+        assertEquals("structured", request.body.getString("kind"))
         assertEquals("employee-1", request.body.getString("employeeId"))
         assertEquals("ws-1", request.body.getString("workspaceId"))
         assertEquals("task-1", request.body.getString("workspaceTaskId"))
         assertEquals("继续工作", request.body.getString("prompt"))
-        assertTrue(request.body.getBoolean("respondImmediately"))
+        assertFalse(request.body.has("respondImmediately"))
         assertFalse(request.body.has("provider"))
         assertFalse(request.body.has("command"))
     }
@@ -36,13 +37,70 @@ class WorkspaceTaskCreationTest {
         val request = createEmployeeWorkspaceTaskWindowRequest(
             "employee-1", WorkspaceBinding("ws-1", cwd = "/repo"),
         )
-        assertEquals("/api/structured-sessions", request.path)
+        assertEquals("/api/sessions", request.path)
+        assertEquals("structured", request.body.getString("kind"))
         assertEquals("employee-1", request.body.getString("employeeId"))
         assertEquals("ws-1", request.body.getString("workspaceId"))
         assertEquals("/repo", request.body.getString("cwd"))
         for (key in listOf("prompt", "respondImmediately", "workspaceTaskId", "provider", "model", "thinkingEffort")) {
             assertFalse(request.body.has(key))
         }
+    }
+
+    @Test
+    fun employeeSessionUsesCandidatesUnlessExecutionWasExplicitlyOverridden() {
+        val inherited = createEmployeeWorkspaceTaskWindowRequest(
+            "employee-1", WorkspaceBinding("ws-1", cwd = "/repo"),
+        )
+        assertFalse(inherited.body.has("overrideCli"))
+        assertFalse(inherited.body.has("runner"))
+        assertFalse(inherited.body.has("provider"))
+        assertFalse(inherited.body.has("engine"))
+        assertFalse(inherited.body.has("model"))
+        assertFalse(inherited.body.has("thinkingEffort"))
+        assertEquals("employee-1", inherited.body.getString("employeeId"))
+
+        val overridden = createEmployeeWorkspaceTaskWindowRequest(
+            "employee-1", WorkspaceBinding("ws-1", cwd = "/repo"), overrideCli = true,
+            target = WorkspaceSessionTarget.WandAgent, model = "pi-model",
+            thinkingEffort = "high", mode = "managed",
+        )
+        assertEquals("/api/sessions", overridden.path)
+        assertTrue(overridden.body.getBoolean("overrideCli"))
+        assertEquals("pi", overridden.body.getString("provider"))
+        assertEquals("sdk", overridden.body.getString("engine"))
+        assertEquals("pi-cli-json", overridden.body.getString("runner"))
+        assertEquals("pi-model", overridden.body.getString("model"))
+        assertEquals("high", overridden.body.getString("thinkingEffort"))
+        assertEquals("managed", overridden.body.getString("mode"))
+        assertEquals("employee-1", overridden.body.getString("employeeId"))
+    }
+
+    @Test
+    fun employeeOverrideCannotSelectShellOrPty() {
+        val failure = runCatching {
+            createEmployeeWorkspaceTaskWindowRequest(
+                "employee-1", WorkspaceBinding(cwd = "/repo"), overrideCli = true,
+                target = WorkspaceSessionTarget.Shell,
+            )
+        }.exceptionOrNull()
+        assertTrue(failure is IllegalArgumentException)
+    }
+
+    @Test
+    fun shellIsPtyOnlyAndWandAgentIsStructuredOnly() {
+        val emptyShell = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.Shell, WorkspaceBinding(cwd = "/repo"), WorkspaceSessionKind.Structured,
+        )
+        assertEquals("pty", emptyShell.body.getString("kind"))
+        assertTrue(emptyShell.body.getBoolean("shell"))
+        assertFalse(emptyShell.body.has("initialInput"))
+
+        val sdk = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.WandAgent, WorkspaceBinding(cwd = "/repo"), WorkspaceSessionKind.Pty,
+        )
+        assertEquals("structured", sdk.body.getString("kind"))
+        assertFalse(sdk.body.has("command"))
     }
 
     @Test
@@ -94,7 +152,8 @@ class WorkspaceTaskCreationTest {
 
         for ((target, expectedCommand) in cases) {
             val pty = createWorkspaceTaskWindowRequest(target, binding, WorkspaceSessionKind.Pty)
-            assertEquals("/api/commands", pty.path)
+            assertEquals("/api/sessions", pty.path)
+            assertEquals("pty", pty.body.getString("kind"))
             assertEquals("command for ${target.raw}", expectedCommand, pty.body.getString("command"))
             assertEquals("provider for ${target.raw}", target.provider, pty.body.getString("provider"))
             assertEquals("ws-1", pty.body.getString("workspaceId"))
@@ -102,11 +161,32 @@ class WorkspaceTaskCreationTest {
             assertEquals("/worktree/path", pty.body.getString("cwd"))
 
             val structured = createWorkspaceTaskWindowRequest(target, binding, WorkspaceSessionKind.Structured)
-            assertEquals("/api/structured-sessions", structured.path)
+            assertEquals("/api/sessions", structured.path)
+            assertEquals("structured", structured.body.getString("kind"))
             assertEquals(target.provider, structured.body.getString("provider"))
             assertEquals(structuredRunnerFor(target.provider!!), structured.body.getString("runner"))
             assertTrue(!structured.body.has("command"))
         }
+    }
+
+    @Test
+    fun pendingStructuredSessionUsesSupportedFlatFieldsAndNoPrompt() {
+        val request = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.WandAgent,
+            WorkspaceBinding("ws-1", cwd = "/repo"),
+            kind = WorkspaceSessionKind.Structured,
+            prompt = "first input",
+            model = "model-x",
+            thinkingEffort = "high",
+            overrideCli = true,
+        )
+        assertTrue(request.body.getBoolean("overrideCli"))
+        assertFalse(request.body.has("executionPreference"))
+        assertEquals("first input", request.body.getString("prompt"))
+        assertEquals("pi", request.body.getString("provider"))
+        assertEquals("model-x", request.body.getString("model"))
+        assertEquals("high", request.body.getString("thinkingEffort"))
+        assertEquals("sdk", request.body.getString("engine"))
     }
 
     @Test
@@ -117,7 +197,7 @@ class WorkspaceTaskCreationTest {
             WorkspaceBinding("ws-1", "task-1", "/worktree/path"),
             WorkspaceSessionKind.Structured,
         )
-        assertEquals("/api/structured-sessions", request.path)
+        assertEquals("/api/sessions", request.path)
         assertEquals("pi", request.body.getString("provider"))
         assertEquals("sdk", request.body.getString("engine"))
         assertEquals("pi-cli-json", request.body.getString("runner"))
@@ -130,6 +210,21 @@ class WorkspaceTaskCreationTest {
         )
         assertEquals("pi", cli.body.getString("provider"))
         assertFalse(cli.body.has("engine"))
+    }
+
+    @Test
+    fun wandAgentCannotBecomePtyEvenWithStaleKindSelection() {
+        val request = createWorkspaceTaskWindowRequest(
+            WorkspaceSessionTarget.WandAgent,
+            WorkspaceBinding("w", "t", "/work"),
+            kind = WorkspaceSessionKind.Pty,
+            prompt = "hello",
+        )
+        assertEquals("structured", request.body.getString("kind"))
+        assertEquals("sdk", request.body.getString("engine"))
+        assertEquals("hello", request.body.getString("prompt"))
+        assertFalse(request.body.has("command"))
+        assertFalse(request.body.has("initialInput"))
     }
 
     @Test
@@ -147,6 +242,7 @@ class WorkspaceTaskCreationTest {
             WorkspaceBinding("ws-1", "task-1", "/worktree/path"),
         ).body
 
+        assertEquals("pty", body.getString("kind"))
         assertTrue(body.getBoolean("shell"))
         assertTrue(!body.has("command"))
         assertTrue(!body.has("provider"))
@@ -160,19 +256,21 @@ class WorkspaceTaskCreationTest {
         val binding = WorkspaceBinding("ws-1", "task-1", "/repo")
         val structured = createWorkspaceTaskWindowRequest(
             WorkspaceSessionTarget.Pi, binding, WorkspaceSessionKind.Structured,
-            prompt = "完成这项任务", model = "pi-model", thinkingEffort = "max",
+            prompt = "完成这项任务", model = "pi-model", thinkingEffort = "max", mode = "managed",
         ).body
         assertEquals("pi-model", structured.getString("model"))
         assertEquals("max", structured.getString("thinkingEffort"))
+        assertEquals("managed", structured.getString("mode"))
         assertEquals("完成这项任务", structured.getString("prompt"))
-        assertTrue(structured.getBoolean("respondImmediately"))
+        assertFalse(structured.has("respondImmediately"))
 
         val pty = createWorkspaceTaskWindowRequest(
             WorkspaceSessionTarget.Codex, binding, WorkspaceSessionKind.Pty,
-            prompt = "先检查仓库", model = "codex-model", thinkingEffort = "deep",
+            prompt = "先检查仓库", model = "codex-model", thinkingEffort = "deep", mode = "full-access",
         ).body
         assertEquals("codex-model", pty.getString("model"))
         assertEquals("deep", pty.getString("thinkingEffort"))
+        assertEquals("full-access", pty.getString("mode"))
         assertEquals("先检查仓库", pty.getString("initialInput"))
         assertFalse(pty.has("respondImmediately"))
 

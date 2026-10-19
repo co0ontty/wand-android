@@ -179,7 +179,7 @@ internal fun HomeTopBar(
         if (onNewTask != null) {
             WandIconButton(
                 icon = WandIcons.add,
-                contentDescription = "全局新建任务或会话，选择工作区",
+                contentDescription = "全局新建会话，选择执行对象和工作目录",
                 onClick = onNewTask,
                 enabled = newTaskEnabled,
                 tint = WandColors.brand,

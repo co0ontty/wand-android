@@ -16,20 +16,18 @@ class ComposerInputFieldPresentationTest {
 
     @Test
     fun composerExpansionStatesReflectUserActivity() {
-        // 未聚焦、无录音、单行草稿、无附件时保持紧凑折叠
+        // 未聚焦、单行草稿、无附件时保持紧凑折叠
         val collapsed = shouldComposerExpand(
             isFocused = false,
-            voicePressed = false,
             draftNeedsExpanded = false,
             hasAttachments = false,
         )
         assertFalse(collapsed)
 
         // 任意激活状态均触发平滑展开
-        assertTrue(shouldComposerExpand(isFocused = true, voicePressed = false, draftNeedsExpanded = false, hasAttachments = false))
-        assertTrue(shouldComposerExpand(isFocused = false, voicePressed = true, draftNeedsExpanded = false, hasAttachments = false))
-        assertTrue(shouldComposerExpand(isFocused = false, voicePressed = false, draftNeedsExpanded = true, hasAttachments = false))
-        assertTrue(shouldComposerExpand(isFocused = false, voicePressed = false, draftNeedsExpanded = false, hasAttachments = true))
+        assertTrue(shouldComposerExpand(isFocused = true, draftNeedsExpanded = false, hasAttachments = false))
+        assertTrue(shouldComposerExpand(isFocused = false, draftNeedsExpanded = true, hasAttachments = false))
+        assertTrue(shouldComposerExpand(isFocused = false, draftNeedsExpanded = false, hasAttachments = true))
     }
 
     @Test

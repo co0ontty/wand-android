@@ -88,6 +88,8 @@ class SessionSummarizeTest {
             prompt: String?,
             model: String?,
             thinkingEffort: String?,
+            mode: String?,
+            overrideCli: Boolean,
         ): SessionSnapshot = error("归纳只建卡与移动，不起新会话")
     }
 

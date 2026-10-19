@@ -3,13 +3,32 @@ package com.wand.app.ui.screens
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.data.WorkspaceTaskStatus
+import com.wand.app.data.PaneTab
+import com.wand.app.data.activeWorkWindowTab
+import com.wand.app.data.orderWorkspaceSessions
 import com.wand.app.data.ExecutionSubject
 import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.ui.isGenericSessionTitle
 import com.wand.app.ui.sessionCwdLeaf
 
 internal const val UNNAMED_TASK_NAME = "未命名任务"
+
+internal fun taskTitleRoute(task: WorkspaceTaskSummary, group: TaskDirectoryGroup): TaskTitleRoute {
+    val orderedSessions = orderWorkspaceSessions(task.sessions)
+        .filter { it.archived != true && it.teamChat == null }
+    val activeSessionId = (activeWorkWindowTab(task.task.layout) as? PaneTab.Session)?.sessionId
+    val session = orderedSessions.firstOrNull { it.id == activeSessionId }
+        ?: orderedSessions.firstOrNull()
+    return TaskTitleRoute(
+        workspaceId = task.task.workspaceId,
+        taskId = task.id,
+        workspaceName = group.workspaceName,
+        taskName = task.name,
+        session = session?.let { taskSessionRoute(it, group, task) },
+    )
+}
 
 /** 独立根模式；通讯录是导航入口，不占用模式偏好。 */
 enum class HomeListMode(val storageValue: String) {

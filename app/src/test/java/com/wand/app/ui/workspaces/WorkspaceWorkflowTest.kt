@@ -309,6 +309,8 @@ class WorkspaceWorkflowTest {
             prompt: String?,
             model: String?,
             thinkingEffort: String?,
+            mode: String?,
+            overrideCli: Boolean,
         ): SessionSnapshot {
             createCalls += target to binding
             return SessionSnapshot(

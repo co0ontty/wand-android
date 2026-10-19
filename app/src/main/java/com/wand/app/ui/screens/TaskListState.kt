@@ -23,6 +23,7 @@ import com.wand.app.data.addSessionWindow
 import com.wand.app.data.reconcileTaskWindowLayout
 import com.wand.app.ui.ScopedStore
 import kotlinx.coroutines.CancellationException
+import com.wand.app.data.isRequestOutcomeUnconfirmed
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -43,6 +44,8 @@ class TaskListState(
         private set
     var mutationError by mutableStateOf<String?>(null)
         private set
+    var mutationOutcomeUnconfirmed by mutableStateOf(false)
+        private set
     var orderSaveError by mutableStateOf<String?>(null)
         private set
     var defaultCwd by mutableStateOf<String?>(null)
@@ -56,9 +59,17 @@ class TaskListState(
     var defaultSessionKind by mutableStateOf(WorkspaceSessionKind.Structured)
     var defaultThinkingEffort by mutableStateOf("off")
         private set
+    var defaultMode by mutableStateOf("default")
+        private set
     var creationDefaultsLoading by mutableStateOf(false)
         private set
+    var pendingConversationRequest by mutableLongStateOf(0L)
+        private set
+    private var consumedPendingConversationRequest = 0L
     var newTaskRequest by mutableLongStateOf(0L)
+        private set
+    /** 根壳全局「新建会话」请求；与显式新建任务保持不同消费通道。 */
+    var newSessionRequest by mutableLongStateOf(0L)
         private set
 
     /** 首页「最近对话」那一区的折叠档位（员工/团队/终端分组）。 */
@@ -101,6 +112,7 @@ class TaskListState(
     private var dragPreviousPendingOrder: List<String>? = null
     private var syncing = false
     private var consumedNewTaskRequest = 0L
+    private var consumedNewSessionRequest = 0L
     private var groupsRevision: String? = null
 
     fun startSync() {
@@ -118,6 +130,27 @@ class TaskListState(
 
     fun requestNewTask() {
         newTaskRequest += 1
+    }
+
+    fun requestNewSession() {
+        newSessionRequest += 1
+    }
+
+    fun requestPendingConversation(): Long {
+        pendingConversationRequest += 1
+        return pendingConversationRequest
+    }
+
+    fun consumePendingConversationRequest(): Long? {
+        if (pendingConversationRequest <= consumedPendingConversationRequest) return null
+        consumedPendingConversationRequest = pendingConversationRequest
+        return pendingConversationRequest
+    }
+
+    fun consumeNewSessionRequest(): Boolean {
+        if (newSessionRequest <= consumedNewSessionRequest) return false
+        consumedNewSessionRequest = newSessionRequest
+        return true
     }
 
     fun consumeNewTaskRequest(): Boolean {
@@ -159,9 +192,11 @@ class TaskListState(
         mutationMutex.withLock {
             mutationBusy = true
             mutationError = null
+            mutationOutcomeUnconfirmed = false
             try {
                 block()
             } catch (error: Exception) {
+                mutationOutcomeUnconfirmed = isRequestOutcomeUnconfirmed(error)
                 if (error is CancellationException) throw error
                 mutationError = error.message ?: failureMessage
                 null
@@ -211,6 +246,9 @@ class TaskListState(
                     WandAgentEngine.Cli.raw
                 }
                 defaultSessionKind = WorkspaceSessionKind.fromRaw(config.defaultSessionKind)
+                defaultMode = com.wand.app.data.supportedSessionModeIds(config.defaultProvider)
+                    .takeIf { modes -> config.defaultMode in modes }
+                    ?.let { config.defaultMode ?: "default" } ?: "default"
             }
             true
         } catch (error: Exception) {
@@ -229,57 +267,70 @@ class TaskListState(
         workspaceId: String? = null,
         description: String? = null,
         parentTaskId: String? = null,
-    ): TaskCreationResult? = mutate("创建任务失败") {
-        // Task names belong to the container, never to a session's prompt.
-        val normalizedName = name.trim()
-        val normalizedCwd = cwd.trim()
-        // 首个会话的提示词：任务没起名时交给服务端据它总结标题。
-        val normalizedDescription = description?.trim().orEmpty()
-        if (!isValidOptionalTaskName(normalizedName)) {
-            mutationError = "任务名称无效或过长"
-            return@mutate null
+    ): TaskCreationResult? {
+        taskCreationOutcomeUnconfirmed = false
+        return mutate("创建任务失败") {
+            // Task names belong to the container, never to a session's prompt.
+            val normalizedName = name.trim()
+            val normalizedCwd = cwd.trim()
+            // 首个会话的提示词：任务没起名时交给服务端据它总结标题。
+            val normalizedDescription = description?.trim().orEmpty()
+            if (!isValidOptionalTaskName(normalizedName)) {
+                mutationError = "任务名称无效或过长"
+                return@mutate null
+            }
+            val workspaces = port.listWorkspaces()
+            val project = when {
+                workspaceId == com.wand.app.data.GLOBAL_WORKSPACE_ID -> null
+                !workspaceId.isNullOrBlank() -> workspaces.firstOrNull { it.id == workspaceId }
+                    ?: throw IllegalStateException("工作区已不存在，请重新选择目录")
+                normalizedCwd.isNotEmpty() -> workspaces.firstOrNull {
+                    normalizeWorkspacePath(it.cwd) == normalizeWorkspacePath(normalizedCwd)
+                } ?: port.createWorkspace(
+                    normalizedCwd.trimEnd('/').substringAfterLast('/').ifBlank { "工作区" }, normalizedCwd,
+                )
+                else -> null
+            }
+            val task = if (project != null) {
+                port.createWorkspaceTask(
+                    workspaceId = project.id,
+                    name = normalizedName.ifEmpty { "新任务" },
+                    worktree = worktree,
+                    description = normalizedDescription.ifEmpty { null },
+                    parentTaskId = parentTaskId,
+                )
+            } else {
+                port.createStandaloneTask(
+                    name = normalizedName.ifEmpty { "新任务" },
+                    cwd = normalizedCwd.ifEmpty { null },
+                    worktree = if (normalizedCwd.isEmpty()) false else worktree,
+                    description = normalizedDescription.ifEmpty { null },
+                    parentTaskId = parentTaskId,
+                )
+            }
+            val workspace = project
+                ?: Workspace(
+                    id = task.workspaceId,
+                    name = "",
+                    cwd = task.cwd.ifEmpty { normalizedCwd },
+                    defaultProvider = null,
+                    layout = null,
+                    createdAt = null,
+                    lastOpenedAt = null,
+                )
+            load(silent = true)
+            TaskCreationResult(workspace, task)
+        }.also { result ->
+            if (result == null) taskCreationOutcomeUnconfirmed = mutationOutcomeUnconfirmed
         }
-        val workspaces = port.listWorkspaces()
-        val project = when {
-            workspaceId == com.wand.app.data.GLOBAL_WORKSPACE_ID -> null
-            !workspaceId.isNullOrBlank() -> workspaces.firstOrNull { it.id == workspaceId }
-                ?: throw IllegalStateException("工作区已不存在，请重新选择目录")
-            normalizedCwd.isNotEmpty() -> workspaces.firstOrNull {
-                normalizeWorkspacePath(it.cwd) == normalizeWorkspacePath(normalizedCwd)
-            } ?: port.createWorkspace(
-                normalizedCwd.trimEnd('/').substringAfterLast('/').ifBlank { "工作区" }, normalizedCwd,
-            )
-            else -> null
-        }
-        val task = if (project != null) {
-            port.createWorkspaceTask(
-                workspaceId = project.id,
-                name = normalizedName.ifEmpty { "新任务" },
-                worktree = worktree,
-                description = normalizedDescription.ifEmpty { null },
-                parentTaskId = parentTaskId,
-            )
-        } else {
-            port.createStandaloneTask(
-                name = normalizedName.ifEmpty { "新任务" },
-                cwd = normalizedCwd.ifEmpty { null },
-                worktree = if (normalizedCwd.isEmpty()) false else worktree,
-                description = normalizedDescription.ifEmpty { null },
-                parentTaskId = parentTaskId,
-            )
-        }
-        val workspace = project
-            ?: Workspace(
-                id = task.workspaceId,
-                name = "",
-                cwd = task.cwd.ifEmpty { normalizedCwd },
-                defaultProvider = null,
-                layout = null,
-                createdAt = null,
-                lastOpenedAt = null,
-            )
-        load(silent = true)
-        TaskCreationResult(workspace, task)
+    }
+
+    private var taskCreationOutcomeUnconfirmed = false
+
+    internal fun consumeTaskCreationOutcomeUnconfirmed(): Boolean {
+        val unconfirmed = taskCreationOutcomeUnconfirmed
+        taskCreationOutcomeUnconfirmed = false
+        return unconfirmed
     }
 
     suspend fun renameTask(taskId: String, name: String): WorkspaceTask? = mutate("重命名任务失败") {
@@ -339,6 +390,51 @@ class TaskListState(
             result
         }
 
+    private val uncertainSessionCreations = mutableSetOf<String>()
+
+    suspend fun createPendingConversationSession(
+        workspaceId: String?,
+        cwd: String,
+        target: WorkspaceSessionTarget,
+        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+        model: String? = null,
+        thinkingEffort: String? = null,
+        mode: String? = null,
+        employeeId: String? = null,
+        overrideCli: Boolean = false,
+    ): SessionSnapshot? {
+        val key = "pending:${workspaceId.orEmpty()}:${cwd.trim()}:${employeeId.orEmpty()}:${target.raw}:${target.engine?.raw.orEmpty()}:${kind.raw}:${model.orEmpty()}:${thinkingEffort.orEmpty()}:${mode.orEmpty()}:${overrideCli}"
+        var requestStarted = false
+        var uncertain = false
+        return mutate("启动会话失败") {
+            if (key in uncertainSessionCreations) {
+                mutationError = "会话创建结果未确认，请先核对列表中的会话；勿盲目重试。"
+                return@mutate null
+            }
+            val binding = WorkspaceBinding(
+                workspaceId = workspaceId?.takeIf { it.isNotBlank() && it != GLOBAL_WORKSPACE_ID },
+                cwd = cwd.trim(),
+            )
+            requestStarted = true
+            val session = try {
+                port.createPendingConversationSession(
+                    target, binding, kind, model, thinkingEffort, mode,
+                    employeeId, overrideCli,
+                )
+            } catch (error: Exception) {
+                uncertain = isRequestOutcomeUnconfirmed(error)
+                if (uncertain) uncertainSessionCreations += key
+                throw error
+            }
+            load(silent = true)
+            session
+        }.also { result ->
+            if (result == null && requestStarted && uncertain) {
+                mutationError = "会话创建结果未确认，请刷新列表并核对会话；勿盲目重试。"
+            }
+        }
+    }
+
     suspend fun createTaskWindow(
         taskId: String,
         target: WorkspaceSessionTarget,
@@ -347,27 +443,53 @@ class TaskListState(
         model: String? = null,
         thinkingEffort: String? = null,
         employeeId: String? = null,
-    ): SessionSnapshot? = mutate("创建工作窗口失败") {
-        val detail = port.workspaceTask(taskId)
-        val binding = WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd)
-        val session = if (employeeId != null) port.createEmployeeWorkspaceTaskWindow(
-            employeeId, binding, prompt,
-        ) else port.createWorkspaceTaskWindow(
-            target,
-            binding,
-            kind,
-            prompt,
-            model,
-            thinkingEffort,
-        )
-        val reconciled = reconcileTaskWindowLayout(
-            detail.task.layout,
-            detail.sessions.map { it.id },
-        )
-        val nextLayout = addSessionWindow(reconciled, session.id, activate = true)
-        runCatching { port.saveWorkspaceTaskLayout(detail.id, nextLayout) }
-        load(silent = true)
-        session
+        mode: String? = null,
+        overrideCli: Boolean = false,
+    ): SessionSnapshot? {
+        val key = "task:$taskId:${employeeId.orEmpty()}:${target.raw}:${target.engine?.raw.orEmpty()}:${model.orEmpty()}:${thinkingEffort.orEmpty()}:${mode.orEmpty()}:${overrideCli}"
+        var requestStarted = false
+        var uncertain = false
+        return mutate("创建工作窗口失败") {
+            if (key in uncertainSessionCreations) {
+                mutationError = "会话创建结果未确认，请先核对任务中的会话；确认后可改用不同目录或目标创建。"
+                return@mutate null
+            }
+            val detail = port.workspaceTask(taskId)
+            val binding = WorkspaceBinding(detail.workspaceId, detail.id, detail.cwd)
+            requestStarted = true
+            val session = try {
+                if (employeeId != null) port.createEmployeeWorkspaceTaskWindow(
+                    employeeId, binding, prompt, overrideCli, target, model, thinkingEffort, mode,
+                ) else port.createWorkspaceTaskWindow(
+                    target,
+                    binding,
+                    kind,
+                    prompt,
+                    model,
+                    thinkingEffort,
+                    mode,
+                    overrideCli,
+                )
+            } catch (error: Exception) {
+                uncertain = isRequestOutcomeUnconfirmed(error)
+                if (uncertain) uncertainSessionCreations += key
+                throw error
+            }
+            val reconciled = reconcileTaskWindowLayout(
+                detail.task.layout,
+                detail.sessions.map { it.id },
+            )
+            val nextLayout = addSessionWindow(reconciled, session.id, activate = true)
+            runCatching { port.saveWorkspaceTaskLayout(detail.id, nextLayout) }
+            load(silent = true)
+            session
+        }.also { result ->
+            if (result == null && requestStarted) {
+                if (uncertain) {
+                    mutationError = "会话创建结果未确认，请刷新任务、核对会话后再继续，勿盲目重试。"
+                }
+            }
+        }
     }
 
     /**
@@ -384,16 +506,39 @@ class TaskListState(
         model: String? = null,
         thinkingEffort: String? = null,
         employeeId: String? = null,
-    ): SessionSnapshot? = mutate("启动会话失败") {
-        val binding = WorkspaceBinding(
-            // 隐藏的全局暂存区不是项目，不写进会话归属。
-            workspaceId = workspaceId?.takeIf { it.isNotBlank() && it != GLOBAL_WORKSPACE_ID },
-            cwd = cwd.trim(),
-        )
-        val session = if (employeeId != null) port.createEmployeeWorkspaceTaskWindow(employeeId, binding, prompt)
-        else port.createWorkspaceTaskWindow(target, binding, kind, prompt, model, thinkingEffort)
-        load(silent = true)
-        session
+        mode: String? = null,
+        overrideCli: Boolean = false,
+    ): SessionSnapshot? {
+        val key = "ungrouped:${workspaceId.orEmpty()}:${cwd.trim()}:${employeeId.orEmpty()}:${target.raw}:${kind.raw}"
+        var requestStarted = false
+        var uncertain = false
+        return mutate("启动会话失败") {
+            if (key in uncertainSessionCreations) {
+                mutationError = "会话创建结果未确认，请先核对列表中的会话；确认后可改用不同目录或目标创建。"
+                return@mutate null
+            }
+            val binding = WorkspaceBinding(
+                // 隐藏的全局暂存区不是项目，不写进会话归属。
+                workspaceId = workspaceId?.takeIf { it.isNotBlank() && it != GLOBAL_WORKSPACE_ID },
+                cwd = cwd.trim(),
+            )
+            requestStarted = true
+            val session = try {
+                if (employeeId != null) port.createEmployeeWorkspaceTaskWindow(
+                    employeeId, binding, prompt, overrideCli, target, model, thinkingEffort, mode,
+                ) else port.createWorkspaceTaskWindow(target, binding, kind, prompt, model, thinkingEffort, mode, overrideCli)
+            } catch (error: Exception) {
+                uncertain = isRequestOutcomeUnconfirmed(error)
+                if (uncertain) uncertainSessionCreations += key
+                throw error
+            }
+            load(silent = true)
+            session
+        }.also { result ->
+            if (result == null && requestStarted && uncertain) {
+                mutationError = "会话创建结果未确认，请刷新列表、核对会话后再继续，勿盲目重试。"
+            }
+        }
     }
 
     suspend fun clearTaskSessions(taskId: String): Int? = mutate("清空任务会话失败") {
@@ -512,6 +657,10 @@ class TaskListState(
 
     fun clearMutationError() {
         mutationError = null
+    }
+
+    fun reportMutationError(message: String) {
+        mutationError = message
     }
 
     companion object {

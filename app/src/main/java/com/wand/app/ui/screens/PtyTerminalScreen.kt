@@ -39,6 +39,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -94,6 +97,8 @@ import com.wand.app.ui.components.SessionCompletionViewEffect
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
+import com.wand.app.data.WorkspaceSessionSummary
+import com.wand.app.data.orderWorkspaceSessions
 import com.wand.app.ui.QuickCommitStore
 import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.applyProvisionalSessionTopic
@@ -116,7 +121,6 @@ import com.wand.app.ui.components.WandSnackbarHost
 import com.wand.app.ui.components.showWandNotice
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.components.WandProviderMarkVariant
-import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -154,7 +158,7 @@ private val TerminalHairline = Color(TerminalPalette.hairlineArgb)
 /**
  * PTY 会话原生壳：顶部用原生头部，中间是 libvterm 终端。
  * 软键盘确认的文字立刻写入 PTY，输入法组词留在键盘上方的一行里。
- * 底部快捷键发送 Esc / Ctrl / 方向键；草稿框用于长文本、语音和附件。
+ * 底部快捷键发送 Esc / Ctrl / 方向键；草稿框用于长文本和附件。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -164,6 +168,8 @@ fun PtyTerminalScreen(
     serverDisplayName: String,
     workspaceName: String? = null,
     taskName: String? = null,
+    taskSessions: List<WorkspaceSessionSummary> = emptyList(),
+    onSelectTaskSession: (WorkspaceSessionSummary) -> Unit = {},
     isHapticEnabled: () -> Boolean,
     showBack: Boolean = true,
     onBack: () -> Unit,
@@ -194,11 +200,11 @@ fun PtyTerminalScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     // 软键盘直接写 PTY。打开页面时不弹键盘，点一下终端再打开。
-    // 草稿抽屉默认收起，只在整段提示、语音或附件时打开。
+    // 草稿抽屉默认收起，只在整段提示或附件时打开。
     var inputDrawerOpen by remember(sessionId) { mutableStateOf(false) }
     var keyboardRequested by remember(sessionId) { mutableStateOf(false) }
-    val voiceDrafts = remember(sessionId) { com.wand.app.ui.SessionDraftStore() }
-    val draft = voiceDrafts[sessionId]
+    val drafts = remember(sessionId) { com.wand.app.ui.SessionDraftStore() }
+    val draft = drafts[sessionId]
     var uploadingAttachments by remember(sessionId) { mutableStateOf(false) }
     var pendingAttachments by remember(sessionId) { mutableStateOf<List<UploadedFile>>(emptyList()) }
     val scope = rememberCoroutineScope()
@@ -244,17 +250,6 @@ fun PtyTerminalScreen(
             onToast = { message -> toast = message },
         )
     }
-    val voiceInput = rememberVoiceInputHandle(
-        isHapticEnabled = isHapticEnabled,
-        onToast = { message -> toast = message },
-        onCommit = { text -> voiceDrafts[sessionId] = appendVoiceText(draft, text) },
-        sessionKey = sessionId,
-        api = api,
-        onCommitForPress = {
-            val revision = voiceDrafts.revision(sessionId);
-            { text -> if (voiceDrafts.revision(sessionId) == revision) voiceDrafts[sessionId] = appendVoiceText(voiceDrafts[sessionId], text) }
-        },
-    )
     val shortcutQueue = remember(sessionId) {
         Channel<TerminalShortcut>(capacity = 12, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     }
@@ -328,7 +323,7 @@ fun PtyTerminalScreen(
         sendPhase = SendPhase.Sending
         val text = buildAttachmentPrompt(attachments, body).trim()
         val restore = draft
-        voiceDrafts[sessionId] = ""
+        drafts[sessionId] = ""
         pendingAttachments = emptyList()
         val blockedTitles = sessionTopicBlocklist(
             taskName = taskName,
@@ -355,7 +350,7 @@ fun PtyTerminalScreen(
                 dwellSendPhase(SendPhase.Failed, SEND_FAILED_DWELL_MS)
                 toast = error.message ?: "终端命令发送失败"
                 if (draft.isEmpty()) {
-                    voiceDrafts[sessionId] = restore
+                    drafts[sessionId] = restore
                     pendingAttachments = attachments
                 }
             }
@@ -375,6 +370,8 @@ fun PtyTerminalScreen(
                 serverDisplayName = serverDisplayName,
                 workspaceName = workspaceName,
                 taskName = taskName,
+                taskSessions = taskSessions,
+                onSelectTaskSession = onSelectTaskSession,
                 quickCommit = quickCommit,
                 showBack = showBack,
                 onBack = onBack,
@@ -406,7 +403,7 @@ fun PtyTerminalScreen(
                     }
                 },
                 draft = draft,
-                onDraftChange = { voiceDrafts[sessionId] = it },
+                onDraftChange = { drafts[sessionId] = it },
                 sendPhase = sendPhase,
                 onSend = { sendPtyDraft() },
                 uploadingAttachments = uploadingAttachments,
@@ -425,8 +422,6 @@ fun PtyTerminalScreen(
                     if (!sent) toast = "终端未就绪，输入未发送；请检查连接后重试"
                     sent
                 },
-                voice = voiceInput.voice,
-                onMicDown = voiceInput.onMicDown,
             )
         },
     ) { padding ->
@@ -477,9 +472,6 @@ fun PtyTerminalScreen(
                     }
                 }
             }
-            if (voiceInput.voice.showModelDialog) {
-                SttModelDownloadDialog(onDismiss = { voiceInput.voice.showModelDialog = false })
-            }
             if (quickCommit.panelOpen) {
                 QuickCommitSheet(
                     qc = quickCommit,
@@ -510,6 +502,8 @@ private fun PtyTopBar(
     serverDisplayName: String,
     workspaceName: String?,
     taskName: String?,
+    taskSessions: List<WorkspaceSessionSummary>,
+    onSelectTaskSession: (WorkspaceSessionSummary) -> Unit,
     quickCommit: QuickCommitStore,
     showBack: Boolean,
     onBack: () -> Unit,
@@ -556,6 +550,28 @@ private fun PtyTopBar(
             }
         },
         actions = {
+            if (taskSessions.size > 1) {
+                var taskSessionsOpen by remember(sessionId) { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { taskSessionsOpen = true }) {
+                        Icon(WandIcons.workspace, contentDescription = "切换任务会话", tint = WandColors.textPrimary)
+                    }
+                    DropdownMenu(
+                        expanded = taskSessionsOpen,
+                        onDismissRequest = { taskSessionsOpen = false },
+                    ) {
+                        orderWorkspaceSessions(taskSessions).forEach { session ->
+                            DropdownMenuItem(
+                                text = { Text(session.title?.takeIf(String::isNotBlank) ?: "终端会话") },
+                                onClick = {
+                                    taskSessionsOpen = false
+                                    onSelectTaskSession(session)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
             SessionFilesButton(api, sessionId, snapshot?.cwd, onOpen = onOpenFiles)
             GitChangesButton(quickCommit, compact = true) { onOpenQuickCommit() }
         },
@@ -582,8 +598,6 @@ private fun PtyBottomBar(
     onShortcut: (TerminalShortcut) -> Unit,
     sessionId: String,
     onDirectInput: (String) -> Boolean,
-    voice: VoiceInputController,
-    onMicDown: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     val shortcutScroll = rememberScrollState()
@@ -598,7 +612,6 @@ private fun PtyBottomBar(
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
-            if (voice.pressed || voice.processing) VoiceTranscriptBubble(backdrop = null, voice = voice)
             AnimatedVisibility(
                 visible = inputDrawerOpen,
                 enter = if (reduceMotionEnabled()) {
@@ -630,8 +643,6 @@ private fun PtyBottomBar(
                         onRemoveAttachment = onRemoveAttachment,
                         onPickPhoto = onPickPhoto,
                         onPickFile = onPickFile,
-                        voice = voice,
-                        onMicDown = onMicDown,
                         attachOpen = attachOpen,
                         onAttachOpenChange = { attachOpen = it },
                         sendPhase = sendPhase,
@@ -939,7 +950,7 @@ private fun PtyDirectField(
     )
 }
 
-/// 展开后的终端输入抽屉：多行文本框 + 按住说话 + 发送。显示在快捷键栏上方。
+/// 展开后的终端输入抽屉：多行文本框 + 发送。显示在快捷键栏上方。
 @Composable
 private fun PtyInputDrawer(
     draft: String,
@@ -951,8 +962,6 @@ private fun PtyInputDrawer(
     onRemoveAttachment: (UploadedFile) -> Unit,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
-    voice: VoiceInputController,
-    onMicDown: () -> Unit,
     attachOpen: Boolean,
     onAttachOpenChange: (Boolean) -> Unit,
     sendPhase: SendPhase,
@@ -1077,12 +1086,6 @@ private fun PtyInputDrawer(
             ) {
                 plusMenu()
             }
-            VoiceMicButton(
-                voice = voice,
-                voiceMode = false,
-                onToggleMode = { runCatching { focusRequester.requestFocus() } },
-                onMicDown = onMicDown,
-            )
             sendButton()
         },
     )

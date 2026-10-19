@@ -122,7 +122,6 @@ class ClientFeedback(private val baseUrl: String, private val token: String?) {
             "wand-tasks", "wand-task-agent-defaults", "tasks", "workspace-tasks", "workspaces", "wand-milestones",
             "missions", "scheduled-tasks" -> "tasks"
             "files", "upload", "directory", "session-files", "file-preview", "file-read", "file-write", "recent-paths" -> "files"
-            "speech" -> "speech"
             "settings", "config", "user-profile", "auto-update", "update-channel" -> "settings"
             "models", "model-groups", "local-models" -> "models"
             "login", "logout", "app-login", "session-check", "set-password" -> "authentication"

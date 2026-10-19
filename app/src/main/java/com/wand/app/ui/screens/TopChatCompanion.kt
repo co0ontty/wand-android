@@ -14,6 +14,8 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import com.wand.app.ui.components.*
 import com.wand.app.ui.theme.WandColors
 import kotlin.math.roundToInt
@@ -22,19 +24,19 @@ import kotlin.math.roundToInt
 @Composable
 internal fun topCompanionClearance(): Dp {
     val compact = LocalConfiguration.current.screenHeightDp < 420
-    val narrow = LocalConfiguration.current.screenWidthDp < 344
-    val size = if (compact || narrow) 64.dp else 88.dp
-    val top = FloatingControlCenter - size / 2
-    return maxOf(ChatFloatingControlsClearance, top + size + 8.dp)
+    val density = LocalDensity.current
+    val textHeight = with(density) {
+        MaterialTheme.typography.labelMedium.lineHeight.toDp() * 2 + MaterialTheme.typography.labelSmall.lineHeight.toDp()
+    } + 2.dp
+    return maxOf(ChatFloatingControlsClearance, if (compact) textHeight + 8.dp else 56.dp + 4.dp + textHeight + 8.dp)
 }
 
 /** The scene's safe slot is independent of the composer/IME and live execution state. */
 @Composable
 internal fun TopChatCompanion(
     employeeId: String?, name: String?, avatar: String?, status: String,
-    activity: AvatarFileActivity, thinking: Boolean, speaking: Boolean,
-    onEdit: () -> Unit, gesture: DraftVoiceGesture,
-    onPauseSpeech: (() -> Unit)? = null,
+    activity: AvatarFileActivity, thinking: Boolean,
+    onEdit: () -> Unit,
 ) {
     val context = LocalContext.current
     val preference = remember(context) { CompanionSidePreference(context) }
@@ -45,19 +47,15 @@ internal fun TopChatCompanion(
         onDispose { unsubscribe() }
     }
     val currentEdit by rememberUpdatedState(onEdit)
-    val currentGesture by rememberUpdatedState(gesture)
     val density = LocalDensity.current
     val compact = LocalConfiguration.current.screenHeightDp < 420
     BoxWithConstraints(Modifier.fillMaxWidth().height(topCompanionClearance())) {
-        val narrow = maxWidth < 344.dp
-        // A narrow tablet pane can have a wide window configuration. Keep its scene
-        // inside the same reserved top viewport instead of moving it below the controls.
-        val size = if (compact || narrow) 64.dp else 88.dp
+        val size = if (compact) 48.dp else 56.dp
         val left = 60.dp
-        val iconRowStart = maxWidth - 164.dp
+        val iconRowStart = maxWidth - 112.dp
         val right = iconRowStart - size
-        val start = (left + right) / 2
-        val end = maxOf(start, right)
+        val start = if (compact) left else (left + right) / 2
+        val end = if (compact) left else maxOf(start, right)
         val base = if (side == CompanionSide.Left) start else end
         val x = with(density) { (base.toPx() + drag).coerceIn(left.toPx().coerceAtMost(end.toPx()), end.toPx()) }
         val top = FloatingControlCenter - size / 2
@@ -68,7 +66,7 @@ internal fun TopChatCompanion(
         val currentSnap by rememberUpdatedState(snap)
         Box(Modifier.offset { IntOffset(x.roundToInt(), with(density) { top.roundToPx() }) }.size(size).semantics(mergeDescendants = true) {
             role = Role.Button
-            contentDescription = "${name ?: "员工"}，点按编辑，长按说话，拖动左右换边"
+            contentDescription = "${name ?: "员工"}，点按编辑，拖动左右换边"
             val place = if (side == CompanionSide.Left) "角色在左侧" else "角色在右侧"
             stateDescription = if (status.isBlank()) place else "$place，$status"
             if (status.isNotBlank()) liveRegion = LiveRegionMode.Polite
@@ -78,39 +76,30 @@ internal fun TopChatCompanion(
                 preference.write(side); true
             })
         }.focusable().pointerInput(Unit) {
-            companionGesture(true, { currentEdit() }, { currentGesture.start() },
-                { currentGesture.move(it) }, { currentGesture.end() }, { currentGesture.cancel() },
+            companionGesture({ currentEdit() },
                 { drag = it }, { currentSnap() }, { drag = 0f })
         }) {
             EmployeeAvatar(employeeId ?: "e_wand_default", name, avatar, size = size, animated = true,
-                fileActivity = activity, thinking = thinking && activity == AvatarFileActivity.Idle, speaking = speaking)
+                fileActivity = activity, thinking = thinking && activity == AvatarFileActivity.Idle)
         }
-        if (onPauseSpeech != null) IconButton(onClick = onPauseSpeech,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).size(48.dp)) {
-            Icon(WandIcons.pause, "暂停朗读，任务继续", tint = WandColors.textSecondary)
-        }
-    }
-}
-
-/** One accessible microphone, shared by the compact and expanded capsule. */
-@Composable
-internal fun CapsuleMicrophone(gesture: DraftVoiceGesture, pressed: Boolean, canceling: Boolean = false) {
-    var hint by remember { mutableStateOf(false) }
-    val currentGesture by rememberUpdatedState(gesture)
-    Box(Modifier.size(48.dp).semantics(mergeDescendants = true) {
-        role = Role.Button
-        contentDescription = "按住说话，松手转写，上滑取消"
-        stateDescription = if (pressed) "正在录音" else "长按录音"
-        onClick("显示语音输入提示") { hint = true; true }
-    }.focusable().pointerInput(Unit) {
-        companionGesture(false, { hint = true }, { currentGesture.start() },
-            { currentGesture.move(it) }, { currentGesture.end() }, { currentGesture.cancel() }, {}, {}, {})
-    }, contentAlignment = Alignment.Center) {
-        Icon(WandIcons.mic, null, modifier = Modifier.size(22.dp), tint = when {
-            canceling -> WandColors.danger; pressed -> WandColors.brand; else -> WandColors.textPrimary
-        })
-        DropdownMenu(hint, { hint = false }) {
-            DropdownMenuItem(text = { Text("按住猫头或麦克风说话，松手仅转写") }, onClick = { hint = false })
+        val label = name?.takeIf { it.isNotBlank() } ?: "当前会话"
+        val textHeight = with(density) {
+            MaterialTheme.typography.labelMedium.lineHeight.toDp() * 2 + MaterialTheme.typography.labelSmall.lineHeight.toDp()
+        } + 2.dp
+        val labelWidth = if (compact) (maxWidth - 60.dp - 112.dp - size - 8.dp).coerceAtLeast(24.dp)
+            else minOf(with(density) { x.toDp() } + size / 2 - 12.dp,
+                maxWidth - 12.dp - with(density) { x.toDp() } - size / 2).coerceAtLeast(24.dp) * 2
+        val labelX = if (compact) with(density) { x.toDp() } + size + 8.dp
+            else with(density) { x.toDp() } + size / 2 - labelWidth / 2
+        Column(Modifier.offset(x = labelX, y = if (compact) 4.dp else top + size + 4.dp)
+            .width(labelWidth).height(textHeight).semantics(mergeDescendants = true) { contentDescription = "$label，$status" },
+            horizontalAlignment = if (compact) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = WandColors.textPrimary, maxLines = 2,
+                textAlign = if (compact) TextAlign.Start else TextAlign.Center,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().height(with(density) { MaterialTheme.typography.labelMedium.lineHeight.toDp() } * 2))
+            Text(status, style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary, maxLines = 1,
+                textAlign = if (compact) TextAlign.Start else TextAlign.Center,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
         }
     }
 }

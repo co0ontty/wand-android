@@ -129,6 +129,13 @@ internal fun newTaskStartsUngroupedSession(
     linkedToParent: Boolean,
 ): Boolean = name.isBlank() && startFirstSession && !linkedToParent
 
+internal fun normalizedNewTaskMode(provider: String?, preferred: String?): String {
+    val supported = com.wand.app.data.supportedSessionModeIds(provider)
+    if (preferred in supported) return preferred.orEmpty()
+    return if ("default" in supported) "default"
+    else com.wand.app.data.SESSION_MODE_OPTIONS.firstOrNull { it.id in supported }?.id ?: "default"
+}
+
 /** 未分组开工下那行开关的标题与说明：不建卡，也不许再暗示「建卡后…」。 */
 internal fun newTaskUngroupedStartLabel(): String = "直接开工，不建任务卡"
 

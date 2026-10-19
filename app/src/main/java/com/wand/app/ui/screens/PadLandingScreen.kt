@@ -63,7 +63,7 @@ internal fun padLandingSessions(groups: List<TaskDirectoryGroup>): List<PadLandi
 internal fun PadLandingScreen(
     groups: List<TaskDirectoryGroup>,
     onOpenSession: (TaskSessionRoute) -> Unit,
-    onNewTask: () -> Unit,
+    onNewSession: () -> Unit,
 ) {
     val overview = homeOverview(directoryTreeGroups(groups))
     val sessions = padLandingSessions(groups)
@@ -73,7 +73,7 @@ internal fun PadLandingScreen(
         WandDetailTopBar(
             title = "工作概览",
             subtitle = "从左侧选择任务，或在这里继续会话",
-            actions = { WandButton(label = "新建任务", onClick = onNewTask, compact = true) },
+            actions = { WandButton(label = "新建会话", onClick = onNewSession, compact = true) },
         )
         Column(
             modifier = Modifier
@@ -105,7 +105,7 @@ internal fun PadLandingScreen(
             )
             if (sessions.isEmpty()) {
                 Text(
-                    "还没有会话。从左侧新建任务开始。",
+                    "还没有会话。从左侧新建会话开始。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = WandColors.textSecondary,
                 )

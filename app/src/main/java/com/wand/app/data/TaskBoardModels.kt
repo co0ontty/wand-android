@@ -507,6 +507,8 @@ interface TaskBoardPort : TaskChangeSource {
     suspend fun getBoardTask(id: String): BoardTask?
     /** Read-only comments; older servers may not expose the endpoint. */
     suspend fun listTaskComments(id: String): List<TaskComment> = emptyList()
+    suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?): TaskComment =
+        throw UnsupportedOperationException("当前客户端未提供评论提交能力。")
     suspend fun createBoardTask(
         title: String,
         description: String,

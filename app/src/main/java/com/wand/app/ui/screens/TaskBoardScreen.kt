@@ -75,7 +75,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.AiTeam
-import com.wand.app.data.AiTeamDispatchRun
 import com.wand.app.data.AiTeamRunDetail
 import com.wand.app.data.BOARD_TASK_PRIORITIES
 import com.wand.app.data.BOARD_TASK_DETAIL_STATUSES
@@ -87,8 +86,8 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.TaskDirectoryGroup
-import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
+import com.wand.app.data.TeamRunAction
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.workspaceProviderLabel
 import com.wand.app.data.dispatchStartBlockedReason
@@ -142,6 +141,7 @@ fun TaskBoardScreen(
      * [TaskBoardTaskScreen] 占一屏：侧栏（或全屏列表）不会再多堆一层详情顶栏。
      */
     onOpenTaskDetail: (taskId: String) -> Unit,
+    onNewConversation: (cwd: String?, workspaceId: String?, workspaceTaskId: String?, taskName: String?, initialCreateMode: Boolean) -> Unit,
     linkedWorkspaceId: String? = null,
     embedded: Boolean = false,
     /** 首页嵌入态隐藏看板搜索，独立看板保留自己的搜索框。 */
@@ -154,36 +154,14 @@ fun TaskBoardScreen(
     var workspaces by remember(api) { mutableStateOf<List<Workspace>>(emptyList()) }
     var directoryGroups by remember(api, workspaceApi) { mutableStateOf<List<TaskDirectoryGroup>>(emptyList()) }
     var directoryError by remember(api, workspaceApi) { mutableStateOf<String?>(null) }
-    var models by remember { mutableStateOf<ModelsResponse?>(null) }
     var loading by remember { mutableStateOf(true) }
     var refreshingBoard by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
     var refreshError by remember { mutableStateOf<String?>(null) }
     var internalQuery by remember { mutableStateOf("") }
     val query = internalQuery
     val onQueryChange: (String) -> Unit = { internalQuery = it }
     var filterWorkspaceId by remember { mutableStateOf(linkedWorkspaceId.orEmpty()) }
     var statusFilter by remember { mutableStateOf("") }
-    var showCreate by remember { mutableStateOf(false) }
-    // 从哪一列点开的「新建」决定初始状态：待办 = 只创建，进行中 = 创建并指派。
-    var createStatus by remember { mutableStateOf("todo") }
-    var busy by remember { mutableStateOf(false) }
-    var lastAgent by remember { mutableStateOf(BoardTaskAgent.default()) }
-    // 新建对话框的「指派对象」团队列表：拉取失败回落空，不影响看板本身。
-    var teams by remember { mutableStateOf<List<AiTeam>>(emptyList()) }
-    var employees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
-    // 「建卡成功但交给团队失败」的卡 id：重发只走 startTeamRun，绝不重复建卡。
-    // 生命周期收敛在「进入新建流程」（openCreateDialog）与「重试消费后」（成功/失败赋值），
-    // onDismiss 只是额外保险：任何再开新建对话框的路径都从干净初始态开始。
-    var teamRetryTaskId by remember { mutableStateOf<String?>(null) }
-
-    fun openCreateDialog(initialStatus: String) {
-        teamRetryTaskId = null
-        error = null
-        busy = false
-        createStatus = initialStatus
-        showCreate = true
-    }
     val refreshMutex = remember(api, workspaceApi) { kotlinx.coroutines.sync.Mutex() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
@@ -219,10 +197,6 @@ fun TaskBoardScreen(
     suspend fun refreshBoardData(showProgress: Boolean = false) {
         refresh(showProgress)
         workspaces = runCatching { api.listBoardWorkspaces() }.getOrDefault(emptyList())
-        models = runCatching { api.boardModels() }.getOrNull()
-        lastAgent = runCatching { api.boardTaskAgentDefaults() }.getOrDefault(BoardTaskAgent.default())
-        teams = runCatching { api.listAiTeams() }.getOrDefault(emptyList())
-        employees = runCatching { api.listSiliconEmployees() }.getOrDefault(emptyList())
     }
 
     /**
@@ -242,15 +216,12 @@ fun TaskBoardScreen(
 
     fun patchTask(id: String, body: JSONObject, after: (suspend () -> Unit)? = null) {
         scope.launch {
-            busy = true
             try {
                 api.updateBoardTask(id, body)
                 after?.invoke()
                 refresh()
             } catch (e: Exception) {
-                error = e.message
-            } finally {
-                busy = false
+                refreshError = e.message
             }
         }
     }
@@ -339,14 +310,11 @@ fun TaskBoardScreen(
                         } else {
                             // 归档 = DELETE（服务端 archiveBoardTask），与详情页「归档」一致。
                             scope.launch {
-                                busy = true
                                 try {
                                     api.deleteBoardTask(task.id)
                                     refresh()
                                 } catch (e: Exception) {
-                                    error = e.message
-                                } finally {
-                                    busy = false
+                                    refreshError = e.message
                                 }
                             }
                         }
@@ -355,11 +323,14 @@ fun TaskBoardScreen(
                     onOpenStandaloneSession = onOpenSession,
                     standaloneGroups = if (statusFilter.isBlank()) boardStandaloneGroups(directoryGroups, tasks, query, filterWorkspaceId) else emptyList(),
                     refreshing = refreshingBoard,
-                    onCreateForStatus = { status -> openCreateDialog(status) },
+                    onCreateForStatus = { status ->
+                        val workspace = workspaces.firstOrNull { it.id == filterWorkspaceId }
+                        onNewConversation(workspace?.cwd, workspace?.id, null, null, true)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            (error ?: refreshError ?: directoryError)?.let { message ->
+            (refreshError ?: directoryError)?.let { message ->
                 Surface(
                     color = WandColors.dangerSoft,
                     shape = WandShapes.sm,
@@ -371,113 +342,6 @@ fun TaskBoardScreen(
         }
     }
 
-    if (showCreate) {
-        CreateBoardTaskDialog(
-            workspaces = workspaces,
-            tasks = tasks,
-            teams = teams,
-            employees = employees,
-            models = models,
-            lastAgent = lastAgent,
-            defaultWorkspaceId = filterWorkspaceId,
-            initialStatus = createStatus,
-            busy = busy,
-            error = error,
-            onDismiss = {
-                if (!busy) {
-                    showCreate = false
-                    teamRetryTaskId = null
-                }
-            },
-            teamRunRetry = teamRetryTaskId != null,
-            api = api,
-            workspaceApi = workspaceApi,
-            onDispatchStarted = { started ->
-                // 派工由服务端建卡 + 起 run：关窗、刷新看板，直接落到那张卡的详情。
-                showCreate = false
-                teamRetryTaskId = null
-                scope.launch { refresh() }
-                onOpenTaskDetail(started.taskId)
-            },
-            onCreate = create@{ title, description, status, priority, directory, agent, parentTaskId, teamId, employeeId ->
-                if (busy) return@create
-                busy = true
-                error = null
-                scope.launch {
-                    try {
-                        val workspace = resolveCreationWorkspace(workspaceApi, directory)
-                        val workspaceId = workspace?.id
-                        if (workspace != null && workspaces.none { it.id == workspace.id }) workspaces = workspaces + workspace
-                        // 上一步「交给团队」失败的卡还在手里：只在本次仍会走团队链路时才复用旧卡，
-                        // 条件与下面的重发、按钮文案同一份（boardDispatchesToTeam）——
-                        // 改回「待办」再点「创建任务」就真的是建新卡。
-                        val teamDispatch = boardDispatchesToTeam(
-                            teamSelected = teamId != null,
-                            dispatches = boardCreateDispatches(status),
-                            hasDescription = description.isNotBlank(),
-                        )
-                        val retriedTaskId = if (teamDispatch) teamRetryTaskId else null
-                        val creationSubject = teamId?.let(ExecutionSubject::team)
-                            ?: employeeId?.let(ExecutionSubject::employee)
-                            ?: ExecutionSubject.cli(agent.provider)
-                        val createdTask: BoardTask? = if (retriedTaskId != null) null else api.createBoardSubjectTask(
-                            title, description, status, priority, workspaceId,
-                            agent.takeIf { creationSubject.type == "cli" }, parentTaskId, creationSubject,
-                        )
-                        val createdId = retriedTaskId ?: createdTask!!.id
-                        if (createdTask != null) {
-                            lastAgent = agent
-                            runCatching { api.saveBoardTaskAgentDefaults(agent) }
-                        }
-                        // 交给团队：建卡 + startTeamRun（note 传空，目标由卡片标题+描述在服务端拼装）
-                        // 整条链都成功才算成；失败保留对话框并原位显示错误原文，卡已建好则照常刷新列表。
-                        if (teamDispatch) {
-                            try {
-                                api.startTeamRun(createdId, teamId!!, "")
-                                teamRetryTaskId = null
-                            } catch (e: Exception) {
-                                if (e is kotlinx.coroutines.CancellationException) throw e
-                                teamRetryTaskId = createdId
-                                refresh()
-                                error = "任务已创建，但交给团队失败：${e.message ?: "可稍后在详情里再交给团队"}"
-                                return@launch
-                            }
-                        }
-                        showCreate = false
-                        onOpenTaskDetail(createdId)
-                        // 只有「进行中」列的新建才顺带第一次指派；「待办」列只创建任务；团队分支不再派 CLI。
-                        var dispatchError: String? = null
-                        var dispatchedSessionId: String? = null
-                        var dispatchedStructured = true
-                        if (teamId == null && retriedTaskId == null &&
-                            boardCreateDispatches(status) && description.isNotBlank()
-                        ) {
-                            val subject = employeeId?.let(ExecutionSubject::employee)
-                                ?: ExecutionSubject.cli(agent.provider)
-                            runCatching { api.dispatchBoardSubject(createdId, subject, agent, description, workspaceId) }
-                                .onSuccess {
-                                    dispatchedSessionId = boardDispatchSessionId(it.sessionId)
-                                    dispatchedStructured = it.isStructured
-                                }
-                                .onFailure { dispatchError = it.message ?: "任务已创建，但第一次指派失败。" }
-                        }
-                        refresh()
-                        if (dispatchError != null) error = dispatchError
-                        // 创建并指派成功后直接落到新 Agent 的会话，不让用户再自己找一遍。
-                        dispatchedSessionId?.let { openSession(it, dispatchedStructured) }
-                        createdTask?.let { fresh ->
-                            if (title.isBlank() && fresh.titleSource == "auto") {
-                                scope.launch { awaitGeneratedBoardTaskTitle(fresh.id, fresh.title) }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        error = e.message
-                    } finally { busy = false }
-                }
-            },
-        )
-    }
 
     if (embedded) Unit
 }
@@ -1459,12 +1323,11 @@ internal fun TaskBoardDetailPane(
     var title by remember(task.id, task.title) { mutableStateOf(task.title) }
     var agent by remember(task.id, task.agent) { mutableStateOf(task.agent ?: lastAgent) }
     var dispatchSubjectKey by remember(task.id, task.executionSubject?.key) {
-        mutableStateOf(task.executionSubject?.key ?: "cli")
+        mutableStateOf(task.executionSubject?.takeIf { it.type == "team" }?.key ?: "cli")
     }
-    val hasAgents = task.sessions.isNotEmpty()
-    var composeOpen by remember(task.id) { mutableStateOf(!hasAgents) }
+    var composeOpen by remember(task.id) { mutableStateOf(false) }
     var executionSettingsOpen by remember(task.id) { mutableStateOf(false) }
-    var composePrompt by remember(task.id) { mutableStateOf(if (hasAgents) "" else task.description) }
+    var composePrompt by remember(task.id) { mutableStateOf("") }
     LaunchedEffect(teams, employees, dispatchSubjectKey) {
         val subject = ExecutionSubject.fromKey(dispatchSubjectKey, agent.provider)
         if ((subject.type == "team" && teams.none { it.id == subject.id }) ||
@@ -1524,7 +1387,7 @@ internal fun TaskBoardDetailPane(
             Text(task.description, style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary, modifier = Modifier.padding(vertical = 8.dp))
         }
-        commentsApi?.let { TaskComments(it, task.id) }
+        commentsApi?.let { TaskComments(it, task.id, employees, onOpenSession) }
         HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             WandChoice(
@@ -1633,7 +1496,7 @@ internal fun TaskBoardDetailPane(
                     when {
                         teamTarget != null -> if (task.sessions.isEmpty()) "交给团队" else "再交给团队处理"
                         employeeTarget != null -> if (task.sessions.isEmpty()) "交给员工" else "再交给员工处理"
-                        else -> if (task.sessions.isEmpty()) "指派 Agent" else "再指派一个 Agent"
+                        else -> "CLI / 团队兼容派发"
                     },
                     color = WandColors.textPrimary,
                     style = MaterialTheme.typography.titleSmall,
@@ -1665,7 +1528,6 @@ internal fun TaskBoardDetailPane(
                         label = "指派对象 · ${employeeTarget?.name ?: teamTarget?.name ?: "CLI 工具"}",
                         options = buildList {
                             add("cli" to "CLI 工具")
-                            employees.forEach { add("employee:${it.id}" to "员工 · ${it.name}") }
                             teams.forEach { add("team:${it.id}" to "团队 · ${it.name}（${it.members.size} 人）") }
                         },
                         onSelect = {
@@ -1724,7 +1586,7 @@ internal fun TaskBoardDetailPane(
         } else {
             // 有会话时默认收起派发表单，但入口必须一眼可见：整行主按钮，不再是一个 36dp 的 +。
             WandButton(
-                label = "再指派一个 Agent",
+                label = "CLI / 团队兼容派发",
                 onClick = {
                     composePrompt = ""
                     composeOpen = true

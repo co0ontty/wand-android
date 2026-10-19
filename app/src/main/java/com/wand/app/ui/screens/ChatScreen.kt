@@ -1,17 +1,11 @@
 package com.wand.app.ui.screens
 
 import android.Manifest
+import android.net.Uri
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.wand.app.speech.CallSpeechEngine
-import com.wand.app.speech.VoiceCallController
-import com.wand.app.speech.VoiceCallPhase
-import com.wand.app.speech.LocalTextSpeaker
-import com.wand.app.speech.SystemSpeechEngine
-import com.wand.app.speech.SherpaSpeechEngine
-import com.wand.app.speech.SttModelManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 
@@ -27,6 +21,9 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import com.wand.app.ui.QueueRecoveryPhase
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -165,13 +162,14 @@ import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TurnUsage
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
+import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.SESSION_MODE_OPTIONS
 import com.wand.app.data.sessionModeLabel
 import com.wand.app.data.supportedSessionModeIds
-import com.wand.app.speech.SpeechNativeLibrary
-import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.ChatStore
 import com.wand.app.ui.ChatComposer
+import com.wand.app.ui.attachmentPrompt
+import com.wand.app.ui.attachmentPromptBody
 import com.wand.app.ui.SendPhase
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.QuickCommitStore
@@ -350,6 +348,9 @@ fun ChatScreen(
     isHapticEnabled: () -> Boolean,
     trafficTimelineMode: () -> String = { "wifi" },
     drafts: SessionDraftStore,
+    initialSubmitDraft: Boolean = false,
+    taskSessions: List<WorkspaceSessionSummary> = emptyList(),
+    onSelectTaskSession: (WorkspaceSessionSummary) -> Unit = {},
     showBack: Boolean = true,
     onBack: () -> Unit,
 ) {
@@ -369,6 +370,26 @@ fun ChatScreen(
     }
     DisposableEffect(composer) {
         onDispose { composer.shutdown() }
+    }
+    val context = LocalContext.current
+    var initialDraftTriggered by remember(sessionId, initialSubmitDraft) { mutableStateOf(false) }
+    LaunchedEffect(store.loading, store.snapshot, composer.canSubmit, initialSubmitDraft) {
+        if (initialSubmitDraft && !initialDraftTriggered && !store.loading && store.snapshot != null && composer.canSubmit) {
+            initialDraftTriggered = true
+            composer.submit(deliver = { prompt ->
+                val staged = composer.stagedAttachments
+                if (staged.isNotEmpty()) {
+                    val existingAttachments = composer.attachments
+                    val body = attachmentPromptBody(existingAttachments, prompt)
+                    val uploaded = uploadComposerAttachments(context, api, sessionId, staged.map { Uri.parse(it.uri) }, 5)
+                    if (!composer.acceptUploadedStagedAttachments(staged, uploaded)) error("附件上传结果已过期，请重新打开会话核对")
+                    val combinedPrompt = attachmentPrompt(existingAttachments + uploaded, body)
+                    store.submitInput(combinedPrompt)
+                } else {
+                    store.submitInput(prompt)
+                }
+            })
+        }
     }
     val quickCommit = remember(sessionId, api) {
         QuickCommitStore(sessionId, api) { msg -> store.toast = msg }
@@ -486,89 +507,17 @@ fun ChatScreen(
     }
     val haptic = LocalHapticFeedback.current
 
-    val context = LocalContext.current
-    var voiceCommitSignal by remember(sessionId) { mutableIntStateOf(0) }
-    val voiceInput = rememberVoiceInputHandle(
-        isHapticEnabled = isHapticEnabled,
-        onToast = { store.toast = it },
-        onCommit = composer::appendVoice,
-        sessionKey = composer,
-        onCommitForPress = {
-            val commit = composer.voiceCommitForCurrentDraft();
-            { text: String ->
-                val before = composer.draftRevision
-                commit(text)
-                if (composer.draftRevision != before) voiceCommitSignal++
-            }
-        },
-        api = api,
-    )
-    val voice = voiceInput.voice
-
-    var callOpen by remember(sessionId) { mutableStateOf(false) }
-    var callTargetOpen by remember(sessionId) { mutableStateOf(false) }
-    var callDirectoryOpen by remember(sessionId) { mutableStateOf(false) }
-    val call = remember(sessionId, api, composer) {
-        lateinit var controller: VoiceCallController
-        val speaker = LocalTextSpeaker(context) { controller.pause("系统音频被打断，点击继续") }
-        controller = VoiceCallController(composerScope,
-            engineFactory = {
-                val engine = when {
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED -> null
-                    SttModelManager.isReady(context) -> SherpaSpeechEngine(context)
-                    SystemSpeechEngine.isUsable(context) -> SystemSpeechEngine(context)
-                    else -> null
-                }
-                engine?.let { CallSpeechEngine(context, it) { controller.pause("系统音频被打断，点击继续") } }
-            }, speaker = speaker,
-            send = { text ->
-                // Original send lock, draft revisions and unknown-delivery policy.
-                composer.editDraft(text)
-                if (!composer.submit()) false else withTimeout(30_000) {
-                    androidx.compose.runtime.snapshotFlow { composer.sendPhase }.first { it != SendPhase.Sending } == SendPhase.Sent
-                }
-            },
-            ready = { !store.loading && store.snapshot?.employeeId != null && store.isStructured &&
-                !store.providerSwitching && !store.directoryChanging && !store.isResponding && store.connected &&
-                store.pendingEscalation == null && store.legacyPermissionPrompt == null &&
-                composer.draft.isBlank() && composer.attachments.isEmpty() && !composer.uploading && composer.sendPhase != SendPhase.Sending },
-            messageCount = { store.messages.size },
-        )
-        controller
-    }
-    val onMicDown: () -> Unit = { call.pause("已切换为按住说话"); voiceInput.onMicDown() }
-    val callPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) call.start() else { call.start(); call.pause("麦克风权限被拒绝，请在系统设置中允许后继续") }
-    }
-    val startCall: () -> Unit = {
-        voice.cancelPress()
-        if (store.snapshot?.employeeId == null || !store.isStructured) callTargetOpen = true
-        else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) call.start()
-        else callPermission.launch(Manifest.permission.RECORD_AUDIO)
-    }
-    DisposableEffect(call, lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) call.pause("应用进入后台，点击继续通话")
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); call.destroy() }
-    }
-    LaunchedEffect(call, store.messages, store.isResponding, store.pendingEscalation, store.legacyPermissionPrompt, store.connected, call.phase) {
-        call.agentUpdate(store.messages, store.isResponding,
-            store.pendingEscalation != null || store.legacyPermissionPrompt != null, store.connected)
-    }
-    LaunchedEffect(employeeId, store.snapshot?.cwd, store.snapshot?.provider) {
-        if (call.active) call.end()
-    }
-    if (callTargetOpen) WandDialog(title = "会话对象与目录", onDismissRequest = { callTargetOpen = false },
-        confirm = WandDialogAction("完成", { callTargetOpen = false })) {
+    var targetPickerOpen by remember(sessionId) { mutableStateOf(false) }
+    var directoryPickerOpen by remember(sessionId) { mutableStateOf(false) }
+    if (targetPickerOpen) WandDialog(title = "会话对象与目录", onDismissRequest = { targetPickerOpen = false },
+        confirm = WandDialogAction("完成", { targetPickerOpen = false })) {
         LaunchProviderPicker(store)
         Text(store.snapshot?.cwd.orEmpty(), style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
-        TextButton(enabled = store.canChangeDirectory, onClick = { callDirectoryOpen = true }) { Text("选择运行目录") }
+        TextButton(enabled = store.canChangeDirectory, onClick = { directoryPickerOpen = true }) { Text("选择运行目录") }
         if (!store.canChangeDirectory) Text("当前会话目录已固定；新目录请创建新会话", style = MaterialTheme.typography.bodySmall)
     }
-    if (callDirectoryOpen) WorkspaceDirectoryPicker(api = api, currentCwd = store.snapshot?.cwd.orEmpty(),
-        onSelect = { callDirectoryOpen = false; store.chooseWorkingDirectory(it.cwd) }, onDismiss = { callDirectoryOpen = false })
+    if (directoryPickerOpen) WorkspaceDirectoryPicker(api = api, currentCwd = store.snapshot?.cwd.orEmpty(),
+        onSelect = { directoryPickerOpen = false; store.chooseWorkingDirectory(it.cwd) }, onDismiss = { directoryPickerOpen = false })
 
     val focusManager = LocalFocusManager.current
 
@@ -845,14 +794,13 @@ fun ChatScreen(
     val glassBackdrop = rememberGlassBackdrop()
     val activeBackdrop = if (chromeSettled) glassBackdrop else null
     val inputPresentation = remember(sessionId) { ChatInputPresentation() }
-    val draftVoiceGesture = DraftVoiceGesture(onMicDown, voice::updateCancel, voice::endPress, voice::cancelPress)
     var composerExpanded by remember(sessionId) { mutableStateOf(false) }
     var stopRequest by remember(sessionId) { mutableIntStateOf(0) }
     // ＋ 展开的动作面板：就地展开，返回键/发送/换会话时收起（规则 2）。
     var attachOpen by remember(sessionId) { mutableStateOf(false) }
     BackHandler(enabled = attachOpen) { attachOpen = false }
-    LaunchedEffect(voice.pressed, store.snapshot?.provider, store.snapshot?.toolId, store.providerSwitching, store.isStructured, store.pendingEscalation) {
-        if (voice.pressed || store.providerSwitching || store.snapshot?.toolId == "wand-agent" || store.snapshot?.provider != "pi" || !store.isStructured || store.pendingEscalation != null) resources.dismiss()
+    LaunchedEffect(store.snapshot?.provider, store.snapshot?.toolId, store.providerSwitching, store.isStructured, store.pendingEscalation) {
+        if (store.providerSwitching || store.snapshot?.toolId == "wand-agent" || store.snapshot?.provider != "pi" || !store.isStructured || store.pendingEscalation != null) resources.dismiss()
     }
     CompositionLocalProvider(
         LocalServerBaseUrl provides api.baseUrl,
@@ -878,18 +826,8 @@ fun ChatScreen(
             progressTodos = progressTodos,
             stopRequest = stopRequest,
             presentation = inputPresentation,
-            callPanel = {
-                if (callOpen || call.active) VoiceCallPanel(call.phase,
-                    target = "${liveEmployee?.name ?: store.snapshot?.employeeName ?: "请选择员工"} · ${store.snapshot?.cwd.orEmpty()}",
-                    notice = call.notice, transcript = call.transcript,
-                    onStart = startCall, onInterrupt = call::interrupt, onFinishUtterance = call::finishListening,
-                    onPause = { call.pause() }, onEnd = { call.end(); callOpen = false }, onChooseTarget = { callTargetOpen = true })
-            },
             resources = resources,
             composer = composer,
-            voice = voice,
-            voiceCommitSignal = voiceCommitSignal,
-            onMicDown = onMicDown,
             uploading = composer.uploading,
             pendingAttachments = composer.attachments,
             baseUrl = api.baseUrl,
@@ -905,7 +843,6 @@ fun ChatScreen(
             lastAssistantUsage = lastAssistantUsage,
             onActivityDockExpandedChange = { activityDockExpanded = it },
         ) {
-            call.pause("已切换为文本输入")
             resources.dismiss()
             if (composer.submit()) {
                 attachOpen = false
@@ -1135,11 +1072,6 @@ fun ChatScreen(
                 }
             }
 
-            // 端侧语音模型下载对话框（无可用识别引擎时由麦克风按钮触发）。
-            if (voice.showModelDialog) {
-                SttModelDownloadDialog(onDismiss = { voice.showModelDialog = false })
-            }
-
             // Git 快捷提交弹层（磁吸气泡 dock，对齐网页版交互）。
             if (quickCommit.panelOpen) {
                 QuickCommitSheet(
@@ -1153,11 +1085,6 @@ fun ChatScreen(
             TopChatCompanion(employeeId, liveEmployee?.name ?: store.snapshot?.employeeName,
                 liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
                     status = when {
-                        voice.canceling -> "松开取消"
-                        voice.pressed -> "正在听 · 上滑取消"
-                        voice.processing -> "转写中…"
-                        call.phase == VoiceCallPhase.Listening -> "正在聆听"
-                        call.audioPlaying -> "正在朗读"
                         composer.sendPhase == SendPhase.Sending -> "正在发送"
                         composer.sendPhase == SendPhase.Failed -> "请核对发送结果，草稿已保留"
                         composer.sendPhase == SendPhase.Sent -> "已送达"
@@ -1168,16 +1095,16 @@ fun ChatScreen(
                     }, activity = avatarActivity,
                     thinking = companionThinking(store.messages, store.isResponding && store.status == "running" &&
                         store.pendingEscalation == null && store.legacyPermissionPrompt == null, avatarActivity),
-                speaking = call.audioPlaying,
-                onEdit = { call.pause("已切换为文字输入"); inputPresentation.edit() }, gesture = draftVoiceGesture,
-                onPauseSpeech = { call.pause("声音已暂停，任务继续") }.takeIf { call.audioPlaying })
+                onEdit = inputPresentation::edit)
 
-            FloatingChatControls(showBack = showBack, onBack = onBack, onCall = { callOpen = !callOpen },
+            FloatingChatControls(showBack = showBack, onBack = onBack,
                 identity = liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel ?: "当前会话",
-                cwd = store.snapshot?.cwd, onTarget = { callTargetOpen = true },
+                cwd = store.snapshot?.cwd, onTarget = { targetPickerOpen = true },
                 gitEnabled = quickCommit.status?.isGit == true,
                 onGit = { resources.dismiss(); quickCommit.openPanel() },
                 onStop = { stopRequest++; Unit }.takeIf { store.isResponding },
+                taskSessions = taskSessions,
+                onSelectTaskSession = onSelectTaskSession,
                 modifier = Modifier.align(Alignment.TopCenter),
                 files = { SessionFilesButton(api, sessionId, store.snapshot?.cwd) {
                     resources.dismiss(); quickCommit.closePanel(); attachOpen = false; focusManager.clearFocus()
@@ -1910,24 +1837,25 @@ private fun shortModelLabel(store: ChatStore): String {
 }
 
 /**
- * 排队消息条（对位 Web 端 queue-bar）：折叠态显示「已排队 N 条」+ 操作按钮；
- * 展开后逐条列出，每条带「立即发送 ⚡」「删除 ×」，外加底部「全部清空」。
+ * 输入区中的排队消息：取回经服务端确认后进入同一个 composer，不另开编辑对话框。
  * promote 的中断/preserveQueue 语义在 ChatStore.promoteQueued 里按 inFlight 自动决定。
  */
 @Composable
-private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop?) {
+private fun QueueBar(store: ChatStore, composer: ChatComposer, presentation: ChatInputPresentation) {
     var expanded by rememberSaveable(store.sessionId) { mutableStateOf(false) }
     val queue = store.queuedMessages
+    val recovery = composer.queueRecovery
+    BackHandler(enabled = expanded) { expanded = false }
+    LaunchedEffect(composer.sendPhase, queue.isEmpty()) {
+        if (composer.sendPhase == SendPhase.Sending || queue.isEmpty()) expanded = false
+    }
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = WandMotion.tweenFast(),
+        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()),
         label = "queue-expand-rotate",
     )
     Column(
-        modifier = Modifier
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .glassSurface(backdrop, RoundedCornerShape(14.dp), WandGlass.clear)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // 标题行：图标 + 计数 + 展开/收起；整行可点。
@@ -1937,8 +1865,9 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop?) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .clickableWithoutRipple { expanded = !expanded }
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+                .clickable(role = Role.Button, onClickLabel = if (expanded) "收起排队消息" else "展开排队消息") { expanded = !expanded }
+                .heightIn(min = ComposerActionTouchSize)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
             Icon(
                 WandIcons.history,
@@ -1966,14 +1895,21 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop?) {
             enter = fadeIn(WandMotion.tweenFast()),
             exit = fadeOut(WandMotion.tweenFast()),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(modifier = Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 queue.forEachIndexed { index, text ->
                     QueueItemRow(
                         index = index,
                         text = text,
-                        onPromote = { store.promoteQueued(index) },
+                        enabled = !store.queueMutationPending && recovery == null,
+                        onPromote = { store.promoteQueued(index); expanded = false },
                         onDelete = { store.deleteQueued(index) },
-                        onEdit = { store.editQueued(index, it) },
+                        onEdit = {
+                            if (composer.retrieveQueued(index, text, store::retrieveQueued)) {
+                                expanded = false
+                                presentation.edit()
+                            }
+                        },
                     )
                 }
                 // 全部清空：右对齐，提示性按钮。
@@ -1981,7 +1917,8 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop?) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    TextButton(onClick = { store.clearQueued() }) {
+                    TextButton(onClick = { store.clearQueued(); expanded = false },
+                        enabled = !store.queueMutationPending && recovery == null) {
                         Icon(
                             WandIcons.delete,
                             contentDescription = null,
@@ -1998,6 +1935,31 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop?) {
                 }
             }
         }
+        if (recovery != null) {
+            Column(modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
+                Text(recovery.message, color = WandColors.textMuted, fontSize = 12.sp)
+                if (recovery.phase != QueueRecoveryPhase.Retrieving) {
+                    SelectionContainer {
+                        Text(recovery.text, color = WandColors.textPrimary, fontSize = 13.sp,
+                            modifier = Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState()))
+                    }
+                }
+                when (recovery.phase) {
+                    QueueRecoveryPhase.Ready -> TextButton(
+                        enabled = composer.sendPhase != SendPhase.Sending,
+                        onClick = { if (composer.restoreQueuedOriginal()) presentation.edit() },
+                    ) { Text("加入当前输入继续编辑") }
+                    QueueRecoveryPhase.Unconfirmed -> TextButton(
+                        enabled = composer.sendPhase != SendPhase.Sending,
+                        onClick = { if (composer.restoreQueuedOriginal(confirmedNotExecuted = true)) presentation.edit() },
+                    ) { Text("确认已移出且未执行，恢复原文") }
+                    QueueRecoveryPhase.Rejected -> TextButton(onClick = composer::dismissRejectedQueueRecovery) {
+                        Text("保留队列，关闭提示")
+                    }
+                    QueueRecoveryPhase.Retrieving -> Unit
+                }
+            }
+        }
     }
 }
 
@@ -2005,22 +1967,11 @@ private fun QueueBar(store: ChatStore, backdrop: GlassBackdrop?) {
 private fun QueueItemRow(
     index: Int,
     text: String,
+    enabled: Boolean,
     onPromote: () -> Unit,
     onDelete: () -> Unit,
-    onEdit: (String) -> Unit,
+    onEdit: () -> Unit,
 ) {
-    var editing by remember { mutableStateOf(false) }
-    var draft by remember(text) { mutableStateOf(text) }
-    if (editing) WandDialog(
-        title = "编辑排队消息",
-        onDismissRequest = { editing = false },
-        confirm = WandDialogAction("保存", {
-            if (draft.isNotBlank()) { onEdit(draft); editing = false }
-        }),
-        dismiss = WandDialogAction("取消", { editing = false }),
-    ) {
-        WandTextField(value = draft, onValueChange = { draft = it }, label = "消息")
-    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2039,36 +1990,21 @@ private fun QueueItemRow(
             text,
             fontSize = 13.sp,
             color = WandColors.textPrimary,
-            maxLines = 2,
+            maxLines = 6,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        IconButton(onClick = { editing = true }, modifier = Modifier.size(28.dp)) {
-            Text("✎", fontSize = 18.sp, color = WandColors.brand)
+        IconButton(onClick = onEdit, enabled = enabled, modifier = Modifier.size(48.dp)) {
+            Icon(WandIcons.edit, contentDescription = "取回到输入框编辑", tint = WandColors.brand,
+                modifier = Modifier.size(20.dp))
         }
-        // 立即发送
-        IconButton(
-            onClick = onPromote,
-            modifier = Modifier.size(28.dp),
-        ) {
-            Icon(
-                WandIcons.send,
-                contentDescription = "立即发送",
-                tint = WandColors.brand,
-                modifier = Modifier.size(16.dp),
-            )
+        IconButton(onClick = onPromote, enabled = enabled, modifier = Modifier.size(48.dp)) {
+            Icon(WandIcons.send, contentDescription = "立即发送", tint = WandColors.brand,
+                modifier = Modifier.size(20.dp))
         }
-        // 删除
-        IconButton(
-            onClick = onDelete,
-            modifier = Modifier.size(28.dp),
-        ) {
-            Icon(
-                WandIcons.close,
-                contentDescription = "删除",
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(16.dp),
-            )
+        IconButton(onClick = onDelete, enabled = enabled, modifier = Modifier.size(48.dp)) {
+            Icon(WandIcons.close, contentDescription = "删除", tint = WandColors.textMuted,
+                modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -2126,7 +2062,6 @@ fun ConnectionBanner(visible: Boolean, modifier: Modifier = Modifier) {
 @Composable
 private fun BottomBar(
     backdrop: GlassBackdrop?,
-    callPanel: @Composable () -> Unit = {},
     presentation: ChatInputPresentation,
     stopRequest: Int = 0,
     store: ChatStore,
@@ -2134,9 +2069,6 @@ private fun BottomBar(
     progressTodos: List<TodoEntry>,
     attachmentPickerOpen: Boolean,
     resources: com.wand.app.ui.PiResourcesController,
-    voice: VoiceInputController,
-    voiceCommitSignal: Int,
-    onMicDown: () -> Unit,
     uploading: Boolean,
     pendingAttachments: List<UploadedFile>,
     baseUrl: String,
@@ -2168,17 +2100,6 @@ private fun BottomBar(
             .widthIn(max = ChatReadableMaxWidth)
             .fillMaxWidth(),
     ) {
-        // 待办进度条：当前 turn 有未完成 todos 时悬浮在输入栏上方（对齐 Web todo-progress）。
-        // 会话不再 running（turn 已结束、idle/exited/archived）时直接收起：模型经常
-        // 漏发最后一条全 completed 的 TodoWrite，否则进度条会卡在最后一项 in_progress
-        // 直到下一次发消息才被刷新，看着像「永远执行中」（对齐 Web updateTodoProgress
-        // 用 session.status 而不是 inFlight 判定，避免流式间隙闪烁）。
-        if (progressTodos.isNotEmpty()) {
-            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage, detailsInSheet = true,
-                    onDetailsOpenChange = { presentation.overlayOpen = it })
-            }
-        }
         // 权限审批卡：底部滑入 + 淡入；退场期间用缓存内容避免闪空。
         val hasPermission = store.pendingEscalation != null || store.legacyPermissionPrompt != null
         var cachedEscalation by remember { mutableStateOf<EscalationRequest?>(null) }
@@ -2207,17 +2128,8 @@ private fun BottomBar(
                 )
             }
         }
-        if (store.queuedMessages.isNotEmpty()) {
-            QueueBar(store = store, backdrop = backdrop)
-        }
         // 结构化会话没有「会话已结束 / 恢复会话」的概念：一个回合结束后只是回到 idle，
         // 直接继续输入即可（服务端 sendMessage 自动 --resume 续接）。不再渲染结束态横幅。
-        // 按住说话实时转写气泡（按住期间悬浮在输入栏上方）。
-        if (voice.pressed || voice.processing) {
-            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                VoiceTranscriptBubble(backdrop, voice)
-            }
-        }
         // Agent 状态坞排在待办/权限/队列之后，作为输入栏上方的最后一项贴着输入框。
         AnimatedVisibility(
             visible = activityDockVisible && (subagentActivities.isNotEmpty() || progressTodos.isEmpty()),
@@ -2238,8 +2150,20 @@ private fun BottomBar(
                 )
             }
         }
-        callPanel()
         InputBar(
+            accessory = {
+                if (progressTodos.isNotEmpty() || store.queuedMessages.isNotEmpty() || composer.queueRecovery != null) {
+                    Column(Modifier.padding(bottom = 4.dp)) {
+                        if (progressTodos.isNotEmpty()) {
+                            TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage, detailsInSheet = true,
+                                onDetailsOpenChange = { presentation.overlayOpen = it })
+                        }
+                        if (store.queuedMessages.isNotEmpty() || composer.queueRecovery != null) {
+                            QueueBar(store = store, composer = composer, presentation = presentation)
+                        }
+                    }
+                }
+            },
             backdrop = backdrop,
             store = store,
             attachmentPickerOpen = attachmentPickerOpen,
@@ -2250,9 +2174,6 @@ private fun BottomBar(
             stopRequest = stopRequest,
             draft = draft,
             onDraftChange = onDraftChange,
-            voice = voice,
-            voiceCommitSignal = voiceCommitSignal,
-            onMicDown = onMicDown,
             uploading = uploading,
             pendingAttachments = pendingAttachments,
             baseUrl = baseUrl,
@@ -2279,6 +2200,7 @@ internal val ComposerExpandedInputMaxHeight = 132.dp
 
 @Composable
 private fun InputBar(
+    accessory: @Composable () -> Unit,
     backdrop: GlassBackdrop?,
     store: ChatStore,
     attachmentPickerOpen: Boolean,
@@ -2289,9 +2211,6 @@ private fun InputBar(
     stopRequest: Int,
     draft: String,
     onDraftChange: (String) -> Unit,
-    voice: VoiceInputController,
-    voiceCommitSignal: Int,
-    onMicDown: () -> Unit,
     uploading: Boolean,
     pendingAttachments: List<UploadedFile>,
     baseUrl: String,
@@ -2312,9 +2231,9 @@ private fun InputBar(
     val menuStopVisible = composerMenuHasStop(store.isResponding,
         composerPrimaryVisual(sendPhase, store.isResponding, canSend, canSubmit))
     var thinkingOpen by remember(store.sessionId) { mutableStateOf(false) }
-    val draftVoice = DraftVoiceGesture(onMicDown, voice::updateCancel, voice::endPress, voice::cancelPress)
     SharedMessageComposer(
         backdrop = backdrop,
+        accessory = accessory,
         sessionKey = store.sessionId,
         draft = draft,
         onDraftChange = onDraftChange,
@@ -2330,16 +2249,12 @@ private fun InputBar(
         onSend = onSend,
         allowRefocus = !store.sessionEnded,
         presentation = presentation,
-        capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling) },
         actionCount = composerActionPresentation(sendPhase, store.isResponding, canSend, canSubmit).slotCount,
         exteriorAction = { send -> TrailingSendStop(store, sendPhase, canSend, canSubmit,
             onStop = { onAttachOpenChange(false); resources.dismiss(); showStopConfirm = true },
-            voiceAction = {}, onSend = send) },
+            onSend = send) },
         compactAfterAcknowledgement = true,
         deliveryPhase = sendPhase,
-        voicePressed = voice.pressed,
-        voiceProcessing = voice.processing,
-        voiceCommitSignal = voiceCommitSignal,
         editorOverlayOpen = modelOpen || modeOpen || thinkingOpen || showStopConfirm || attachmentPickerOpen,
         onExpandedChange = onExpandedChange,
         resourcePanel = { PiResourcesPanel(resources) { runCatching { menuTriggerFocus.requestFocus() } } },
@@ -2374,7 +2289,7 @@ private fun InputBar(
                 )
             }
         },
-        trailingActions = { _, _ -> CapsuleMicrophone(draftVoice, voice.pressed, voice.canceling) },
+        trailingActions = { _, _ -> },
         controls = {
             ComposerSettingsRow(
                 model = shortModelLabel(store), mode = SESSION_MODE_OPTIONS.firstOrNull { it.id == store.mode }?.label ?: store.mode, thinking = thinkingLabel(store, store.thinkingEffort),
@@ -2419,7 +2334,7 @@ private fun InputBar(
 
 /**
  * 发送 / 停止按钮组（对齐 iOS trailingButtons）：
- * - 语音留在胶囊内，发送/停止在右侧独立圆形槽；
+ * - 发送/停止在右侧独立圆形槽；
  * - 草稿发送和运行停止独立显示，展开时移入输入框右下角。
  *
  * 动效（`docs/motion-design.md` 规则 3 / 4）：
@@ -2433,11 +2348,9 @@ private fun TrailingSendStop(
     canSend: Boolean,
     canSubmit: Boolean,
     onStop: () -> Unit,
-    voiceAction: @Composable () -> Unit,
     onSend: () -> Unit,
 ) {
     ComposerSendStopActions(
-        voiceAction = voiceAction,
         presentation = composerActionPresentation(sendPhase, store.isResponding, canSend, canSubmit),
         stopDescription = "停止任务",
         sendDescription = if (store.isResponding) "继续发送（排队）" else "发送消息",
@@ -2946,281 +2859,3 @@ internal fun ComposerActionsMenu(
         }
     }
 }
-
-// MARK: - 按住说话（端侧语音识别）
-
-/** Shared cat/microphone boundary. A hold never also dispatches a tap. */
-internal const val VOICE_HOLD_THRESHOLD_MS = 300L
-
-/**
- * 轻点 / 按住二分手势：
- * - 按住超过 [VOICE_HOLD_THRESHOLD_MS] → onHoldStart()（开始录音），
- *   之后移动驱动「上滑取消」，松手 endPress() 提交；
- * - 阈值内松手 → onTap()。
- * 录音的触感反馈在 onHoldStart（即 onMicDown）里触发，正好对应「真正开始聆听」。
- */
-internal suspend fun PointerInputScope.voiceTapOrHoldGesture(
-    voice: VoiceInputController,
-    onTap: () -> Unit,
-    onHoldStart: () -> Unit,
-) {
-    voiceTapOrHoldGesture(onTap, onHoldStart, voice::updateCancel, voice::endPress, voice::cancelPress)
-}
-
-/** The same timed pointer adapter is also exercised by the isolated native fixture. */
-internal suspend fun PointerInputScope.voiceTapOrHoldGesture(
-    onTap: () -> Unit, onHoldStart: () -> Unit, onHoldMove: (Boolean) -> Unit,
-    onHoldEnd: () -> Unit, onHoldCancel: () -> Unit,
-) {
-    val cancelThresholdPx = 60.dp.toPx()
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        down.consume()
-        var recording = false
-        var released = false
-        var elapsed = 0L
-        try {
-            while (true) {
-                val event = if (recording) awaitPointerEvent()
-                    else withTimeoutOrNull(VOICE_HOLD_THRESHOLD_MS - elapsed) { awaitPointerEvent() }
-                if (event == null) {
-                    recording = true
-                    onHoldStart()
-                    continue
-                }
-                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                elapsed = change.uptimeMillis - down.uptimeMillis
-                if (!change.pressed) {
-                    released = !change.isConsumed
-                    change.consume()
-                    if (!recording && released) onTap()
-                    break
-                }
-                if (!recording && (change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
-                change.consume()
-                if (recording) onHoldMove(down.position.y - change.position.y > cancelThresholdPx)
-            }
-        } finally {
-            if (recording) {
-                if (released) onHoldEnd() else onHoldCancel()
-            }
-        }
-    }
-}
-
-/** 输入框外侧的独立语音按钮：轻点聚焦输入，长按录音。 */
-@Composable
-internal fun VoiceMicButton(
-    voice: VoiceInputController,
-    voiceMode: Boolean,
-    onToggleMode: () -> Unit,
-    onMicDown: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val currentOnToggle by rememberUpdatedState(onToggleMode)
-    val currentOnMicDown by rememberUpdatedState(onMicDown)
-    val micProgress by animateFloatAsState(
-        targetValue = if (voiceMode && !voice.pressed) 1f else 0f,
-        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.morph()),
-        label = "composerMicMorph",
-    )
-    val iconTint = when {
-        voice.pressed && voice.canceling -> WandColors.danger
-        voice.pressed -> WandColors.brand
-        else -> WandColors.textSecondary
-    }
-    val scale by animateFloatAsState(
-        if (voice.pressed) 1.1f else 1f,
-        WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenPress()),
-        label = "micScale",
-    )
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .size(ComposerActionTouchSize)
-            .clip(CircleShape)
-            .semantics {
-                role = Role.Button
-                contentDescription = if (voiceMode) "切回键盘输入" else "长按说话，松开完成，上滑取消"
-                stateDescription = if (voice.pressed) "正在录音" else "长按录音"
-                onClick(label = "聚焦文字输入") {
-                    currentOnToggle()
-                    true
-                }
-            }
-            .pointerInput(voice) {
-                voiceTapOrHoldGesture(
-                    voice = voice,
-                    onTap = { currentOnToggle() },
-                    onHoldStart = { currentOnMicDown() },
-                )
-            },
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(ComposerActionVisualSize)
-                .clip(CircleShape)
-                .background(if (voice.pressed) WandColors.brandSoft else WandColors.surface)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                },
-        ) {
-            WandMorphingIcon(
-                progress = micProgress,
-                from = WandIcons.mic,
-                to = WandIcons.keyboard,
-                tint = iconTint,
-                modifier = Modifier.size(ComposerActionIconSize),
-            )
-        }
-    }
-}
-
-/** 按住期间的实时转写气泡：覆盖式文本 + 引擎标签 + 上滑取消提示。 */
-@Composable
-internal fun VoiceTranscriptBubble(backdrop: GlassBackdrop?, voice: VoiceInputController) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(backdrop, RoundedCornerShape(12.dp), WandGlass.regular)
-            .then(
-                if (voice.canceling) {
-                    Modifier.border(
-                        1.dp,
-                        WandColors.danger.copy(alpha = 0.55f),
-                        RoundedCornerShape(12.dp),
-                    )
-                } else Modifier
-            )
-            .padding(12.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                if (voice.canceling) WandIcons.close else WandIcons.mic,
-                contentDescription = null,
-                tint = if (voice.canceling) WandColors.danger else WandColors.brand,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                when {
-                    voice.canceling -> "松开手指，取消输入"
-                    voice.processing -> "${voice.engineLabel}中…"
-                    voice.transcript.isEmpty() -> "正在聆听…"
-                    else -> voice.transcript
-                },
-                fontSize = 14.sp,
-                color = when {
-                    voice.canceling -> WandColors.danger
-                    voice.transcript.isEmpty() -> WandColors.textMuted
-                    else -> WandColors.textPrimary
-                },
-            )
-        }
-        if (!voice.canceling) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    voice.engineLabel,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = WandColors.brand,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(WandColors.brand.copy(alpha = 0.12f))
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                )
-                Text(
-                    "松开填入输入框 · 上滑取消",
-                    fontSize = 11.sp,
-                    color = WandColors.textMuted,
-                )
-            }
-        }
-    }
-}
-
-/** 端侧语音模型下载对话框：说明 → 下载进度 → 就绪/失败重试。 */
-@Composable
-internal fun SttModelDownloadDialog(onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val state = SttModelManager.state
-    val model = remember { SttModelManager.selectedModel(context) }
-    val needsLibrary = !SpeechNativeLibrary.isInstalled(context)
-    val needsModel = !SttModelManager.isModelDownloaded(context, model)
-    // 下载完成立刻预热模型，让「下载完→按住即用」无加载等待。
-    LaunchedEffect(state) {
-        if (state is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
-    }
-    WandDialog(
-        title = "启用本地语音识别",
-        onDismissRequest = { if (state !is SttModelManager.State.Downloading) onDismiss() },
-        icon = WandIcons.update,
-        confirm = when (state) {
-            is SttModelManager.State.Downloading -> WandDialogAction(
-                label = "取消下载",
-                destructive = true,
-                onClick = { SttModelManager.cancelDownload() },
-            )
-            is SttModelManager.State.Ready -> WandDialogAction("知道了", onDismiss)
-            else -> WandDialogAction(
-                if (state is SttModelManager.State.Failed) "重试" else "下载",
-                { SttModelManager.startDownload(context) },
-            )
-        },
-        dismiss = if (state is SttModelManager.State.Idle || state is SttModelManager.State.Failed) {
-            WandDialogAction("暂不", onDismiss)
-        } else null,
-    ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (state) {
-                    is SttModelManager.State.Downloading -> {
-                        Text(
-                            "正在下载语音识别组件…",
-                            fontSize = 13.sp,
-                            color = WandColors.textSecondary,
-                        )
-                        LinearProgressIndicator(
-                            progress = { state.percent / 100f },
-                            color = WandColors.brand,
-                            trackColor = WandColors.surfaceSoft,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            "${state.percent}%（${formatMb(state.downloadedBytes)} / ${formatMb(state.totalBytes)}）",
-                            fontSize = 12.sp,
-                            color = WandColors.textMuted,
-                        )
-                    }
-                    is SttModelManager.State.Ready -> Text(
-                        "模型已就绪，按住麦克风即可语音输入，识别完全在本机离线运行。",
-                        fontSize = 13.sp,
-                        color = WandColors.textSecondary,
-                    )
-                    is SttModelManager.State.Failed -> Text(
-                        "${state.message}\n请检查网络后重试；模型下载会尝试备用镜像。",
-                        fontSize = 13.sp,
-                        color = WandColors.danger,
-                    )
-                    else -> Text(
-                        "此设备没有可用的系统语音识别服务。" +
-                            (if (needsLibrary) "将从官方 GitHub 下载语音引擎（约 38 MB）；" else "") +
-                            (if (needsModel) "另下载${model.label}（${model.sizeLabel}）。" else "模型已在本机。") +
-                            "仅在确认后下载；启用后识别完全在本机离线运行。",
-                        fontSize = 13.sp,
-                        color = WandColors.textSecondary,
-                    )
-                }
-            }
-    }
-}
-
-private fun formatMb(bytes: Long): String =
-    String.format(java.util.Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)

@@ -69,6 +69,21 @@ internal fun filterConversationList(
     }
 }
 
+/** Read-only header context; a historical failed run must not mask a newer completed run. */
+internal fun conversationIdentityStatus(detail: ConversationInstance?): String {
+    if (detail == null) return "正在加载对话"
+    if (detail.deleting) return "正在删除对话"
+    if (detail.dissolvedAt != null) return "群聊已解散"
+    if (!detail.unavailableReason.isNullOrBlank()) return "当前对象暂不可用"
+    val runs = detail.tasks.flatMap { it.runs }
+    if (runs.any { it.status == "awaiting_approval" }) return "等待你的确认"
+    if (runs.any { it.status == "waiting_user" }) return "等待你的回复"
+    if (runs.any { it.status == "running" || it.status == "starting" }) return "任务执行中"
+    if (runs.maxByOrNull { it.updatedAt.orEmpty() }?.status == "failed") return "最近一轮失败"
+    return if (detail.kind == "group") detail.team?.let { "${it.members.size} 位员工 · 可派发任务" } ?: "群聊 · 可派发任务"
+        else "可以继续对话"
+}
+
 internal fun conversationRunLabel(status: String): String = when (status) {
     "running" -> "进行中"; "awaiting_approval" -> "等你批准"; "waiting_user" -> "等你回复";
     "done" -> "已完成"; "failed" -> "失败"; "stopped" -> "已停止"; else -> "待开工"

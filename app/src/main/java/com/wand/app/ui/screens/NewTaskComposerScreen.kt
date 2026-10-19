@@ -56,6 +56,8 @@ import com.wand.app.data.dispatchStartBlockedReason
 import com.wand.app.data.AiTeam
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.ModelsResponse
+import com.wand.app.data.SESSION_MODE_OPTIONS
+import com.wand.app.data.supportedSessionModeIds
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
 import com.wand.app.data.boardAgentModelOptions
@@ -74,6 +76,7 @@ import com.wand.app.ui.thinkingEffortOptions
 @Composable
 internal fun NewTaskComposerDialog(
     name: String,
+    sessionOnly: Boolean = false,
     onNameChange: (String) -> Unit,
     prompt: String,
     onPromptChange: (String) -> Unit,
@@ -107,6 +110,8 @@ internal fun NewTaskComposerDialog(
     onModelChange: (String) -> Unit,
     thinkingEffort: String,
     onThinkingEffortChange: (String) -> Unit,
+    mode: String = "default",
+    onModeChange: (String) -> Unit = {},
     models: ModelsResponse?,
     startFirstSession: Boolean,
     onStartFirstSessionChange: (Boolean) -> Unit,
@@ -147,6 +152,7 @@ internal fun NewTaskComposerDialog(
         models?.thinkingEffortsFor(provider).orEmpty(),
     )
     val effortLabel = effortOptions.firstOrNull { it.id == thinkingEffort }?.label ?: "自动"
+    val availableModes = SESSION_MODE_OPTIONS.filter { it.id in supportedSessionModeIds(provider) }
     // 会话参数行与选择器可开性共用这份判定。
     val controlChips = newTaskComposerControlChips(namedSubjectSelected, startFirstSession, target.isShell)
     var displayedControlChips by remember { mutableStateOf(controlChips) }
@@ -157,12 +163,13 @@ internal fun NewTaskComposerDialog(
     var modelOpen by remember { mutableStateOf(false) }
     var effortOpen by remember { mutableStateOf(false) }
     var kindOpen by remember { mutableStateOf(false) }
+    var modeOpen by remember { mutableStateOf(false) }
     var parentOpen by remember { mutableStateOf(false) }
     var advancedOpen by remember { mutableStateOf(false) }
 
     val motionEnabled = !reduceMotionEnabled()
     WandFormDialog(
-        title = "新建任务",
+        title = if (sessionOnly) "新建会话" else "新建任务",
         busy = busy || dispatchFlow.busy,
         onDismiss = onDismiss,
         footer = {
@@ -266,6 +273,17 @@ internal fun NewTaskComposerDialog(
                 onDismiss = { kindOpen = false },
             )
         }
+        if (modeOpen) {
+            ComposerChoiceSheet(
+                title = "执行模式", options = availableModes.map { it.id to it.label },
+                selected = mode,
+                onSelect = {
+                    modeOpen = false
+                    onModeChange(it)
+                },
+                onDismiss = { modeOpen = false },
+            )
+        }
         directoryPickerContent()
         },
     ) {
@@ -345,6 +363,8 @@ internal fun NewTaskComposerDialog(
                                         dispatchMode = false
                                         dispatchFlow.resetResults()
                                         onTargetChange(option)
+                                        // Codex 只有全权限模式，切换后必须显示并要求明确确认。
+                                        if (option.provider == "codex") onModeChange("full-access")
                                         // Wand Agent 只有进程内 SDK 的结构化会话，不能停在 PTY。
                                         if (option.isSdk && kind != WorkspaceSessionKind.Structured) {
                                             onKindChange(WorkspaceSessionKind.Structured)
@@ -489,13 +509,15 @@ internal fun NewTaskComposerDialog(
                         }
                         WandInlinePanel(visible = advancedOpen) {
                             Column(Modifier.padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                WandTextField(
-                                    value = name, onValueChange = onNameChange,
-                                    label = "任务名称（可选）", placeholder = if (ungroupedStart) "填写名称后创建任务卡" else "留空自动命名",
-                                    singleLine = true, enabled = !busy && !fieldsLocked,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                                if (!namedSubjectSelected) {
+                                if (!sessionOnly) {
+                                    WandTextField(
+                                        value = name, onValueChange = onNameChange,
+                                        label = "任务名称（可选）", placeholder = if (ungroupedStart) "填写名称后创建任务卡" else "留空自动命名",
+                                        singleLine = true, enabled = !busy && !fieldsLocked,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                                if (!sessionOnly && !namedSubjectSelected) {
                                     NewTaskToggleRow(
                                         icon = WandIcons.todo,
                                         label = if (ungroupedStart) newTaskUngroupedStartLabel() else "创建后启动会话",
@@ -512,7 +534,7 @@ internal fun NewTaskComposerDialog(
                                         },
                                     )
                                 }
-                                if (!ungroupedStart) {
+                                if (!sessionOnly && !ungroupedStart) {
                                     NewTaskToggleRow(
                                         icon = WandIcons.commit, label = "工作目录方式",
                                         checked = worktree,
@@ -520,6 +542,17 @@ internal fun NewTaskComposerDialog(
                                         description = newTaskWorktreeDescription(worktree),
                                         enabled = !busy && !fieldsLocked, onToggle = onWorktreeChange,
                                     )
+                                }
+                                if (startFirstSession && !target.isShell && !namedSubjectSelected) {
+                                    if (availableModes.isNotEmpty()) {
+                                        NewTaskSettingRow(
+                                            icon = WandIcons.permission,
+                                            label = "执行模式",
+                                            value = availableModes.firstOrNull { it.id == mode }?.label ?: "标准",
+                                            enabled = !busy && !fieldsLocked,
+                                            onClick = { modeOpen = true },
+                                        )
+                                    }
                                 }
                                 AnimatedVisibility(
                                     visible = controlChips.isNotEmpty(),
@@ -551,22 +584,24 @@ internal fun NewTaskComposerDialog(
                                         }
                                     }
                                 }
-                                NewTaskSettingRow(
-                                    icon = WandIcons.todo, label = "归属父任务",
-                                    value = when {
-                                        parentError != null -> "加载失败，点此重试"
-                                        parentsLoading -> "正在加载任务…"
-                                        else -> parentOptions.firstOrNull { it.first == parentTaskId }?.second
-                                            ?: "不关联父任务"
-                                    },
-                                    enabled = !busy && !fieldsLocked,
-                                    onClick = {
-                                        if (parentError != null) onReloadParents() else parentOpen = true
-                                    },
-                                )
-                                if (!parentsLoading && parentError == null && parentOptions.size == 1) {
-                                    Text("当前目录没有进行中的任务",
-                                        style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                                if (!sessionOnly) {
+                                    NewTaskSettingRow(
+                                        icon = WandIcons.todo, label = "归属父任务",
+                                        value = when {
+                                            parentError != null -> "加载失败，点此重试"
+                                            parentsLoading -> "正在加载任务…"
+                                            else -> parentOptions.firstOrNull { it.first == parentTaskId }?.second
+                                                ?: "不关联父任务"
+                                        },
+                                        enabled = !busy && !fieldsLocked,
+                                        onClick = {
+                                            if (parentError != null) onReloadParents() else parentOpen = true
+                                        },
+                                    )
+                                    if (!parentsLoading && parentError == null && parentOptions.size == 1) {
+                                        Text("当前目录没有进行中的任务",
+                                            style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                                    }
                                 }
                             }
                         }

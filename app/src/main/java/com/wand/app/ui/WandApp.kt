@@ -80,6 +80,7 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
+import com.wand.app.ui.screens.PendingConversationScreen
 import com.wand.app.ui.screens.AiTeamConversationRoute
 import com.wand.app.ui.screens.ConversationChatScreen
 import com.wand.app.ui.screens.ConversationList
@@ -212,6 +213,31 @@ private val MediumSidebarMaxWidth = 280.dp
 private val ExpandedSidebarMinWidth = 280.dp
 private val ExpandedSidebarMaxWidth = 400.dp
 private val ExpandedDetailMinWidth = 560.dp
+
+internal fun pendingConversationDraftKey(serverId: String, entryKey: String): String =
+    "pending-conversation:$serverId:$entryKey"
+
+internal fun pendingConversationScreen(
+    entry: String,
+    cwd: String? = null,
+    workspaceId: String? = null,
+    workspaceTaskId: String? = null,
+    taskName: String? = null,
+    initialEmployeeId: String? = null,
+    initialCreateMode: Boolean = false,
+): Screen.PendingConversation = Screen.PendingConversation(
+    draftKey = entry,
+    cwd = cwd,
+    workspaceId = workspaceId,
+    workspaceTaskId = workspaceTaskId,
+    taskName = taskName,
+    initialEmployeeId = initialEmployeeId,
+    initialCreateMode = initialCreateMode,
+)
+
+private fun openPendingConversation(nav: NavState, entry: Long) {
+    nav.push(pendingConversationScreen("entry-$entry"))
+}
 /**
  * 展开折叠屏与平板会在运行时反复跨越这个边界；只依据当前窗口尺寸，
  * 不依赖设备类型或物理方向，才能同时覆盖分屏和自由窗口。
@@ -401,13 +427,16 @@ private fun ReadyContent(
         )
     }
     // 长按图标的旧 ACTION_NEW_SESSION 保持二进制兼容，但语义迁移为「新任务」。
+    LaunchedEffect(taskState.pendingConversationRequest) {
+        taskState.consumePendingConversationRequest()?.let { entry -> openPendingConversation(nav, entry) }
+    }
     LaunchedEffect(Unit) {
         if (!initialQuickActionConsumed) {
             initialQuickActionConsumed = true
             when (val action = initialQuickAction) {
                 is QuickAction.NewSession -> {
                     changeHomeListMode(HomeListMode.Sessions)
-                    taskState.requestNewTask()
+                    taskState.requestPendingConversation()
                 }
                 is QuickAction.OpenSession -> {
                     if (homeListMode == HomeListMode.Im) changeHomeListMode(HomeListMode.Sessions)
@@ -522,6 +551,25 @@ private fun SessionDetailScreen(
     onOpenContacts: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val taskSessions = screen.taskIdOrNull()?.let { taskId ->
+        taskState.groups.asSequence().flatMap { it.tasks.asSequence() }
+            .firstOrNull { it.id == taskId }
+            ?.sessions
+            ?.filter { it.archived != true && it.teamChat == null }
+            .orEmpty()
+    }.orEmpty()
+    val openTaskSession: (WorkspaceSessionSummary) -> Unit = { session ->
+        val route = when (screen) {
+            is Screen.Chat -> sessionScreen(
+                session.id, session.isStructured, screen.workspaceName, screen.taskName, screen.workspaceId, screen.taskId,
+            )
+            is Screen.PtyTerminal -> sessionScreen(
+                session.id, session.isStructured, screen.workspaceName, screen.taskName, screen.workspaceId, screen.taskId,
+            )
+            else -> null
+        }
+        route?.let(nav::replaceTop)
+    }
     when (screen) {
         is Screen.SessionList -> Unit
         is Screen.Conversation -> {
@@ -542,8 +590,42 @@ private fun SessionDetailScreen(
             isHapticEnabled = actions.settings.isHapticEnabled,
             trafficTimelineMode = actions.settings.getTrafficTimelineMode,
             drafts = sessionDrafts,
+            initialSubmitDraft = screen.submitDraftOnOpen,
+            taskSessions = taskSessions,
+            onSelectTaskSession = openTaskSession,
             showBack = showBack,
             onBack = { nav.pop() },
+        )
+        is Screen.PendingConversation -> PendingConversationScreen(
+            api = api,
+            taskState = taskState,
+            draftKey = pendingConversationDraftKey(actions.connection.serverId, screen.draftKey),
+            cwd = screen.cwd ?: "",
+            workspaceId = screen.workspaceId,
+            workspaceTaskId = screen.workspaceTaskId,
+            taskName = screen.taskName,
+            initialEmployeeId = screen.initialEmployeeId,
+            initialCreateMode = screen.initialCreateMode,
+            drafts = sessionDrafts,
+            onCancel = { nav.pop() },
+            onCreated = { created, submitDraft ->
+                if (!created.isStructured) {
+                    nav.replaceTop(Screen.PtyTerminal(
+                        created.id,
+                        taskName = screen.taskName,
+                        workspaceId = screen.workspaceId,
+                        taskId = screen.workspaceTaskId,
+                    ))
+                } else {
+                    nav.replaceTop(Screen.Chat(
+                        created.id,
+                        taskName = screen.taskName,
+                        workspaceId = screen.workspaceId,
+                        taskId = screen.workspaceTaskId,
+                        submitDraftOnOpen = submitDraft,
+                    ))
+                }
+            },
         )
         is Screen.PtyTerminal -> PtyTerminalScreen(
             api = api,
@@ -551,6 +633,8 @@ private fun SessionDetailScreen(
             serverDisplayName = actions.connection.serverDisplayName,
             workspaceName = screen.workspaceName,
             taskName = screen.taskName,
+            taskSessions = taskSessions,
+            onSelectTaskSession = openTaskSession,
             isHapticEnabled = actions.settings.isHapticEnabled,
             showBack = showBack,
             onBack = { nav.pop() },
@@ -601,6 +685,13 @@ private fun SessionDetailScreen(
                 },
                 // 全屏工作台也走同一套详情页，列表与详情各占一屏，不再叠两条顶栏。
                 onOpenTaskDetail = { taskId -> nav.push(Screen.TaskBoard(taskId = taskId)) },
+                onNewConversation = { cwd, workspaceId, taskId, taskName, createMode ->
+                    nav.push(pendingConversationScreen(
+                        entry = "entry-${System.currentTimeMillis()}", cwd = cwd,
+                        workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
+                        initialCreateMode = createMode,
+                    ))
+                },
                 linkedWorkspaceId = screen.workspaceId,
                 // 这里不是侧栏内嵌那种收窄列表，顶栏要留（标题 + 返回）；
                 // 侧栏实例由 TaskListScreen 自己传 embedded = true。
@@ -764,6 +855,13 @@ private fun SinglePaneContent(
                 onHomeListModeChange = { onHomeListModeChange(it) },
                 onOpenTask = onOpenWorkspaceTask,
                 onOpenSession = onOpenSession,
+                onNewConversation = { cwd, workspaceId, taskId, taskName, employeeId, createMode ->
+                    nav.push(pendingConversationScreen(
+                        entry = "entry-${System.currentTimeMillis()}", cwd = cwd,
+                        workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
+                        initialEmployeeId = employeeId, initialCreateMode = createMode,
+                    ))
+                },
                 onOpenBoardSession = onOpenBoardSession,
                 onOpenBoardTaskDetail = onOpenBoardTaskDetail,
                 onOpenRestoredSession = onOpenRestoredSession,
@@ -963,6 +1061,13 @@ private fun WideReadyContent(
                                 selectedTaskId = selectedTaskId,
                                 onOpenTask = onOpenWorkspaceTask,
                                 onOpenSession = onOpenSession,
+                                onNewConversation = { cwd, workspaceId, taskId, taskName, employeeId, createMode ->
+                                    nav.push(pendingConversationScreen(
+                                        entry = "entry-${System.currentTimeMillis()}", cwd = cwd,
+                                        workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
+                                        initialEmployeeId = employeeId, initialCreateMode = createMode,
+                                    ))
+                                },
                                 onOpenBoardSession = onOpenBoardSession,
                                 onOpenBoardTaskDetail = onOpenBoardTaskDetail,
                                 onOpenRestoredSession = onOpenRestoredSession,
@@ -1028,7 +1133,7 @@ private fun WideReadyContent(
                         title = "选择一位成员",
                         modifier = Modifier.fillMaxSize(),
                         subtitle = "在左侧通讯录里点名字开对话，点头像改资料",
-                    ) else PadLandingScreen(taskState.groups, onOpenSession, taskState::requestNewTask)
+                    ) else PadLandingScreen(taskState.groups, onOpenSession, taskState::requestNewSession)
                 } else {
                     SessionDetailScreen(
                         shellState = shellState,
@@ -1173,6 +1278,7 @@ private fun Screen.transitionKey(): String = when (this) {
     Screen.SessionList -> "session-list"
     is Screen.Conversation -> "conversation:$conversationId"
     is Screen.Chat -> "chat:$sessionId"
+    is Screen.PendingConversation -> "pending-conversation:$draftKey"
     is Screen.PtyTerminal -> "pty:$sessionId"
     is Screen.Missions -> "missions:${taskId.orEmpty()}"
     is Screen.TaskBoard -> "task-board:${workspaceId.orEmpty()}:${taskId.orEmpty()}"
@@ -1217,6 +1323,7 @@ private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.PtyTerminal -> taskId
     is Screen.WorkspaceTask -> taskId
     Screen.SessionList,
+    is Screen.PendingConversation,
     is Screen.Missions,
     is Screen.TaskBoard,
     Screen.Settings,
@@ -1233,6 +1340,7 @@ private fun Screen.sessionIdOrNull(): String? = when (this) {
     is Screen.Chat -> sessionId
     is Screen.PtyTerminal -> sessionId
     Screen.SessionList,
+    is Screen.PendingConversation,
     is Screen.Missions,
     is Screen.TaskBoard,
     Screen.Settings,

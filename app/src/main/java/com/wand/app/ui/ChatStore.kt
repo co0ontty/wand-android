@@ -183,7 +183,8 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
      */
     private var started = false
     private var active = false
-    private var queuePromotePending = false
+    var queueMutationPending by mutableStateOf(false)
+        private set
     private val settingsMutationMutex = Mutex()
     private var modelMutationGeneration = 0L
     private var thinkingMutationGeneration = 0L
@@ -289,6 +290,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     )
 
     private fun handle(event: SessionEvent) {
+        queueRealtimeRevision += 1
         if (event.sessionId != null && event.sessionId != sessionId) return
         val next = ChatSessionEventReducer.reduce(
             current = realtimeState(),
@@ -600,7 +602,7 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
             if (queueing) {
                 optimisticQueue = queuedMessages + trimmed
                 queuedMessages = optimisticQueue
-                toast = "已加入排队，等当前回复完成会自动发送。"
+                toast = "已加入待发送队列，将按执行器支持的时机自动发送。"
             } else {
                 optimisticMessages = messages + ConversationTurn(
                     role = "user",
@@ -731,73 +733,80 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private val isInFlight: Boolean
         get() = isStructured && isResponding && status == "running"
 
-    /**
-     * 把第 index 条排队消息「立即发送」。
-     * 乐观剥掉这一条；inFlight 时带 interrupt+preserveQueue（中断当前回复保留余下队列）。
-     * 失败回滚整段队列。对齐 Web queueBarPromoteIndex。
-     */
+    private var queueRealtimeRevision = 0L
+
+    private fun applyQueueReceipt(snap: SessionSnapshot, revision: Long) {
+        val queue = snap.queuedMessages
+        if (snap.id != sessionId || queue == null) {
+            throw com.wand.app.data.WandApiException(null, "队列确认无效，请核对最新状态。")
+        }
+        if (queueRealtimeRevision == revision) queuedMessages = queue
+        socket.requestResync()
+    }
+
+    /** Wait for acknowledgement, never resurrect an unknown promoted item. */
     fun promoteQueued(index: Int) {
-        if (queuePromotePending) return
-        val prev = queuedMessages
-        if (index < 0 || index >= prev.size) return
-        val picked = prev[index]
-        val rest = prev.toMutableList().apply { removeAt(index) }
-        val inFlight = isInFlight
-        queuePromotePending = true
-        queuedMessages = rest
-        toast = if (inFlight) "已请求中断当前回复，立即发送这条。" else "已立即发送这条消息。"
+        if (queueMutationPending) return
+        val picked = queuedMessages.getOrNull(index) ?: return
+        val revision = queueRealtimeRevision
+        queueMutationPending = true
         scope.launch {
             try {
-                val snap = api.promoteQueued(sessionId, index, picked)
-                apply(snap)
+                applyQueueReceipt(api.promoteQueued(sessionId, index, picked), revision)
             } catch (e: Exception) {
-                queuedMessages = prev
-                toast = e.message ?: "立即发送失败"
+                if (e is CancellationException) throw e
+                socket.requestResync()
+                toast = e.message ?: "立即发送结果未确认，请核对对话。"
             } finally {
-                queuePromotePending = false
+                queueMutationPending = false
             }
         }
     }
 
-    fun editQueued(index: Int, text: String) {
-        val original = queuedMessages.getOrNull(index) ?: return
-        if (text.isBlank()) { toast = "排队消息不能为空。"; return }
-        scope.launch {
-            try {
-                apply(api.editQueued(sessionId, index, original, text.trim()))
-            } catch (e: Exception) {
-                toast = e.message ?: "编辑排队消息失败"
-            }
+    /** Composer owns the original and recovery; the store only confirms the queue mutation. */
+    suspend fun retrieveQueued(index: Int, expectedText: String) {
+        if (queueMutationPending || queuedMessages.getOrNull(index) != expectedText) {
+            throw com.wand.app.data.WandApiException(422, "队列已变化，请核对最新消息。")
+        }
+        val revision = queueRealtimeRevision
+        queueMutationPending = true
+        try {
+            val snap = api.deleteQueued(sessionId, index, expectedText)
+            currentCoroutineContext().ensureActive()
+            applyQueueReceipt(snap, revision)
+        } finally {
+            queueMutationPending = false
         }
     }
 
-    /** 删除第 index 条排队消息（乐观 + 失败回滚）。 */
     fun deleteQueued(index: Int) {
-        val prev = queuedMessages
-        if (index < 0 || index >= prev.size) return
-        queuedMessages = prev.toMutableList().apply { removeAt(index) }
+        if (queueMutationPending) return
+        val original = queuedMessages.getOrNull(index) ?: return
         scope.launch {
             try {
-                api.deleteQueued(sessionId, index)
+                retrieveQueued(index, original)
             } catch (e: Exception) {
-                queuedMessages = prev
-                toast = e.message ?: "删除排队消息失败"
+                if (e is CancellationException) throw e
+                toast = e.message ?: "删除结果未确认，请核对最新队列。"
+                socket.requestResync()
             }
         }
     }
 
-    /** 清空全部排队消息（乐观 + 失败回滚）。 */
     fun clearQueued() {
-        val prev = queuedMessages
-        if (prev.isEmpty()) return
-        queuedMessages = emptyList()
+        if (queueMutationPending || queuedMessages.isEmpty()) return
+        val expected = queuedMessages.toList()
+        val revision = queueRealtimeRevision
+        queueMutationPending = true
         scope.launch {
             try {
-                api.clearQueued(sessionId)
-                toast = "已清空 ${prev.size} 条排队消息。"
+                applyQueueReceipt(api.clearQueued(sessionId, expected), revision)
             } catch (e: Exception) {
-                queuedMessages = prev
-                toast = e.message ?: "清空排队消息失败"
+                if (e is CancellationException) throw e
+                socket.requestResync()
+                toast = e.message ?: "清空结果未确认，请核对最新队列。"
+            } finally {
+                queueMutationPending = false
             }
         }
     }

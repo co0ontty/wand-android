@@ -74,10 +74,15 @@ class WandApi(baseUrl: String, val token: String?,
             .build()
     }
 
+    // A broken connection cannot establish whether compare-and-remove already executed.
+    private val queueRemovalClient by lazy { client.newBuilder().retryOnConnectionFailure(false).build() }
+
     private fun execute(request: Request, timeoutSec: Int): Pair<Int, String> {
-        val requestClient = when (timeoutSec) {
-            30 -> client
-            180 -> longTimeoutClient
+        val requestClient = when {
+            request.method == "DELETE" && request.url.encodedPath.startsWith("/api/structured-sessions/") &&
+                request.url.encodedPath.contains("/queued/") -> queueRemovalClient
+            timeoutSec == 30 -> client
+            timeoutSec == 180 -> longTimeoutClient
             else -> client.newBuilder()
                 .readTimeout(timeoutSec.toLong(), TimeUnit.SECONDS)
                 .build()
@@ -167,50 +172,6 @@ class WandApi(baseUrl: String, val token: String?,
         parseResponse(requestData(method, path)) { JSONArray(it) }
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
-
-    // MARK: - 语音（原始 WAV，复用当前服务器认证；取消会真正终止上传/请求）
-
-    suspend fun speechStatus(): ServerSpeechStatus = ServerSpeechStatus.parse(requestObject("GET", "/api/speech/status"))
-
-    private suspend fun speechResponse(request: Request): Pair<Int, String> = suspendCancellableCoroutine { continuation ->
-        val call = longTimeoutClient.newCall(request)
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: IOException) {
-                if (continuation.isActive) continuation.resumeWithException(e.toApiException())
-            }
-            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                try {
-                    val result = response.use { it.code to (it.body?.string() ?: "") }
-                    if (continuation.isActive) {
-                        feedback.httpFailure(request.url.encodedPath, result.first, result.second)
-                        continuation.resume(result)
-                    }
-                } catch (e: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(e.toApiException())
-                }
-            }
-        })
-    }
-
-    suspend fun transcribeSpeech(wav: ByteArray): String {
-        val request = Request.Builder().url("$baseUrl/api/speech/transcribe")
-            .post(wav.toRequestBody("audio/wav".toMediaType())).build()
-        var (code, text) = speechResponse(request)
-        if (code == 401 && !token.isNullOrEmpty()) {
-            withContext(Dispatchers.IO) { WandAuth.loginWithToken(baseUrl, token, client) }
-            val retried = speechResponse(request); code = retried.first; text = retried.second
-        }
-        // Never log the response body: it contains the user's dictation.
-        if (code !in 200..299) {
-            val message = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotBlank() }
-            throw WandApiException(code, message ?: "服务端语音识别失败（$code）")
-        }
-        val result = runCatching { JSONObject(text).getString("text") }.getOrNull()
-            ?: throw WandApiException(null, "语音转写响应无效")
-        if (result.length > 8_000) throw WandApiException(null, "语音转写响应过大")
-        return result.trim()
-    }
 
     // MARK: - 会话
 
@@ -415,15 +376,20 @@ class WandApi(baseUrl: String, val token: String?,
         SessionSnapshot.parse(requestObject("PATCH", "/api/structured-sessions/$id/queued/$index",
             JSONObject().put("expectedText", expectedText).put("text", text)))
 
-    /** 删除第 index 条排队消息。 */
-    suspend fun deleteQueued(id: String, index: Int) {
-        requestData("DELETE", "/api/structured-sessions/$id/queued/$index")
+    /** Compare-and-remove; only a matching session snapshot acknowledges removal. */
+    suspend fun deleteQueued(id: String, index: Int, expectedText: String): SessionSnapshot {
+        val response = requestObject("DELETE", "/api/structured-sessions/${encode(id)}/queued/$index",
+            JSONObject().put("expectedText", expectedText))
+        if (response.str("id") != id || response.arr("queuedMessages") == null) {
+            throw WandApiException(null, "取回结果未确认，请核对队列与会话；原文已保留。")
+        }
+        return SessionSnapshot.parse(response)
     }
 
     /** 清空全部排队消息。 */
-    suspend fun clearQueued(id: String) {
-        requestData("DELETE", "/api/structured-sessions/$id/queued")
-    }
+    suspend fun clearQueued(id: String, expectedQueue: List<String>): SessionSnapshot =
+        SessionSnapshot.parse(requestObject("DELETE", "/api/structured-sessions/$id/queued",
+            JSONObject().put("expectedQueue", JSONArray(expectedQueue))))
 
     suspend fun resumeSession(id: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/resume"))
@@ -717,6 +683,13 @@ class WandApi(baseUrl: String, val token: String?,
     override suspend fun getBoardTask(id: String): BoardTask? =
         BoardTask.parse(requestObject("GET", "/api/wand-tasks/${encode(id)}"))
 
+    override suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?): TaskComment {
+        val payload = JSONObject().put("requestId", requestId).put("body", body)
+        employeeId?.let { payload.put("employeeId", it) }; sourceCommentId?.let { payload.put("sourceCommentId", it) }
+        val response = requestObject("POST", "/api/wand-tasks/${encode(id)}/comments", payload)
+        return TaskComment.parseList(JSONObject().put("comments", org.json.JSONArray().put(response.getJSONObject("comment"))), id).single()
+    }
+
     override suspend fun listTaskComments(id: String): List<TaskComment> = try {
         TaskComment.parseList(requestObject("GET", "/api/wand-tasks/${encode(id)}/comments"), id)
     } catch (error: WandApiException) {
@@ -808,7 +781,10 @@ class WandApi(baseUrl: String, val token: String?,
     suspend fun updateSiliconEmployee(id: String, draft: SiliconEmployeeDraft,
         agentsOnly: Boolean = false): SiliconEmployee =
         SiliconEmployee.parse(requestObject("PUT", "/api/silicon-employees/${encode(id)}",
-            if (agentsOnly) JSONObject().put("agents", draft.agentsJson()) else draft.toJson()))
+            if (agentsOnly) JSONObject()
+                .put("agents", draft.agentsJson())
+                .put("systemSessionLimit", draft.systemSessionLimit ?: JSONObject.NULL)
+            else draft.toJson()))
             ?: throw WandApiException(500, "保存员工响应无效。")
 
     suspend fun archiveSiliconEmployee(id: String, archived: Boolean) {
@@ -964,6 +940,7 @@ class WandApi(baseUrl: String, val token: String?,
     ): SessionSnapshot {
         val command = WandProvider.cliCommandFor(provider)
         val body = JSONObject()
+            .put("kind", "pty")
             .put("command", command)
             .put("provider", provider)
             .put("cwd", workspace.cwd)
@@ -971,7 +948,7 @@ class WandApi(baseUrl: String, val token: String?,
             .put("initialInput", prompt)
             .put("sessionSource", "interactive")
             .put("workspaceId", workspace.id)
-        return SessionSnapshot.parse(requestObject("POST", "/api/commands", body))
+        return SessionSnapshot.parse(requestObject("POST", "/api/sessions", body))
     }
 
     override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> =
@@ -1211,8 +1188,8 @@ class WandApi(baseUrl: String, val token: String?,
     }
 
     /**
-     * 任务内选择 Agent：结构化走 /api/structured-sessions，PTY/空白终端走 /api/commands。
-     * 绑定 workspaceId/workspaceTaskId 和任务 cwd。不调用 updateNewSessionDefaults。
+     * 任务内选择 Agent：统一通过 /api/sessions 创建，并绑定 workspaceId/workspaceTaskId 和任务 cwd。
+     * 不调用 updateNewSessionDefaults。
      */
     override suspend fun createWorkspaceTaskWindow(
         target: WorkspaceSessionTarget,
@@ -1221,8 +1198,10 @@ class WandApi(baseUrl: String, val token: String?,
         prompt: String?,
         model: String?,
         thinkingEffort: String?,
+        mode: String?,
+        overrideCli: Boolean,
     ): SessionSnapshot {
-        val request = createWorkspaceTaskWindowRequest(target, binding, kind, prompt, model, thinkingEffort)
+        val request = createWorkspaceTaskWindowRequest(target, binding, kind, prompt, model, thinkingEffort, mode, overrideCli)
         return SessionSnapshot.parse(requestObject("POST", request.path, request.body))
     }
 
@@ -1230,8 +1209,15 @@ class WandApi(baseUrl: String, val token: String?,
         employeeId: String,
         binding: WorkspaceBinding,
         prompt: String?,
+        overrideCli: Boolean,
+        target: WorkspaceSessionTarget,
+        model: String?,
+        thinkingEffort: String?,
+        mode: String?,
     ): SessionSnapshot {
-        val request = createEmployeeWorkspaceTaskWindowRequest(employeeId, binding, prompt)
+        val request = createEmployeeWorkspaceTaskWindowRequest(
+            employeeId, binding, prompt, overrideCli, target, model, thinkingEffort, mode,
+        )
         return SessionSnapshot.parse(requestObject("POST", request.path, request.body))
     }
 

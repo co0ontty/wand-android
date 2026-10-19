@@ -59,11 +59,9 @@ import androidx.compose.ui.unit.sp
 import com.wand.app.data.UploadedFile
 import com.wand.app.data.WandApi
 import com.wand.app.data.WandApiException
-import com.wand.app.speech.VoiceInputController
 import com.wand.app.ui.WandAsyncImage
 import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
-import com.wand.app.ui.appendComposerVoiceText
 import com.wand.app.ui.attachmentPrompt
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
@@ -78,62 +76,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-
-internal data class VoiceInputHandle(
-    val voice: VoiceInputController,
-    val onMicDown: () -> Unit,
-)
-
-@Composable
-internal fun rememberVoiceInputHandle(
-    isHapticEnabled: () -> Boolean,
-    onToast: (String) -> Unit,
-    onCommit: (String) -> Unit,
-    sessionKey: Any? = null,
-    onCommitForPress: (() -> (String) -> Unit)? = null,
-    api: com.wand.app.data.WandApi? = null,
-): VoiceInputHandle {
-    val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
-    val currentIsHapticEnabled = rememberUpdatedState(isHapticEnabled)
-    val currentOnToast = rememberUpdatedState(onToast)
-    val currentOnCommit = rememberUpdatedState(onCommit)
-    val currentOnCommitForPress = rememberUpdatedState(onCommitForPress)
-    val voice = remember(context, sessionKey, api) { VoiceInputController(context, api) }
-
-    DisposableEffect(voice) {
-        voice.onToast = { message -> currentOnToast.value(message) }
-        onDispose {
-            voice.onToast = null
-            voice.destroy()
-        }
-    }
-
-    val micPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        currentOnToast.value(
-            if (granted) "已获得麦克风权限，按住麦克风说话" else "需要麦克风权限才能语音输入",
-        )
-    }
-    val onMicDown = remember(voice, micPermissionLauncher, haptic) {
-        {
-            if (voice.hasMicPermission()) {
-                if (currentIsHapticEnabled.value()) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                }
-                // Capture the destination when recording begins, before navigation can
-                // replace rememberUpdatedState with another session's composer.
-                val commitForPress = currentOnCommitForPress.value?.invoke() ?: currentOnCommit.value
-                voice.beginPress(commitForPress)
-            } else {
-                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            }
-        }
-    }
-
-    return remember(voice, onMicDown) { VoiceInputHandle(voice, onMicDown) }
-}
 
 internal data class AttachmentPickerActions(
     val pickPhoto: () -> Unit,
@@ -228,10 +170,12 @@ internal suspend fun uploadComposerAttachments(
     sessionId: String,
     uris: List<Uri>,
     limit: Int,
+    onRequestStarted: () -> Unit = {},
 ): List<UploadedFile> {
     val files = withContext(Dispatchers.IO) {
         uris.take(limit).map { uri -> readAttachment(context, uri) }
     }
+    onRequestStarted()
     return api.uploadAttachments(sessionId, files)
 }
 
@@ -261,11 +205,6 @@ internal fun readBoundedAttachment(input: InputStream, name: String): ByteArray 
         output.write(buffer, 0, count)
     }
     return output.toByteArray()
-}
-
-/** 识别文本追加进草稿（不覆盖已有内容，对齐 Web commitVoiceTranscript / iOS appendTranscriptToDraft）。 */
-internal fun appendVoiceText(existing: String, text: String): String {
-    return appendComposerVoiceText(existing, text)
 }
 
 internal fun buildAttachmentPrompt(attachments: List<UploadedFile>, body: String): String {
@@ -340,11 +279,10 @@ internal fun PendingAttachmentsPreview(
 /** 判断输入栏是否需要平滑展开为多行工作台态。 */
 internal fun shouldComposerExpand(
     isFocused: Boolean,
-    voicePressed: Boolean,
     draftNeedsExpanded: Boolean,
     hasAttachments: Boolean,
 ): Boolean {
-    return isFocused || voicePressed || draftNeedsExpanded || hasAttachments
+    return isFocused || draftNeedsExpanded || hasAttachments
 }
 
 /**

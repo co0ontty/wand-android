@@ -24,7 +24,7 @@ interface WorkspacePort : TaskChangeSource {
         throw UnsupportedOperationException("worktree 概览接口不可用")
     }
 
-    /** 启动只绑定项目的 Worktree 合并 Agent（POST /api/commands，mode=managed）。 */
+    /** 启动只绑定项目的 Worktree 合并 Agent（POST /api/sessions，kind=pty，mode=managed）。 */
     suspend fun startWorktreeMergeAgent(
         workspace: Workspace,
         provider: String,
@@ -181,9 +181,9 @@ interface WorkspacePort : TaskChangeSource {
     /**
      * 在任务 worktree 内创建一个绑定工作窗口。
      *
-     * - [WorkspaceSessionTarget.Shell] → POST /api/commands `{shell:true}`
-     * - 其它 target + 结构化 → POST /api/structured-sessions
-     * - 其它 target + PTY → POST /api/commands，provider 对应 CLI（qoder → qodercli）
+     * - 所有新会话统一 POST /api/sessions，并显式携带 kind=structured|pty
+     * - [WorkspaceSessionTarget.Shell] 不带 provider/command，固定 `{kind:pty,shell:true}`
+     * - PTY provider 使用 CLI 命令映射（qoder → qodercli）
      *
      * 模型 / thinking effort 可按这次新建的显式选择覆盖，否则使用服务端默认值；
      * 不调用 updateNewSessionDefaults，避免任务快捷选择器持久化全局新建偏好。
@@ -195,14 +195,39 @@ interface WorkspacePort : TaskChangeSource {
         prompt: String? = null,
         model: String? = null,
         thinkingEffort: String? = null,
+        mode: String? = null,
+        overrideCli: Boolean = false,
     ): SessionSnapshot
 
-    /** An employee always starts a structured conversation in the task's cwd. */
+    /** An employee always starts a structured conversation in the task's cwd; employee choices do not inherit a CLI mode. */
     suspend fun createEmployeeWorkspaceTaskWindow(
         employeeId: String,
         binding: WorkspaceBinding,
         prompt: String? = null,
+        overrideCli: Boolean = false,
+        target: WorkspaceSessionTarget = WorkspaceSessionTarget.Claude,
+        model: String? = null,
+        thinkingEffort: String? = null,
+        mode: String? = null,
     ): SessionSnapshot {
         throw UnsupportedOperationException("当前服务不支持硅基员工。")
+    }
+
+    /** Creates a real structured session without sending a first prompt. */
+    suspend fun createPendingConversationSession(
+        target: WorkspaceSessionTarget,
+        binding: WorkspaceBinding,
+        kind: WorkspaceSessionKind = WorkspaceSessionKind.Structured,
+        model: String? = null,
+        thinkingEffort: String? = null,
+        mode: String? = null,
+        employeeId: String? = null,
+        overrideCli: Boolean = false,
+    ): SessionSnapshot {
+        if (employeeId != null) return createEmployeeWorkspaceTaskWindow(
+            employeeId, binding, prompt = null, overrideCli = overrideCli,
+            target = target, model = model, thinkingEffort = thinkingEffort, mode = mode,
+        )
+        return createWorkspaceTaskWindow(target, binding, kind, prompt = null, model, thinkingEffort, mode, overrideCli)
     }
 }

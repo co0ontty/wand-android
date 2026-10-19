@@ -20,6 +20,16 @@ sealed class Screen {
         val taskName: String? = null,
         val workspaceId: String? = null,
         val taskId: String? = null,
+        val submitDraftOnOpen: Boolean = false,
+    ) : Screen()
+    data class PendingConversation(
+        val draftKey: String,
+        val cwd: String? = null,
+        val workspaceId: String? = null,
+        val workspaceTaskId: String? = null,
+        val taskName: String? = null,
+        val initialEmployeeId: String? = null,
+        val initialCreateMode: Boolean = false,
     ) : Screen()
     data class PtyTerminal(
         val sessionId: String,
@@ -73,7 +83,8 @@ sealed class Screen {
 
 /** Chat / PTY 首帧很重，手机栈用交叉淡入淡出，避免和滑动转场抢同一帧。 */
 internal fun usesHeavyDetailTransition(screen: Screen): Boolean =
-    screen is Screen.Chat || screen is Screen.PtyTerminal || screen is Screen.AiTeamChat || screen is Screen.Conversation
+    screen is Screen.Chat || screen is Screen.PtyTerminal || screen is Screen.AiTeamChat ||
+        screen is Screen.Conversation || screen is Screen.PendingConversation
 
 /** 长按图标快捷操作（对称 iOS QuickAction）：认证就绪后落到对应页面，消费一次。 */
 sealed class QuickAction {
@@ -179,6 +190,7 @@ class NavState {
             stack[index] = when (val screen = stack[index]) {
                 is Screen.WorkspaceTask -> if (screen.taskId == taskId) screen.copy(taskName = taskName) else screen
                 is Screen.Chat -> if (screen.taskId == taskId) screen.copy(taskName = taskName) else screen
+                is Screen.PendingConversation -> screen
                 is Screen.PtyTerminal -> if (screen.taskId == taskId) screen.copy(taskName = taskName) else screen
                 else -> screen
             }
@@ -282,6 +294,7 @@ class NavState {
 
         private const val SESSION_LIST_KEY = "session-list"
         private const val CHAT_PREFIX = "chat:"
+        private const val PENDING_CONVERSATION_PREFIX = "pending-conversation"
         private const val PTY_TERMINAL_PREFIX = "pty-terminal:"
         private const val NEW_SESSION_KEY = "new-session"
         private const val NEW_SESSION_PREFIX = "new-session:"
@@ -310,7 +323,12 @@ class NavState {
                 taskName,
                 workspaceId,
                 taskId,
-            )
+            ) + if (submitDraftOnOpen) FIELD_SEP + "submit-draft" else ""
+            is Screen.PendingConversation -> listOf(
+                PENDING_CONVERSATION_PREFIX, draftKey, cwd.orEmpty(), workspaceId.orEmpty(),
+                workspaceTaskId.orEmpty(), taskName.orEmpty(), initialEmployeeId.orEmpty(),
+                if (initialCreateMode) "create-task" else "conversation",
+            ).joinToString(FIELD_SEP)
             is Screen.PtyTerminal -> buildSessionDetailKey(
                 PTY_TERMINAL_PREFIX,
                 sessionId,
@@ -360,12 +378,30 @@ class NavState {
         private fun String.restoreScreen(): Screen? = when {
             this == SESSION_LIST_KEY -> Screen.SessionList
             startsWith("conversation" + FIELD_SEP) -> removePrefix("conversation" + FIELD_SEP).takeIf { it.isNotBlank() }?.let { Screen.Conversation(it) }
-            startsWith(CHAT_PREFIX) -> restoreSessionDetail(
-                prefix = CHAT_PREFIX,
-                create = { sessionId, workspaceName, taskName, workspaceId, taskId ->
-                    Screen.Chat(sessionId, workspaceName, taskName, workspaceId, taskId)
-                },
-            )
+            startsWith(CHAT_PREFIX) -> {
+                val submitDraftOnOpen = endsWith(FIELD_SEP + "submit-draft")
+                val key = if (submitDraftOnOpen) removeSuffix(FIELD_SEP + "submit-draft") else this
+                key.restoreSessionDetail(
+                    prefix = CHAT_PREFIX,
+                    create = { sessionId, workspaceName, taskName, workspaceId, taskId ->
+                        Screen.Chat(sessionId, workspaceName, taskName, workspaceId, taskId, submitDraftOnOpen)
+                    },
+                )
+            }
+            startsWith(PENDING_CONVERSATION_PREFIX + FIELD_SEP) -> {
+                val parts = removePrefix(PENDING_CONVERSATION_PREFIX + FIELD_SEP).split(FIELD_SEP, limit = 7)
+                parts.firstOrNull()?.takeIf(String::isNotBlank)?.let { key ->
+                    Screen.PendingConversation(
+                        draftKey = key,
+                        cwd = parts.getOrNull(1)?.takeIf(String::isNotBlank),
+                        workspaceId = parts.getOrNull(2)?.takeIf(String::isNotBlank),
+                        workspaceTaskId = parts.getOrNull(3)?.takeIf(String::isNotBlank),
+                        taskName = parts.getOrNull(4)?.takeIf(String::isNotBlank),
+                        initialEmployeeId = parts.getOrNull(5)?.takeIf(String::isNotBlank),
+                        initialCreateMode = parts.getOrNull(6) == "create-task",
+                    )
+                }
+            }
             startsWith(PTY_TERMINAL_PREFIX) -> restoreSessionDetail(
                 prefix = PTY_TERMINAL_PREFIX,
                 create = { sessionId, workspaceName, taskName, workspaceId, taskId ->

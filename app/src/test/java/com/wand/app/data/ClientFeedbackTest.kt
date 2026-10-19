@@ -79,7 +79,6 @@ class ClientFeedbackTest {
             "conversations" to listOf("conversations"),
             "tasks" to listOf("wand-tasks", "wand-task-agent-defaults", "tasks", "workspace-tasks", "workspaces", "wand-milestones", "missions", "scheduled-tasks"),
             "files" to listOf("files", "upload", "directory", "session-files", "file-preview", "file-read", "file-write", "recent-paths"),
-            "speech" to listOf("speech"),
             "settings" to listOf("settings", "config", "user-profile", "auto-update", "update-channel"),
             "models" to listOf("models", "model-groups", "local-models"),
             "authentication" to listOf("login", "logout", "app-login", "session-check", "set-password"),

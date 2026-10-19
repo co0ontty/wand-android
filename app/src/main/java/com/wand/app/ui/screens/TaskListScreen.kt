@@ -30,7 +30,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -81,7 +80,6 @@ import com.wand.app.ui.withLiveTitle
 import com.wand.app.ui.components.EmptyState
 import com.wand.app.ui.components.ErrorState
 import com.wand.app.ui.components.LoadingState
-import com.wand.app.ui.components.WandBottomSheet
 import com.wand.app.ui.components.WandCard
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
@@ -115,6 +113,14 @@ data class TaskSessionRoute(
     val teamChatRunId: String? = null,
 )
 
+data class TaskTitleRoute(
+    val workspaceId: String,
+    val taskId: String,
+    val workspaceName: String,
+    val taskName: String,
+    val session: TaskSessionRoute?,
+)
+
 /**
  * Android task-first root. Directory is grouping metadata, named tasks are optional containers,
  * and ungrouped sessions render under the directory's standalone section.
@@ -142,6 +148,7 @@ fun TaskListScreen(
     interactionEnabled: Boolean = true,
     onOpenTask: (workspaceId: String, taskId: String, workspaceName: String, taskName: String) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit,
+    onNewConversation: (cwd: String?, workspaceId: String?, workspaceTaskId: String?, taskName: String?, employeeId: String?, createMode: Boolean) -> Unit,
     onOpenBoardSession: (sessionId: String, isStructured: Boolean) -> Unit = { _, _ -> },
     /**
      * 看板卡片点选：由上层在右侧主区（宽屏）/ 新页（窄屏）打开详情，
@@ -168,13 +175,13 @@ fun TaskListScreen(
     val menuClearance = maxOf(68.dp, menuHeight + 12.dp)
     val contactContext = androidx.compose.ui.platform.LocalContext.current
     var newTaskOpen by remember { mutableStateOf(false) }
-    val recentConversations = remember(api) { mutableStateMapOf<String, RecentEmployeeConversation>() }
+    var sessionComposer by remember { mutableStateOf(false) }
     val homeViewState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val recentTerminals = remember(api) { mutableStateMapOf<String, RecentTerminalConversation>() }
     var terminalMenuKey by remember(api) { mutableStateOf<String?>(null) }
     var recentConversationOpeningId by remember { mutableLongStateOf(0L) }
     fun recentCreationBusy(): Boolean =
-        recentConversations.values.any { it.busy } || recentTerminals.values.any { it.busy }
+        recentTerminals.values.any { it.busy }
     fun invalidateRecentConversationOpening() {
         recentConversationOpeningId += 1
         terminalMenuKey = null
@@ -211,18 +218,12 @@ fun TaskListScreen(
     var newTaskKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
     var newTaskModel by remember { mutableStateOf("default") }
     var newTaskThinkingEffort by remember { mutableStateOf("off") }
+    var newTaskMode by remember { mutableStateOf("default") }
     var newTaskModels by remember { mutableStateOf<ModelsResponse?>(null) }
     var newTaskDraftRevision by remember { mutableLongStateOf(0L) }
     var newTaskOpeningId by remember { mutableLongStateOf(0L) }
     var newTaskSubmitting by remember { mutableStateOf(false) }
-    var targetDraftRevision by remember { mutableLongStateOf(0L) }
     var directoryPickerOpen by remember { mutableStateOf(false) }
-    var pendingTarget by remember { mutableStateOf<Pair<TaskDirectoryGroup, WorkspaceTaskSummary>?>(null) }
-    var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
-    var selectedEmployeeId by remember { mutableStateOf<String?>(null) }
-    var selectedKind by remember { mutableStateOf(WorkspaceSessionKind.Structured) }
-    var targetCreating by remember { mutableStateOf(false) }
-    var targetError by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var renameDraft by remember { mutableStateOf("") }
     var renameDirectoryTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
@@ -241,7 +242,6 @@ fun TaskListScreen(
     var deleteDirectoryTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val dragState = rememberWandDragReorderState()
-    val targetSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val reduceMotion = reduceMotionEnabled()
     val allGroups = directoryTreeGroups(state.groups)
@@ -381,9 +381,11 @@ fun TaskListScreen(
         initialEmployeeId: String? = null,
         initialTeamId: String? = null,
         initialTarget: WorkspaceSessionTarget? = null,
+        sessionOnly: Boolean = false,
     ) {
         if (!interactionEnabled || newTaskOpen || newTaskSubmitting) return
         invalidateRecentConversationOpening()
+        sessionComposer = sessionOnly
         state.clearMutationError()
         taskCwdDraft = initialCwd.orEmpty()
         newTaskWorkspaceId = workspaceId
@@ -405,6 +407,8 @@ fun TaskListScreen(
         newTaskKind = WorkspaceSessionKind.Structured
         newTaskModel = "default"
         newTaskThinkingEffort = "off"
+        newTaskMode = if (initialEmployeeId != null || initialTeamId != null) "default"
+        else initialTarget?.let { normalizedNewTaskMode(it.provider, "default") } ?: "default"
         newTaskModels = null
         newTaskDraftRevision += 1
         newTaskOpeningId += 1
@@ -420,11 +424,20 @@ fun TaskListScreen(
                 newTaskWorkspaceId = workspaceForPath(taskCwdDraft)
                 newTaskParentId = ""
             }
-            if (defaultsRevision == newTaskDraftRevision && initialTarget == null &&
+            if (sessionOnly) {
+                // 全局新建会话不读取/写回全局新建偏好：本页固定结构化 + 默认真实伙伴，
+                // 仅把配置读取出的目录作为本次启动的兜底。
+                newTaskTarget = WorkspaceSessionTarget.Claude
+                newTaskKind = WorkspaceSessionKind.Structured
+                newTaskThinkingEffort = "off"
+                newTaskMode = "default"
+            } else if (defaultsRevision == newTaskDraftRevision && initialTarget == null &&
                 initialEmployeeId == null && initialTeamId == null) {
                 newTaskTarget = WorkspaceSessionTarget.fromPreference(state.defaultProvider, state.defaultEngine) ?: newTaskTarget
                 newTaskKind = state.defaultSessionKind
                 newTaskThinkingEffort = state.defaultThinkingEffort
+                val defaultTarget = WorkspaceSessionTarget.fromPreference(state.defaultProvider, state.defaultEngine)
+                newTaskMode = normalizedNewTaskMode(defaultTarget?.provider, state.defaultMode)
             }
             val loadedModels = runCatching { boardApi.boardModels() }.getOrNull()
             if (!newTaskOpen || openingId != newTaskOpeningId) return@launch
@@ -446,12 +459,20 @@ fun TaskListScreen(
     LaunchedEffect(state.newTaskRequest) {
         if (state.consumeNewTaskRequest()) beginNewTask()
     }
+    LaunchedEffect(state.newSessionRequest) {
+        if (state.consumeNewSessionRequest()) onNewConversation(null, null, null, null, null, false)
+    }
     // 每次打开对话框拉一次团队；失败回落空列表 = 不显示团队区，绝不挡新建任务本身。
     // 不进 30s/轮询环：团队定义只在 Web 端编辑，频率对不上。
     LaunchedEffect(newTaskOpen, newTaskOpeningId) {
         if (newTaskOpen) {
             newTaskTeams = runCatching { boardApi.listAiTeams() }.getOrDefault(emptyList())
             newTaskEmployees = runCatching { boardApi.listSiliconEmployees() }.getOrDefault(emptyList())
+            if (sessionComposer && newTaskEmployeeId == null && newTaskKind == WorkspaceSessionKind.Structured) {
+                newTaskEmployeeId = newTaskEmployees.firstOrNull {
+                    !it.archived && it.agents.isNotEmpty() && it.systemKey == SiliconEmployee.DEFAULT_EMPLOYEE_KEY
+                }?.id ?: newTaskEmployees.firstOrNull { !it.archived && it.agents.isNotEmpty() }?.id
+            }
         }
     }
     val contactsLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -495,18 +516,20 @@ fun TaskListScreen(
         // 表单摘要按当前选择判一次；提交时同一式子拿快照再判一次。
         val gateParentId = pendingParentLink?.second
             ?: newTaskParentId.takeIf { id -> id.isNotEmpty() && parentOptions.any { it.first == id } }
-        val ungroupedStart = !teamSelected &&
-            newTaskStartsUngroupedSession(groupedName, startFirstSession, gateParentId != null)
+        val ungroupedStart = !teamSelected && (sessionComposer ||
+            newTaskStartsUngroupedSession(groupedName, startFirstSession, gateParentId != null))
+        val sessionSubmitError = if (sessionComposer && newTaskKind == WorkspaceSessionKind.Structured &&
+            newTaskPrompt.trim().isEmpty()) "结构化会话需要先填写工作内容。" else null
         val canCreateTask = (pendingParentLink != null && newTaskTeamId == null) ||
-            (cwd.isNotEmpty() &&
+            ((cwd.isNotEmpty() || sessionComposer) &&
                 TaskListState.isValidOptionalTaskName(groupedName) &&
-                (groupedName.isNotEmpty() || taskPrompt != null) &&
-                teamSubmitError == null)
+                (groupedName.isNotEmpty() || teamSelected || ungroupedStart) &&
+                teamSubmitError == null && sessionSubmitError == null)
         val submitNewTask: () -> Unit = submit@{
             if (state.mutationBusy || parentLinkBusy || newTaskSubmitting || !canCreateTask) return@submit
             // 提交侧兜底：目录被改成未登记项目后团队选择即使还挂着，也不许走团队分支（§5.1 R2）。
-            if (teamSubmitError != null) {
-                teamRunError = teamSubmitError
+            if (teamSubmitError != null || sessionSubmitError != null) {
+                teamRunError = teamSubmitError ?: sessionSubmitError
                 return@submit
             }
             teamRunError = null
@@ -523,6 +546,9 @@ fun TaskListScreen(
             val submittedEmployeeId = newTaskEmployeeId.takeIf { id ->
                 submittedKind == WorkspaceSessionKind.Structured && newTaskEmployees.any { it.id == id }
             }
+            val submittedMode = if (submittedEmployeeId == null && !submittedTarget.isShell) {
+                normalizedNewTaskMode(submittedTarget.provider, newTaskMode)
+            } else null
             // 重试态只认团队分支记下的 id 对；CLI 分支的老 retry id 不复用，跨分支不复用。
             val submittedTeamRunRetry =
                 if (newTaskTeamRetryActive(submittedTeamId != null, teamRunRetry)) teamRunRetry else null
@@ -603,11 +629,6 @@ fun TaskListScreen(
                         }
                         return@launch
                     }
-                    state.rememberCreationChoice(
-                        defaultProvider = submittedTarget.provider.takeUnless { submittedTarget.isShell },
-                        defaultEngine = submittedTarget.engine?.raw,
-                        defaultSessionKind = submittedKind,
-                    )
                     if (newTaskStartsUngroupedSession(
                             groupedName,
                             submittedStartSession,
@@ -626,6 +647,7 @@ fun TaskListScreen(
                             model = submittedModel,
                             thinkingEffort = submittedEffort,
                             employeeId = submittedEmployeeId,
+                            mode = submittedMode,
                         )
                         if (session != null) {
                             newTaskOpen = false
@@ -663,7 +685,7 @@ fun TaskListScreen(
                         newTaskOpen = false
                         val snapshot = if (submittedStartSession) state.createTaskWindow(
                             result.task.id, submittedTarget, submittedKind, taskPrompt,
-                            submittedModel, submittedEffort, submittedEmployeeId,
+                            submittedModel, submittedEffort, submittedEmployeeId, submittedMode,
                         ) else null
                         if (snapshot != null) {
                             onOpenSession(
@@ -715,12 +737,14 @@ fun TaskListScreen(
                 onOpenBoardTaskDetail(started.taskId)
             },
             target = newTaskTarget,
-            teams = newTaskTeams,
+            sessionOnly = sessionComposer,
+            teams = if (sessionComposer) emptyList() else newTaskTeams,
             employees = newTaskEmployees,
             teamId = newTaskTeamId,
             employeeId = newTaskEmployeeId,
             teamAllowed = isTeamPickAllowed(newTaskWorkspaceId),
             onTeamChange = { id ->
+                newTaskMode = "default"
                 // 互斥：选团队即放弃 CLI 目标（CLI 与团队不能同时作为派发对象）。
                 newTaskDraftRevision += 1
                 newTaskTeamId = id
@@ -729,6 +753,7 @@ fun TaskListScreen(
                 teamRunError = null
             },
             onEmployeeChange = { id ->
+                newTaskMode = "default"
                 newTaskDraftRevision += 1
                 newTaskEmployeeId = id
                 newTaskTeamId = null
@@ -738,9 +763,11 @@ fun TaskListScreen(
                 newTaskKind = WorkspaceSessionKind.Structured
             },
             onTargetChange = { option ->
+                newTaskMode = "default"
                 val resetsCliParams = newTaskTargetChangeResetsCliParams(newTaskTarget, option)
                 newTaskDraftRevision += 1
                 newTaskTarget = option
+                if (option.isSdk) newTaskKind = WorkspaceSessionKind.Structured
                 newTaskTeamId = null
                 newTaskEmployeeId = null
                 teamRunRetry = null
@@ -757,12 +784,6 @@ fun TaskListScreen(
                         available.any { it.id == effort }
                     } ?: "off"
                 }
-                if (!option.isShell) {
-                    state.rememberCreationChoice(
-                        defaultProvider = option.provider.orEmpty(),
-                        defaultEngine = option.engine?.raw,
-                    )
-                }
             },
             kind = newTaskKind,
             onKindChange = {
@@ -772,7 +793,6 @@ fun TaskListScreen(
                     newTaskEmployeeId = null
                     newTaskTeamId = null
                 }
-                state.rememberCreationChoice(defaultSessionKind = it)
             },
             model = newTaskModel,
             onModelChange = { chosen ->
@@ -788,14 +808,19 @@ fun TaskListScreen(
             },
             thinkingEffort = newTaskThinkingEffort,
             onThinkingEffortChange = { newTaskDraftRevision += 1; newTaskThinkingEffort = it },
+            mode = newTaskMode,
+            onModeChange = {
+                newTaskDraftRevision += 1
+                newTaskMode = it
+            },
             models = newTaskModels,
             startFirstSession = startFirstSession,
-            onStartFirstSessionChange = { startFirstSession = it },
+            onStartFirstSessionChange = { newTaskDraftRevision += 1; startFirstSession = it },
             ungroupedStart = ungroupedStart,
             worktree = newTaskWorktree,
             onWorktreeChange = { newTaskWorktree = it },
             busy = state.mutationBusy || parentLinkBusy || newTaskSubmitting,
-            error = teamRunError ?: parentLinkError ?: state.mutationError,
+            error = teamRunError ?: parentLinkError ?: sessionSubmitError ?: state.mutationError,
             teamRunRetry = teamRunRetry != null,
             canCreate = canCreateTask,
             onSubmit = submitNewTask,
@@ -803,6 +828,7 @@ fun TaskListScreen(
             onDismiss = {
                 if (!state.mutationBusy && !newTaskSubmitting) {
                     newTaskOpen = false
+                    sessionComposer = false
                     teamRunRetry = null
                     teamRunError = null
                 }
@@ -1133,79 +1159,6 @@ fun TaskListScreen(
         )
     }
 
-    pendingTarget?.let { (group, task) ->
-        WandBottomSheet(
-            onDismissRequest = {
-                if (!targetCreating) {
-                    pendingTarget = null
-                    targetError = null
-                }
-            },
-            sheetState = targetSheetState,
-            gesturesEnabled = !targetCreating,
-        ) {
-            WorkspaceTargetSheet(
-                selected = selectedTarget,
-                selectedKind = selectedKind,
-                employees = contactsEmployees,
-                selectedEmployeeId = selectedEmployeeId,
-                creating = targetCreating,
-                error = targetError,
-                onSelect = {
-                    selectedEmployeeId = null
-                    targetDraftRevision += 1
-                    selectedTarget = it
-                    if (!it.isShell) state.rememberCreationChoice(defaultProvider = it.raw)
-                },
-                onSelectEmployee = {
-                    selectedEmployeeId = it
-                    selectedKind = WorkspaceSessionKind.Structured
-                },
-                onSelectKind = {
-                    targetDraftRevision += 1
-                    selectedKind = it
-                    if (it != WorkspaceSessionKind.Structured) selectedEmployeeId = null
-                    state.rememberCreationChoice(defaultSessionKind = it)
-                },
-                onConfirm = {
-                    if (targetCreating) return@WorkspaceTargetSheet
-                    targetCreating = true
-                    targetError = null
-                    val submittedTarget = selectedTarget
-                    val submittedKind = selectedKind
-                    val submittedEmployeeId = selectedEmployeeId
-                    targetDraftRevision += 1
-                    scope.launch {
-                        try {
-                            val snapshot = state.createTaskWindow(task.id, submittedTarget,
-                                submittedKind, employeeId = submittedEmployeeId)
-                            if (snapshot == null) {
-                                targetError = state.mutationError ?: "创建工作窗口失败"
-                                return@launch
-                            }
-                            pendingTarget = null
-                            onOpenSession(
-                                TaskSessionRoute(
-                                    sessionId = snapshot.id,
-                                    structured = snapshot.isStructured,
-                                    workspaceId = task.task.workspaceId,
-                                    taskId = task.id,
-                                    workspaceName = group.workspaceName,
-                                    taskName = task.name,
-                                ),
-                            )
-                        } catch (error: Exception) {
-                            targetError = error.message ?: "创建工作窗口失败"
-                        } finally {
-                            targetCreating = false
-                        }
-                    }
-                },
-                onDismiss = { if (!targetCreating) pendingTarget = null },
-            )
-        }
-    }
-
     // 通讯录自带顶栏（搜索框就在页头），IM 列表在 conversationList 非空时也自带；
     // 这两种情况不叠根壳的 HomeTopBar。
     val modeOwnsTopBar = homeListMode == HomeListMode.Contacts ||
@@ -1226,7 +1179,7 @@ fun TaskListScreen(
                     title = if (homeListMode == HomeListMode.Tasks) "任务" else "工作区",
                     serverDisplayName = serverDisplayName,
                     interactionEnabled = interactionEnabled,
-                    onNewTask = if (homeListMode == HomeListMode.Sessions) ({ beginNewTask() }) else null,
+                    onNewTask = if (homeListMode == HomeListMode.Sessions) ({ onNewConversation(null, null, null, null, null, false) }) else null,
                     newTaskEnabled = interactionEnabled && !selecting && !recentCreationBusy() && !newTaskOpen && !newTaskSubmitting,
                     onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
                     onSwitchServer = { invalidateRecentConversationOpening(); onSwitchServer() },
@@ -1291,6 +1244,9 @@ fun TaskListScreen(
                             onBack = {},
                             onOpenSession = onOpenBoardSession,
                             onOpenTaskDetail = onOpenBoardTaskDetail,
+                            onNewConversation = { cwd, workspaceId, taskId, taskName, createMode ->
+                                onNewConversation(cwd, workspaceId, taskId, taskName, null, createMode)
+                            },
                             embedded = true,
                             showSearchField = false,
                             // 底部悬浮胶囊压在列表上，最后一张卡要能滑到胶囊上方。
@@ -1429,7 +1385,6 @@ fun TaskListScreen(
                         // 身份头始终保留，具体会话放在二级。
                         items(recentGroups, key = { "recent:${it.key}" }) { group ->
                             val employee = homeGroupAssignableEmployee(group, contactsEmployees)
-                            val conversation = group.employeeId?.let { recentConversations[it] }
                             val terminal = recentTerminals[group.key]
                             val binding = homeGroupConversationBinding(group)
                             HomeGroupCard(
@@ -1454,10 +1409,6 @@ fun TaskListScreen(
                                 },
                                 onOpenSession = { recent ->
                                     invalidateRecentConversationOpening()
-                                    // 打开列表核对未知回执后，下一次加号才允许开始新的创建。
-                                    if (conversation?.creationUnconfirmed == true) {
-                                        recentConversations.remove(conversation.employeeId)
-                                    }
                                     if (terminal?.creationUnconfirmed == true) {
                                         recentTerminals.remove(group.key)
                                     }
@@ -1470,12 +1421,11 @@ fun TaskListScreen(
                                     state.clearMutationError()
                                 },
                                 onMove = { invalidateRecentConversationOpening(); moveSessionTarget = it },
-                                conversationCreating = conversation?.busy == true || terminal?.busy == true,
-                                conversationCreated = conversation?.snapshot != null || terminal?.snapshot != null,
-                                conversationError = conversation?.error ?: terminal?.error,
+                                conversationCreating = terminal?.busy == true,
+                                conversationCreated = terminal?.snapshot != null,
+                                conversationError = terminal?.error,
                                 conversationEnabled = interactionEnabled && !newTaskOpen &&
                                     (group.kind.isTerminal || (employee != null && binding != null)) &&
-                                    conversation?.creationUnconfirmed != true &&
                                     terminal?.creationUnconfirmed != true && !recentCreationBusy(),
                                 terminalMenuOpen = terminalMenuKey == group.key,
                                 onToggleTerminalMenu = {
@@ -1493,28 +1443,16 @@ fun TaskListScreen(
                                     }
                                     if (!interactionEnabled || selecting || newTaskOpen || employee == null ||
                                         binding == null || recentCreationBusy()) return@create
-                                    val request = conversation?.takeIf { it.snapshot == null && it.binding == binding }
-                                        ?: RecentEmployeeConversation(employee.id, binding).also {
-                                            recentConversations[employee.id] = it
-                                        }
-                                    recentConversationOpeningId += 1
-                                    val openingId = recentConversationOpeningId
-                                    scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                                        val snapshot = request.create(api,
-                                            homeGroupAssignableEmployee(group, contactsEmployees))
-                                        if (snapshot != null) {
-                                            // 用户已经切换列表/会话时，只保留已创建结果，不抢回导航。
-                                            if (openingId == recentConversationOpeningId) {
-                                                onOpenSession(TaskSessionRoute(
-                                                    sessionId = snapshot.id,
-                                                    structured = snapshot.isStructured,
-                                                    workspaceId = snapshot.workspaceId,
-                                                    workspaceName = group.conversations.firstOrNull()?.group?.workspaceName,
-                                                ))
-                                            }
-                                            state.refreshAfterMutation()
-                                        }
-                                    }
+                                    state.clearMutationError()
+                                    invalidateRecentConversationOpening()
+                                    onNewConversation(
+                                        binding.cwd,
+                                        binding.workspaceId,
+                                        null,
+                                        null,
+                                        employee.id,
+                                        false,
+                                    )
                                 },
                             )
                         }
@@ -1586,14 +1524,19 @@ fun TaskListScreen(
                             },
                             onOpenTask = { task ->
                                 invalidateRecentConversationOpening()
-                                onOpenTask(task.task.workspaceId, task.id, group.workspaceName, task.name)
+                                val route = taskTitleRoute(task, group)
+                                if (route.session != null) {
+                                    onOpenSession(route.session)
+                                } else {
+                                    onOpenTask(route.workspaceId, route.taskId, route.workspaceName, route.taskName)
+                                }
                             },
                             onOpenSession = { session, task ->
                                 invalidateRecentConversationOpening()
                                 onOpenSession(taskSessionRoute(session, group, task))
                             },
                             onMoveSession = { moveSessionTarget = it },
-                            onNewTask = { beginNewTask(group.workspaceCwd, group.workspaceId.takeUnless { group.synthetic }) },
+                            onNewTask = { onNewConversation(group.workspaceCwd, group.workspaceId.takeUnless { group.synthetic }, null, null, null, false) },
                             onRenameDirectory = {
                                 renameDirectoryDraft = group.workspaceName
                                 renameDirectoryTarget = group
@@ -1604,23 +1547,7 @@ fun TaskListScreen(
                             onOrganizationFinished = { state.refreshAfterMutation() },
                             onNewWindow = { task ->
                                 invalidateRecentConversationOpening()
-                                selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
-                                    ?: WorkspaceSessionTarget.Claude
-                                selectedEmployeeId = null
-                                selectedKind = state.defaultSessionKind
-                                targetError = null
-                                pendingTarget = group to task
-                                targetDraftRevision += 1
-                                val defaultsRevision = targetDraftRevision
-                                scope.launch {
-                                    state.loadCreationDefaults()
-                                    if (pendingTarget?.second?.id != task.id || defaultsRevision != targetDraftRevision) return@launch
-                                    selectedTarget = WorkspaceSessionTarget.fromRaw(state.defaultProvider)
-                                        ?: selectedTarget
-                                    selectedEmployeeId = null
-                                    selectedKind = state.defaultSessionKind
-                                    targetSheetState.show()
-                                }
+                                onNewConversation(task.cwd, task.task.workspaceId, task.id, task.name, null, false)
                             },
                             onRename = { task ->
                                 renameDraft = task.name

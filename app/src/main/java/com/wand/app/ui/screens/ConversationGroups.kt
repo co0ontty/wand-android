@@ -79,9 +79,13 @@ internal fun ConversationGroupEditor(
         } else false
     }) {
         Column(Modifier.fillMaxWidth().heightIn(max = LocalConversationPanelHeight.current).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (inviteTo == null) "发起群聊" else "邀请成员", style = MaterialTheme.typography.titleMedium, fontSize = 18.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (inviteTo == null) "发起群聊" else "邀请成员", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                WandButton("取消", onClick = onClose, variant = WandButtonVariant.Text)
+            }
+            Text(if (inviteTo == null) "已选 $memberCount 位 · 最多 8 位员工" else "已选 $memberCount 位 · 全群 $total/8 位员工",
+                style = MaterialTheme.typography.bodyMedium, color = if (total > 8) WandColors.danger else WandColors.textSecondary)
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (inviteTo == null) "已选 $memberCount 位 · 最多 8 位员工" else "已选 $memberCount 位 · 全群 $total/8 位员工", style = MaterialTheme.typography.bodyMedium, color = WandColors.textSecondary)
                 if (inviteTo != null) Text("新成员将在下次派任务时加入协作，当前任务不变。", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
                 WandChoiceStrip(options = listOf(0 to "员工", 1 to "预设小组"), selected = tab, onSelect = { tab = it },
                     modifier = Modifier.fillMaxWidth(), minHeight = 48.dp, labelFontSize = 14.sp, flat = true)
@@ -164,10 +168,11 @@ internal fun ConversationGroupEditor(
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(chosen, role = Role.RadioButton, onClick = { leaderId = id }), verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = chosen, onClick = null); Text(label)
                     } }
-                    WandTextField(value = name, onValueChange = { name = it }, label = "群名（可选）", modifier = Modifier.fillMaxWidth(), singleLine = true)
                 }
                 } }
             }
+            if (inviteTo == null) WandTextField(value = name, onValueChange = { name = it }, label = "群名（可选）",
+                modifier = Modifier.fillMaxWidth().testTag("conversation-group-name"), singleLine = true, enabled = operation.canSubmit)
             val feedback = operation.feedback.ifBlank { if (invalid) "请显式处理不可用成员。" else if (invalidDuty) "本群职责不能超过2000个字符。" else "" }
             if (feedback.isNotBlank()) Text(feedback, Modifier.heightIn(max = 96.dp).verticalScroll(rememberScrollState()).padding(vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
             if (unknown != null) WandButton("核对请求", onClick = { operation.reconcile(state.api::conversationReceipt) }, variant = WandButtonVariant.Text)
@@ -175,7 +180,6 @@ internal fun ConversationGroupEditor(
                 state.finishGroup(context); onAccepted(receipt.conversationId)
             }, variant = WandButtonVariant.Text) }
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                WandButton("取消", onClick = onClose, variant = WandButtonVariant.Text)
                 WandButton(label = when (phase) { "sending" -> "处理中"; "sent" -> "已完成"; "failed" -> "失败"; "unknown" -> "未确认"; else -> if (inviteTo == null) "建群" else "邀请" },
                     modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 48.dp), enabled = operation.canSubmit && memberCount > 0 && total <= 8 && !invalid && !invalidDuty,
                     onClick = {

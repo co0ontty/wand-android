@@ -13,6 +13,5 @@ internal fun changesTaskHierarchy(method: String, path: String): Boolean {
     return path == "/api/tasks" || path.startsWith("/api/tasks/") || path.startsWith("/api/workspace-tasks/") ||
         path == "/api/workspaces" || path.startsWith("/api/workspaces/") ||
         path == "/api/wand-tasks" || path.startsWith("/api/wand-tasks/") ||
-        path == "/api/commands" || path == "/api/structured-sessions" ||
-        path == "/api/sessions/batch-delete"
+        path == "/api/sessions" || path == "/api/sessions/batch-delete"
 }

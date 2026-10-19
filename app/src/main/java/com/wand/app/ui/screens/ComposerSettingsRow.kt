@@ -22,6 +22,7 @@ import com.wand.app.ui.theme.WandColors
 @Composable
 internal fun ComposerSettingsRow(
     model: String, mode: String, thinking: String, enabled: Boolean = true,
+    modeLabel: String = "权限",
     onModel: () -> Unit, onMode: () -> Unit, onThinking: () -> Unit,
 ) {
     val focus = LocalFocusManager.current
@@ -29,7 +30,7 @@ internal fun ComposerSettingsRow(
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val showValues = maxWidth >= 300.dp
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            listOf(Triple("模型", model, onModel), Triple("权限", mode, onMode), Triple("思考", thinking, onThinking)).forEach { (label, value, action) ->
+            listOf(Triple("模型", model, onModel), Triple(modeLabel, mode, onMode), Triple("思考", thinking, onThinking)).forEach { (label, value, action) ->
                 val open = { focus.clearFocus(); keyboard?.hide(); action() }
                 val target = if (label == "模型") Modifier.weight(1f) else if (showValues) Modifier.widthIn(min = 48.dp) else Modifier.width(48.dp)
                 Row(target.heightIn(min = 48.dp)
@@ -43,7 +44,7 @@ internal fun ComposerSettingsRow(
                     .padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterHorizontally)) {
                     val tint = WandColors.textSecondary.copy(alpha = if (enabled) 1f else .4f)
-                    if (label != "模型") Icon(if (label == "权限") WandIcons.permission else WandIcons.thinking,
+                    if (label != "模型") Icon(if (label == "权限") WandIcons.permission else if (label == "工具") WandIcons.settings else WandIcons.thinking,
                         contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
                     if (label == "模型" || showValues) Text(value,
                         if (label == "模型") Modifier.weight(1f) else Modifier.widthIn(max = 88.dp),

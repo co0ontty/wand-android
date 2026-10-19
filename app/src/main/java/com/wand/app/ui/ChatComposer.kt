@@ -14,13 +14,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
+data class StagedComposerAttachment(val uri: String, val name: String, val mimeType: String = "")
+
 internal data class ComposerSubmission(
     val text: String,
     val attachments: List<UploadedFile>,
+    val stagedAttachments: List<StagedComposerAttachment>,
     val textRevision: Long,
-) {
-    val prompt: String get() = attachmentPrompt(attachments, text).trim()
-}
+    val prompt: String = attachmentPrompt(attachments, text).trim(),
+)
 
 /** Some input chunks reached the terminal, so a later rejection is not an unsent draft. */
 internal class UnconfirmedComposerInputException(cause: Exception) : Exception(cause.message, cause)
@@ -42,10 +44,12 @@ class ChatComposer(
     private var active = true
     private var feedbackJob: Job? = null
     private var unconfirmedSubmission: ComposerSubmission? = null
+    private var stagedUploadInProgress = false
     val draftRevision: Long get() = drafts.revision(sessionId)
 
     val draft: String get() = drafts[sessionId]
     val attachments: List<UploadedFile> get() = drafts.attachments(sessionId)
+    val stagedAttachments: List<StagedComposerAttachment> get() = drafts.stagedAttachments(sessionId)
     var uploading by mutableStateOf(false)
         private set
     var sendPhase by mutableStateOf(SendPhase.Idle)
@@ -53,10 +57,51 @@ class ChatComposer(
     private val currentPrompt: String
         get() = attachmentPrompt(attachments, draft).trim()
     val canSubmit: Boolean get() = active && ready() && !uploading && sendPhase != SendPhase.Sending &&
-        (draft.isNotBlank() || attachments.isNotEmpty()) && !drafts.isUnconfirmed(sessionId, currentPrompt)
+        (draft.isNotBlank() || attachments.isNotEmpty() || stagedAttachments.isNotEmpty()) && !drafts.isUnconfirmed(sessionId, currentPrompt)
 
     fun editDraft(text: String) {
         if (active) drafts[sessionId] = text
+    }
+
+    val queueRecovery: QueueRecovery? get() = drafts.queueRecovery(sessionId)
+
+    /** Capture the original before I/O; never PATCH or replay an uncertain DELETE. */
+    fun retrieveQueued(index: Int, text: String, remove: suspend (Int, String) -> Unit): Boolean {
+        if (!active || queueRecovery != null || sendPhase == SendPhase.Sending) return false
+        val revision = draftRevision
+        drafts.setQueueRecovery(sessionId, QueueRecovery(text, QueueRecoveryPhase.Retrieving, "正在取回原文…"))
+        scope.launch {
+            try {
+                remove(index, text)
+                coroutineContext.ensureActive()
+                drafts.setQueueRecovery(sessionId, QueueRecovery(text, QueueRecoveryPhase.Ready, "已取回，可在输入框继续编辑"))
+                // An existing or newly typed draft requires explicit adoption, never replacement.
+                if (active && draftRevision == revision && draft.isEmpty()) restoreQueuedOriginal()
+            } catch (e: Exception) {
+                val rejected = isDefiniteRequestRejection(e)
+                drafts.setQueueRecovery(sessionId, QueueRecovery(text,
+                    if (rejected) QueueRecoveryPhase.Rejected else QueueRecoveryPhase.Unconfirmed,
+                    if (rejected) e.message ?: "取回被拒绝，原文已保留"
+                    else "取回结果未知，请核对队列和会话，勿重复发送；原文已保留"))
+                if (e is CancellationException) throw e
+            }
+        }
+        return true
+    }
+
+    /** Explicitly append to the latest draft without changing any attachments. */
+    fun restoreQueuedOriginal(confirmedNotExecuted: Boolean = false): Boolean {
+        val recovery = queueRecovery ?: return false
+        if (!active || sendPhase == SendPhase.Sending ||
+            (recovery.phase != QueueRecoveryPhase.Ready &&
+                !(recovery.phase == QueueRecoveryPhase.Unconfirmed && confirmedNotExecuted))) return false
+        editDraft(if (draft.isEmpty()) recovery.text else "$draft\n\n${recovery.text}")
+        drafts.setQueueRecovery(sessionId, null)
+        return true
+    }
+
+    fun dismissRejectedQueueRecovery() {
+        if (active && queueRecovery?.phase == QueueRecoveryPhase.Rejected) drafts.setQueueRecovery(sessionId, null)
     }
 
     /** Offer an unaddressed draft for explicit adoption; no selection/read path performs this move. */
@@ -71,16 +116,58 @@ class ChatComposer(
         return drafts.adopt(offer)
     }
 
-    fun appendVoice(text: String) {
-        if (active && text.isNotBlank()) editDraft(appendComposerVoiceText(draft, text))
+    fun stageAttachments(files: List<StagedComposerAttachment>): Boolean {
+        if (!active || uploading || files.isEmpty()) return false
+        val combined = (stagedAttachments + files).distinctBy { it.uri }
+        if (combined.size > MAX_COMPOSER_ATTACHMENTS - attachments.size) {
+            notice("最多添加 $MAX_COMPOSER_ATTACHMENTS 个附件")
+            return false
+        }
+        drafts.setStagedAttachments(sessionId, combined)
+        return true
     }
 
-    /** Bind speech recognition to the draft that was present when recording began. */
-    fun voiceCommitForCurrentDraft(): (String) -> Unit {
-        val startedRevision = drafts.revision(sessionId)
-        return { text ->
-            if (active && drafts.revision(sessionId) == startedRevision) appendVoice(text)
+    fun clearStagedAttachments() {
+        if (active) drafts.setStagedAttachments(sessionId, emptyList())
+    }
+
+    fun acceptUploadedStagedAttachments(files: List<StagedComposerAttachment>, uploaded: List<UploadedFile>): Boolean {
+        if (!active || files.isEmpty() || files.any { it !in stagedAttachments }) return false
+        drafts.setStagedAttachments(sessionId, stagedAttachments.filterNot { it in files })
+        drafts.setAttachments(sessionId, (attachments + uploaded).distinctBy { it.savedPath })
+        return true
+    }
+
+    fun uploadStaged(operation: suspend (List<StagedComposerAttachment>) -> List<UploadedFile>): Boolean {
+        val captured = stagedAttachments
+        if (!active || uploading || stagedUploadInProgress || captured.isEmpty()) return false
+        if (attachments.size + captured.size > MAX_COMPOSER_ATTACHMENTS) {
+            notice("最多添加 $MAX_COMPOSER_ATTACHMENTS 个附件")
+            return false
         }
+        stagedUploadInProgress = true
+        uploading = true
+        scope.launch {
+            try {
+                val uploaded = operation(captured)
+                coroutineContext.ensureActive()
+                if (!active) return@launch
+                require(uploaded.size == captured.size) { "上传附件数量不匹配" }
+                if (!acceptUploadedStagedAttachments(captured, uploaded)) {
+                    notice("附件选择已变化，上传结果未加入草稿；请核对会话附件")
+                    return@launch
+                }
+                notice("已上传 ${uploaded.size} 个附件")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (active) notice(e.message ?: "附件上传失败，已保留所选附件")
+            } finally {
+                stagedUploadInProgress = false
+                uploading = false
+            }
+        }
+        return true
     }
 
     fun removeAttachment(file: UploadedFile) {
@@ -124,7 +211,10 @@ class ChatComposer(
             return false
         }
         if (!canSubmit) return false
-        val submission = drafts.submission(sessionId)
+        val submission = drafts.submission(sessionId).copy(
+            prompt = attachmentPrompt(attachments, draft).trim(),
+            stagedAttachments = stagedAttachments,
+        )
         val transport = deliver ?: send
         feedbackJob?.cancel()
         sendPhase = SendPhase.Sending
@@ -171,6 +261,10 @@ class ChatComposer(
     }
 
     fun shutdown() {
+        queueRecovery?.takeIf { it.phase == QueueRecoveryPhase.Retrieving }?.let {
+            drafts.setQueueRecovery(sessionId, it.copy(phase = QueueRecoveryPhase.Unconfirmed,
+                message = "取回结果未知，请核对队列和会话，勿重复发送；原文已保留"))
+        }
         active = false
         scope.cancel()
     }
@@ -178,15 +272,14 @@ class ChatComposer(
 
 internal const val MAX_COMPOSER_ATTACHMENTS = 5
 
-internal fun appendComposerVoiceText(existing: String, text: String): String {
-    val clean = text.trim()
-    if (clean.isEmpty()) return existing
-    val base = existing.trimEnd()
-    return if (base.isEmpty()) clean else "$base $clean"
-}
-
 internal fun attachmentPrompt(attachments: List<UploadedFile>, body: String): String {
     if (attachments.isEmpty()) return body
     val paths = attachments.joinToString("\n") { it.savedPath }
     return "[附件已上传，请查看以下文件:\n$paths\n]\n\n$body"
+}
+
+internal fun attachmentPromptBody(attachments: List<UploadedFile>, prompt: String): String {
+    if (attachments.isEmpty()) return prompt
+    val prefix = attachmentPrompt(attachments, "")
+    return prompt.removePrefix(prefix)
 }

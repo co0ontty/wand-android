@@ -189,16 +189,9 @@ class CompanionDockInstrumentedTest {
         val activity = start("progress")
         try {
             val initial = point(activity)
-            waitFor("Microphone has a stable native accessible target") { find(instrumentation.uiAutomation.rootInActiveWindow, "按住说话，松手转写，上滑取消") != null }
-            val mic = find(instrumentation.uiAutomation.rootInActiveWindow, "按住说话，松手转写，上滑取消")
-            assertNotNull(mic)
-            val micBounds = Rect(); mic!!.getBoundsInScreen(micBounds)
-            assertTrue("Scene is anchored above the message viewport, mic stays in the composer", initial.second < micBounds.top)
-            instrumentation.runOnMainSync { composer(activity).editDraft("测试第三个操作槽") }
+            instrumentation.runOnMainSync { composer(activity).editDraft("测试第二个操作槽") }
             Thread.sleep(500)
-            val expandedMic = find(instrumentation.uiAutomation.rootInActiveWindow, "按住说话，松手转写，上滑取消")
-            val afterDraft = Rect(); expandedMic!!.getBoundsInScreen(afterDraft)
-            assertEquals("Mic does not move when send/stop appears", micBounds, afterDraft)
+            assertEquals("Scene does not move when send/stop appears", initial.second, point(activity).second, 2f)
             instrumentation.runOnMainSync { composer(activity).editDraft("") }
             Thread.sleep(500)
             assertNull(find(instrumentation.uiAutomation.rootInActiveWindow, "正在处理"))
@@ -206,7 +199,7 @@ class CompanionDockInstrumentedTest {
             click("展开任务进度")
             Thread.sleep(500)
             assertNotNull(find(instrumentation.uiAutomation.rootInActiveWindow, "\$0.13"))
-            assertNotNull(find(instrumentation.uiAutomation.rootInActiveWindow, "修复输入焦点与重复语音入口，保留模型搜索、附件选择和原生文字编辑"))
+            assertNotNull(find(instrumentation.uiAutomation.rootInActiveWindow, "修复输入焦点与重复入口，保留模型搜索、附件选择和原生文字编辑"))
             assertEquals(initial.second, point(activity).second, 2f)
             instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             waitFor("progress sheet dismissed") { find(instrumentation.uiAutomation.rootInActiveWindow, "展开任务进度") != null }
@@ -267,29 +260,13 @@ class CompanionDockInstrumentedTest {
         } finally { finish(activity) }
     }
 
-    @Test fun emptyTextFieldLongPressNeverStartsAudio() {
-        val activity = start("composer-focus")
-        try {
-            click("展开键盘输入")
-            waitFor("editor ready") { imeVisible(activity) && field(activity, "EditorVisible") == true }
-            val node = editable(instrumentation.uiAutomation.rootInActiveWindow)
-            assertNotNull(node)
-            val bounds = Rect(); node!!.getBoundsInScreen(bounds)
-            pointer(bounds.centerX().toFloat() to bounds.centerY().toFloat(), 650)
-            assertEquals(0, field(activity, "VoiceStarts"))
-            assertEquals(0, field(activity, "VoiceCommits"))
-            assertEquals("", composer(activity).draft)
-            assertEquals(true, field(activity, "EditorVisible"))
-        } finally { finish(activity) }
-    }
-
     private fun side(): String? = context.getSharedPreferences("wand_chat_companion", Context.MODE_PRIVATE).getString("side", "Left")
     private fun resetFixtureSide() {
         assumeTrue(context.packageName.endsWith(".preview"))
         context.getSharedPreferences("wand_chat_companion", Context.MODE_PRIVATE).edit().putString("side", "Left").commit()
     }
 
-    @Test fun actualTapDragHoldCancelAndDraftTranscriptionAreExclusive() {
+    @Test fun actualTapAndDragAreExclusive() {
         resetFixtureSide()
         val activity = start("idle")
         try {
@@ -307,17 +284,8 @@ class CompanionDockInstrumentedTest {
             val density = context.resources.displayMetrics.density
             pointer(point(activity), 0, 220 * density, 0f, true)
             waitFor("drag snaps right and persists") { side() == "Right" }
-            assertEquals(0, field(activity, "VoiceStarts"))
-            pointer(point(activity), 370, -40 * density, -90 * density)
-            waitFor("upward release cancels") { field(activity, "VoiceCancels") == 1 }
-            assertEquals("Right", side())
             assertEquals("原草稿", composer(activity).draft)
-            assertEquals(0, field(activity, "VoiceCommits"))
-            pointer(point(activity), 370)
-            waitFor("release only appends editable draft") { field(activity, "VoiceCommits") == 1 }
-            assertEquals("原草稿 请继续检查布局", composer(activity).draft)
             assertEquals(0, field(activity, "SendCount"))
-            waitFor("transcription restores editor") { field(activity, "EditorVisible") == true }
             assertEquals(SendPhase.Idle, composer(activity).sendPhase)
         } finally { finish(activity) }
         val otherChat = start("orange")
@@ -326,20 +294,6 @@ class CompanionDockInstrumentedTest {
             assertEquals("Global local side retained across chats", "Right", side())
             assertTrue("Top slot clears right controls", position.first < context.resources.displayMetrics.widthPixels - 140 * context.resources.displayMetrics.density)
         } finally { finish(otherChat) }
-    }
-
-    @Test fun noSpeechNeverOverwritesExistingDraftOrDispatches() {
-        resetFixtureSide()
-        val activity = start("silence")
-        try {
-            waitFor("fixture ready") { field(activity, "ComposerForTest") != null }
-            instrumentation.runOnMainSync { composer(activity).editDraft("保留原稿") }
-            pointer(point(activity), 370)
-            Thread.sleep(900)
-            assertEquals("保留原稿", composer(activity).draft)
-            assertEquals(0, field(activity, "VoiceCommits"))
-            assertEquals(0, field(activity, "SendCount"))
-        } finally { finish(activity) }
     }
 
     @Test fun successFailureAndUnknownUseOriginalReceiptAndAttachmentOwner() {

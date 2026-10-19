@@ -28,7 +28,6 @@ class SettingsNavigationTest {
         navigation.back()
         navigation.open(SettingsDestination.Models)
         assertEquals(listOf(SettingsDestination.Index, SettingsDestination.Models, SettingsDestination.Appearance), navigation.visited.toList())
-        assertFalse(SettingsDestination.Voice in navigation.visited)
         assertFalse(SettingsDestination.Diagnostics in navigation.visited)
     }
 

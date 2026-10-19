@@ -32,44 +32,27 @@ class CompanionDockStateTest {
         assertEquals("正在写文件", companionWorkStatus(true, AvatarFileActivity.Writing, true))
         assertEquals("", companionWorkStatus(false, AvatarFileActivity.Reading, false))
     }
-    @Test fun sceneStaysCompactAndReservesRoomForThreeTouchTargets() {
+    @Test fun sceneStaysCompactAndReservesRoomForTwoTouchTargets() {
         for (width in listOf(280f, 320f, 360f, 393f, 600f, 840f)) {
             val size = companionSceneSizeDp(width)
             assertTrue(size in 48f..88f)
-            assertTrue(size + 36f + 3 * 48f + 48f <= width) // caption/pause keeps its own touch width
+            assertTrue(size + 36f + 2 * 48f + 48f <= width)
         }
         assertEquals(88f, COMPANION_SCENE_SLOT_DP)
     }
-    @Test fun shortTapAndLongHoldCannotBothFire() {
-        val tap = CompanionGestureState(true)
+    @Test fun tapReleasesOnceAndHorizontalDragNeverTaps() {
+        val tap = CompanionGestureState()
         assertEquals(CompanionGestureEffect.Tap, tap.release(false))
-        assertEquals(CompanionGestureEffect.None, tap.timeout())
-        val hold = CompanionGestureState(true)
-        assertEquals(CompanionGestureEffect.Hold, hold.timeout())
-        assertEquals(CompanionGestureEffect.FinishVoice, hold.release(false))
-        assertEquals(CompanionGestureEffect.None, hold.release(false))
-    }
-    @Test fun horizontalDragBeforeHoldCanNeverOpenMicrophone() {
-        val drag = CompanionGestureState(true)
-        assertEquals(CompanionGestureEffect.Drag, drag.move(35f, 4f, 12f, 60f))
-        assertEquals(CompanionGestureEffect.None, drag.timeout())
+        assertEquals(CompanionGestureEffect.None, tap.release(false))
+        val drag = CompanionGestureState()
+        assertEquals(CompanionGestureEffect.Drag, drag.move(35f, 4f, 12f))
         assertEquals(CompanionGestureEffect.Snap, drag.release(false))
     }
-    @Test fun afterRecordingUpwardCancelCannotSwapSideEvenWithHorizontalMotion() {
-        val hold = CompanionGestureState(true)
-        hold.timeout()
-        assertEquals(CompanionGestureEffect.None, hold.move(150f, -80f, 12f, 60f))
-        assertTrue(hold.cancelVoice)
-        assertEquals(CompanionGestureEffect.CancelVoice, hold.release(false))
-    }
-    @Test fun interruptedPointerDiscardsUtteranceAndVerticalScrollDoesNotRecord() {
-        val hold = CompanionGestureState(true); hold.timeout()
-        assertEquals(CompanionGestureEffect.CancelVoice, hold.release(true))
-        val scroll = CompanionGestureState(true); scroll.move(2f, 45f, 12f, 60f)
-        assertEquals(CompanionGestureEffect.None, scroll.timeout())
+    @Test fun canceledPointerAndVerticalScrollFireNothing() {
+        val canceled = CompanionGestureState()
+        assertEquals(CompanionGestureEffect.None, canceled.release(true))
+        val scroll = CompanionGestureState(); scroll.move(2f, 45f, 12f)
         assertEquals(CompanionGestureEffect.None, scroll.release(false))
-        val mic = CompanionGestureState(false); mic.move(50f, 0f, 12f, 60f)
-        assertEquals(CompanionGestureEffect.None, mic.timeout())
     }
     @Test fun dropClampsToSidesAndPreferenceHandlesOlderOrInvalidValues() {
         assertEquals(CompanionSide.Left, companionSnapSide(100f, 320f))

@@ -49,7 +49,6 @@ internal fun composerActionPresentation(
 /** Compact mode has no empty slot; the same actions move inside the expanded surface. */
 @Composable
 internal fun ComposerSendStopActions(
-    voiceAction: @Composable () -> Unit,
     presentation: ComposerActionPresentation,
     stopDescription: String,
     onSend: () -> Unit,
@@ -59,7 +58,6 @@ internal fun ComposerSendStopActions(
     canSubmit: Boolean = true,
     failureDescription: String = "发送失败，可重试",
 ) {
-    voiceAction()
     Row {
     if (presentation.stop) SubmitMorphButton(
         visual = SendActionVisual.Stop,

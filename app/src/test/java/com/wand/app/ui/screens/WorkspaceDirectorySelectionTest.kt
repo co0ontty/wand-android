@@ -35,7 +35,7 @@ class WorkspaceDirectorySelectionTest {
         override suspend fun deleteWorkspaceTask(taskId: String) = Unit
         override suspend fun saveWorkspaceTaskLayout(taskId: String, layout: TaskWindowLayout?): TaskWindowLayout? = error("unused")
         override suspend fun createWorkspaceTaskWindow(target: WorkspaceSessionTarget, binding: WorkspaceBinding,
-            kind: WorkspaceSessionKind, prompt: String?, model: String?, thinkingEffort: String?): SessionSnapshot = error("unused")
+            kind: WorkspaceSessionKind, prompt: String?, model: String?, thinkingEffort: String?, mode: String?, overrideCli: Boolean): SessionSnapshot = error("unused")
     }
 
     @Test fun existingPathsReuseWorkspacesAndUnusedDirectoryIsCreatedOnlyWhenSubmitting() = runTest {
@@ -114,13 +114,12 @@ class WorkspaceDirectorySelectionTest {
         fun source(name: String) = File("src/main/java/com/wand/app/ui/screens/$name.kt").readText()
         assertTrue(source("TaskListScreen").contains("onNewTask = if (homeListMode == HomeListMode.Sessions)"))
         assertTrue(source("HomeChrome").contains("onClick = onNewTask"))
-        for (name in listOf("TaskListScreen", "CreateBoardTaskDialog", "ChatScreen")) {
+        for (name in listOf("TaskListScreen", "ChatScreen", "PendingConversationScreen")) {
             assertTrue(name, source(name).contains("WorkspaceDirectoryPicker("))
         }
-        for (name in listOf("NewTaskComposerScreen", "CreateBoardTaskDialog")) {
-            assertTrue(name, source(name).contains("WandFormDialog("))
-        }
-        assertFalse(source("TaskBoardScreen").contains("private fun CreateBoardTaskDialog"))
-        assertTrue(source("CreateBoardTaskDialog").contains("!formBusy && !teamRunRetry"))
+        assertTrue(source("NewTaskComposerScreen").contains("WandFormDialog("))
+        assertTrue(source("TaskBoardScreen").contains("onNewConversation(workspace?.cwd, workspace?.id, null, null, true)"))
+        assertFalse(source("TaskBoardScreen").contains("CreateBoardTaskDialog("))
+        assertFalse(File("src/main/java/com/wand/app/ui/screens/CreateBoardTaskDialog.kt").exists())
     }
 }

@@ -167,7 +167,7 @@ class ChatComposerTest {
     }
 
     @Test
-    fun successDoesNotClearNewTextVoiceOrAttachmentsEnteredDuringSend() = runTest {
+    fun successDoesNotClearNewTextOrAttachmentsEnteredDuringSend() = runTest {
         val drafts = SessionDraftStore(mapOf("chat-a" to "first"))
         val ack = CompletableDeferred<Unit>()
         val composer = composer(drafts, send = { ack.await() })
@@ -176,33 +176,13 @@ class ChatComposerTest {
         composer.submit()
         runCurrent()
         composer.editDraft("next")
-        composer.appendVoice(" voice ")
         composer.upload { listOf(file("/uploads/next.txt")) }
         runCurrent()
         ack.complete(Unit)
         runCurrent()
-        assertEquals("next voice", composer.draft)
+        assertEquals("next", composer.draft)
         assertEquals(listOf("/uploads/next.txt"), composer.attachments.map { it.savedPath })
-        assertEquals(mapOf("chat-a" to "next voice"), drafts.savedDrafts())
-    }
-
-    @Test
-    fun delayedVoiceResultCannotAppendToARevisedDraftOrDisposedSession() = runTest {
-        val drafts = SessionDraftStore(mapOf("chat-a" to "first"))
-        val composer = composer(drafts)
-        val oldRecording = composer.voiceCommitForCurrentDraft()
-        composer.editDraft("new edit")
-        oldRecording("stale voice")
-        assertEquals("new edit", composer.draft)
-
-        val currentRecording = composer.voiceCommitForCurrentDraft()
-        currentRecording("fresh voice")
-        assertEquals("new edit fresh voice", composer.draft)
-
-        val disposedRecording = composer.voiceCommitForCurrentDraft()
-        composer.shutdown()
-        disposedRecording("late voice")
-        assertEquals("new edit fresh voice", drafts["chat-a"])
+        assertEquals(mapOf("chat-a" to "next"), drafts.savedDrafts())
     }
 
     @Test
@@ -233,18 +213,18 @@ class ChatComposerTest {
         runCurrent()
         composerA.shutdown()
         val composerB = composer(drafts, id = "chat-b")
-        composerB.appendVoice("voice b")
+        composerB.editDraft("b edit")
         response.complete(Unit)
         upload.complete(listOf(file("/uploads/a.txt")))
         runCurrent()
         assertEquals("a", drafts["chat-a"])
-        assertEquals("b voice b", composerB.draft)
+        assertEquals("b edit", composerB.draft)
         assertTrue(composerB.attachments.isEmpty())
         assertTrue(drafts.attachments("chat-a").isEmpty())
         assertFalse(composerA.submit())
-        composerA.appendVoice("late a")
+        composerA.editDraft("late a")
         assertEquals("a", drafts["chat-a"])
-        assertEquals(mapOf("chat-b" to "b voice b"), drafts.savedDrafts())
+        assertEquals(mapOf("chat-b" to "b edit"), drafts.savedDrafts())
     }
 
     @Test

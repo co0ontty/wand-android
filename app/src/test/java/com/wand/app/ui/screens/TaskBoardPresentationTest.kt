@@ -563,6 +563,20 @@ class TaskBoardPresentationTest {
     }
 
     @Test
+    fun boardCreateActionsRouteToPendingWithNewTaskModeAndKeepDirectDispatchSeparate() {
+        val screen = java.io.File("src/main/java/com/wand/app/ui/screens/TaskBoardScreen.kt").readText()
+        val createHandler = screen.substringAfter("onCreateForStatus = {")
+            .substringBefore("modifier = Modifier.fillMaxWidth()")
+        assertTrue(createHandler.contains("onNewConversation(workspace?.cwd, workspace?.id, null, null, true)"))
+        assertFalse(createHandler.contains("openCreateDialog"))
+
+        assertTrue(screen.contains("onDispatch(agent, composePrompt.trim(), selected)"))
+        assertTrue(screen.contains("label = \"CLI / 团队兼容派发\""))
+        val detail = java.io.File("src/main/java/com/wand/app/ui/screens/TaskBoardTaskScreen.kt").readText()
+        assertTrue(detail.contains("api.dispatchBoardSubject(taskId, subject, agent, prompt, task?.workspaceId)"))
+    }
+
+    @Test
     fun retryLabelAndSkipCardCreationShareOneCondition() {
         // 「复用旧卡 / 重发 team-runs / 按钮写重试」必须是同一份判定（boardDispatchesToTeam），
         // 否则失败后改回「待办」再点「创建任务」会不建新卡直接跳旧卡 —— 语义与行为矛盾。

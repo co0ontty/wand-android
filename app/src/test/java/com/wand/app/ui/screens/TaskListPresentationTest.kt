@@ -8,6 +8,10 @@ import com.wand.app.data.WorkspaceSessionTeamChat
 import com.wand.app.data.WorkspaceSessionTeamStep
 import com.wand.app.data.WorkspaceTask
 import com.wand.app.data.WorkspaceTaskStatus
+import com.wand.app.data.LayoutNode
+import com.wand.app.data.PaneTab
+import com.wand.app.data.TaskWindowLayout
+import com.wand.app.data.WorkWindowLayout
 import com.wand.app.data.WorkspaceTaskSummary
 import com.wand.app.ui.Screen
 import org.junit.Assert.assertEquals
@@ -30,6 +34,58 @@ class TaskListPresentationTest {
         assertEquals("task-1", route.taskId)
         assertEquals("Repo", route.workspaceName)
         assertEquals("Fix", route.taskName)
+    }
+
+    @Test
+    fun taskTitleOpensItsActiveNonArchivedSessionWithTaskContext() {
+        val group = group()
+        val active = session("structured", "structured").copy(id = "active")
+        val other = session("pty", null).copy(id = "other")
+        val task = task().copy(
+            task = task().task.copy(layout = TaskWindowLayout(
+                windows = listOf(WorkWindowLayout(
+                    id = "window-1",
+                    layout = LayoutNode.Pane(
+                        tabs = listOf(PaneTab.Session("tab-1", "other"), PaneTab.Session("tab-2", "active")),
+                        active = 0,
+                    ),
+                    activeTabId = "tab-2",
+                )),
+                activeWindowId = "window-1",
+            )),
+            sessions = listOf(other, active),
+            totalSessions = 2,
+        )
+
+        val route = taskTitleRoute(task, group)
+
+        assertEquals("workspace-1", route.workspaceId)
+        assertEquals("task-1", route.taskId)
+        assertEquals("active", route.session?.sessionId)
+        assertEquals("workspace-1", route.session?.workspaceId)
+        assertEquals("task-1", route.session?.taskId)
+    }
+
+    @Test
+    fun taskTitleSkipsArchivedOrMissingActiveSessionAndFallsBackToFirstValidSession() {
+        val group = group()
+        val archivedActive = session("structured", "structured").copy(id = "archived", archived = true)
+        val fallback = session("pty", null).copy(id = "fallback")
+        val task = task().copy(
+            task = task().task.copy(layout = TaskWindowLayout(
+                windows = listOf(WorkWindowLayout(
+                    id = "window-1",
+                    layout = LayoutNode.Pane(listOf(PaneTab.Session("tab-1", "archived")), active = 0),
+                    activeTabId = "tab-1",
+                )),
+                activeWindowId = "window-1",
+            )),
+            sessions = listOf(archivedActive, fallback),
+            totalSessions = 2,
+        )
+
+        assertEquals("fallback", taskTitleRoute(task, group).session?.sessionId)
+        assertNull(taskTitleRoute(task().copy(sessions = emptyList()), group).session)
     }
 
     @Test

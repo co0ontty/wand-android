@@ -10,6 +10,23 @@ import org.junit.Test
 
 class SiliconEmployeeModelsTest {
     @Test
+    fun systemSessionLimitPreservesZeroUnlimitedAndRejectsInvalidInput() {
+        for (limit in listOf<Int?>(null, 0, 25, 10000)) {
+            val employee = SiliconEmployee.parse(JSONObject().put("id", "e_wand_ops").put("name", "初二")
+                .put("systemSessionLimit", limit ?: JSONObject.NULL))!!
+            assertEquals(limit, employee.systemSessionLimit)
+            val draft = SiliconEmployeeDraft.from(employee)
+            assertEquals(limit, draft.systemSessionLimit)
+            assertEquals(limit ?: JSONObject.NULL, draft.toJson().get("systemSessionLimit"))
+        }
+        val draft = SiliconEmployeeDraft(name = "员工")
+        for (input in listOf("-1", "1.5", "10001", "999999999999999999", "abc")) {
+            assertNotNull(draft.copy(systemSessionLimitInput = input).validationError())
+        }
+        assertEquals(null, SiliconEmployee.parse(JSONObject().put("id", "legacy"))!!.systemSessionLimit)
+    }
+
+    @Test
     fun employeeDraftKeepsCandidateOrderAndRejectsPty() {
         val first = BoardTaskAgent("codex", "gpt", "deep", "full-access", "structured")
         val second = BoardTaskAgent("claude", "sonnet", "off", "managed", "structured")

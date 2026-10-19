@@ -4,29 +4,6 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
-import groovy.json.JsonSlurper
-import java.security.MessageDigest
-import java.util.zip.ZipFile
-
-// 只带固定官方版本的 JVM API；原生引擎在用户启用语音后按需下载。
-// tools/prepare-sherpa-api.py 可从官方 AAR 字节级复现，普通构建不下载/提取 AAR。
-def sherpaApiJar = file('libs/sherpa-onnx-api-1.13.2.jar')
-def sherpaApiManifest = file('libs/sherpa-onnx-api-1.13.2.json')
-def verifySherpaApi = tasks.register('verifySherpaApi') {
-    inputs.files(sherpaApiJar, sherpaApiManifest)
-    doLast {
-        def spec = new JsonSlurper().parse(sherpaApiManifest)
-        def hash = MessageDigest.getInstance('SHA-256').digest(sherpaApiJar.bytes).encodeHex().toString()
-        if (hash != spec.apiSha256) throw new GradleException('sherpa JVM API SHA-256 不匹配')
-        new ZipFile(sherpaApiJar).withCloseable { jar ->
-            if (spec.removedClasses.any { jar.getEntry(it) != null } ||
-                jar.entries().toList().any { it.name.endsWith('.so') }) {
-                throw new GradleException('sherpa JVM API 不得含 eager-load wrapper 或原生库')
-            }
-        }
-    }
-}
-
 def appVersionName = project.hasProperty('APP_VERSION_NAME') ? project.property('APP_VERSION_NAME') : "1.0.0"
 
 // versionCode 的唯一真源 —— 由 versionName 派生，所有构建方式（本地 / publish.sh / CI）必须
@@ -71,7 +48,7 @@ android {
         versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        // 端侧语音仅支持 arm64：现代真机全是 arm64-v8a，
+        // 仅支持 arm64：现代真机全是 arm64-v8a，
         // 砍掉其余 ABI 省约 3/4 的 .so 体积（代价：x86 模拟器装不了）。
         ndk {
             abiFilters "arm64-v8a"
@@ -99,7 +76,7 @@ android {
             // material-icons-extended 的 ~5000 图标 + 全量 Compose 全进 dex，APK 膨到 ~75MB。
             // 仅在「带版本号的分发构建」（CI / publish.sh 传 -PAPP_VERSION_NAME）启用 R8 + 资源裁剪，
             // 把分发包压到 ~15MB；裸 `./gradlew assembleDebug` 仍不裁剪，保证本地迭代快。
-            // 复用 release 的 proguard 规则（sherpa-onnx JNI 必须 keep，见 proguard-rules.pro）。
+            // 复用 release 的 proguard 规则（见 proguard-rules.pro）。
             def distributionBuild = project.hasProperty('APP_VERSION_NAME')
             minifyEnabled distributionBuild
             shrinkResources distributionBuild
@@ -108,7 +85,7 @@ android {
         release {
             signingConfig signingConfigs.wand
             // R8 代码压缩 + 资源裁剪：缩小 APK、加快启动。keep 规则见 proguard-rules.pro
-            // （sherpa-onnx JNI 必须保留，否则 native 方法绑定失效崩溃）。
+            // 。
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -145,8 +122,7 @@ android {
             useLegacyPackaging = true
         }
         jniLibs {
-            // .so 压缩进 APK：下载体积从 +22MB 降到 +8MB（自分发下载体积优先；
-            // 代价是安装时解压、磁盘双份占用）。
+            // .so 压缩进 APK：自分发下载体积优先，代价是安装时解压、磁盘双份占用。
             useLegacyPackaging = true
         }
     }
@@ -226,9 +202,6 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // Compose 图片加载（聊天内联缩略图 / 全屏预览）：用 WandHttp.client 走自签证书 + cookie 鉴权。
     implementation 'io.coil-kt:coil-compose:2.7.0'
-    // 固定来源的 API jar 不含 eager-load wrapper 或 22 MB 原生库。
-    // 启用语音时从同版本官方发行包下载并校验（见 SpeechNativeLibrary）。
-    implementation files(sherpaApiJar)
 }
 
 // UI 页面只能跨 Wand 设计系统 seam 使用 Material 3。底层 Material/玻璃实现集中在
@@ -265,10 +238,4 @@ tasks.register('verifyWandDesignSystem') {
     }
 }
 
-tasks.named('preBuild').configure { dependsOn('verifyWandDesignSystem', verifySherpaApi) }
-
-tasks.withType(Test).configureEach {
-    // 可选官方产物集成验证；常规单测使用小型 fixture，不要求完整 AAR。
-    def archive = providers.gradleProperty('SHERPA_AAR').orNull
-    if (archive != null) systemProperty 'wand.sherpaAar', rootProject.file(archive).absolutePath
-}
+tasks.named('preBuild').configure { dependsOn('verifyWandDesignSystem') }

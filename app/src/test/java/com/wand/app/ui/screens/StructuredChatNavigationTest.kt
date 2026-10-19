@@ -36,7 +36,7 @@ class StructuredChatNavigationTest {
         assertTrue(app.contains(start))
         assertTrue(app.contains(end))
         val route = app.substringAfter(start).substringBefore(end)
-        listOf("taskId =", "siblingSessions =", "onSwitchSession =",
+        listOf("siblingSessions =", "onSwitchSession =",
             "onCreateTaskSession =", "onDeleteTaskSession =").forEach {
             assertFalse("Structured route still wires $it", route.contains(it))
         }

@@ -8,7 +8,6 @@ class MinimalComposerStateTest {
         val initial = MinimalComposerState()
         assertFalse(initial.editing)
         assertTrue(initial.edit().editing)
-        assertEquals(300L, VOICE_HOLD_THRESHOLD_MS)
     }
     @Test fun keyboardDismissRetainsDraftPresentationAndCanReopen() {
         val state = MinimalComposerState().edit().dismissKeyboard()

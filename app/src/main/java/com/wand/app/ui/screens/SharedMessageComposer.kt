@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -33,6 +36,9 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
 import com.wand.app.ui.SendPhase
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.Icon
 import com.wand.app.data.UploadedFile
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInlinePanelAction
@@ -45,6 +51,25 @@ internal data class CompanionComposerControls(
 )
 internal typealias MinimalCompanion = @Composable (CompanionComposerControls, @Composable () -> Unit) -> Unit
 
+@Composable
+private fun StagedAttachmentsPreview(
+    attachments: List<com.wand.app.ui.StagedComposerAttachment>,
+    onRemove: (com.wand.app.ui.StagedComposerAttachment) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth().padding(start = 2.dp, end = 2.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        attachments.forEach { attachment ->
+            Row(Modifier.clickable(onClickLabel = "移除附件：${attachment.name}") { onRemove(attachment) }
+                .background(com.wand.app.ui.theme.WandColors.surfaceSoft, RoundedCornerShape(10.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(WandIcons.close, contentDescription = "移除附件：${attachment.name}", modifier = Modifier.size(16.dp).padding(start = 2.dp))
+            }
+        }
+    }
+}
+
 /** The native chat input layout shared by a session and its AI Team group chat. */
 @Composable
 internal fun SharedMessageComposer(
@@ -53,6 +78,8 @@ internal fun SharedMessageComposer(
     draft: String,
     onDraftChange: (String) -> Unit,
     attachments: List<UploadedFile>,
+    stagedAttachments: List<com.wand.app.ui.StagedComposerAttachment> = emptyList(),
+    onRemoveStagedAttachment: (com.wand.app.ui.StagedComposerAttachment) -> Unit = {},
     baseUrl: String,
     onRemoveAttachment: (UploadedFile) -> Unit,
     uploading: Boolean,
@@ -63,9 +90,6 @@ internal fun SharedMessageComposer(
     canSubmit: Boolean,
     onSend: () -> Unit,
     allowRefocus: Boolean,
-    voicePressed: Boolean,
-    voiceCommitSignal: Int = 0,
-    voiceProcessing: Boolean = false,
     /** Owned selectors live above the conditional editor and temporarily borrow its focus. */
     editorOverlayOpen: Boolean = false,
     onExpandedChange: (Boolean) -> Unit,
@@ -83,17 +107,17 @@ internal fun SharedMessageComposer(
     deliveryPhase: SendPhase = SendPhase.Idle,
     minimalCompanion: MinimalCompanion? = null,
     presentation: ChatInputPresentation? = null,
-    capsuleMicrophone: @Composable () -> Unit = {},
     /** Only visible actions reserve space; the expanded editor always has full width. */
     exteriorAction: (@Composable (send: () -> Unit) -> Unit)? = null,
     actionCount: Int = 0,
+    accessory: @Composable () -> Unit = {},
 ) {
     if (presentation != null) {
         FocusCapsuleComposer(presentation, sessionKey, draft, onDraftChange, attachments, baseUrl,
             onRemoveAttachment, uploading, attachOpen, onAttachOpenChange, onPickPhoto, onPickFile,
-            canSubmit, onSend, deliveryPhase, voicePressed, voiceProcessing, voiceCommitSignal,
+            canSubmit, onSend, deliveryPhase,
             editorOverlayOpen, resourcePanelOpen, onExpandedChange, trailingActions, controls,
-            resourcePanel, menuContent, capsuleMicrophone, exteriorAction, actionCount)
+            resourcePanel, menuContent, exteriorAction, actionCount, accessory)
         return
     }
     val focusRequester = remember(sessionKey) { FocusRequester() }
@@ -125,9 +149,10 @@ internal fun SharedMessageComposer(
             collapsePending = false
         }
     }
-    val compactVisual = inlineControls && draft.isEmpty() && attachments.isEmpty() || compactAfterAcknowledgement && acknowledged && !recoveryExpanded &&
-        !isFocused && !keyboardVisible && draft.isEmpty() && attachments.isEmpty() && !uploading &&
-        !voicePressed && !attachOpen && !resourcePanelOpen && !editorOverlayOpen && deliveryPhase != SendPhase.Sending
+    val hasAnyAttachments = attachments.isNotEmpty() || stagedAttachments.isNotEmpty()
+    val compactVisual = inlineControls && draft.isEmpty() && !hasAnyAttachments || compactAfterAcknowledgement && acknowledged && !recoveryExpanded &&
+        !isFocused && !keyboardVisible && draft.isEmpty() && !hasAnyAttachments && !uploading &&
+        !attachOpen && !resourcePanelOpen && !editorOverlayOpen && deliveryPhase != SendPhase.Sending
     LaunchedEffect(refocusAfterSend, allowRefocus) {
         if (refocusAfterSend && allowRefocus) {
             refocusAfterSend = false
@@ -136,11 +161,10 @@ internal fun SharedMessageComposer(
     }
     val expanded = fixedViewport || editorOverlayOpen || shouldComposerExpand(
         isFocused = isFocused,
-        voicePressed = voicePressed,
         draftNeedsExpanded = draftNeedsExpanded,
-        hasAttachments = attachments.isNotEmpty(),
+        hasAttachments = hasAnyAttachments,
     )
-    val editorVisible = !voicePressed && !voiceProcessing && (minimal.editing || minimal.recovery || attachOpen || resourcePanelOpen || uploading)
+    val editorVisible = (minimal.editing || minimal.recovery || attachOpen || resourcePanelOpen || uploading)
     val reportExpanded = if (minimalCompanion == null) expanded else editorVisible && expanded
     LaunchedEffect(reportExpanded) { onExpandedChange(reportExpanded) }
     val focusEditor: () -> Unit = {
@@ -170,7 +194,7 @@ internal fun SharedMessageComposer(
         }
     }
     val interactionSuspended = editorOverlayOpen || attachOpen || resourcePanelOpen || uploading ||
-        voicePressed || voiceProcessing || !windowFocused
+        !windowFocused
     LaunchedEffect(keyboardVisible, interactionSuspended) {
         if (minimalCompanion != null) {
             val wasEditing = minimal.editing
@@ -178,13 +202,7 @@ internal fun SharedMessageComposer(
             if (wasEditing && !minimal.editing) focusManager.clearFocus()
         }
     }
-    LaunchedEffect(voiceCommitSignal) {
-        if (voiceCommitSignal > 0 && minimalCompanion != null) requestFocus()
-    }
     ConversationLayerBackHandler(attachOpen) { onAttachOpenChange(false); onMenuDismissFocus() }
-    LaunchedEffect(voicePressed) {
-        if (voicePressed) onAttachOpenChange(false)
-    }
     val sendAndRefocus: () -> Unit = {
         if (canSubmit) {
             onAttachOpenChange(false)
@@ -204,7 +222,7 @@ internal fun SharedMessageComposer(
         inlineControls = if (minimalCompanion != null) false else compactVisual,
         inputTrailing = {
             // Text-free capsule has no third action. Uploaded files still have an explicit route.
-            if (minimalCompanion != null && draft.isBlank() && attachments.isNotEmpty())
+            if (minimalCompanion != null && draft.isBlank() && hasAnyAttachments)
                 TextButton(onClick = sendAndRefocus, enabled = canSubmit) { Text("发送附件") }
         },
         leadingControl = {
@@ -220,6 +238,9 @@ internal fun SharedMessageComposer(
                         onRemove = onRemoveAttachment,
                         modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 6.dp),
                     )
+                }
+                if (expanded && stagedAttachments.isNotEmpty()) {
+                    StagedAttachmentsPreview(stagedAttachments, onRemoveStagedAttachment)
                 }
                 ComposerInputField(
                     value = draft,
@@ -247,7 +268,7 @@ internal fun SharedMessageComposer(
                 )
             }
         },
-        resourcePanel = resourcePanel,
+        resourcePanel = { accessory(); resourcePanel() },
         panelVisible = attachOpen,
         panelModifier = menuPanelModifier,
         panelContent = {
@@ -297,6 +318,6 @@ internal fun SharedMessageComposer(
             .align(androidx.compose.ui.Alignment.BottomEnd)) { exteriorAction(sendAndRefocus) }
     }
     else if (minimalCompanion == null) editor()
-    else minimalCompanion(CompanionComposerControls(editorVisible, draft.isNotBlank(), attachments.isNotEmpty(),
+    else minimalCompanion(CompanionComposerControls(editorVisible, draft.isNotBlank(), hasAnyAttachments,
         canSubmit, deliveryPhase, requestFocus, sendAndRefocus)) { if (editorVisible) editor() }
 }

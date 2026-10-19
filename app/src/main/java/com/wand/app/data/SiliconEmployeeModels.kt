@@ -16,6 +16,8 @@ data class SiliconEmployee(
     val tags: List<String> = emptyList(),
     /** 创建时间（ISO-8601）。通讯录按它做时间先后排序；旧服务不返回时为空串。 */
     val createdAt: String = "",
+    /** system-ai 自动调用历史保留上限；null 表示不限，0 表示不保留已结束记录。 */
+    val systemSessionLimit: Int? = null,
 ) {
     val archived: Boolean get() = !archivedAt.isNullOrBlank()
 
@@ -58,6 +60,14 @@ data class SiliconEmployee(
                     (0 until array.length()).mapNotNull { array.opt(it) as? String }
                 } ?: emptyList(),
                 createdAt = value.str("createdAt") ?: "",
+                systemSessionLimit = value.opt("systemSessionLimit").let { raw ->
+                    when (raw) {
+                        null, JSONObject.NULL -> null
+                        is Number -> raw.toLong().takeIf { it in Int.MIN_VALUE..Int.MAX_VALUE }?.toInt()
+                        is String -> raw.toIntOrNull()
+                        else -> null
+                    }
+                },
             )
         }
 
@@ -73,7 +83,9 @@ data class SiliconEmployeeDraft(
     val avatar: String = "",
     val agents: List<BoardTaskAgent> = listOf(BoardTaskAgent.default()),
     val tagInput: String = "",
+    val systemSessionLimitInput: String = "",
 ) {
+    val systemSessionLimit: Int? get() = systemSessionLimitInput.toIntOrNull()
     fun tags(): List<String> = tagInput.split(',', '，', '、', '\n')
         .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
@@ -90,6 +102,8 @@ data class SiliconEmployeeDraft(
         validateTags && tags().any {
             it == SiliconEmployee.SYSTEM_EMPLOYEE_TAG || it == SiliconEmployee.DEFAULT_EMPLOYEE_TAG
         } -> "「系统用户」「默认用户」是内置标签，不可自定义。"
+        systemSessionLimitInput.isNotEmpty() && (systemSessionLimitInput.any { it !in '0'..'9' } || systemSessionLimit == null || (systemSessionLimit ?: -1) !in 0..MAX_SYSTEM_SESSION_LIMIT) ->
+            "系统调用历史保留上限必须是 0 到 $MAX_SYSTEM_SESSION_LIMIT 的整数。"
         agents.isEmpty() -> "至少保留 1 个执行候选。"
         agents.size > 4 -> "最多 4 个执行候选。"
         agents.any { it.kind != "structured" } -> "硅基员工只能使用结构化会话。"
@@ -103,6 +117,7 @@ data class SiliconEmployeeDraft(
         .put("prompt", prompt.trim())
         .put("avatar", avatar)
         .put("tags", JSONArray(tags()))
+        .put("systemSessionLimit", systemSessionLimit ?: JSONObject.NULL)
         .put("agents", agentsJson())
 
     /** 内置员工只允许改执行候选，锁定字段不回传（服务端会拒绝与现值不一致的字段）。 */
@@ -111,6 +126,8 @@ data class SiliconEmployeeDraft(
     }
 
     companion object {
+        const val MAX_SYSTEM_SESSION_LIMIT = 10_000
+
         fun from(employee: SiliconEmployee): SiliconEmployeeDraft = SiliconEmployeeDraft(
             name = employee.name,
             duty = employee.duty,
@@ -118,6 +135,7 @@ data class SiliconEmployeeDraft(
             avatar = employee.avatar,
             agents = employee.agents,
             tagInput = employee.displayTags.joinToString("，"),
+            systemSessionLimitInput = employee.systemSessionLimit?.toString() ?: "",
         )
     }
 }

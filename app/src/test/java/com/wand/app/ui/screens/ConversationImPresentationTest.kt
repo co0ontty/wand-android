@@ -108,6 +108,17 @@ class ConversationImPresentationTest {
         dissolvedBy = null, deleting = false,
     )
 
+    @Test fun headerProjectsCurrentFactsWithoutResurrectingOldFailures() {
+        val history = listOf(run("failed").copy(updatedAt = "2026-10-16"), run("done").copy(updatedAt = "2026-10-17"))
+        val detail = conversation("header").copy(tasks = listOf(ConversationTask(boardTask("t", "doing"), history)))
+        assertEquals("群聊 · 可派发任务", conversationIdentityStatus(detail))
+        assertEquals("等待你的回复", conversationIdentityStatus(detail.copy(tasks = listOf(
+            ConversationTask(boardTask("t", "doing"), history + run("waiting_user"))))))
+        assertEquals("群聊已解散", conversationIdentityStatus(detail.copy(dissolvedAt = "2026-10-18")))
+        assertEquals("当前对象暂不可用", conversationIdentityStatus(detail.copy(unavailableReason = "拒绝访问")))
+        assertEquals("正在加载对话", conversationIdentityStatus(null))
+    }
+
     @Test fun emptyListProjectionDistinguishesSearchFiltersAndNoData() {
         assertEquals(ConversationListEmptyState.Empty, conversationListEmptyState("", ConversationListTier.All))
         assertEquals(ConversationListEmptyState.Search, conversationListEmptyState("zzqa404", ConversationListTier.All))

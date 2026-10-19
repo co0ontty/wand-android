@@ -61,8 +61,10 @@ fun WandChoice(
     enabled: Boolean = true,
     leadingIcon: ImageVector? = null,
     chip: Boolean = false,
+    openRequest: Int = 0,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(openRequest) { if (enabled && openRequest > 0) expanded = true }
     LaunchedEffect(enabled) { if (!enabled) expanded = false }
     Box(modifier = modifier) {
         Row(

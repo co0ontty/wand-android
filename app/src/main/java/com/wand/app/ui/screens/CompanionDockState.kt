@@ -56,35 +56,26 @@ internal class CompanionSidePreference(context: Context) {
     }
 }
 
-internal enum class CompanionGesturePhase { Pending, Dragging, Recording, Ended }
-internal enum class CompanionGestureEffect { None, Tap, Hold, Drag, FinishVoice, CancelVoice, Snap }
+internal enum class CompanionGesturePhase { Pending, Dragging, Ended }
+internal enum class CompanionGestureEffect { None, Tap, Drag, Snap }
 
-/** Monotonic modes: a recording can cancel upwards but can never become a drag. */
-internal class CompanionGestureState(private val canDrag: Boolean) {
+/** Monotonic modes: a gesture is a tap or a horizontal drag, never both. */
+internal class CompanionGestureState {
     var phase = CompanionGesturePhase.Pending
         private set
-    var cancelVoice = false
-        private set
-    fun timeout(): CompanionGestureEffect {
-        if (phase != CompanionGesturePhase.Pending) return CompanionGestureEffect.None
-        phase = CompanionGesturePhase.Recording
-        return CompanionGestureEffect.Hold
-    }
-    fun move(x: Float, y: Float, slop: Float, cancelDistance: Float): CompanionGestureEffect = when (phase) {
+    fun move(x: Float, y: Float, slop: Float): CompanionGestureEffect = when (phase) {
         CompanionGesturePhase.Pending -> when {
             abs(x) <= slop && abs(y) <= slop -> CompanionGestureEffect.None
-            canDrag && abs(x) > abs(y) -> { phase = CompanionGesturePhase.Dragging; CompanionGestureEffect.Drag }
+            abs(x) > abs(y) -> { phase = CompanionGesturePhase.Dragging; CompanionGestureEffect.Drag }
             else -> { phase = CompanionGesturePhase.Ended; CompanionGestureEffect.None }
         }
         CompanionGesturePhase.Dragging -> CompanionGestureEffect.Drag
-        CompanionGesturePhase.Recording -> { cancelVoice = y < -cancelDistance; CompanionGestureEffect.None }
         CompanionGesturePhase.Ended -> CompanionGestureEffect.None
     }
     fun release(canceled: Boolean): CompanionGestureEffect {
         val effect = when (phase) {
             CompanionGesturePhase.Pending -> if (canceled) CompanionGestureEffect.None else CompanionGestureEffect.Tap
             CompanionGesturePhase.Dragging -> if (canceled) CompanionGestureEffect.None else CompanionGestureEffect.Snap
-            CompanionGesturePhase.Recording -> if (canceled || cancelVoice) CompanionGestureEffect.CancelVoice else CompanionGestureEffect.FinishVoice
             CompanionGesturePhase.Ended -> CompanionGestureEffect.None
         }
         phase = CompanionGesturePhase.Ended

@@ -13,6 +13,19 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.resume
 
 class TaskCommentsTest {
+    @Test fun `mention query follows the caret and only the chosen token stays bound`() {
+        assertEquals("name", TaskCommentMention.query("literal @name", "literal @name".length)?.text)
+        assertNull(TaskCommentMention.query("mail@host", 9))
+        assertEquals("瑞", TaskCommentMention.query("@瑞辰 已写完", 2)?.text)
+        assertNull(TaskCommentMention.query("@瑞辰 已写完", 4))
+        assertNull(TaskCommentMention.query("@开头", 0))
+        val inserted = TaskCommentMention.insert("请 @虎", 5, "赛博虎妞")
+        assertEquals("请 @赛博虎妞 ", inserted.first)
+        assertTrue(TaskCommentMention.holds(inserted.first, "赛博虎妞"))
+        assertFalse(TaskCommentMention.holds("@赛博", "赛博虎妞"))
+        assertFalse(TaskCommentMention.holds("@瑞辰同学", "瑞辰"))
+    }
+
     @Test fun `parse read only comments preserves body and excludes other tasks and empty rows`() {
         val response = JSONObject("""{"comments":[
             {"id":"c1","taskId":"one","authorName":"小王","body":"原始评论\n下一行","createdAt":"2026-10-16T12:00:00Z"},

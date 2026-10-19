@@ -69,7 +69,7 @@ class ChatViewportInstrumentedTest {
     private fun viewport(activity: Activity) = field(activity, "MessageViewportForTest") as Rect
     private fun assertBoundary(activity: Activity, text: String? = null) {
         val area = viewport(activity)
-        for (label in listOf("返回", "通话", "会话文件", "更多：会话对象、工作目录与变更")) {
+        for (label in listOf("返回", "会话文件", "更多：会话对象、工作目录与变更")) {
             val control = labelled(label)
             assertNotNull(label, control)
             assertTrue("Reading viewport must clear $label: $area", bounds(control!!).bottom <= area.top)
@@ -130,9 +130,7 @@ class ChatViewportInstrumentedTest {
                             field(activity, "EditorVisible") == true && labelled("继续发送（排队）") != null &&
                                 activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
                         }
-                        val voice = bounds(labelled("按住说话，松手转写，上滑取消")!!)
                         val send = bounds(labelled("继续发送（排队）")!!)
-                        assertTrue("send is right of independent voice", voice.right <= send.left)
                         assertEquals("send slot does not move on expansion", initialStop.left, send.left)
                     }
                     waitFor("new draft exposes send and stop together") { labelled("继续发送（排队）") != null && labelled("停止当前任务") != null }
@@ -141,12 +139,11 @@ class ChatViewportInstrumentedTest {
                     assertTrue("stop and send never overlap", stop.right <= send.left)
                     screenshot("continue-$index-${if (expanded) "ime" else "collapsed"}")
                     click("停止当前任务")
-                    waitFor("stop callback applied without clearing voice") { field(activity, "StopCount") == 1 && field(activity, "RunningForTest") == false }
+                    waitFor("stop callback applied without clearing the draft") { field(activity, "StopCount") == 1 && field(activity, "RunningForTest") == false }
                     assertEquals(draft, composer.draft)
                     assertEquals(listOf("/mock/stop.txt"), composer.attachments.map { it.savedPath })
                     assertEquals("stop never submits the draft", 0, field(activity, "SendCount"))
                     waitFor("stop changes to send for retained draft") { labelled("停止当前任务") == null && labelled("发送消息") != null }
-                    assertNotNull("voice stays independent", labelled("按住说话，松手转写，上滑取消"))
                     assertEquals("send/stop slot has stable x", initialStop.left, bounds(labelled("发送消息")!!).left)
                 } finally { instrumentation.runOnMainSync { activity.finish() } }
             }
@@ -209,29 +206,21 @@ class ChatViewportInstrumentedTest {
         val activity = instrumentation.startActivitySync(Intent().setClassName(context.packageName, "com.wand.app.ChatPreviewActivity")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("mode", "idle"))
         try {
-            waitFor("idle capsule ready") { labelled("按住说话，松手转写，上滑取消") != null }
+            waitFor("idle capsule ready") { field(activity, "ComposerForTest") != null }
             assertNull(labelled("发送消息")); assertNull(labelled("停止当前任务"))
-            val emptyVoice = bounds(labelled("按住说话，松手转写，上滑取消")!!)
             screenshot("circle-empty-idle")
             val composer = field(activity, "ComposerForTest") as ChatComposer
             instrumentation.runOnMainSync { composer.editDraft("请检查独立圆钮") }
             waitFor("send outside collapsed capsule") { labelled("发送消息") != null }
             val send = bounds(labelled("发送消息")!!)
-            val voice = bounds(labelled("按住说话，松手转写，上滑取消")!!)
-            assertTrue("empty capsule occupies the trailing action space", kotlin.math.abs(send.right - emptyVoice.right) <= (8 * context.resources.displayMetrics.density).toInt())
-            assertTrue(voice.right <= send.left)
             assertFalse(field(activity, "EditorVisible") as Boolean)
             screenshot("circle-draft-idle")
             click("发送消息")
-            assertTrue("visible send alone reserves one touch slot", emptyVoice.left - voice.left >= (48 * context.resources.displayMetrics.density).toInt())
             waitFor("accepted submission leaves stop after receipt dwell") { field(activity, "SendCount") == 1 && composer.draft.isEmpty() && labelled("停止当前任务") != null && composer.sendPhase == com.wand.app.ui.SendPhase.Idle }
             assertEquals(send.left, bounds(labelled("停止当前任务")!!).left)
-            assertEquals(voice, bounds(labelled("按住说话，松手转写，上滑取消")!!))
             screenshot("circle-running-empty")
             click("停止当前任务")
             waitFor("idle empty exterior circle hidden after feedback") { labelled("停止当前任务") == null && labelled("发送消息") == null && composer.sendPhase == com.wand.app.ui.SendPhase.Idle }
-            assertNotNull(labelled("按住说话，松手转写，上滑取消"))
-            assertEquals("empty composer reclaims the hidden slot", emptyVoice, bounds(labelled("按住说话，松手转写，上滑取消")!!))
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 

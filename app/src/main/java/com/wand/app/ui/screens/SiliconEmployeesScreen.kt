@@ -49,6 +49,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.BoardTaskAgent
@@ -258,6 +260,9 @@ fun SiliconEmployeeEditorScreen(
                                 Text("职责", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
                                 Text(draft.duty.ifBlank { "暂无职责说明" }, modifier = Modifier.padding(top = 6.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = WandColors.textPrimary)
+                                Text(systemSessionLimitSummary(draft.systemSessionLimit),
+                                    modifier = Modifier.padding(top = 12.dp),
+                                    style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
                             }
                             HorizontalDivider(color = WandColors.border, modifier = Modifier.padding(start = 16.dp))
                             Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -333,6 +338,21 @@ fun SiliconEmployeeEditorScreen(
                                     minLines = 2, maxLines = 5, enabled = !busy,
                                     modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
                             }
+                            WandTextField(
+                                value = draft.systemSessionLimitInput,
+                                onValueChange = { input -> edit(draft.copy(systemSessionLimitInput = input)) },
+                                label = "系统调用历史保留上限",
+                                placeholder = "留空表示不限",
+                                singleLine = true,
+                                enabled = !busy,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                            )
+                            Text(
+                                "仅保留标题生成等系统辅助功能的最新 N 条已结束记录，保存后永久清理超出部分。留空不限，0 不保留。任务派发、agent 间调用（含决策）、手动聊天与运行中会话不计入，也不会清理。",
+                                color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
                         }
                     }
                     item(key = "employee-prompt") {
@@ -551,6 +571,12 @@ fun SiliconEmployeeEditorScreen(
             dismiss = WandDialogAction("继续编辑", onClick = { confirmDiscard = false }),
         ) { Text("名字、标签、职责、角色设定和工具顺序会恢复到上次保存的内容。") }
     }
+}
+
+private fun systemSessionLimitSummary(limit: Int?): String = when (limit) {
+    null -> "系统调用历史：不限"
+    0 -> "系统调用历史：0（不保留已结束记录）"
+    else -> "系统调用历史：保留最新 $limit 条已结束记录"
 }
 
 @Composable

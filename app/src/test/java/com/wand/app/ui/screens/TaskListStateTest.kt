@@ -100,6 +100,22 @@ class TaskListStateTest {
     }
 
     @Test
+    fun pendingConversationRequestIsConsumedExactlyOnce() = runTest {
+        val state = TaskListState(FakeWorkspacePort())
+        try {
+            assertNull(state.consumePendingConversationRequest())
+            val requestId = state.requestPendingConversation()
+            assertEquals(requestId, state.consumePendingConversationRequest())
+            assertNull(state.consumePendingConversationRequest())
+            val nextId = state.requestPendingConversation()
+            assertTrue(nextId > requestId)
+            assertEquals(nextId, state.consumePendingConversationRequest())
+        } finally {
+            state.shutdown()
+        }
+    }
+
+    @Test
     fun loadPublishesGroupsAndFailureKeepsCachedSnapshot() = runBlocking {
         val cached = group("ws-1", "/repo")
         val port = FakeWorkspacePort().apply { groups = listOf(cached) }
@@ -249,6 +265,21 @@ class TaskListStateTest {
     }
 
     @Test
+    fun createTaskWindowCarriesExplicitOverrideToPort() = runBlocking {
+        val port = FakeWorkspacePort()
+        val state = TaskListState(port)
+
+        state.createTaskWindow(
+            "task-1", WorkspaceSessionTarget.WandAgent,
+            model = "sdk-model", thinkingEffort = "high", overrideCli = true,
+        )
+
+        assertEquals(listOf(true), port.createdWindowOverrides)
+        assertEquals(listOf("sdk-model"), port.createdWindowModels)
+        assertEquals(listOf("high"), port.createdWindowEfforts)
+    }
+
+    @Test
     fun createTaskWindowUsesServerDetailBindingAndPersistsLayout() = runBlocking {
         val port = FakeWorkspacePort()
         val state = TaskListState(port)
@@ -256,12 +287,52 @@ class TaskListStateTest {
         val session = state.createTaskWindow("task-1", WorkspaceSessionTarget.Codex)
 
         assertEquals("created-session", session?.id)
+        assertEquals(listOf(false), port.createdWindowOverrides)
+        assertEquals(listOf<String?>(null), port.createdWindowModes)
         assertEquals(
             WorkspaceBinding("ws-1", "task-1", "/repo"),
             port.createdWindowBindings.single(),
         )
         val saved = port.savedLayouts.single().second!!
         assertEquals(listOf("created-session"), saved.windows.flatMap { layoutSessionIds(it.layout) })
+    }
+
+    @Test
+    fun uncertainTaskCreationOutcomeCanBeConsumedWithoutRetryingTheTaskRequest() = runBlocking {
+        val port = FakeWorkspacePort().apply {
+            taskCreationFailure = com.wand.app.data.WandApiException(500, "结果未知")
+        }
+        val state = TaskListState(port)
+
+        assertNull(state.createTask("待确认", "/repo", worktree = false))
+        assertTrue(state.consumeTaskCreationOutcomeUnconfirmed())
+        assertFalse(state.consumeTaskCreationOutcomeUnconfirmed())
+        assertEquals(1, port.taskRequests.size)
+        assertTrue(state.mutationOutcomeUnconfirmed)
+    }
+
+    @Test
+    fun uncertainTaskSessionCreationBlocksRepeatAndCancellationIsRecorded() = runBlocking {
+        val port = FakeWorkspacePort().apply {
+            sessionCreationFailure = com.wand.app.data.WandApiException(500, "结果未知")
+        }
+        val state = TaskListState(port)
+
+        assertNull(state.createTaskWindow("task-uncertain", WorkspaceSessionTarget.Claude))
+        assertNull(state.createTaskWindow("task-uncertain", WorkspaceSessionTarget.Claude))
+        assertEquals(1, port.sessionCreateCalls)
+        assertTrue(state.mutationError.orEmpty().contains("未确认"))
+
+        port.sessionCreationFailure = kotlinx.coroutines.CancellationException("cancelled")
+        try {
+            state.createTaskWindow("task-cancelled", WorkspaceSessionTarget.Claude)
+            throw AssertionError("expected cancellation")
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            // Cancellation propagates while the state records uncertain delivery.
+        }
+        port.sessionCreationFailure = null
+        assertNull(state.createTaskWindow("task-cancelled", WorkspaceSessionTarget.Claude))
+        assertEquals(2, port.sessionCreateCalls)
     }
 
     @Test
@@ -277,6 +348,7 @@ class TaskListStateTest {
             prompt = "先看一眼",
             model = "gpt-5",
             thinkingEffort = "low",
+            mode = "full-access",
         )
 
         assertEquals("created-session", session?.id)
@@ -284,6 +356,7 @@ class TaskListStateTest {
         assertEquals(WorkspaceBinding("ws-1", null, "/repo"), port.createdWindowBindings.single())
         assertEquals(listOf(WorkspaceSessionTarget.Codex to WorkspaceSessionKind.Pty), port.createdWindowChoices)
         assertEquals(listOf("先看一眼"), port.createdWindowPrompts)
+        assertEquals(listOf("full-access"), port.createdWindowModes)
         assertTrue("没有指定任务就不建卡", port.taskRequests.isEmpty() && port.standaloneRequests.isEmpty())
         assertTrue("未分组会话没有任务布局可改", port.savedLayouts.isEmpty())
     }
@@ -304,6 +377,11 @@ class TaskListStateTest {
         assertTrue(port.createdWindowBindings.isEmpty())
         val request = port.employeeWindowRequests.single()
         assertEquals("e-1", request.employeeId)
+        assertFalse(request.overrideCli)
+        assertEquals(WorkspaceSessionTarget.Claude, request.target)
+        assertNull(request.model)
+        assertNull(request.thinkingEffort)
+        assertNull(request.mode)
         assertNull("全局暂存区不写成项目归属", request.binding.workspaceId)
         assertNull(request.binding.workspaceTaskId)
         assertEquals("/scratch", request.binding.cwd)
@@ -319,6 +397,20 @@ class TaskListStateTest {
         assertFalse(state.consumeNewTaskRequest())
         state.requestNewTask()
         assertTrue(state.consumeNewTaskRequest())
+    }
+
+    @Test
+    fun newSessionRequestsHaveAnIndependentExactlyOnceChannel() {
+        val state = TaskListState(FakeWorkspacePort())
+
+        assertFalse(state.consumeNewSessionRequest())
+        state.requestNewSession()
+        assertTrue(state.consumeNewSessionRequest())
+        assertFalse(state.consumeNewSessionRequest())
+        state.requestNewTask()
+        assertFalse(state.consumeNewSessionRequest())
+        state.requestNewSession()
+        assertTrue(state.consumeNewSessionRequest())
     }
 
     @Test
@@ -583,6 +675,7 @@ class TaskListStateTest {
         val createdWorkspaces = mutableListOf<Pair<String, String>>()
         var createWorkspaceFailure: Exception? = null
         var workspaceAfterCreateFailure: Workspace? = null
+        var taskCreationFailure: Exception? = null
         val taskRequests = mutableListOf<TaskRequest>()
         val standaloneRequests = mutableListOf<StandaloneRequest>()
         val renamedTasks = mutableListOf<Pair<String, String>>()
@@ -595,9 +688,13 @@ class TaskListStateTest {
         val createdWindowPrompts = mutableListOf<String?>()
         val createdWindowModels = mutableListOf<String?>()
         val createdWindowEfforts = mutableListOf<String?>()
+        val createdWindowModes = mutableListOf<String?>()
         val createdWindowChoices = mutableListOf<Pair<WorkspaceSessionTarget, WorkspaceSessionKind>>()
+        val createdWindowOverrides = mutableListOf<Boolean>()
         val employeeWindowRequests = mutableListOf<EmployeeWindowRequest>()
         var pendingConfig: CompletableDeferred<ServerConfigInfo>? = null
+        var sessionCreationFailure: Exception? = null
+        var sessionCreateCalls = 0
         val savedLayouts = mutableListOf<Pair<String, TaskWindowLayout?>>()
         var taskDefault: String? = null
         var recent: List<RecentPath> = emptyList()
@@ -657,6 +754,7 @@ class TaskListStateTest {
             parentTaskId: String?,
         ): WorkspaceTaskCreation {
             taskRequests += TaskRequest(workspaceId, name, worktree, cwd, description, parentTaskId)
+            taskCreationFailure?.let { throw it }
             return WorkspaceTaskCreation(
                 id = "task-${taskRequests.size}",
                 workspaceId = workspaceId,
@@ -734,8 +832,15 @@ class TaskListStateTest {
             employeeId: String,
             binding: WorkspaceBinding,
             prompt: String?,
+            overrideCli: Boolean,
+            target: WorkspaceSessionTarget,
+            model: String?,
+            thinkingEffort: String?,
+            mode: String?,
         ): SessionSnapshot {
-            employeeWindowRequests += EmployeeWindowRequest(employeeId, binding, prompt)
+            employeeWindowRequests += EmployeeWindowRequest(
+                employeeId, binding, prompt, overrideCli, target, model, thinkingEffort, mode,
+            )
             return SessionSnapshot.parse(JSONObject().put("id", "created-employee-session"))
         }
 
@@ -746,12 +851,18 @@ class TaskListStateTest {
             prompt: String?,
             model: String?,
             thinkingEffort: String?,
+            mode: String?,
+            overrideCli: Boolean,
         ): SessionSnapshot {
+            sessionCreateCalls += 1
+            sessionCreationFailure?.let { throw it }
             createdWindowBindings += binding
             createdWindowPrompts += prompt
             createdWindowModels += model
             createdWindowEfforts += thinkingEffort
+            createdWindowModes += mode
             createdWindowChoices += target to kind
+            createdWindowOverrides += overrideCli
             return SessionSnapshot.parse(JSONObject().put("id", "created-session"))
         }
     }
@@ -777,6 +888,11 @@ class TaskListStateTest {
         val employeeId: String,
         val binding: WorkspaceBinding,
         val prompt: String?,
+        val overrideCli: Boolean,
+        val target: WorkspaceSessionTarget,
+        val model: String?,
+        val thinkingEffort: String?,
+        val mode: String?,
     )
 
     companion object {

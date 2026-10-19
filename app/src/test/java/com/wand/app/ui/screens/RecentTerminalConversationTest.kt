@@ -402,7 +402,7 @@ class RecentTerminalConversationTest {
         }
         override suspend fun createWorkspaceTaskWindow(
             target: WorkspaceSessionTarget, binding: WorkspaceBinding, kind: WorkspaceSessionKind,
-            prompt: String?, model: String?, thinkingEffort: String?,
+            prompt: String?, model: String?, thinkingEffort: String?, mode: String?, overrideCli: Boolean,
         ): SessionSnapshot {
             creates += Create(target, binding, kind, prompt, model, thinkingEffort)
             createFailure?.let { throw it }

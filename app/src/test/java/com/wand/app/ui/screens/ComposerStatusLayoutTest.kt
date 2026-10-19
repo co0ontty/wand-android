@@ -27,16 +27,17 @@ class ComposerStatusLayoutTest {
         assertFalse(progress.contains("rememberInfiniteTransition"))
     }
 
-    @Test fun editingReservesTheSendSlotOnlyInTheBottomToolbar() {
+    @Test fun statusSitsOutsideTheWritingSurfaceAndActionsShareTheBottomToolbar() {
         val capsule = source("FocusCapsuleComposer")
         val surface = capsule.substringAfter("Surface(").substringBefore("// Panels are modal")
-        assertTrue(surface.contains("Modifier.fillMaxWidth().padding(end = if (expanded) 0.dp else actionInset)"))
-        assertTrue(surface.contains("ComposerCapsuleToolbar(expanded, if (expanded) actionInset else 0.dp"))
+        assertFalse(surface.contains("accessory()"))
+        assertTrue(capsule.indexOf("    accessory()") < capsule.indexOf("    Surface("))
+        assertTrue(surface.contains("ComposerCapsuleToolbar(expanded, actionInset"))
         assertTrue(surface.contains("align(Alignment.BottomEnd)"))
         assertTrue(surface.contains("exteriorAction != null && actionCount > 0"))
         assertTrue(capsule.contains("ComposerActionTouchSize * actionCount"))
-        assertTrue(capsule.contains("if (actionWidth > 0.dp) actionWidth + 4.dp else 0.dp"))
-        assertTrue(capsule.contains("val stacked = expanded && width - inset < touch * 5"))
+        assertTrue(capsule.contains("val actionInset = actionWidth"))
+        assertTrue(capsule.contains("val stacked = expanded && width - inset - trailing < touch * 4"))
         assertFalse(surface.contains("if (expanded) Row(Modifier.fillMaxWidth()"))
         assertFalse(capsule.contains("horizontalArrangement = Arrangement.spacedBy(4.dp)"))
         assertEquals(1, Regex("ComposerInputField\\(").findAll(capsule).count())
@@ -45,7 +46,7 @@ class ComposerStatusLayoutTest {
     @Test fun groupDraftAlsoSeparatesTextFromTheExteriorActionAndInlineIcons() {
         val shared = source("SharedMessageComposer")
         val surface = source("NativeComposerSurface")
-        assertTrue(shared.contains("inlineControls && draft.isEmpty() && attachments.isEmpty()"))
+        assertTrue(shared.contains("inlineControls && draft.isEmpty() && !hasAnyAttachments"))
         assertTrue(shared.contains("padding(end = if (compactVisual) exteriorInset else 0.dp)"))
         assertTrue(shared.contains("controlsEndPadding = if (compactVisual) 0.dp else exteriorInset"))
         assertTrue(shared.contains("showClearAction = !compactVisual && exteriorAction == null"))

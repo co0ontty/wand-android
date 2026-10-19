@@ -90,6 +90,39 @@ class AppNavTest {
     }
 
     @Test
+    fun roundTrip_pendingConversationPreservesDraftIdentityAndContext() {
+        val expected = Screen.PendingConversation(
+            "pending:server:1", "/repo", "ws-1", "task-1", "Task",
+            initialEmployeeId = "employee-7", initialCreateMode = true,
+        )
+        assertEquals(expected, roundTrip(expected))
+    }
+
+    @Test
+    fun oldPendingConversationKeyDefaultsCreateModeToFalse() {
+        assertEquals(
+            Screen.PendingConversation("draft-old", "/repo", "ws-1"),
+            restoreKeys("session-list", "pending-conversation\u0001draft-old\u0001/repo\u0001ws-1").lastOrNull(),
+        )
+    }
+
+    @Test
+    fun employeeEntryRoutesToPendingWithoutCreatingSession() {
+        val screen = pendingConversationScreen(
+            entry = "employee-entry", cwd = "/repo", workspaceId = "ws-1",
+            initialEmployeeId = "employee-7", initialCreateMode = true,
+        )
+        assertEquals(
+            Screen.PendingConversation(
+                "employee-entry", "/repo", "ws-1", initialEmployeeId = "employee-7",
+                initialCreateMode = true,
+            ),
+            screen,
+        )
+        assertEquals(screen, roundTrip(screen))
+    }
+
+    @Test
     fun roundTrip_ptyScreen() {
         val restored = roundTrip(Screen.PtyTerminal("session-456"))
         assertEquals(Screen.PtyTerminal("session-456"), restored)

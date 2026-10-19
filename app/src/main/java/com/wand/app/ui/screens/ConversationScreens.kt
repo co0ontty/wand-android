@@ -14,6 +14,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -55,6 +56,7 @@ import com.wand.app.ui.acceptedConversationTask
 import com.wand.app.ui.conversationStartupLabel
 import com.wand.app.ui.SendActionVisual
 import com.wand.app.ui.SendPhase
+import com.wand.app.ui.thinkingEffortOptions
 import com.wand.app.ui.components.*
 import com.wand.app.ui.theme.*
 import kotlinx.coroutines.delay
@@ -174,7 +176,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     // 建档面板优先于多选态消耗返回；多选态退出后选中集一并清掉。
     ConversationLayerBackHandler(create || selecting) { if (create) close(true) else exitSelection() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-    CompositionLocalProvider(LocalConversationPanelHeight provides minOf(480.dp, maxHeight * .60f)) {
+    CompositionLocalProvider(LocalConversationPanelHeight provides maxHeight) {
     Column(Modifier.fillMaxSize().imePadding().then(layer.host(create, setOf("actions", "form", "search", "list")) { close() }).onKeyEvent { event ->
         if (event.key == Key.Escape && event.type == KeyEventType.KeyUp && (create || query.isNotEmpty())) { close(true); true } else false
     }) {
@@ -185,7 +187,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
             Box(Modifier.fillMaxWidth().height(44.dp).clip(CircleShape).background(WandColors.surface).border(0.6.dp, WandColors.border, CircleShape))
             Row(verticalAlignment = Alignment.CenterVertically) {
             Box {
-                WandIconButton(WandIcons.more, "消息菜单", { navigationMenu = true }, iconSize = 20.dp)
+                WandIconButton(WandIcons.more, "消息菜单", { navigationMenu = true }, enabled = !create, iconSize = 20.dp)
                 DropdownMenu(navigationMenu, onDismissRequest = { navigationMenu = false }) {
                     ConversationListTier.entries.forEach { tier -> DropdownMenuItem(
                         text = { Text(if (tier == ConversationListTier.All) "全部消息" else tier.label) },
@@ -202,10 +204,11 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
             }
             }
         }
-        WandInlineSearchField(true, query, { query = it }, null, "搜索聊天或任务",
+        if (!create) WandInlineSearchField(true, query, { query = it }, null, "搜索聊天或任务",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).heightIn(min = 40.dp).then(layer.region("search")),
             autoFocus = false, focusRequester = searchTrigger, onClear = { query = "" })
-        WandInlinePanel(visible = create, growFrom = Alignment.Top, modifier = layer.region("form")) {
+        WandInlinePanel(visible = create, growFrom = Alignment.Top,
+            modifier = (if (create) Modifier.weight(1f) else Modifier).then(layer.region("form"))) {
             forms.SaveableStateProvider("create-group") {
                 ConversationGroupEditor(state, onClose = { close(true) }, onAccepted = { create = false; onSelect(it) })
             }
@@ -213,7 +216,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
         val rows = filterConversationList(state.items, ConversationListTier.of(listTier), query)
         val selectedRows = rows.filter { it.id in selectedIds }
         val batchAction = conversationBatchAction(selectedRows.map { it.pinnedAt != null })
-        if (selecting) ConversationManageBar(
+        if (selecting && !create) ConversationManageBar(
             count = selectedIds.size,
             allSelected = selectedIds.isNotEmpty() && selectedIds.size == rows.size,
             busy = isBusy(),
@@ -224,7 +227,10 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
             onDone = { exitSelection() },
         )
         actionError?.let { Text(it, Modifier.padding(12.dp), color = WandColors.danger) }
-        LazyColumn(state = conversationListState, modifier = Modifier.weight(1f).padding(horizontal = 12.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)).background(WandColors.surface).then(layer.region("list")), contentPadding = PaddingValues(top = 4.dp, bottom = bottomClearance)) {
+        LazyColumn(state = conversationListState, userScrollEnabled = !create,
+            modifier = (if (create) Modifier.height(0.dp).clearAndSetSemantics {} else Modifier.weight(1f))
+                .padding(horizontal = 12.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)).background(WandColors.surface).then(layer.region("list")),
+            contentPadding = PaddingValues(top = 4.dp, bottom = bottomClearance)) {
             if (state.error != null) item { ErrorState(state.error.orEmpty(), onRetry = { state.retry() }) }
             if (state.loading && state.items.isEmpty()) items(3) { Row(Modifier.fillMaxWidth().height(76.dp).padding(12.dp)) {
                 Box(Modifier.size(44.dp).clip(WandShapes.md).background(WandColors.surface))
@@ -410,11 +416,39 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     val composer = state.composer(id, target)
     val inputPresentation = remember(key) { ChatInputPresentation() }
     var defaultsOpen by remember(key) { mutableStateOf(false) }
-    var voiceCommitSignal by remember(key) { mutableIntStateOf(0) }
+    val executionChoice = remember { com.wand.app.ui.EmployeeExecutionPreferenceState() }
+    var executionModels by remember(id) { mutableStateOf<com.wand.app.data.ModelsResponse?>(null) }
+    var executionModelsLoading by remember(id) { mutableStateOf(false) }
+    var executionModelsError by remember(id) { mutableStateOf<String?>(null) }
+    var executionToolOpen by remember(id) { mutableStateOf(false) }
+    var executionModelOpen by remember(id) { mutableStateOf(false) }
+    var executionEffortOpen by remember(id) { mutableStateOf(false) }
     val privateChat = detail?.kind == "dm"
     val currentId by rememberUpdatedState(id)
     val currentKey by rememberUpdatedState(key)
     val employee = state.employees.firstOrNull { it.id == detail?.peerEmployeeId || id == employeeConversationId(it.id) }
+    val defaultExecutionAgent = employee?.agents?.firstOrNull()
+    LaunchedEffect(id, employee?.id) { executionChoice.selectEmployee(employee) }
+    val selectedExecutionAgent = executionChoice.preference ?: defaultExecutionAgent
+    suspend fun loadExecutionModels() {
+        executionModelsLoading = true
+        executionModelsError = null
+        try {
+            executionModels = state.api.models()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            executionModelsError = failure.message ?: "无法加载模型目录，请重试。"
+        } finally {
+            executionModelsLoading = false
+        }
+    }
+    LaunchedEffect(id, privateChat, defaultExecutionAgent) {
+        executionChoice.selectEmployee(employee)
+        executionModels = null
+        executionModelsError = null
+        if (privateChat) loadExecutionModels()
+    }
     var menu by rememberSaveable(id) { mutableStateOf(false) }
     var taskMode by rememberSaveable(id) { mutableStateOf(false) }
     val metadata = rememberSaveable(id, saver = com.wand.app.ui.ConversationComposeDraft.Saver) { state.composeDraft(id) }
@@ -491,16 +525,6 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     }
     LaunchedEffect(state.layerRevision) { applyComposer(ConversationComposerEvent.LeftScreen); invite = false; members = false; taskDetails = false; titleOpen = false; headerMenu = false }
     ConversationLayerBackHandler(menu || invite || members || taskDetails || titleOpen) { closeLayer() }
-    val voice = rememberVoiceInputHandle(isHapticEnabled, onToast = { state.feedback[key] = it }, onCommit = composer::appendVoice,
-        sessionKey = composer, onCommitForPress = {
-            val commit = composer.voiceCommitForCurrentDraft();
-            { text: String ->
-                val revision = composer.draftRevision
-                commit(text)
-                if (revision != composer.draftRevision) voiceCommitSignal++
-            }
-        }, api = state.api)
-    val draftVoice = DraftVoiceGesture(voice.onMicDown, voice.voice::updateCancel, voice.voice::endPress, voice.voice::cancelPress)
     val pickers = rememberAttachmentPickerActions { uris ->
         val captured = composer; val capturedId = id; val cwd = if (taskMode) state.projects.firstOrNull { it.id == projectId }?.cwd else chatCwd.ifBlank { null }
         captured.upload { remaining ->
@@ -542,13 +566,29 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
         if (detail == null || detail.unavailableReason != null || unknown != null || !actionOperation.canSubmit) return
         if (taskMode && (projectId.isBlank() || detail.memberVersion != memberVersion)) { state.feedback[key] = "请选择工作项目并核对当前成员版本"; return }
         val capturedKey = key; val capturedId = id; val dispatch = taskMode
+        val capturedPreference = executionChoice.forMessage(
+            employee = employee,
+            isDirectMessage = privateChat,
+            hasRunTarget = target != null,
+            isDispatch = dispatch,
+            unknown = unknown != null,
+            sendPhase = composer.sendPhase,
+            uploading = composer.uploading,
+        )
         val body = JSONObject().put("title", title).put("workspaceId", projectId)
         if (detail.kind == "group") body.put("memberVersion", memberVersion)
         if (continueTask != null) body.put("continueTaskId", continueTask)
         var accepted: ConversationReceipt? = null
         composer.submit(deliver = { text ->
             accepted = if (dispatch) state.post(capturedKey, conversationSendPath(capturedId, true), body.put("description", text))
-            else state.post(capturedKey, conversationSendPath(capturedId, false), JSONObject().put("input", text).put("target", target?.toJson() ?: JSONObject.NULL).apply { if (chatCwd.isNotBlank()) put("cwd", chatCwd) })
+            else state.post(capturedKey, conversationSendPath(capturedId, false), JSONObject().put("input", text).put("target", target?.toJson() ?: JSONObject.NULL).apply {
+                if (chatCwd.isNotBlank()) put("cwd", chatCwd)
+                capturedPreference?.let { agent ->
+                    put("executionPreference", JSONObject().put("provider", agent.provider)
+                        .put("model", agent.model).put("thinkingEffort", agent.thinkingEffort)
+                        .apply { agent.engine?.let { put("engine", it) } })
+                }
+            })
             state.feedback[capturedKey] = accepted?.error ?: if (dispatch) "任务已接受" else "已发送"
             state.refresh(); state.load(capturedId)
         }, afterAccepted = {
@@ -563,6 +603,62 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 }
             }
         })
+    }
+    if (executionToolOpen && selectedExecutionAgent != null) {
+        ComposerChoiceSheet(
+            title = "本页执行工具",
+            options = com.wand.app.data.AGENT_TOOL_OPTIONS.map { it.id to it.label },
+            selected = selectedExecutionAgent.toolId,
+            onSelect = { toolId ->
+                val option = com.wand.app.data.agentToolOption(toolId)
+                if (option != null) executionChoice.chooseTool(
+                    toolId, employee,
+                    enabled = unknown == null && composer.sendPhase != SendPhase.Sending && !composer.uploading,
+                )
+                executionToolOpen = false
+            },
+            onDismiss = { executionToolOpen = false },
+        )
+    }
+    if (executionModelOpen && selectedExecutionAgent != null) {
+        val agent = selectedExecutionAgent
+        val options = com.wand.app.data.boardAgentModelOptions(executionModels, agent.provider)
+            .map { it.id to it.label }.toMutableList()
+        if (options.none { it.first == agent.model }) options.add(agent.model to agent.model)
+        ComposerChoiceSheet(
+            title = "本页模型", options = options, selected = agent.model, searchable = true,
+            searchPlaceholder = "搜索模型",
+            onSelect = { model ->
+                val efforts = thinkingEffortOptions(agent.provider, model,
+                    executionModels?.defaultModelFor(agent.provider),
+                    executionModels?.modelsFor(agent.provider).orEmpty(),
+                    executionModels?.thinkingEffortsFor(agent.provider).orEmpty())
+                executionChoice.chooseModel(
+                    model, efforts.map { it.id }.toSet(), employee,
+                    enabled = unknown == null && composer.sendPhase != SendPhase.Sending && !composer.uploading,
+                )
+                executionModelOpen = false
+            },
+            onDismiss = { executionModelOpen = false },
+        )
+    }
+    if (executionEffortOpen && selectedExecutionAgent != null) {
+        val agent = selectedExecutionAgent
+        val efforts = thinkingEffortOptions(agent.provider, agent.model,
+            executionModels?.defaultModelFor(agent.provider),
+            executionModels?.modelsFor(agent.provider).orEmpty(),
+            executionModels?.thinkingEffortsFor(agent.provider).orEmpty())
+        ComposerChoiceSheet(
+            title = "本页思考深度", options = efforts.map { it.id to it.menuLabel }, selected = agent.thinkingEffort,
+            onSelect = { effort ->
+                executionChoice.chooseThinkingEffort(
+                    effort, efforts.map { it.id }.toSet(), employee,
+                    enabled = unknown == null && composer.sendPhase != SendPhase.Sending && !composer.uploading,
+                )
+                executionEffortOpen = false
+            },
+            onDismiss = { executionEffortOpen = false },
+        )
     }
     if (defaultsOpen) WandDialog(title = "员工默认配置", onDismissRequest = { defaultsOpen = false },
         confirm = WandDialogAction("查看配置", { defaultsOpen = false; employee?.id?.let(onOpenEmployee) }),
@@ -592,20 +688,25 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             if (privateChat) {
                 val active = protocols.values.firstOrNull { it.isResponding }
                 val avatarActivity = avatarFileActivity(active?.messages.orEmpty(), active != null && active.pendingEscalation == null && active.legacyPermissionPrompt == null)
-                TopChatCompanion(employee?.id, employee?.name, employee?.avatar,
-                    when { voice.voice.pressed -> "正在听 · 上滑取消"; voice.voice.processing -> "转写中…"
+                TopChatCompanion(employee?.id, employee?.name ?: displayTitle, employee?.avatar,
+                    when {
                         active?.pendingEscalation != null || active?.legacyPermissionPrompt != null -> "等待确认"
-                        else -> companionWorkStatus(active != null, avatarActivity, false) },
-                    avatarActivity, companionThinking(active?.messages.orEmpty(), active != null, avatarActivity), false,
-                    onEdit = inputPresentation::edit, gesture = draftVoice)
+                        active != null -> companionWorkStatus(true, avatarActivity, false)
+                        else -> conversationIdentityStatus(detail) },
+                    avatarActivity, companionThinking(active?.messages.orEmpty(), active != null, avatarActivity),
+                    onEdit = inputPresentation::edit)
             }
             if (!privateChat) Box(Modifier.fillMaxWidth().padding(horizontal = 56.dp).heightIn(min = 48.dp).focusRequester(titleTrigger).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (detail?.kind == "group") "查看群成员" else "查看员工资料") {
                 if (employee != null) onOpenEmployee(employee.id) else { members = !members; taskDetails = false; invite = false }
             }, contentAlignment = Alignment.Center) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (employee != null) EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 40.dp, floating = true)
-                    Text(displayTitle ?: employee?.name ?: "消息", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f, fill = false))
+                if (employee != null) EmployeeAvatar(employee.id, employee.name, employee.avatar, size = 40.dp, floating = true)
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(displayTitle ?: employee?.name ?: "消息", maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall, color = WandColors.textPrimary)
+                    Text(conversationIdentityStatus(detail), style = MaterialTheme.typography.labelSmall,
+                        color = WandColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 }
             }
             Box(Modifier.align(if (privateChat) Alignment.TopEnd else Alignment.CenterEnd)) {
@@ -870,7 +971,6 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 onClick = { action("approve") },
             )
             if (run?.run?.status == "waiting_user" && run.run.statusDetail.contains("步数上限")) WandButton("明确增加本轮步数", { action("continue") }, enabled = actionOperation.canSubmit)
-            if (voice.voice.pressed || voice.voice.processing) VoiceTranscriptBubble(backdrop = null, voice = voice.voice)
             val canSubmit = composer.canSubmit && id.isNotBlank() && detail != null && detail.unavailableReason == null && unknown == null && actionOperation.canSubmit
             val actions = composerActionPresentation(composer.sendPhase, running && !taskMode,
                 composer.draft.isNotBlank() || composer.attachments.isNotEmpty(), canSubmit,
@@ -883,12 +983,11 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 },
                 onMenuDismissFocus = { runCatching { menuTrigger.requestFocus() } },
                 onPickPhoto = pickers.pickPhoto, onPickFile = pickers.pickFile, canSubmit = canSubmit, onSend = ::send,
-                allowRefocus = true, voicePressed = voice.voice.pressed, voiceProcessing = voice.voice.processing, onExpandedChange = {},
+                allowRefocus = true, onExpandedChange = {},
                 editorOverlayOpen = pickers.open || defaultsOpen || headerMenu || taskDetails || members || invite,
                 presentation = inputPresentation,
-                capsuleMicrophone = { CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling) },
                 actionCount = actions.slotCount,
-                exteriorAction = { send -> ComposerSendStopActions(voiceAction = {},
+                exteriorAction = { send -> ComposerSendStopActions(
                     presentation = actions,
                     stopDescription = if (target != null) "停止选中的本轮" else "停止当前回复",
                     sendDescription = if (taskMode) "确认派发任务" else if (running) "继续发送" else "发送消息",
@@ -897,7 +996,6 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                     canSubmit = canSubmit, failureDescription = if (unknown != null) "送达未确认，请先核对" else "操作失败")
                 },
                 deliveryPhase = if (unknown != null) SendPhase.Failed else composer.sendPhase,
-                voiceCommitSignal = voiceCommitSignal,
                 inlineControls = true,
                 menuActionModifier = Modifier.focusRequester(menuTrigger).then(layer.region("menu-trigger")),
                 menuPanelModifier = layer.region("menu").heightIn(max = menuPanelHeight).verticalScroll(rememberScrollState()),
@@ -922,15 +1020,44 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         WandButton("取消派发", { applyComposer(ConversationComposerEvent.DispatchCancel) }, variant = WandButtonVariant.Text)
                     }
                 }, controls = {
-                    if (privateChat) {
-                        val defaults = employeeComposerDefaults(employee?.agents.orEmpty())
-                        ComposerSettingsRow(defaults.model, defaults.permission, defaults.thinking,
-                            onModel = { defaultsOpen = true }, onMode = { defaultsOpen = true }, onThinking = { defaultsOpen = true })
+                    if (privateChat && target == null && !taskMode && defaultExecutionAgent != null) {
+                        if (executionModelsError != null) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(executionModelsError.orEmpty(), Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall, color = WandColors.danger,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                TextButton(enabled = !executionModelsLoading, onClick = { scope.launch { loadExecutionModels() } }) {
+                                    Text(if (executionModelsLoading) "重试中…" else "重试")
+                                }
+                            }
+                        }
+                        val agent = selectedExecutionAgent ?: defaultExecutionAgent
+                        val models = com.wand.app.data.boardAgentModelOptions(executionModels, agent.provider)
+                        val modelLabel = models.firstOrNull { it.id == agent.model }?.label
+                            ?: agent.model.takeUnless { it == "default" } ?: "默认模型"
+                        val efforts = thinkingEffortOptions(
+                            agent.provider, agent.model, executionModels?.defaultModelFor(agent.provider),
+                            executionModels?.modelsFor(agent.provider).orEmpty(),
+                            executionModels?.thinkingEffortsFor(agent.provider).orEmpty(),
+                        )
+                        val effortLabel = efforts.firstOrNull { it.id == agent.thinkingEffort }?.label ?: "自动"
+                        ComposerSettingsRow(
+                            modelLabel,
+                            com.wand.app.data.agentToolOption(agent.toolId)?.label ?: agent.provider,
+                            effortLabel,
+                            enabled = unknown == null && composer.sendPhase != SendPhase.Sending && !composer.uploading,
+                            modeLabel = "工具",
+                            onModel = { executionModelOpen = true },
+                            onMode = { executionToolOpen = true },
+                            onThinking = { executionEffortOpen = true },
+                        )
+                        if (executionChoice.preference != null) {
+                            WandButton("恢复员工默认", { executionChoice.reset() },
+                                enabled = unknown == null && composer.sendPhase != SendPhase.Sending && !composer.uploading,
+                                variant = WandButtonVariant.Text)
+                        }
                     }
-                }, trailingActions = { requestFocus, _ ->
-                    if (privateChat) CapsuleMicrophone(draftVoice, voice.voice.pressed, voice.voice.canceling)
-                    else VoiceMicButton(voice.voice, false, requestFocus, voice.onMicDown)
-                })
+                }, trailingActions = { _, _ -> })
         }
     }
     }

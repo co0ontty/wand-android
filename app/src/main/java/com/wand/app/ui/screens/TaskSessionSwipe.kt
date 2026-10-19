@@ -21,7 +21,9 @@ internal fun siblingSessionsFor(
     if (!sessionId.isNullOrBlank()) {
         groups.asSequence().flatMap { it.tasks.asSequence() }
             .firstOrNull { task -> task.sessions.any { it.id == sessionId } }
-            ?.let { return orderWorkspaceSessions(it.sessions) }
+            ?.let { return orderWorkspaceSessions(it.sessions.filter { session ->
+                session.archived != true && session.teamChat == null
+            }) }
         groups.firstOrNull { group -> group.standaloneSessions.any { it.id == sessionId } }
             ?.let { return orderWorkspaceSessions(it.standaloneSessions) }
     }

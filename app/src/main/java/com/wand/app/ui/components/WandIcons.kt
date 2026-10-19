@@ -48,7 +48,6 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
-import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -169,10 +168,7 @@ object WandIcons {
     /** 发送。 */
     val send: ImageVector = Icons.AutoMirrored.Outlined.Send
 
-    /** 按住说话麦克风。 */
-    val mic: ImageVector = Icons.Outlined.Mic
-
-    /** 语音模式下切回键盘输入。 */
+    /** 键盘输入。 */
     val keyboard: ImageVector = Icons.Outlined.Keyboard
 
     /** 停止。 */

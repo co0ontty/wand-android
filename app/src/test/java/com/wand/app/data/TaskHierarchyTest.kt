@@ -18,7 +18,7 @@ class TaskHierarchyTest {
         assertFalse(changesTaskHierarchy("PUT", "/api/workspace-tasks/a/layout"))
         assertTrue(changesTaskHierarchy("POST", "/api/workspace-tasks/a/sessions"))
         assertTrue(changesTaskHierarchy("PATCH", "/api/wand-tasks/a"))
-        assertTrue(changesTaskHierarchy("POST", "/api/structured-sessions"))
+        assertTrue(changesTaskHierarchy("POST", "/api/sessions"))
         assertTrue(changesTaskHierarchy("POST", "/api/tasks/organize-by-title"))
         assertFalse(changesTaskHierarchy("POST", "/api/login"))
     }

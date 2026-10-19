@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Opt-in isolated native preview only; no microphone, AI or real session mutation. */
+/** Opt-in isolated native preview only; no AI or real session mutation. */
 @RunWith(AndroidJUnit4::class)
 class SharedPlushSceneInstrumentedTest {
     private fun findWebView(view: View): WebView? {

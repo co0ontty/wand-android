@@ -79,9 +79,6 @@ import com.wand.app.WandDiagnostics
 import com.wand.app.WandLog
 import com.wand.app.WebSettingsActivity
 import com.wand.app.data.WandApi
-import com.wand.app.speech.SherpaSpeechEngine
-import com.wand.app.speech.SpeechNativeLibrary
-import com.wand.app.speech.SttModelManager
 import com.wand.app.ui.HomeConnectionInfo
 import com.wand.app.ui.HomeNavigationActions
 import com.wand.app.ui.HomeSettingsActions
@@ -304,12 +301,6 @@ fun SettingsScreen(
                                         ModelGroupsSettingsPanel(api, initiallyExpanded = true)
                                     }
                                 }
-                                SettingsDestination.Voice -> {
-                                    SpeechRecognitionSection(api) {
-                                        context.startActivity(Intent(context, WebSettingsActivity::class.java)
-                                            .putExtra(WebSettingsActivity.EXTRA_SERVER_ID, connection.serverId))
-                                    }
-                                }
                                 SettingsDestination.Server -> {
                                     SettingsSection(
                                         title = "",
@@ -492,7 +483,7 @@ private fun SettingsContentLayout(
 /** Stable destinations preserve each visited editor and scroll position for this settings visit. */
 internal enum class SettingsDestination(val title: String) {
     Index("设置"), Appearance("外观与反馈"), Traffic("流量与实时内容"),
-    Voice("语音输入"), Models("模型分组"), Server("服务器"),
+    Models("模型分组"), Server("服务器"),
     Updates("应用与更新"), Diagnostics("诊断"), About("关于");
 }
 
@@ -554,8 +545,6 @@ private fun SettingsDirectory(
             ActionRow("外观与反馈", WandIcons.settings, appearance) { onOpen(SettingsDestination.Appearance) }
             RowDivider()
             ActionRow("流量与实时内容", WandIcons.web) { onOpen(SettingsDestination.Traffic) }
-            RowDivider()
-            ActionRow("语音输入", WandIcons.mic) { onOpen(SettingsDestination.Voice) }
             RowDivider()
             ActionRow("应用与更新", WandIcons.update, "v$appVersion") { onOpen(SettingsDestination.Updates) }
         }
@@ -924,197 +913,6 @@ private fun ServerConnectionRow(
 @Composable
 private fun ConnectionActionsRow(onSwitchServer: () -> Unit) {
     ActionRow("管理服务器", WandIcons.swapServer, onClick = onSwitchServer)
-}
-
-/**
- * 端侧语音识别模型选择卡：中文小模型 / 中英混合大模型。
- * 点选即切换；未下载的模型点选后立即开始下载（下载完成自动预热）。
- * 下载中的行内展示进度条；所选模型未就绪期间语音输入自动回退到已就绪模型。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SpeechRecognitionSection(api: WandApi, onOpenWeb: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var mode by remember { mutableStateOf(com.wand.app.speech.SpeechPreferences.mode(context)) }
-    var status by remember(api) { mutableStateOf<com.wand.app.data.ServerSpeechStatus?>(null) }
-    var error by remember(api) { mutableStateOf<String?>(null) }
-    var checking by remember { mutableStateOf(false) }
-    suspend fun refresh() {
-        checking = true; error = null
-        try { status = api.speechStatus() }
-        catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { error = e.message ?: "无法读取服务端语音状态" }
-        finally { checking = false }
-    }
-    LaunchedEffect(api, mode) { if (mode == com.wand.app.speech.SpeechMode.SERVER) refresh() }
-    SettingsSection(title = "识别方式", description = "选择只影响此设备，不会自动切换到第三方云识别。") {
-        SettingsCard {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                val modes = listOf(com.wand.app.speech.SpeechMode.SERVER to "服务端识别", com.wand.app.speech.SpeechMode.LOCAL to "客户端本地识别")
-                modes.forEachIndexed { index, (value, label) ->
-                    SegmentedButton(selected = mode == value, onClick = { mode = value; com.wand.app.speech.SpeechPreferences.select(context, value) },
-                        shape = SegmentedButtonDefaults.itemShape(index, modes.size)) { Text(label) }
-                }
-            }
-        }
-    }
-    if (mode == com.wand.app.speech.SpeechMode.SERVER) {
-        SettingsSection(title = "当前服务器", description = "松手后把音频发送到当前 Wand 服务器，离线转写；最长 60 秒。") {
-            SettingsCard {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(error ?: if (checking) "检查中…" else status?.reason ?: if (status?.ready == true) "已就绪 · Whisper ${status?.model} · ${status?.backend?.uppercase()}" else "尚未读取状态",
-                        color = if (error != null || status?.ready == false) WandColors.danger else WandColors.textSecondary,
-                        style = MaterialTheme.typography.bodyMedium)
-                    Text("服务端支持 CPU、Mac Metal 与可选 CUDA。模型由管理员在服务器下载，手机不需要安装本地引擎。", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
-                    androidx.compose.material3.TextButton(enabled = !checking, onClick = { scope.launch { refresh() } }) { Text("刷新状态") }
-                }
-                RowDivider()
-                ActionRow("管理服务端语音模型", WandIcons.web, onClick = onOpenWeb)
-            }
-        }
-    } else {
-        SettingsSection(title = "客户端本地模型", description = "优先使用已下载的 sherpa 模型，其次系统端侧模型；不上传音频。") { SttModelSection() }
-    }
-}
-
-@Composable
-private fun SttModelSection() {
-    val context = LocalContext.current
-    var selectedId by remember { mutableStateOf(SttModelManager.selectedModel(context).id) }
-    var pendingDownload by remember { mutableStateOf<SttModelManager.SttModel?>(null) }
-    // 触发各行就绪状态重算的信号：下载状态变化时 +1。
-    val sttState = SttModelManager.state
-    val downloadingId = SttModelManager.downloadingModelId
-    LaunchedEffect(Unit) { SttModelManager.refresh(context) }
-    // 下载完成立刻预热，让「下载完→按住即用」无加载等待。
-    LaunchedEffect(sttState) {
-        if (sttState is SttModelManager.State.Ready) SherpaSpeechEngine.warmUp(context)
-    }
-    SettingsCard(modifier = Modifier.fillMaxWidth()) {
-        SttModelManager.MODELS.forEachIndexed { index, model ->
-            if (index > 0) RowDivider(leadingIcon = false)
-            val ready = remember(sttState, downloadingId, model.id) {
-                SttModelManager.isReady(context, model)
-            }
-            val downloading = downloadingId == model.id
-            val isSelected = selectedId == model.id
-            // 选中底跟其他侧栏行一样走淡入淡出，切换模型时不再整块硬闪。
-            val rowFill by animateColorAsState(
-                targetValue = if (isSelected) WandColors.brand.copy(alpha = 0.08f) else Color.Transparent,
-                animationSpec = WandMotion.respectMotion(
-                    !reduceMotionEnabled(),
-                    WandMotion.tweenFast(),
-                ),
-                label = "sttModelRowFill",
-            )
-            val status = when {
-                downloading && sttState is SttModelManager.State.Downloading ->
-                    "${sttState.percent}%"
-                ready -> "已就绪"
-                sttState is SttModelManager.State.Failed && selectedId == model.id ->
-                    "重试"
-                SttModelManager.isModelDownloaded(context, model) -> "需下载引擎"
-                else -> model.sizeLabel
-            }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(rowFill)
-                    .selectable(
-                        selected = isSelected,
-                        role = Role.RadioButton,
-                    ) {
-                        selectedId = model.id
-                        SttModelManager.setSelectedModel(context, model.id)
-                        if (SttModelManager.isReady(context, model)) {
-                            SherpaSpeechEngine.warmUp(context)
-                        } else {
-                            pendingDownload = model
-                        }
-                    }
-                    .padding(horizontal = 14.dp, vertical = 11.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                model.label,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = WandColors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                status,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = when {
-                                    downloading -> WandColors.brand
-                                    sttState is SttModelManager.State.Failed && selectedId == model.id -> WandColors.danger
-                                    ready -> WandColors.success
-                                    else -> WandColors.textSecondary
-                                },
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
-                        Text(
-                            model.description,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = WandColors.textSecondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 3.dp),
-                        )
-                    }
-                    RadioButton(
-                        selected = isSelected,
-                        onClick = null,
-                        colors = RadioButtonDefaults.colors(
-                            selectedColor = WandColors.brand,
-                            unselectedColor = WandColors.textMuted,
-                        ),
-                    )
-                }
-                if (downloading && sttState is SttModelManager.State.Downloading) {
-                    LinearProgressIndicator(
-                        progress = { sttState.percent / 100f },
-                        color = WandColors.brand,
-                        trackColor = WandColors.surfaceSoft,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                    )
-                }
-            }
-        }
-    }
-    pendingDownload?.let { model ->
-        WandDialog(
-            title = "启用本地语音识别？",
-            onDismissRequest = { pendingDownload = null },
-            icon = WandIcons.update,
-            confirm = WandDialogAction(
-                label = "开始下载",
-                onClick = {
-                    pendingDownload = null
-                    SttModelManager.startDownload(context, model)
-                },
-            ),
-            dismiss = WandDialogAction("取消", { pendingDownload = null }),
-        ) {
-            Text(
-                (if (!SpeechNativeLibrary.isInstalled(context)) "将从官方 GitHub 下载语音引擎（约 38 MB）；" else "") +
-                    (if (!SttModelManager.isModelDownloaded(context, model)) "下载「${model.label}」（${model.sizeLabel}）。" else "模型已在本机。") +
-                    "建议在 Wi‑Fi 下进行，启用后识别完全在本机离线运行。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = WandColors.textSecondary,
-            )
-        }
-    }
 }
 
 @Composable

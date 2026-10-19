@@ -10,4 +10,8 @@ The approved mobile design uses one animated identity above the message viewport
 - Progress details use a sheet instead of stacking a large inline panel above the IME. Full tool output, approvals, errors, retry/reconcile and stop routes retain their original owners.
 - `EmployeeAvatar(animated = true)` remains the only dynamic scene. Shared Web assets and fixed-identity mapping are read-only here. Reading/writing/thinking come from actual execution state, speaking from real playback. History and directory avatars use static rendering; group speakers retain identity.
 
-`ChatPreviewActivity` is an opt-in, credential-free native fixture, not a real service session. Its voice/receipt adapters are inert. Native regression covers focus borrowing, model search/select/cancel, picker return, text long press, hold/drag/cancel, ACK/error/unknown, attachments and fixed scene geometry. Preview screenshots and recordings must be labelled accordingly. Real speech/audio, user service permissions and physical-device acceptance require separate evidence.
+`ChatPreviewActivity` is an opt-in, credential-free native fixture, not a real service session. Its receipt adapters are inert. Native regression covers focus borrowing, model search/select/cancel, picker return, text long press, tap/drag, ACK/error/unknown, attachments and fixed scene geometry. Preview screenshots and recordings must be labelled accordingly. User service permissions and physical-device acceptance require separate evidence.
+
+### Composer surface hierarchy
+
+Execution progress and queued-message recovery sit above the writing surface. They never enlarge its rounded background. The collapsed composer is one 48 dp toolbar; the add action, draft entry and visible send/stop actions share that surface. Only visible actions reserve width, while the expanded editor retains full width. Queue summaries retain a 48 dp touch target. iOS uses the same hierarchy.
