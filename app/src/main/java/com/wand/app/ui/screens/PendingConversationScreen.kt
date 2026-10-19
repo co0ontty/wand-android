@@ -55,6 +55,8 @@ internal fun PendingConversationScreen(
     taskName: String? = null,
     initialEmployeeId: String? = null,
     initialCreateMode: Boolean = false,
+    creationStore: com.wand.app.ui.PendingCreationStore,
+    creationKey: String,
     drafts: SessionDraftStore,
     onCancel: () -> Unit,
     onCreated: (SessionSnapshot, Boolean) -> Unit,
@@ -151,8 +153,15 @@ internal fun PendingConversationScreen(
     var error by remember(draftKey) { mutableStateOf<String?>(null) }
     var createMode by remember(draftKey) { mutableStateOf(initialCreateMode) }
     var taskTitle by remember(draftKey) { mutableStateOf("") }
-    var creationStarted by remember(draftKey) {
-        mutableStateOf(drafts.pendingCreationUnconfirmed(draftKey) || drafts.pendingCreatedTask(draftKey) != null || drafts.pendingCreatedSession(draftKey) != null || drafts.pendingTaskWindow(draftKey) != null)
+    var persistedCreation by remember(creationStore, creationKey) {
+        mutableStateOf(creationStore.state(creationKey))
+    }
+    var creationStarted by remember(draftKey, creationKey) {
+        mutableStateOf(
+            persistedCreation.unconfirmed || persistedCreation.taskId != null || persistedCreation.sessionId != null ||
+                drafts.pendingCreationUnconfirmed(draftKey) || drafts.pendingCreatedTask(draftKey) != null ||
+                drafts.pendingCreatedSession(draftKey) != null || drafts.pendingTaskWindow(draftKey) != null,
+        )
     }
     var directoryOpen by remember(draftKey) { mutableStateOf(false) }
     var selectedCwd by remember(draftKey) { mutableStateOf(cwd.ifBlank { taskState.defaultCwd.orEmpty() }) }
@@ -208,8 +217,8 @@ internal fun PendingConversationScreen(
         }
     }
 
-    val hasKnownSession = drafts.pendingCreatedSession(draftKey) != null || drafts.pendingTaskWindow(draftKey) != null
-    val hasKnownTask = createMode && drafts.pendingCreatedTask(draftKey) != null
+    val hasKnownSession = drafts.pendingCreatedSession(draftKey) != null || drafts.pendingTaskWindow(draftKey) != null || persistedCreation.sessionId != null
+    val hasKnownTask = createMode && (drafts.pendingCreatedTask(draftKey) != null || persistedCreation.taskId != null)
     val canResumeCreation = hasKnownSession || hasKnownTask
     val canCreateEmptyShell = target.isShell && composer.draft.isBlank() &&
         composer.attachments.isEmpty() && composer.stagedAttachments.isEmpty()
@@ -224,18 +233,27 @@ internal fun PendingConversationScreen(
             scope.launch {
                 var creatingSession = false
                 try {
-                    val existingId = drafts.pendingCreatedSession(draftKey)
+                    persistedCreation = creationStore.state(creationKey)
+                    val existingId = drafts.pendingCreatedSession(draftKey) ?: persistedCreation.sessionId
                     val existingTaskWindow = drafts.pendingTaskWindow(draftKey)
-                    if (drafts.pendingCreationUnconfirmed(draftKey) && existingId == null && existingTaskWindow == null) {
+                    val existingTaskId = if (persistedCreation.unconfirmed && persistedCreation.operation == com.wand.app.ui.PendingCreationOperation.SESSION) {
+                        null
+                    } else drafts.pendingCreatedTask(draftKey) ?: persistedCreation.taskId
+                    if ((drafts.pendingCreationUnconfirmed(draftKey) || persistedCreation.unconfirmed) && existingId == null && existingTaskWindow == null) {
                         error("创建结果仍未确认，请刷新任务列表和会话列表后核对；不要重复发送。")
                         creationStarted = true
                         return@launch
                     }
-                    if (existingId != null || existingTaskWindow != null) creationStarted = true
+                    if (existingId != null || existingTaskWindow != null || existingTaskId != null) creationStarted = true
                     val targetWorkspaceId = workspaceId?.takeUnless { it == GLOBAL_WORKSPACE_ID }
                     val session = when {
-                        existingId != null -> api.getSession(existingId)
+                        existingId != null -> api.getSession(existingId).also {
+                            creationStore.sessionAccepted(creationKey, it.id)
+                            persistedCreation = creationStore.state(creationKey)
+                        }
                         existingTaskWindow != null -> api.getSession(existingTaskWindow).also {
+                            creationStore.sessionAccepted(creationKey, it.id)
+                            persistedCreation = creationStore.state(creationKey)
                             drafts.setPendingCreatedSession(draftKey, it.id)
                         }
                         else -> {
@@ -245,27 +263,40 @@ internal fun PendingConversationScreen(
                                 ?: targetWorkspaceId
                             creatingSession = true
                             val taskId = if (createMode) {
-                                val existingTaskId = drafts.pendingCreatedTask(draftKey)
-                                if (existingTaskId != null) existingTaskId else {
+                                if (existingTaskId != null) {
+                                    existingTaskId
+                                } else {
+                                    creationStore.markUnconfirmed(creationKey, com.wand.app.ui.PendingCreationOperation.TASK)
                                     drafts.setPendingCreationUnconfirmed(draftKey, true)
                                     try {
                                         taskState.createTask(
                                             name = taskTitle.trim(), cwd = cwdValue, worktree = false,
                                             workspaceId = actualWorkspaceId,
-                                        )?.task?.id?.also { drafts.setPendingCreatedTask(draftKey, it) }
+                                        )?.task?.id?.also {
+                                            creationStore.recordTaskAccepted(creationKey, it)
+                                            drafts.setPendingCreatedTask(draftKey, it)
+                                            persistedCreation = creationStore.state(creationKey)
+                                        }
                                             ?: run {
                                                 if (!taskState.mutationOutcomeUnconfirmed && !taskState.consumeTaskCreationOutcomeUnconfirmed()) {
+                                                    creationStore.definiteRejection(creationKey)
+                                                    persistedCreation = creationStore.state(creationKey)
                                                     drafts.setPendingCreationUnconfirmed(draftKey, false)
                                                 }
                                                 error(taskState.mutationError ?: "创建任务失败")
                                             }
                                     } catch (failure: Exception) {
                                         if (failure is kotlinx.coroutines.CancellationException) throw failure
-                                        if (!taskState.mutationOutcomeUnconfirmed) drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                        if (!taskState.mutationOutcomeUnconfirmed) {
+                                            creationStore.definiteRejection(creationKey)
+                                            persistedCreation = creationStore.state(creationKey)
+                                            drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                        }
                                         throw failure
                                     }
                                 }
                             } else workspaceTaskId
+                            creationStore.markUnconfirmed(creationKey, com.wand.app.ui.PendingCreationOperation.SESSION)
                             drafts.setPendingCreationUnconfirmed(draftKey, true)
                             val created = try {
                                 if (taskId != null) {
@@ -276,7 +307,11 @@ internal fun PendingConversationScreen(
                                         overrideCli = selectedEmployeeId != null && manuallySpecifiedExecution,
                                     )
                                         ?: run {
-                                            if (!taskState.mutationOutcomeUnconfirmed) drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                            if (!taskState.mutationOutcomeUnconfirmed) {
+                                                creationStore.definiteRejection(creationKey)
+                                                persistedCreation = creationStore.state(creationKey)
+                                                drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                            }
                                             error(taskState.mutationError ?: "创建任务会话失败")
                                         }
                                 } else {
@@ -287,15 +322,25 @@ internal fun PendingConversationScreen(
                                         employeeId = selectedEmployeeId,
                                         overrideCli = selectedEmployeeId != null && manuallySpecifiedExecution,
                                     ) ?: run {
-                                        if (!taskState.mutationOutcomeUnconfirmed) drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                        if (!taskState.mutationOutcomeUnconfirmed) {
+                                            creationStore.definiteRejection(creationKey)
+                                            persistedCreation = creationStore.state(creationKey)
+                                            drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                        }
                                         error(taskState.mutationError ?: "创建会话失败")
                                     }
                                 }
                             } catch (failure: Exception) {
                                 if (failure is kotlinx.coroutines.CancellationException) throw failure
-                                if (!taskState.mutationOutcomeUnconfirmed) drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                if (!taskState.mutationOutcomeUnconfirmed) {
+                                    creationStore.definiteRejection(creationKey)
+                                    persistedCreation = creationStore.state(creationKey)
+                                    drafts.setPendingCreationUnconfirmed(draftKey, false)
+                                }
                                 throw failure
                             }
+                            creationStore.sessionAccepted(creationKey, created.id)
+                            persistedCreation = creationStore.state(creationKey)
                             drafts.setPendingCreatedSession(draftKey, created.id)
                             drafts.setPendingCreationUnconfirmed(draftKey, false)
                             created
@@ -328,6 +373,8 @@ internal fun PendingConversationScreen(
                         return@launch
                     }
                     drafts.clearPendingCreation(draftKey)
+                    creationStore.clear(creationKey)
+                    persistedCreation = com.wand.app.ui.PendingCreationState()
                     onCreated(session, true)
                 } catch (failure: Exception) {
                     if (failure is kotlinx.coroutines.CancellationException) throw failure

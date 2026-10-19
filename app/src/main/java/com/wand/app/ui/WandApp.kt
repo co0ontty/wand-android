@@ -101,6 +101,8 @@ import com.wand.app.ui.screens.SettingsScreen
 import com.wand.app.ui.screens.SharedTaskListExpansionStore
 import com.wand.app.ui.screens.TaskListScreen
 import com.wand.app.ui.screens.TaskListState
+import com.wand.app.ui.SharedPreferencesPendingCreationPersistence
+import com.wand.app.ui.PendingCreationStore
 import com.wand.app.ui.screens.PadLandingScreen
 import com.wand.app.ui.screens.CollapsedDirectoryRail
 import com.wand.app.ui.screens.DirectoryPeekOverlay
@@ -216,6 +218,23 @@ private val ExpandedDetailMinWidth = 560.dp
 
 internal fun pendingConversationDraftKey(serverId: String, entryKey: String): String =
     "pending-conversation:$serverId:$entryKey"
+
+internal fun pendingCreationScopeKey(
+    serverId: String,
+    cwd: String?,
+    workspaceId: String?,
+    workspaceTaskId: String?,
+    employeeId: String?,
+): String {
+    val routeScope = when {
+        !workspaceTaskId.isNullOrBlank() -> "task:$workspaceTaskId"
+        !workspaceId.isNullOrBlank() -> "workspace:$workspaceId"
+        !cwd.isNullOrBlank() -> "cwd:$cwd"
+        else -> "global"
+    }
+    val scope = if (employeeId.isNullOrBlank()) routeScope else "$routeScope:employee:$employeeId"
+    return PendingCreationStore.stableKey(serverId, scope)
+}
 
 internal fun pendingConversationScreen(
     entry: String,
@@ -382,6 +401,9 @@ private fun ReadyContent(
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     // 任务聚合是根导航的数据真源。通知走 SessionWatcher，快捷方式用当前任务树。
+    val pendingCreationStore = remember(api.baseUrl, context) {
+        PendingCreationStore(SharedPreferencesPendingCreationPersistence(context))
+    }
     val taskState = remember(api, context) {
         TaskListState(api, SharedTaskListExpansionStore(context, api.baseUrl))
     }
@@ -606,6 +628,8 @@ private fun SessionDetailScreen(
             taskName = screen.taskName,
             initialEmployeeId = screen.initialEmployeeId,
             initialCreateMode = screen.initialCreateMode,
+            creationStore = pendingCreationStore,
+            creationKey = pendingCreationScopeKey(actions.connection.serverId, screen.cwd, screen.workspaceId, screen.workspaceTaskId, screen.initialEmployeeId),
             drafts = sessionDrafts,
             onCancel = { nav.pop() },
             onCreated = { created, submitDraft ->
