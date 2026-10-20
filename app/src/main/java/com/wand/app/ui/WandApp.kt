@@ -36,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -80,6 +81,8 @@ import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.isWandDarkTheme
 import com.wand.app.ui.theme.reduceMotionEnabled
 import com.wand.app.ui.screens.ChatScreen
+import com.wand.app.ui.screens.LocalActivityTimelinePreference
+import com.wand.app.ui.screens.rememberActivityTimelinePreference
 import com.wand.app.ui.screens.PendingConversationScreen
 import com.wand.app.ui.screens.AiTeamConversationRoute
 import com.wand.app.ui.screens.ConversationChatScreen
@@ -402,6 +405,8 @@ private fun ReadyContent(
     DisposableEffect(conversations) { conversations.start(); onDispose { conversations.shutdown() } }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
+    // 工具时间线自动展开是本机偏好：根部提供一次，所有会话界面共用同一份。
+    val timelinePreference = rememberActivityTimelinePreference()
     // 任务聚合是根导航的数据真源。通知走 SessionWatcher，快捷方式用当前任务树。
     val taskState = remember(api, context) {
         TaskListState(api, SharedTaskListExpansionStore(context, api.baseUrl))
@@ -508,48 +513,50 @@ private fun ReadyContent(
             openDetail(if (structured) Screen.Chat(sessionId) else Screen.PtyTerminal(sessionId))
         }
 
-        if (wideLayout) {
-            WideReadyContent(
-                shellState = shellState,
-                conversationState = conversations,
-                nav = nav,
-                api = api,
-                actions = actions,
-                sessionDrafts = sessionDrafts,
-                taskState = taskState,
-                listPaneWidth = listPaneWidth,
-                windowWidth = maxWidth,
-                sidebarCollapsed = sidebarCollapsed,
-                homeListMode = homeListMode,
-                onHomeListModeChange = changeHomeListMode,
-                selectedSessionId = nav.current.sessionIdOrNull(),
-                onOpenSession = openTaskSession,
-                onOpenBoardSession = openBoardSession,
-                onOpenRestoredSession = openSnapshot,
-                onOpenSettings = openSettings,
-                onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
-                onOpenWorkspaceTask = openWorkspaceTask,
-                onOpenBoardTaskDetail = openBoardTaskDetail,
-                showDetailBack = showDetailBack,
-            )
-        } else {
-            SinglePaneContent(
-                shellState = shellState,
-                conversationState = conversations,
-                nav = nav,
-                api = api,
-                actions = actions,
-                sessionDrafts = sessionDrafts,
-                taskState = taskState,
-                homeListMode = homeListMode,
-                onHomeListModeChange = changeHomeListMode,
-                onOpenSession = openTaskSession,
-                onOpenBoardSession = openBoardSession,
-                onOpenRestoredSession = openSnapshot,
-                onOpenSettings = openSettings,
-                onOpenWorkspaceTask = openWorkspaceTask,
-                onOpenBoardTaskDetail = openBoardTaskDetail,
-            )
+        CompositionLocalProvider(LocalActivityTimelinePreference provides timelinePreference) {
+            if (wideLayout) {
+                WideReadyContent(
+                    shellState = shellState,
+                    conversationState = conversations,
+                    nav = nav,
+                    api = api,
+                    actions = actions,
+                    sessionDrafts = sessionDrafts,
+                    taskState = taskState,
+                    listPaneWidth = listPaneWidth,
+                    windowWidth = maxWidth,
+                    sidebarCollapsed = sidebarCollapsed,
+                    homeListMode = homeListMode,
+                    onHomeListModeChange = changeHomeListMode,
+                    selectedSessionId = nav.current.sessionIdOrNull(),
+                    onOpenSession = openTaskSession,
+                    onOpenBoardSession = openBoardSession,
+                    onOpenRestoredSession = openSnapshot,
+                    onOpenSettings = openSettings,
+                    onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
+                    onOpenWorkspaceTask = openWorkspaceTask,
+                    onOpenBoardTaskDetail = openBoardTaskDetail,
+                    showDetailBack = showDetailBack,
+                )
+            } else {
+                SinglePaneContent(
+                    shellState = shellState,
+                    conversationState = conversations,
+                    nav = nav,
+                    api = api,
+                    actions = actions,
+                    sessionDrafts = sessionDrafts,
+                    taskState = taskState,
+                    homeListMode = homeListMode,
+                    onHomeListModeChange = changeHomeListMode,
+                    onOpenSession = openTaskSession,
+                    onOpenBoardSession = openBoardSession,
+                    onOpenRestoredSession = openSnapshot,
+                    onOpenSettings = openSettings,
+                    onOpenWorkspaceTask = openWorkspaceTask,
+                    onOpenBoardTaskDetail = openBoardTaskDetail,
+                )
+            }
         }
     }
 }
@@ -609,8 +616,6 @@ private fun SessionDetailScreen(
             workspaceName = screen.workspaceName,
             taskName = screen.taskName,
             isHapticEnabled = actions.settings.isHapticEnabled,
-            trafficTimelineMode = actions.settings.getTrafficTimelineMode,
-            onTrafficTimelineModeChange = actions.settings.setTrafficTimelineMode,
             drafts = sessionDrafts,
             initialSubmitDraft = screen.submitDraftOnOpen,
             taskSessions = taskSessions,

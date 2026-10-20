@@ -32,11 +32,17 @@ public class ServerStore {
     private static final String KEY_NOTIFICATION_VOLUME = "notification_volume";
     private static final String KEY_HAPTIC_ENABLED = "haptic_enabled";
     private static final String KEY_TRAFFIC_SAVING_ENABLED = "traffic_saving_enabled";
-    private static final String KEY_TRAFFIC_TIMELINE_MODE = "traffic_timeline_mode";
-    /** 实时工具时间线自动展开策略。all = 一直打开，wifi = 仅 Wi-Fi，never = 一直折叠。 */
+    public static final String KEY_TRAFFIC_TIMELINE_MODE = "traffic_timeline_mode";
+    /**
+     * 实时工具时间线自动展开策略，两个正交维度合成一个值：
+     * 开闭轴（自动展开 / 一直折叠）× 网络口径轴（所有网络 / 仅 Wi-Fi）。
+     * all = 一直打开，wifi = 仅 Wi-Fi 自动展开，never = 一直折叠（所有网络口径），
+     * never_wifi = 一直折叠（保留仅 Wi-Fi 口径）。
+     */
     public static final String TRAFFIC_TIMELINE_MODE_ALL = "all";
     public static final String TRAFFIC_TIMELINE_MODE_WIFI = "wifi";
     public static final String TRAFFIC_TIMELINE_MODE_NEVER = "never";
+    public static final String TRAFFIC_TIMELINE_MODE_NEVER_WIFI = "never_wifi";
     private static final String KEY_KEEP_ALIVE = "keep_alive_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
@@ -53,6 +59,11 @@ public class ServerStore {
 
     public ServerStore(Context context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    /** 设备级偏好存储：工具时间线策略是本机设置，所有会话界面共用同一份。 */
+    public static SharedPreferences preferences(Context context) {
+        return context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     }
 
     /** Returns all saved endpoints in most-recently-selected order. */
@@ -371,8 +382,25 @@ public class ServerStore {
         prefs.edit().putBoolean(KEY_HAPTIC_ENABLED, enabled).apply();
     }
 
-    /** 一直打开时所有网络显示；仅 Wi-Fi 时移动网络不显示；一直折叠时不自动展开。 */
+    /** 一直打开时所有网络自动展开；仅 Wi-Fi 时只有 Wi-Fi 自动展开；一直折叠时不自动展开。 */
     public String getTrafficTimelineMode() {
+        return trafficTimelineMode(prefs);
+    }
+
+    public void setTrafficTimelineMode(String mode) {
+        setTrafficTimelineMode(prefs, mode);
+    }
+
+    /** 无实例依赖的读取：会话界面直接取本机当前策略。 */
+    public static String trafficTimelineMode(Context context) {
+        return trafficTimelineMode(preferences(context));
+    }
+
+    public static void setTrafficTimelineMode(Context context, String mode) {
+        setTrafficTimelineMode(preferences(context), mode);
+    }
+
+    private static String trafficTimelineMode(SharedPreferences prefs) {
         if (prefs.contains(KEY_TRAFFIC_TIMELINE_MODE)) {
             return normalizeTrafficTimelineMode(prefs.getString(
                 KEY_TRAFFIC_TIMELINE_MODE,
@@ -384,7 +412,7 @@ public class ServerStore {
         return legacySaving ? TRAFFIC_TIMELINE_MODE_WIFI : TRAFFIC_TIMELINE_MODE_ALL;
     }
 
-    public void setTrafficTimelineMode(String mode) {
+    private static void setTrafficTimelineMode(SharedPreferences prefs, String mode) {
         prefs.edit()
             .putString(KEY_TRAFFIC_TIMELINE_MODE, normalizeTrafficTimelineMode(mode))
             .remove(KEY_TRAFFIC_SAVING_ENABLED)
@@ -392,16 +420,52 @@ public class ServerStore {
     }
 
     private static String normalizeTrafficTimelineMode(String mode) {
-        if (TRAFFIC_TIMELINE_MODE_ALL.equals(mode) || TRAFFIC_TIMELINE_MODE_NEVER.equals(mode)) {
+        if (TRAFFIC_TIMELINE_MODE_ALL.equals(mode)
+            || TRAFFIC_TIMELINE_MODE_WIFI.equals(mode)
+            || TRAFFIC_TIMELINE_MODE_NEVER.equals(mode)
+            || TRAFFIC_TIMELINE_MODE_NEVER_WIFI.equals(mode)) {
             return mode;
         }
         return TRAFFIC_TIMELINE_MODE_WIFI;
     }
 
+    /** 已知策略值；未知值一律按保守口径处理，不当自动展开。 */
+    public static boolean isKnownTrafficTimelineMode(String mode) {
+        return TRAFFIC_TIMELINE_MODE_ALL.equals(mode)
+            || TRAFFIC_TIMELINE_MODE_WIFI.equals(mode)
+            || TRAFFIC_TIMELINE_MODE_NEVER.equals(mode)
+            || TRAFFIC_TIMELINE_MODE_NEVER_WIFI.equals(mode);
+    }
+
+    /** 网络口径轴：所有网络 or 仅 Wi-Fi。折叠档沿用最近一次选定的口径。 */
+    public static String trafficTimelineScope(String mode) {
+        if (TRAFFIC_TIMELINE_MODE_ALL.equals(mode) || TRAFFIC_TIMELINE_MODE_NEVER.equals(mode)) {
+            return TRAFFIC_TIMELINE_MODE_ALL;
+        }
+        return TRAFFIC_TIMELINE_MODE_WIFI;
+    }
+
+    /** 开闭轴：true = 一直折叠。 */
+    public static boolean trafficTimelineCollapsed(String mode) {
+        return TRAFFIC_TIMELINE_MODE_NEVER.equals(mode) || TRAFFIC_TIMELINE_MODE_NEVER_WIFI.equals(mode);
+    }
+
+    /** 「一直折叠」档：保留当前网络口径，手动收放不吞掉用户的流量条件。 */
+    public static String trafficTimelineCollapsedMode(String mode) {
+        return TRAFFIC_TIMELINE_MODE_WIFI.equals(trafficTimelineScope(mode))
+            ? TRAFFIC_TIMELINE_MODE_NEVER_WIFI
+            : TRAFFIC_TIMELINE_MODE_NEVER;
+    }
+
+    /** 对话内手动收放：只翻转开闭轴，网络口径保持不变。 */
+    public static String trafficTimelineModeAfterToggle(String mode, boolean open) {
+        return open ? trafficTimelineScope(mode) : trafficTimelineCollapsedMode(mode);
+    }
+
     /** @deprecated 使用 getTrafficTimelineMode。 */
     @Deprecated
     public boolean isTrafficSavingEnabled() {
-        return TRAFFIC_TIMELINE_MODE_WIFI.equals(getTrafficTimelineMode());
+        return TRAFFIC_TIMELINE_MODE_WIFI.equals(trafficTimelineScope(getTrafficTimelineMode()));
     }
 
     /** @deprecated 使用 setTrafficTimelineMode。 */

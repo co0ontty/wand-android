@@ -346,8 +346,6 @@ fun ChatScreen(
     workspaceName: String? = null,
     taskName: String? = null,
     isHapticEnabled: () -> Boolean,
-    trafficTimelineMode: () -> String = { "wifi" },
-    onTrafficTimelineModeChange: (String) -> Unit = {},
     drafts: SessionDraftStore,
     initialSubmitDraft: Boolean = false,
     taskSessions: List<WorkspaceSessionSummary> = emptyList(),
@@ -356,15 +354,6 @@ fun ChatScreen(
     onBack: () -> Unit,
 ) {
     val store = remember(sessionId, api) { ChatStore(sessionId, api) }
-    // 对话内手动收放会改写全局偏好，这里持有同一份状态，让本屏其它活动组立即跟随。
-    var activityTimelineMode by remember(sessionId) { mutableStateOf(trafficTimelineMode()) }
-    val latestTimelineModeChange = rememberUpdatedState(onTrafficTimelineModeChange)
-    val setActivityTimelineMode = remember {
-        { mode: String ->
-            activityTimelineMode = mode
-            latestTimelineModeChange.value(mode)
-        }
-    }
     val composerScope = rememberCoroutineScope()
     val resources = remember(sessionId, api) { com.wand.app.ui.PiResourcesController(sessionId, api, composerScope) }
     DisposableEffect(resources) { onDispose { resources.dismiss() } }
@@ -819,8 +808,6 @@ fun ChatScreen(
         LocalChatWorkingDirectory provides store.snapshot?.cwd,
         LocalCardExpandDefaults provides store.cardDefaults,
         LocalActivityPanelReveal provides revealActivityPanel,
-        LocalActivityTrafficTimelineMode provides activityTimelineMode,
-        LocalActivityTrafficTimelineModeSetter provides setActivityTimelineMode,
         LocalChatViewportHeightPx provides listViewportHeightPx,
     ) {
     val avatarActivity = remember(store.messages, store.isResponding, store.status, store.pendingEscalation, store.legacyPermissionPrompt) {

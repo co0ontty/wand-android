@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -114,14 +115,51 @@ private val ACTIVITY_CONTENT_START = ACTIVITY_ROW_START + ACTIVITY_DOT_BOX + ACT
 private val ACTIVITY_SUMMARY_START = ACTIVITY_PANEL_PADDING + ACTIVITY_ROW_START
 private val ACTIVITY_SUMMARY_END = ACTIVITY_PANEL_PADDING + ACTIVITY_ROW_END
 
-/** Android 聊天树提供的实时工具时间线网络范围。 */
-internal val LocalActivityTrafficTimelineMode = staticCompositionLocalOf {
-    ServerStore.TRAFFIC_TIMELINE_MODE_WIFI
+/**
+ * 工具时间线自动展开偏好：设备级设置（SharedPreferences），所有会话界面共享同一份。
+ * 设置页改动靠偏好监听同步回来，各界面不会各存一份。
+ */
+internal class ActivityTimelinePreference(context: Context) {
+    private val appContext = context.applicationContext
+    internal val prefs: SharedPreferences = ServerStore.preferences(appContext)
+
+    /** 当前策略；折叠与自动展开共用一串取值，靠 [ServerStore.trafficTimelineScope] 拆出网络口径。 */
+    var mode: String by mutableStateOf(ServerStore.trafficTimelineMode(appContext))
+        private set
+
+    /** 对话内手动收放：只翻转开闭轴，不动网络口径。 */
+    fun toggleTo(open: Boolean) {
+        val next = ServerStore.trafficTimelineModeAfterToggle(mode, open)
+        if (next == mode) return
+        mode = next
+        ServerStore.setTrafficTimelineMode(appContext, next)
+    }
+
+    /** 外部（设置页）改动后刷新当前值。 */
+    fun refresh() {
+        mode = ServerStore.trafficTimelineMode(appContext)
+    }
 }
 
-/** 对话内手动收放工具时间线时，把结果同步成全局偏好（一直打开 / 一直折叠）。 */
-internal val LocalActivityTrafficTimelineModeSetter = staticCompositionLocalOf<(String) -> Unit> {
-    { _ -> }
+/** 应用根部提供的工具时间线偏好；会话、团队会话等界面共用同一份。 */
+internal val LocalActivityTimelinePreference = staticCompositionLocalOf<ActivityTimelinePreference> {
+    error("工具时间线偏好尚未提供：必须在应用根部提供 LocalActivityTimelinePreference。")
+}
+
+/** 记住设备级偏好并订阅变化：设置页改完立刻回到会话界面就生效。 */
+@Composable
+internal fun rememberActivityTimelinePreference(): ActivityTimelinePreference {
+    val context = LocalContext.current
+    val preference = remember(context) { ActivityTimelinePreference(context) }
+    DisposableEffect(preference) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == ServerStore.KEY_TRAFFIC_TIMELINE_MODE) preference.refresh()
+        }
+        preference.prefs.registerOnSharedPreferenceChangeListener(listener)
+        preference.refresh()
+        onDispose { preference.prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    return preference
 }
 
 @Composable
@@ -328,9 +366,12 @@ internal fun toolActivityKind(use: ContentBlock.ToolUse): String {
     }
 }
 
-internal fun activityTimelineEnabled(mode: String, wifiConnected: Boolean): Boolean =
-    mode == ServerStore.TRAFFIC_TIMELINE_MODE_ALL ||
-        (mode == ServerStore.TRAFFIC_TIMELINE_MODE_WIFI && wifiConnected)
+/** 是否按当前策略自动展开：一直折叠档永不自动展开，未知值也不自动展开，其余按网络口径判断。 */
+internal fun activityTimelineEnabled(mode: String, wifiConnected: Boolean): Boolean {
+    if (!ServerStore.isKnownTrafficTimelineMode(mode)) return false
+    if (ServerStore.trafficTimelineCollapsed(mode)) return false
+    return ServerStore.trafficTimelineScope(mode) == ServerStore.TRAFFIC_TIMELINE_MODE_ALL || wifiConnected
+}
 
 /** 只有普通命令仍缺结果时才保留执行中状态；不依赖它是不是段的最后一个块。 */
 internal fun activityHasPendingCommand(items: List<DisplayItem>): Boolean = items.any { item ->
@@ -592,8 +633,8 @@ internal fun ToolActivitySummary(
     if (categories.isEmpty() && thinking.isEmpty() && !thinkingPlaceholder) return
     val key = cardFoldKey(LocalChatSessionId.current, scope)
     val wifiConnected = rememberWifiConnected()
-    val trafficTimelineMode = LocalActivityTrafficTimelineMode.current
-    val setTimelinePreference = LocalActivityTrafficTimelineModeSetter.current
+    val timelinePreference = LocalActivityTimelinePreference.current
+    val trafficTimelineMode = timelinePreference.mode
     // 网络策略只控制自动展开，手动查看历史不受网络与新旧活动限制。
     val autoTimelineEnabled = activityTimelineEnabled(trafficTimelineMode, wifiConnected)
     var menuOpen by rememberSaveable(key) { mutableStateOf(false) }
@@ -696,12 +737,9 @@ internal fun ToolActivitySummary(
                     menuOpen = nextOpen
                     drawerManuallyToggled = true
                     inspectedEntries = emptySet()
-                    // 手动打开 = 全局一直打开；手动收起 = 全局一直折叠。
-                    // 「仅 Wi-Fi」只由设置页手动选择，对话内收放不写回该档。
-                    setTimelinePreference(
-                        if (nextOpen) ServerStore.TRAFFIC_TIMELINE_MODE_ALL
-                        else ServerStore.TRAFFIC_TIMELINE_MODE_NEVER,
-                    )
+                    // 手动收放同步全局开闭偏好：只翻「自动展开 / 一直折叠」，
+                    // 用户选过的网络口径（仅 Wi-Fi）不被这一下吞掉。
+                    timelinePreference.toggleTo(nextOpen)
                     // 手动查看历史从上次位置开始，只有当前运行组才跟到最新。
                     if (nextOpen) pinnedToLatest = group.running
                     if (listItemKey.isNotBlank()) revealPanel(listItemKey)

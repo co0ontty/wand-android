@@ -280,7 +280,7 @@ fun SettingsScreen(
                                 SettingsDestination.Traffic -> {
                                     SettingsSection(
                                         title = "",
-                                        description = "选择当前工具活动自动展开的网络范围。历史详情始终可点击查看。",
+                                        description = "选择工具时间线自动展开的方式：自动展开的网络范围，以及是否一直折叠。历史详情始终可点击查看。",
                                     ) {
                                         SettingsCard(modifier = Modifier.fillMaxWidth()) {
                                             TrafficTimelineModePicker(
@@ -629,10 +629,17 @@ private fun TrafficTimelineModePicker(
     ) {
         SettingBlockHeader(
             title = "工具时间线自动展开",
-            supportingText = "仅 Wi-Fi：有 Wi-Fi 时自动展开；一直打开：所有网络都自动展开；一直折叠：只在点开时展开。历史详情始终可点击查看。",
+            supportingText = "仅 Wi-Fi：有 Wi-Fi 时自动展开；一直打开：所有网络都自动展开；一直折叠：只在点开时展开。历史详情始终可点击查看。在对话里手动收放会同步这里的开关，但不会改掉你选过的网络范围。",
             icon = WandIcons.usage,
             tint = WandColors.info,
         )
+        // 存储值是「开闭轴 × 网络范围轴」的组合，界面上仍是三档；
+        // 选「一直折叠」保留当前网络范围，对话内手动收放同理。
+        val selectedOption = if (ServerStore.trafficTimelineCollapsed(selected)) {
+            ServerStore.TRAFFIC_TIMELINE_MODE_NEVER
+        } else {
+            ServerStore.trafficTimelineScope(selected)
+        }
         val options = listOf(
             ServerStore.TRAFFIC_TIMELINE_MODE_WIFI to "仅 Wi-Fi",
             ServerStore.TRAFFIC_TIMELINE_MODE_ALL to "一直打开",
@@ -641,8 +648,16 @@ private fun TrafficTimelineModePicker(
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             options.forEachIndexed { index, (mode, label) ->
                 SegmentedButton(
-                    selected = selected == mode,
-                    onClick = { onSelected(mode) },
+                    selected = selectedOption == mode,
+                    onClick = {
+                        onSelected(
+                            if (mode == ServerStore.TRAFFIC_TIMELINE_MODE_NEVER) {
+                                ServerStore.trafficTimelineCollapsedMode(selected)
+                            } else {
+                                mode
+                            },
+                        )
+                    },
                     shape = SegmentedButtonDefaults.itemShape(index, options.size),
                     colors = SegmentedButtonDefaults.colors(
                         activeContainerColor = WandColors.selectedFill,
