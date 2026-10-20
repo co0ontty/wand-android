@@ -58,6 +58,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.ui.FullscreenImageViewer
+import com.wand.app.ui.ViewerImagePage
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.TextPreviewDialog
 import com.wand.app.ui.WandImage
@@ -538,7 +539,7 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
     serverFilePreview?.let { previewPath ->
         if (WandImage.isImagePath(previewPath)) {
             FullscreenImageViewer(
-                path = previewPath,
+                pages = listOf(ViewerImagePage(previewPath, directUrl = false)),
                 baseUrl = baseUrl,
                 onDismiss = { serverFilePreview = null },
             )

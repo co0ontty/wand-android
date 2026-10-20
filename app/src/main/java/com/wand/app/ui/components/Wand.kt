@@ -122,7 +122,7 @@ internal fun WandStatusTone.statusTextColor(): Color = when (this) {
 
 /** 呼吸图层（running / thinking / 等待输入）；不需要呼吸的色调不挂 graphicsLayer。 */
 @Composable
-private fun Modifier.statusBreath(): Modifier {
+internal fun Modifier.statusBreath(): Modifier {
     if (reduceMotionEnabled()) return this
     val transition = rememberInfiniteTransition(label = "statusDot")
     val alpha by transition.animateFloat(

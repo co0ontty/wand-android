@@ -610,6 +610,7 @@ private fun SessionDetailScreen(
             taskName = screen.taskName,
             isHapticEnabled = actions.settings.isHapticEnabled,
             trafficTimelineMode = actions.settings.getTrafficTimelineMode,
+            onTrafficTimelineModeChange = actions.settings.setTrafficTimelineMode,
             drafts = sessionDrafts,
             initialSubmitDraft = screen.submitDraftOnOpen,
             taskSessions = taskSessions,
@@ -818,6 +819,46 @@ private fun SessionDetailScreen(
             onOpenTaskBoard = { nav.push(Screen.TaskBoard(screen.workspaceId)) },
             onTaskChanged = { scope.launch { taskState.refreshAfterMutation() } },
             onOpenIm = onOpenIm,
+            emptyTaskContent = { cwd ->
+                val context = LocalContext.current
+                val pendingCreationStore = remember(api.baseUrl, context) {
+                    PendingCreationStore(SharedPreferencesPendingCreationPersistence(context))
+                }
+                val entryScope = pendingConversationEntryScope(screen.workspaceId, screen.taskId, cwd)
+                PendingConversationScreen(
+                    api = api,
+                    taskState = taskState,
+                    draftKey = pendingConversationDraftKey(actions.connection.serverId, entryScope),
+                    cwd = cwd,
+                    workspaceId = screen.workspaceId,
+                    workspaceTaskId = screen.taskId,
+                    taskName = screen.taskName,
+                    creationStore = pendingCreationStore,
+                    creationKey = pendingCreationScopeKey(actions.connection.serverId, entryScope),
+                    drafts = sessionDrafts,
+                    onCancel = {},
+                    onCreated = { created, submitDraft ->
+                        scope.launch { taskState.refreshAfterMutation() }
+                        if (!created.isStructured) {
+                            nav.push(Screen.PtyTerminal(
+                                created.id,
+                                taskName = screen.taskName,
+                                workspaceId = screen.workspaceId,
+                                taskId = screen.taskId,
+                            ))
+                        } else {
+                            nav.push(Screen.Chat(
+                                created.id,
+                                taskName = screen.taskName,
+                                workspaceId = screen.workspaceId,
+                                taskId = screen.taskId,
+                                submitDraftOnOpen = submitDraft,
+                            ))
+                        }
+                    },
+                    embedded = true,
+                )
+            },
         )
     }
 }

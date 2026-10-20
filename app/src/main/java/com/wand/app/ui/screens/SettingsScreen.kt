@@ -628,14 +628,15 @@ private fun TrafficTimelineModePicker(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         SettingBlockHeader(
-            title = "实时内容范围",
-            supportingText = "关闭：所有网络显示；仅 Wi-Fi：移动网络隐藏实时输出。",
+            title = "工具时间线自动展开",
+            supportingText = "仅 Wi-Fi：有 Wi-Fi 时自动展开；一直打开：所有网络都自动展开；一直折叠：只在点开时展开。历史详情始终可点击查看。",
             icon = WandIcons.usage,
             tint = WandColors.info,
         )
         val options = listOf(
-            ServerStore.TRAFFIC_TIMELINE_MODE_ALL to "关闭",
             ServerStore.TRAFFIC_TIMELINE_MODE_WIFI to "仅 Wi-Fi",
+            ServerStore.TRAFFIC_TIMELINE_MODE_ALL to "一直打开",
+            ServerStore.TRAFFIC_TIMELINE_MODE_NEVER to "一直折叠",
         )
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             options.forEachIndexed { index, (mode, label) ->

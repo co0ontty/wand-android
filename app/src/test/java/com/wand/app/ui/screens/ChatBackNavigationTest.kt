@@ -29,7 +29,8 @@ class ChatBackNavigationTest {
         assertTrue(timeline.contains("menuOpen = nextOpen"))
         assertTrue(timeline.contains("ToolActivityReveal(menuOpen, from = Alignment.Top)"))
         assertFalse(timeline.contains("enabled = drawerVisible"))
-        assertTrue(timeline.contains("menuOpen = !menuOpen"))
+        assertTrue(timeline.contains("val nextOpen = !menuOpen"))
+        assertTrue(timeline.contains("menuOpen = nextOpen"))
         assertTrue(timeline.contains("open = !open"))
     }
 

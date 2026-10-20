@@ -173,6 +173,7 @@ class TaskBoardModelsTest {
 
     @Test
     fun statusAndPriorityLabelsCoverBoardColumns() {
+        assertEquals("待立项", boardTaskStatusLabel("backlog"))
         assertEquals("待办", boardTaskStatusLabel("todo"))
         assertEquals("进行中", boardTaskStatusLabel("doing"))
         assertEquals("已完成", boardTaskStatusLabel("done"))

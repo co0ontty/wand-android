@@ -24,6 +24,9 @@ internal val FloatingControlRowInset = 4.dp
 internal val ChatFloatingControlsClearance = FloatingControlTouch + FloatingControlRowInset * 2
 /** Shared center line for the back button, the three logos, and the companion. */
 internal val FloatingControlCenter = FloatingControlRowInset + FloatingControlTouch / 2
+/** 顶栏内容区左右各自让开的宽度：一边是返回键，另一边是文件与更多按钮。 */
+internal val FloatingControlsBackInset = 12.dp + FloatingControlTouch
+internal val FloatingControlsActionsInset = 12.dp + FloatingControlTouch * 2 + FloatingControlRowInset
 
 /** Floating controls have 48dp targets; the reading viewport clears them without a toolbar. */
 @Composable

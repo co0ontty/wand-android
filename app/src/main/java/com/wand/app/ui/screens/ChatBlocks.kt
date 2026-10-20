@@ -112,7 +112,8 @@ import com.wand.app.data.summaryText
 import com.wand.app.ui.AskUserSelectionState
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.WandAsyncImage
-import com.wand.app.ui.WandAsyncToolImage
+import com.wand.app.ui.WandImageFigure
+import com.wand.app.ui.WandToolImageFigure
 import com.wand.app.ui.WandFileChip
 import com.wand.app.ui.WandImage
 import com.wand.app.ui.parseUserAttachmentText
@@ -2365,9 +2366,16 @@ private fun UserBubble(turn: ConversationTurn, compact: Boolean, showTime: Boole
         }
         // 附件缩略图 / 文件块：右对齐贴在气泡上方（对齐网页 user-attachments 块在正文之上）。
         if (parsed.paths.isNotEmpty() && baseUrl.isNotEmpty()) {
+            // 同一气泡内的图片组成一组，全屏后可以左右滑动切换。
+            val images = parsed.paths.filter { WandImage.isImagePath(it) }
             parsed.paths.forEach { path ->
                 if (WandImage.isImagePath(path)) {
-                    WandAsyncImage(path = path, baseUrl = baseUrl)
+                    WandAsyncImage(
+                        path = path,
+                        baseUrl = baseUrl,
+                        group = images,
+                        groupIndex = images.indexOf(path).coerceAtLeast(0),
+                    )
                 } else {
                     WandFileChip(path = path)
                 }
@@ -3265,6 +3273,12 @@ fun ToolCard(
             }
         }
     }
+    // 图片结果直出：只保留文件名与完整图片，不再套工具调用卡片。
+    val imageSources = toolImageSources(use, result)
+    if (imageSources.isNotEmpty()) {
+        ToolImageFigureResult(use, imageSources, directSources = result?.images?.isNotEmpty() == true)
+        return
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -3352,30 +3366,75 @@ fun ToolCard(
                 )
             }
         }
-        // 工具结果内联图片（服务端归一化后的取图 URL / data URI）优先：常驻缩略图，
-        // 不藏在展开区里。没有内联图时退回 Read 按路径取图（对齐网页）。
-        val baseUrl = LocalServerBaseUrl.current
-        val resultImages = result?.images.orEmpty()
-        if (resultImages.isNotEmpty()) {
-            resultImages.forEach { source ->
-                WandAsyncToolImage(
-                    source = source,
-                    baseUrl = baseUrl,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                )
-            }
-        } else if (use.name == "Read") {
-            val imgPath = readImagePath(use.input)
-            if (imgPath != null && baseUrl.isNotEmpty()) {
-                WandAsyncImage(
-                    path = imgPath,
-                    baseUrl = baseUrl,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                )
-            }
-        }
         if (!decision) body()
     }
+}
+
+/** 工具图片结果直出：每张图上方只留文件名，下面按原始比例完整展示。 */
+@Composable
+private fun ToolImageFigureResult(
+    use: ContentBlock.ToolUse,
+    sources: List<String>,
+    directSources: Boolean,
+) {
+    val baseUrl = LocalServerBaseUrl.current
+    val inputPath = if (use.name == "Read") readImagePath(use.input) else null
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        sources.forEachIndexed { index, source ->
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    toolImageDisplayName(inputPath, source, index, sources.size),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = WandColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (directSources) {
+                    WandToolImageFigure(
+                        source = source,
+                        baseUrl = baseUrl,
+                        group = sources,
+                        groupIndex = index,
+                    )
+                } else {
+                    WandImageFigure(
+                        path = source,
+                        baseUrl = baseUrl,
+                        group = sources,
+                        groupIndex = index,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 工具结果只有图片时直出：优先服务端归一化图片，其次 Read 读到的图片路径。 */
+internal fun toolImageSources(use: ContentBlock.ToolUse, result: ContentBlock.ToolResult?): List<String> {
+    if (result == null || result.isError) return emptyList()
+    if (result.images.isNotEmpty()) return result.images
+    if (use.name == "Read") return listOfNotNull(readImagePath(use.input))
+    return emptyList()
+}
+
+/** 工具图片展示名：单张 Read 图优先用读取到的文件名，其余取图片 URL 的文件名。 */
+internal fun toolImageDisplayName(inputPath: String?, source: String, index: Int, total: Int): String {
+    val fallback = if (total > 1) "图片 ${index + 1}" else "图片"
+    if (total == 1 && !inputPath.isNullOrEmpty()) {
+        val name = inputPath.substringAfterLast('/')
+        if (name.isNotEmpty()) return name
+    }
+    if (source.startsWith("data:")) return fallback
+    val clean = source.substringBefore('?').substringBefore('#')
+    val last = clean.substringAfterLast('/')
+    return last.ifEmpty { fallback }
 }
 
 /** 从 Read 工具入参取图片路径（file_path / path），非图片返回 null（对齐网页 inline-tool-image 判定）。 */

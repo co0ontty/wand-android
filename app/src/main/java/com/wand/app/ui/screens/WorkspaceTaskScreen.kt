@@ -3,8 +3,6 @@ package com.wand.app.ui.screens
 import android.widget.Toast
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,7 +45,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,8 +76,8 @@ import kotlinx.coroutines.delay
 import androidx.lifecycle.repeatOnLifecycle
 
 /**
- * 任务详情宿主页。空任务显示欢迎态（项目名 / 任务名 / cwd / 唯一主操作「选择 Agent 或空白终端」），
- * 不自动创建会话。已有会话按创建顺序稳定排序，正文一次只承载一个 Chat 或 PTY。
+ * 任务详情宿主页。空任务直接承载那段默认的空白对话（由 [emptyTaskContent] 注入），
+ * 不单独维护任务欢迎页。已有会话按创建顺序稳定排序，正文一次只承载一个 Chat 或 PTY。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,6 +95,7 @@ fun WorkspaceTaskScreen(
     onOpenTaskBoard: () -> Unit = {},
     onTaskChanged: () -> Unit = {},
     onOpenIm: (() -> Unit)? = null,
+    emptyTaskContent: (@Composable (cwd: String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val workflow = remember(api, taskId) { WorkspaceWorkflow(api, scope) }
@@ -334,11 +331,11 @@ fun WorkspaceTaskScreen(
                 )
             }
             is WorkspaceTaskState.EmptySessions -> {
-                EmptyTaskWelcome(
-                    cwd = state.cwd,
-                    onCopyCwd = ::copyTaskCwd,
-                    onChooseTarget = { openSheet() },
-                )
+                if (emptyTaskContent != null) {
+                    emptyTaskContent(state.cwd)
+                } else {
+                    Box(Modifier.fillMaxSize())
+                }
             }
             is WorkspaceTaskState.Content -> {
                 TaskSessionList(
@@ -399,48 +396,6 @@ fun WorkspaceTaskScreen(
                 onConfirm = { confirmCreate() },
                 onDismiss = { if (!creating) dismissSheet() },
             )
-        }
-    }
-}
-
-// MARK: - 空任务欢迎态
-
-@Composable
-private fun EmptyTaskWelcome(
-    cwd: String,
-    onCopyCwd: () -> Unit,
-    onChooseTarget: () -> Unit,
-) {
-    Box(
-        modifier = Modifier.fillMaxSize().navigationBarsPadding()
-            .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
-        contentAlignment = Alignment.TopCenter,
-    ) {
-        Column(
-            modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text("开始这个任务", style = MaterialTheme.typography.titleLarge,
-                color = WandColors.textPrimary, fontWeight = FontWeight.SemiBold)
-            Text("选择员工或执行工具，创建第一个工作窗口。",
-                style = MaterialTheme.typography.bodyMedium, color = WandColors.textSecondary)
-            Row(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                    .clickable(onClick = onCopyCwd).padding(vertical = 12.dp)
-                    .semantics { contentDescription = "任务目录 $cwd，点击复制" },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(WandIcons.folder, contentDescription = null,
-                    tint = WandColors.textMuted, modifier = Modifier.size(20.dp))
-                Text(cwd, style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary,
-                    fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f))
-                Icon(WandIcons.copy, contentDescription = null,
-                    tint = WandColors.textMuted, modifier = Modifier.size(18.dp))
-            }
-            WandButton(label = "选择执行对象", onClick = onChooseTarget,
-                icon = WandIcons.add, modifier = Modifier.fillMaxWidth())
         }
     }
 }

@@ -33,9 +33,10 @@ public class ServerStore {
     private static final String KEY_HAPTIC_ENABLED = "haptic_enabled";
     private static final String KEY_TRAFFIC_SAVING_ENABLED = "traffic_saving_enabled";
     private static final String KEY_TRAFFIC_TIMELINE_MODE = "traffic_timeline_mode";
-    /** 实时工具时间线的网络范围。all = 关闭限制，wifi = 仅 Wi-Fi。 */
+    /** 实时工具时间线自动展开策略。all = 一直打开，wifi = 仅 Wi-Fi，never = 一直折叠。 */
     public static final String TRAFFIC_TIMELINE_MODE_ALL = "all";
     public static final String TRAFFIC_TIMELINE_MODE_WIFI = "wifi";
+    public static final String TRAFFIC_TIMELINE_MODE_NEVER = "never";
     private static final String KEY_KEEP_ALIVE = "keep_alive_enabled";
     private static final String KEY_BETA_CHANNEL = "update_beta_channel";
     private static final String KEY_APPEARANCE_MODE = "wand.appearanceMode";
@@ -370,7 +371,7 @@ public class ServerStore {
         prefs.edit().putBoolean(KEY_HAPTIC_ENABLED, enabled).apply();
     }
 
-    /** 关闭限制时所有网络显示；仅 Wi-Fi 时移动网络不显示。 */
+    /** 一直打开时所有网络显示；仅 Wi-Fi 时移动网络不显示；一直折叠时不自动展开。 */
     public String getTrafficTimelineMode() {
         if (prefs.contains(KEY_TRAFFIC_TIMELINE_MODE)) {
             return normalizeTrafficTimelineMode(prefs.getString(
@@ -391,9 +392,10 @@ public class ServerStore {
     }
 
     private static String normalizeTrafficTimelineMode(String mode) {
-        return TRAFFIC_TIMELINE_MODE_ALL.equals(mode)
-            ? TRAFFIC_TIMELINE_MODE_ALL
-            : TRAFFIC_TIMELINE_MODE_WIFI;
+        if (TRAFFIC_TIMELINE_MODE_ALL.equals(mode) || TRAFFIC_TIMELINE_MODE_NEVER.equals(mode)) {
+            return mode;
+        }
+        return TRAFFIC_TIMELINE_MODE_WIFI;
     }
 
     /** @deprecated 使用 getTrafficTimelineMode。 */

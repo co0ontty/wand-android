@@ -20,6 +20,9 @@ class ActivityGroupingTest {
         assertTrue(activityTimelineEnabled("all", wifiConnected = true))
         assertFalse(activityTimelineEnabled("wifi", wifiConnected = false))
         assertTrue(activityTimelineEnabled("wifi", wifiConnected = true))
+        assertFalse(activityTimelineEnabled("never", wifiConnected = false))
+        assertFalse(activityTimelineEnabled("never", wifiConnected = true))
+        assertFalse(activityTimelineEnabled("unknown", wifiConnected = true))
     }
 
     @Test

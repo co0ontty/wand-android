@@ -129,7 +129,7 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
         ConversationTurn("assistant", listOf(ContentBlock.Text("已整理页面布局。消息内容保持清晰，附件和模型设置继续沿用现有入口。\n\n### 当前检查\n- 长回复和代码块可以正常阅读、复制。\n- 键盘打开后，输入区随系统上移。\n- 执行过程按真实工具状态展示。\n\n```typescript\nconst status = tool.finished ? \"idle\" : \"reading\";\n// 横向滚动保留完整的长代码：doNotTruncateImportantOutput();\n```\n\n这是原生 Compose 预览的示例内容，没有调用 AI，也没有修改任何用户会话。", null)), createdAt = "2026-10-11T08:30:12Z", completedAt = "2026-10-11T08:30:20Z")
     ) }
     val turns = if (mode == "viewport") sentTurns.toList() else exampleTurns
-    val topClearance = topCompanionClearance()
+    val topClearance = chatTopIdentityClearance()
     Scaffold(containerColor = WandColors.bgPrimary,
         contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
         bottomBar = {
@@ -185,16 +185,22 @@ private fun Preview(mode: String, fixture: ChatPreviewActivity) {
                 else if (mode == "loading") item { CircularProgressIndicator(Modifier.size(24.dp)) }
                 else items(turns) { TurnView(it, employeeId = id, employeeName = name, employeeAvatar = "", isLastTurn = it.role == "assistant", showIdentity = false) }
             }
-            TopChatCompanion(id, name, "", when {
-                            notice.isNotBlank() -> notice
-                            mode == "thinking" -> "思考中"
-                            activity == AvatarFileActivity.Reading -> "阅读中"
-                            activity == AvatarFileActivity.Writing -> "编写中"
-                            mode == "streaming" -> "回复中"
-                            running -> companionWorkStatus(true, activity, progressTodos.isNotEmpty())
-                            else -> ""
-                        }, activity, mode == "thinking",
-                onEdit = presentation::edit)
+            ChatTopIdentityBar(
+                identity = chatTopIdentity("整理聊天页面调整", "会话标题", name, "/workspace/demo"),
+                attention = chatTopAttention(connected = true, blocked = false,
+                    sending = delivery == SendPhase.Sending, responding = running, failed = delivery == SendPhase.Failed),
+                statusText = when {
+                    delivery == SendPhase.Sending -> "正在发送"
+                    delivery == SendPhase.Failed -> "请核对发送结果，草稿已保留"
+                    notice.isNotBlank() -> notice
+                    mode == "thinking" -> "思考中"
+                    activity == AvatarFileActivity.Reading -> "阅读中"
+                    activity == AvatarFileActivity.Writing -> "编写中"
+                    mode == "streaming" -> "回复中"
+                    running -> companionWorkStatus(true, activity, progressTodos.isNotEmpty())
+                    else -> ""
+                },
+            )
             FloatingChatControls(showBack = true, onBack = {},
                 identity = name, cwd = "/workspace/demo", onTarget = { contextOpen = true },
                 gitEnabled = true, onGit = {}, onStop = { running = false }.takeIf { running }, modifier = Modifier.align(Alignment.TopCenter),

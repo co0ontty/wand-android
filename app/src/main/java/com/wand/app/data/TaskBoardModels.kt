@@ -219,6 +219,7 @@ data class BoardDispatchResult(
 }
 
 fun boardTaskStatusLabel(status: String): String = when (status) {
+    "backlog" -> "待立项"
     "todo" -> "待办"
     "doing" -> "进行中"
     "done" -> "已完成"
@@ -234,8 +235,8 @@ fun boardTaskPriorityLabel(priority: String): String = when (priority) {
     else -> "无优先级"
 }
 
-val BOARD_TASK_STATUSES = listOf("todo", "doing", "done")
-val BOARD_TASK_DETAIL_STATUSES = listOf("todo", "doing", "done", "archived")
+val BOARD_TASK_STATUSES = listOf("backlog", "todo", "doing", "done")
+val BOARD_TASK_DETAIL_STATUSES = listOf("backlog", "todo", "doing", "done", "archived")
 val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
 val BOARD_TASK_PROVIDERS = WandProvider.entries.map { it.id }
 

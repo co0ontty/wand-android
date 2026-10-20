@@ -347,6 +347,7 @@ fun ChatScreen(
     taskName: String? = null,
     isHapticEnabled: () -> Boolean,
     trafficTimelineMode: () -> String = { "wifi" },
+    onTrafficTimelineModeChange: (String) -> Unit = {},
     drafts: SessionDraftStore,
     initialSubmitDraft: Boolean = false,
     taskSessions: List<WorkspaceSessionSummary> = emptyList(),
@@ -355,6 +356,15 @@ fun ChatScreen(
     onBack: () -> Unit,
 ) {
     val store = remember(sessionId, api) { ChatStore(sessionId, api) }
+    // 对话内手动收放会改写全局偏好，这里持有同一份状态，让本屏其它活动组立即跟随。
+    var activityTimelineMode by remember(sessionId) { mutableStateOf(trafficTimelineMode()) }
+    val latestTimelineModeChange = rememberUpdatedState(onTrafficTimelineModeChange)
+    val setActivityTimelineMode = remember {
+        { mode: String ->
+            activityTimelineMode = mode
+            latestTimelineModeChange.value(mode)
+        }
+    }
     val composerScope = rememberCoroutineScope()
     val resources = remember(sessionId, api) { com.wand.app.ui.PiResourcesController(sessionId, api, composerScope) }
     DisposableEffect(resources) { onDispose { resources.dismiss() } }
@@ -809,7 +819,8 @@ fun ChatScreen(
         LocalChatWorkingDirectory provides store.snapshot?.cwd,
         LocalCardExpandDefaults provides store.cardDefaults,
         LocalActivityPanelReveal provides revealActivityPanel,
-        LocalActivityTrafficTimelineMode provides trafficTimelineMode(),
+        LocalActivityTrafficTimelineMode provides activityTimelineMode,
+        LocalActivityTrafficTimelineModeSetter provides setActivityTimelineMode,
         LocalChatViewportHeightPx provides listViewportHeightPx,
     ) {
     val avatarActivity = remember(store.messages, store.isResponding, store.status, store.pendingEscalation, store.legacyPermissionPrompt) {
@@ -854,7 +865,7 @@ fun ChatScreen(
         val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
         val chatPadding = PaddingValues(
             start = padding.calculateStartPadding(direction), end = padding.calculateEndPadding(direction),
-            top = padding.calculateTopPadding() + topCompanionClearance(), bottom = padding.calculateBottomPadding(),
+            top = padding.calculateTopPadding() + chatTopIdentityClearance(), bottom = padding.calculateBottomPadding(),
         )
         // 整个阅读视口避让顶部伙伴和按钮；不是只给首条消息补内距，滚动/定位后也不穿入控件区。
         Box(
@@ -1082,20 +1093,29 @@ fun ChatScreen(
             }
         }
         Box(Modifier.fillMaxSize().padding(padding)) {
-            TopChatCompanion(employeeId, liveEmployee?.name ?: store.snapshot?.employeeName,
-                liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
-                    status = when {
-                        composer.sendPhase == SendPhase.Sending -> "正在发送"
-                        composer.sendPhase == SendPhase.Failed -> "请核对发送结果，草稿已保留"
-                        composer.sendPhase == SendPhase.Sent -> "已送达"
-                        store.pendingEscalation != null || store.legacyPermissionPrompt != null -> "等待确认"
-                        !store.connected -> "连接已断开"
-                        else -> companionWorkStatus(store.isResponding, avatarActivity,
-                            hasDetailedProgress = progressTodos.isNotEmpty() || subagentActivities.isNotEmpty())
-                    }, activity = avatarActivity,
-                    thinking = companionThinking(store.messages, store.isResponding && store.status == "running" &&
-                        store.pendingEscalation == null && store.legacyPermissionPrompt == null, avatarActivity),
-                onEdit = inputPresentation::edit)
+            // 顶栏不再画头像：主标题是任务名（独立会话回落会话标题），小字是「员工名 · 目录缩写」，
+            // 运行与异常只以一个状态点呈现，完整状态留给读屏、权限卡、连接横幅和待办进度条。
+            ChatTopIdentityBar(
+                identity = chatTopIdentity(taskName, store.snapshot?.displayTitle,
+                    liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel,
+                    store.snapshot?.cwd),
+                attention = chatTopAttention(
+                    connected = store.connected,
+                    blocked = store.pendingEscalation != null || store.legacyPermissionPrompt != null,
+                    sending = composer.sendPhase == SendPhase.Sending,
+                    responding = store.isResponding,
+                    failed = store.status == "failed",
+                ),
+                statusText = when {
+                    composer.sendPhase == SendPhase.Sending -> "正在发送"
+                    composer.sendPhase == SendPhase.Failed -> "请核对发送结果，草稿已保留"
+                    composer.sendPhase == SendPhase.Sent -> "已送达"
+                    store.pendingEscalation != null || store.legacyPermissionPrompt != null -> "等待确认"
+                    !store.connected -> "连接已断开"
+                    else -> companionWorkStatus(store.isResponding, avatarActivity,
+                        hasDetailedProgress = progressTodos.isNotEmpty() || subagentActivities.isNotEmpty())
+                },
+            )
 
             FloatingChatControls(showBack = showBack, onBack = onBack,
                 identity = liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel ?: "当前会话",

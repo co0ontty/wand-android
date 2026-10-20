@@ -61,6 +61,11 @@ internal fun PendingConversationScreen(
     drafts: SessionDraftStore,
     onCancel: () -> Unit,
     onCreated: (SessionSnapshot, Boolean) -> Unit,
+    /**
+     * 空任务页把这段空白对话内嵌进任务正文：任务页已有一条顶栏，
+     * 这里不再重复标题栏与取消入口。
+     */
+    embedded: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -470,7 +475,7 @@ internal fun PendingConversationScreen(
     )
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        WandDetailTopBar(
+        if (!embedded) WandDetailTopBar(
             title = "新建对话",
             subtitle = taskName ?: "输入工作内容，发送后创建会话",
             actions = { TextButton(onClick = onCancel, enabled = !busy) { Text("取消") } },

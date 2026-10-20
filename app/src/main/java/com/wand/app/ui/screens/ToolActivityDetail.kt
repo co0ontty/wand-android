@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wand.app.data.ContentBlock
 import com.wand.app.ui.FullscreenImageViewer
+import com.wand.app.ui.ViewerImagePage
 import com.wand.app.ui.LocalServerBaseUrl
 import com.wand.app.ui.TextPreviewDialog
 import com.wand.app.ui.WandImage
@@ -120,7 +121,11 @@ internal fun ToolActivityFileAction(use: ContentBlock.ToolUse, open: Boolean) {
     }
     previewPath?.let { path ->
         if (WandImage.isImagePath(path)) {
-            FullscreenImageViewer(path = path, baseUrl = baseUrl, onDismiss = { previewPath = null })
+            FullscreenImageViewer(
+                pages = listOf(ViewerImagePage(path, directUrl = false)),
+                baseUrl = baseUrl,
+                onDismiss = { previewPath = null },
+            )
         } else {
             TextPreviewDialog(path = path, baseUrl = baseUrl, onDismiss = { previewPath = null },
                 onOpenExternally = { previewPath = null; openExternally = true; loading = true; request += 1 })

@@ -448,6 +448,8 @@ private fun TaskBoardList(
                 WandChoiceStrip(
                     options = listOf(
                         "" to "全部",
+                        "backlog" to "待立项",
+                        "backlog" to "待立项",
                         "todo" to "待办",
                         "doing" to "进行中",
                         "done" to "已完成",
@@ -465,7 +467,7 @@ private fun TaskBoardList(
             item(key = "create-task") {
                 WandButton(
                     label = "新建任务",
-                    onClick = { onCreateForStatus("todo") },
+                    onClick = { onCreateForStatus("backlog") },
                     icon = WandIcons.add,
                     variant = WandButtonVariant.Secondary,
                     modifier = Modifier.fillMaxWidth(),
@@ -497,7 +499,7 @@ private fun TaskBoardList(
                         "写下要做的事，再选择由谁执行。"
                     },
                     actionText = "新建任务",
-                    onAction = { onCreateForStatus("todo") },
+                    onAction = { onCreateForStatus("backlog") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(260.dp),

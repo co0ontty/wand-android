@@ -221,6 +221,8 @@ internal fun PendingAttachmentsPreview(
     modifier: Modifier = Modifier,
 ) {
     if (attachments.isEmpty()) return
+    // 暂存图片同属一组，全屏后左右滑动切换（对齐 iOS PendingAttachmentsPreview）。
+    val imagePaths = attachments.map { it.savedPath }.filter { WandImage.isImagePath(it) }
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,
@@ -240,6 +242,8 @@ internal fun PendingAttachmentsPreview(
                             .border(0.8.dp, WandColors.border.copy(alpha = 0.6f), WandShapes.sm),
                         maxWidth = 96,
                         maxHeight = 72,
+                        group = imagePaths,
+                        groupIndex = imagePaths.indexOf(file.savedPath).coerceAtLeast(0),
                     )
                 } else {
                     WandFileChip(

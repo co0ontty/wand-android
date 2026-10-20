@@ -8,23 +8,29 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,8 +41,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -173,17 +181,86 @@ private fun ImageLoadFeedback(message: String? = null, dark: Boolean = false, on
 }
 
 /**
+ * 聊天内联图片的自适应上限：按图片自身比例在框内完整显示（Fit，不拉伸不裁切），
+ * 横图吃满宽度、竖图吃满高度，小图不放大。与 iOS `WandImageLayout` 同一处真源，
+ * 两端一起调，避免各写一套像素值。
+ */
+object WandImageLayout {
+    const val thumbnailMaxWidthDp = 320
+    const val thumbnailMaxHeightDp = 360
+}
+
+/** 全屏查看器的一页：站内路径（走 /api/file-raw）或直链（工具图片 URL / data URI）。 */
+data class ViewerImagePage(val source: String, val directUrl: Boolean)
+
+/** 全屏查看器的起始页下标钳制：分组为空或越界都退回第一张（对齐 iOS wandImageViewerStart）。 */
+internal fun viewerStart(index: Int, count: Int): Int = if (count <= 0) 0 else index.coerceIn(0, count - 1)
+
+/** 缩略图分组 → 全屏查看页列表；未分组时只含当前一张。 */
+internal fun viewerPages(group: List<String>, current: String, directUrl: Boolean): List<ViewerImagePage> {
+    val sources = if (group.isNotEmpty()) group else listOf(current)
+    return sources.map { ViewerImagePage(source = it, directUrl = directUrl || it.startsWith("data:")) }
+}
+
+/**
  * 内联图片缩略图：经对应 endpoint 的 WandHttp client 加载，圆角 + Fit，点击放大到全屏预览。
  * 复用 Coil 原生 loading/error 槽；失败明确保留原因和重试，不无解释地消失。
+ * `group` 是同一条消息内的全部图片（含自己），全屏后左右滑动切换。
  */
 @Composable
 fun WandAsyncImage(
     path: String,
     baseUrl: String,
     modifier: Modifier = Modifier,
-    maxWidth: Int = 240,
-    maxHeight: Int = 200,
+    maxWidth: Int = WandImageLayout.thumbnailMaxWidthDp,
+    maxHeight: Int = WandImageLayout.thumbnailMaxHeightDp,
+    group: List<String> = emptyList(),
+    groupIndex: Int = 0,
     onFailure: (() -> Unit)? = null,
+) {
+    RemoteImageContent(
+        path = path,
+        baseUrl = baseUrl,
+        group = group,
+        groupIndex = groupIndex,
+        onFailure = onFailure,
+        modifier = modifier.widthIn(max = maxWidth.dp).heightIn(max = maxHeight.dp),
+        shape = WandShapes.sm,
+        bordered = true,
+    )
+}
+
+/** Read 读到图片的直出形态：占满可用宽度、按原始比例完整展示，不套工具调用卡片。 */
+@Composable
+fun WandImageFigure(
+    path: String,
+    baseUrl: String,
+    modifier: Modifier = Modifier,
+    group: List<String> = emptyList(),
+    groupIndex: Int = 0,
+) {
+    RemoteImageContent(
+        path = path,
+        baseUrl = baseUrl,
+        group = group,
+        groupIndex = groupIndex,
+        onFailure = null,
+        modifier = modifier.fillMaxWidth(),
+        shape = WandShapes.md,
+        bordered = false,
+    )
+}
+
+@Composable
+private fun RemoteImageContent(
+    path: String,
+    baseUrl: String,
+    group: List<String>,
+    groupIndex: Int,
+    onFailure: (() -> Unit)?,
+    modifier: Modifier,
+    shape: Shape,
+    bordered: Boolean,
 ) {
     var retry by remember(baseUrl, path) { mutableStateOf(0) }
     val (loader, model) = rememberRemoteImage(path, baseUrl, retry)
@@ -198,43 +275,63 @@ fun WandAsyncImage(
         error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), onRetry = { retry += 1 }) },
         onError = { onFailure?.invoke() },
         modifier = modifier
-            .widthIn(max = maxWidth.dp)
-            .heightIn(max = maxHeight.dp)
-            .clip(WandShapes.sm)
-            .border(1.dp, WandColors.border, WandShapes.sm)
+            .clip(shape)
+            .then(if (bordered) Modifier.border(1.dp, WandColors.border, shape) else Modifier)
             .clickable { showViewer = true },
     )
 
     if (showViewer) {
         FullscreenImageViewer(
-            path = path,
+            pages = viewerPages(group, path, directUrl = false),
             baseUrl = baseUrl,
+            startIndex = viewerStart(groupIndex, group.size),
             onDismiss = { showViewer = false },
         )
     }
 }
 
 /**
- * 内联工具结果图片：服务端下发的站内取图 URL（/api/sessions/…/tool-images/…）
- * 或 data URI。加载、失败和重试反馈与普通图片一致；保留全屏查看入口。
+ * 工具图片结果的直出形态：占满可用宽度、按原始比例完整展示，不再套工具调用卡片，
+ * 也不再受缩略图长宽上限约束；加载/失败/重试与全屏查看入口保持不变。
  */
 @Composable
-fun WandAsyncToolImage(
+fun WandToolImageFigure(
     source: String,
     baseUrl: String,
     modifier: Modifier = Modifier,
-    maxWidth: Int = 240,
-    maxHeight: Int = 200,
+    group: List<String> = emptyList(),
+    groupIndex: Int = 0,
+) {
+    ToolImageContent(
+        source = source,
+        baseUrl = baseUrl,
+        group = group,
+        groupIndex = groupIndex,
+        modifier = modifier.fillMaxWidth(),
+        shape = WandShapes.md,
+        bordered = false,
+    )
+}
+
+@Composable
+private fun ToolImageContent(
+    source: String,
+    baseUrl: String,
+    group: List<String>,
+    groupIndex: Int,
+    modifier: Modifier,
+    shape: Shape,
+    bordered: Boolean,
 ) {
     var retry by remember(baseUrl, source) { mutableStateOf(0) }
     var failed by remember(baseUrl, source, retry) { mutableStateOf(false) }
     var decoded by remember(baseUrl, source, retry) { mutableStateOf<ImageBitmap?>(null) }
     var showViewer by remember(baseUrl, source) { mutableStateOf(false) }
+    val viewerPages = viewerPages(group, source, directUrl = true)
+    val viewerStart = viewerStart(groupIndex, group.size)
     val shapeModifier = modifier
-        .widthIn(max = maxWidth.dp)
-        .heightIn(max = maxHeight.dp)
-        .clip(WandShapes.sm)
-        .border(1.dp, WandColors.border, WandShapes.sm)
+        .clip(shape)
+        .then(if (bordered) Modifier.border(1.dp, WandColors.border, shape) else Modifier)
 
     if (source.startsWith("data:")) {
         LaunchedEffect(baseUrl, source, retry) {
@@ -254,7 +351,7 @@ fun WandAsyncToolImage(
             contentScale = ContentScale.Fit,
             modifier = shapeModifier.clickable { showViewer = true },
         )
-        if (showViewer) FullscreenImageViewer(source, baseUrl, { showViewer = false }, bitmap = bitmap)
+        if (showViewer) FullscreenImageViewer(viewerPages, baseUrl, { showViewer = false }, viewerStart)
         return
     }
 
@@ -278,7 +375,13 @@ fun WandAsyncToolImage(
         error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), onRetry = { retry += 1 }) },
         modifier = shapeModifier.clickable { showViewer = true },
     )
-    if (showViewer) FullscreenImageViewer(absolute, baseUrl, { showViewer = false }, directUrl = true)
+    if (showViewer) FullscreenImageViewer(viewerPages, baseUrl, { showViewer = false }, viewerStart)
+}
+
+/** 工具图片可能是绝对 URL 或 `/api/…` 站内路径，统一成可直接加载的绝对地址。 */
+internal fun absoluteToolImageSource(source: String, baseUrl: String): String = when {
+    source.startsWith("http://") || source.startsWith("https://") || source.startsWith("data:") -> source
+    else -> WandHttp.normalizeBaseUrl(baseUrl) + if (source.startsWith("/")) source else "/$source"
 }
 
 /** 解析 data:image/…;base64,…. 失败返回 null（不崩溃）。 */
@@ -294,27 +397,32 @@ internal fun decodeDataUriImage(source: String): ImageBitmap? {
 }
 
 /**
- * 全屏图片预览：黑底覆盖层，支持双指缩放 / 拖动 / 双击放大，右上角关闭按钮 + 返回键关闭
- * （对齐 iOS WandImageViewer：缩放 1–5×，缩回 1× 时归位，未放大时单击空白也可关闭）。
+ * 全屏图片预览：黑底覆盖层，同一组图片左右滑动切换（带页码），双指缩放 1–5×、
+ * 放大后单指平移，双击在 1× / 2.5× 间切换，右上角关闭按钮 + 单击空白 + 返回键关闭
+ * （对齐 iOS `WandImageViewer` 的方向锁、缩放钳制与分组翻页）。
  */
 @Composable
 fun FullscreenImageViewer(
-    path: String,
+    pages: List<ViewerImagePage>,
     baseUrl: String,
     onDismiss: () -> Unit,
-    directUrl: Boolean = false,
-    bitmap: ImageBitmap? = null,
+    startIndex: Int = 0,
 ) {
+    if (pages.isEmpty()) return
     val context = LocalContext.current
     val loader = WandImage.imageLoader(context, baseUrl)
-    var retry by remember(baseUrl, path, directUrl) { mutableStateOf(0) }
-    val model = remember(baseUrl, path, directUrl, retry, loader) {
-        ImageRequest.Builder(context)
-            .data(if (directUrl) path else WandImage.fileRawUrl(baseUrl, path))
-            .setParameter("wandImageRetry", retry).build()
-    }
+    val pagerState = rememberPagerState(
+        initialPage = viewerStart(startIndex, pages.size),
+        pageCount = { pages.size },
+    )
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    // 换页回到 1×：上一页的缩放与平移不该带到下一页。
+    LaunchedEffect(pagerState.currentPage) {
+        scale = 1f
+        offset = Offset.Zero
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -337,33 +445,52 @@ fun FullscreenImageViewer(
                             }
                         },
                     )
-                }
-                // 双指捏合缩放 + 单指拖动平移；缩回 1× 时归位（对齐 iOS）。
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 5f)
-                        offset = if (scale > 1f) offset + pan else Offset.Zero
-                    }
                 },
         ) {
-            val imageModifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offset.x
-                    translationY = offset.y
+            HorizontalPager(
+                state = pagerState,
+                // 放大后横向手势让给平移，不触发翻页。
+                userScrollEnabled = scale <= 1.01f,
+                modifier = Modifier.fillMaxSize(),
+            ) { pageIndex ->
+                key(pageIndex) {
+                    var retry by remember(pageIndex) { mutableStateOf(0) }
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .imagePinchPan(
+                                isZoomed = { scale > 1.01f },
+                                onGesture = { zoom, pan ->
+                                    scale = (scale * zoom).coerceIn(1f, 5f)
+                                    offset = if (scale > 1f) offset + pan else Offset.Zero
+                                },
+                            )
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offset.x
+                                translationY = offset.y
+                            },
+                    ) {
+                        ViewerPageImage(pages[pageIndex], baseUrl, loader, retry) { retry += 1 }
+                    }
                 }
-            if (bitmap != null) {
-                Image(bitmap = bitmap, contentDescription = "工具返回图片",
-                    contentScale = ContentScale.Fit, modifier = imageModifier)
-            } else {
-                SubcomposeAsyncImage(model = model, imageLoader = loader,
-                    contentDescription = path.substringAfterLast('/'),
-                    contentScale = ContentScale.Fit, modifier = imageModifier,
-                    loading = { ImageLoadFeedback(dark = true) },
-                    error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), dark = true, onRetry = { retry += 1 }) })
+            }
+            if (pages.size > 1) {
+                Text(
+                    "${pagerState.currentPage + 1} / ${pages.size}",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 28.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
             }
             // 关闭按钮：右上角安全区内的半透明圆钮（对齐 iOS xmark）。
             Box(
@@ -384,6 +511,102 @@ fun FullscreenImageViewer(
                     modifier = Modifier.size(18.dp),
                 )
             }
+        }
+    }
+}
+
+/** 全屏页的一张图片：data URI 本地解码，其余按直链或 /api/file-raw 经 endpoint client 加载。 */
+@Composable
+private fun ViewerPageImage(
+    page: ViewerImagePage,
+    baseUrl: String,
+    loader: ImageLoader,
+    retry: Int,
+    onRetry: () -> Unit,
+) {
+    val context = LocalContext.current
+    val source = page.source
+    if (source.startsWith("data:")) {
+        var failed by remember(source, retry) { mutableStateOf(false) }
+        var bitmap by remember(source, retry) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(source, retry) {
+            bitmap = withContext(Dispatchers.IO) { decodeDataUriImage(source) }
+            if (bitmap == null) failed = true
+        }
+        val decodedBitmap = bitmap
+        if (decodedBitmap == null) {
+            ImageLoadFeedback(if (failed) "图片格式不支持或内容无效。" else null, dark = true, onRetry = onRetry)
+        } else {
+            Image(
+                bitmap = decodedBitmap,
+                contentDescription = "工具返回图片",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        return
+    }
+    val model = remember(baseUrl, source, page.directUrl, retry, loader) {
+        ImageRequest.Builder(context)
+            .data(if (page.directUrl) absoluteToolImageSource(source, baseUrl) else WandImage.fileRawUrl(baseUrl, source))
+            .setParameter("wandImageRetry", retry).build()
+    }
+    SubcomposeAsyncImage(
+        model = model,
+        imageLoader = loader,
+        contentDescription = source.substringAfterLast('/'),
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.fillMaxSize(),
+        loading = { ImageLoadFeedback(dark = true) },
+        error = { state ->
+            ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), dark = true, onRetry = onRetry)
+        },
+    )
+}
+
+/**
+ * 图片页手势：双指捏合缩放，放大后单指平移。未放大且单指时不消费事件，
+ * 把横向拖动让给 HorizontalPager 翻页——`detectTransformGestures` 会无条件消费单指拖动，
+ * 直接用会让图片能缩放但翻不了页。
+ */
+private fun Modifier.imagePinchPan(
+    isZoomed: () -> Boolean,
+    onGesture: (zoom: Float, pan: Offset) -> Unit,
+): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        var previousDistance = 0f
+        var previousCentroid = Offset.Zero
+        var previousCount = 0
+        var claimed = false
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Main)
+            val pressed = event.changes.filter { it.pressed }
+            if (pressed.isEmpty()) break
+            if (pressed.size >= 2) claimed = true
+            if (!claimed && !isZoomed()) {
+                previousCount = pressed.size
+                previousCentroid = Offset.Zero
+                previousDistance = 0f
+                continue
+            }
+            val centroid = Offset(
+                pressed.map { it.position.x }.average().toFloat(),
+                pressed.map { it.position.y }.average().toFloat(),
+            )
+            val distance = if (pressed.size >= 2) (pressed[0].position - pressed[1].position).getDistance() else 0f
+            val zoom = if (previousDistance > 0f && distance > 0f) distance / previousDistance else 1f
+            // 指针数刚变化时不产生位移，避免第二根手指落下时图片跳一下。
+            val pan = if (previousCentroid != Offset.Zero && pressed.size == previousCount) {
+                centroid - previousCentroid
+            } else {
+                Offset.Zero
+            }
+            onGesture(zoom, pan)
+            pressed.forEach { it.consume() }
+            previousDistance = distance
+            previousCentroid = centroid
+            previousCount = pressed.size
         }
     }
 }

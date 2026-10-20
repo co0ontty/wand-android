@@ -119,6 +119,11 @@ internal val LocalActivityTrafficTimelineMode = staticCompositionLocalOf {
     ServerStore.TRAFFIC_TIMELINE_MODE_WIFI
 }
 
+/** 对话内手动收放工具时间线时，把结果同步成全局偏好（一直打开 / 一直折叠）。 */
+internal val LocalActivityTrafficTimelineModeSetter = staticCompositionLocalOf<(String) -> Unit> {
+    { _ -> }
+}
+
 @Composable
 private fun rememberWifiConnected(): Boolean {
     val context = LocalContext.current
@@ -324,7 +329,8 @@ internal fun toolActivityKind(use: ContentBlock.ToolUse): String {
 }
 
 internal fun activityTimelineEnabled(mode: String, wifiConnected: Boolean): Boolean =
-    mode == ServerStore.TRAFFIC_TIMELINE_MODE_ALL || wifiConnected
+    mode == ServerStore.TRAFFIC_TIMELINE_MODE_ALL ||
+        (mode == ServerStore.TRAFFIC_TIMELINE_MODE_WIFI && wifiConnected)
 
 /** 只有普通命令仍缺结果时才保留执行中状态；不依赖它是不是段的最后一个块。 */
 internal fun activityHasPendingCommand(items: List<DisplayItem>): Boolean = items.any { item ->
@@ -587,6 +593,7 @@ internal fun ToolActivitySummary(
     val key = cardFoldKey(LocalChatSessionId.current, scope)
     val wifiConnected = rememberWifiConnected()
     val trafficTimelineMode = LocalActivityTrafficTimelineMode.current
+    val setTimelinePreference = LocalActivityTrafficTimelineModeSetter.current
     // 网络策略只控制自动展开，手动查看历史不受网络与新旧活动限制。
     val autoTimelineEnabled = activityTimelineEnabled(trafficTimelineMode, wifiConnected)
     var menuOpen by rememberSaveable(key) { mutableStateOf(false) }
@@ -685,11 +692,18 @@ internal fun ToolActivitySummary(
                     role = Role.Button,
                     onClickLabel = if (menuOpen) "收起工具时间线" else "查看工具时间线",
                 ) {
-                    menuOpen = !menuOpen
+                    val nextOpen = !menuOpen
+                    menuOpen = nextOpen
                     drawerManuallyToggled = true
                     inspectedEntries = emptySet()
+                    // 手动打开 = 全局一直打开；手动收起 = 全局一直折叠。
+                    // 「仅 Wi-Fi」只由设置页手动选择，对话内收放不写回该档。
+                    setTimelinePreference(
+                        if (nextOpen) ServerStore.TRAFFIC_TIMELINE_MODE_ALL
+                        else ServerStore.TRAFFIC_TIMELINE_MODE_NEVER,
+                    )
                     // 手动查看历史从上次位置开始，只有当前运行组才跟到最新。
-                    if (menuOpen) pinnedToLatest = group.running
+                    if (nextOpen) pinnedToLatest = group.running
                     if (listItemKey.isNotBlank()) revealPanel(listItemKey)
                 }
                 .semantics { stateDescription = if (menuOpen) "已展开" else "已收起" }

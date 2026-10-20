@@ -69,12 +69,14 @@ class TaskBoardPresentationTest {
             listOf(
                 task(id = "d", status = "done"),
                 task(id = "t", status = "todo"),
+                task(id = "b", status = "backlog"),
             ),
         )
-        assertEquals(listOf("todo", "doing", "done"), grouped.map { it.first })
-        assertEquals(listOf("t"), grouped[0].second.map { it.id })
-        assertTrue(grouped[1].second.isEmpty())
-        assertEquals(listOf("d"), grouped[2].second.map { it.id })
+        assertEquals(listOf("backlog", "todo", "doing", "done"), grouped.map { it.first })
+        assertEquals(listOf("b"), grouped[0].second.map { it.id })
+        assertEquals(listOf("t"), grouped[1].second.map { it.id })
+        assertTrue(grouped[2].second.isEmpty())
+        assertEquals(listOf("d"), grouped[3].second.map { it.id })
     }
 
     @Test
@@ -103,7 +105,8 @@ class TaskBoardPresentationTest {
         assertEquals(1, stats.done)
         assertEquals(1, stats.remaining)
         assertEquals(listOf("a"), boardArchivedTasks(tasks).map { it.id })
-        assertEquals(listOf("d"), groupedBoardTasks(tasks)[2].second.map { it.id })
+        val doneGroup = groupedBoardTasks(tasks).first { it.first == "done" }
+        assertEquals(listOf("d"), doneGroup.second.map { it.id })
         assertEquals(listOf("a"), filterBoardTasks(tasks, "", "", "archived").map { it.id })
     }
 
