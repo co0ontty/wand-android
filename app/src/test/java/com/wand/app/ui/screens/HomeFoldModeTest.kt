@@ -41,7 +41,7 @@ class HomeFoldModeTest {
     fun segmentOrderAndLabelsMatchTheThreeStates() {
         assertEquals(listOf("展开", "收起", "在跑"), HomeFoldMode.entries.map { it.label })
         assertEquals(
-            listOf("全部展开", "全部收起", "只看在跑、刚完成、失败和待处理的会话"),
+            listOf("全部展开", "全部收起", "只看排队中、在跑、刚完成、失败和待处理的会话"),
             HomeFoldMode.entries.map { it.actionLabel },
         )
         // 只有「收起」档是折起来的；「在跑」只筛内容，仍然展开。

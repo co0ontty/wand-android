@@ -33,6 +33,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     var onModelCatalogChanged: (() -> Unit)? = null
     /** Existing bounded team live feed; never treated as session input. */
     var onTeamStepLive: ((AiTeamRunLive) -> Unit)? = null
+    var onConversationChanged: (() -> Unit)? = null
     var onConversationSessionPreview: ((ConversationSessionUpdate) -> Unit)? = null
 
     /** 连接状态变化（true=已连上），主线程回调。 */
@@ -45,6 +46,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
      * 上百块而拉回整份历史。null 表示继续走 turn 级窗口（PTY / 通知中枢）。
      */
     var blockBudget: Int? = null
+    var byteBudget: Int? = null
 
     /** 原生 PTY 专用原始帧；聊天订阅仍只收到类型化 SessionEvent。 */
     internal var onPtyEvent: ((WsIncoming) -> Unit)? = null
@@ -55,6 +57,9 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     private val feedback = ClientFeedback(this.baseUrl, appToken)
     private val handler = Handler(Looper.getMainLooper())
 
+    private var sharedHub: ChatHub? = null
+    internal val sharedConnection: WandSocket get() = sharedHub?.host ?: this
+    private var wireFrame: ((DecodedFrame) -> Unit)? = null
     private var webSocket: WebSocket? = null
     private var connected = false
     private var subscribedSessionId: String? = null
@@ -91,6 +96,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     fun connect() {
         if (!closed) return
         closed = false
+        sharedHub?.let { it.add(this); return }
         openSocket()
         restartWatchdog()
     }
@@ -101,6 +107,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
      */
     fun reconnectForForeground() {
         if (closed) return
+        sharedHub?.let { it.recover(this); return }
         authenticationJob?.cancel()
         authenticationJob = null
         reconnectScheduled = false
@@ -120,6 +127,7 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
 
     fun close() {
         closed = true
+        sharedHub?.let { it.remove(this); connected = false; lastSeqBySession.clear(); return }
         authenticationJob?.cancel()
         authenticationJob = null
         handler.removeCallbacksAndMessages(null)
@@ -132,9 +140,11 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
     }
 
     fun subscribe(sessionId: String, ptyAck: Boolean = false) {
+        val previous = subscribedSessionId
         subscribedSessionId = sessionId
+        if (previous != null && previous != sessionId) sharedHub?.release(previous)
         this.ptyAck = ptyAck
-        awaitingPtySnapshot = ptyAck
+        awaitingPtySnapshot = true
         sendSubscribe(sessionId)
     }
 
@@ -196,7 +206,10 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
             .put("sessionId", sessionId)
             .put("compactTools", true)
             .put("capabilities", JSONObject().put("ptyAck", ptyAck))
-        blockBudget?.takeIf { it > 0 }?.let { payload.put("blockBudget", it) }
+        blockBudget?.takeIf { it > 0 }?.let {
+            payload.put("blockBudget", it).put("omitStructuredOutput", true)
+        }
+        byteBudget?.takeIf { it > 0 }?.let { payload.put("byteBudget", it) }
         sendJson(payload)
     }
 
@@ -250,11 +263,14 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                // OkHttp invokes onMessage serially on its reader thread. Decode there,
+                // then post one typed frame: preserve FIFO without UI-thread JSON work.
+                val frame = decodeFrame(text) ?: return
                 handler.post {
                     if (gen != generation || closed) return@post
                     lastMessageAt = SystemClock.elapsedRealtime()
                     reconnectDelayMs = 1_000L
-                    handleText(text)
+                    handleFrame(frame)
                 }
             }
 
@@ -282,23 +298,15 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
         webSocket = socket
     }
 
-    private fun handleText(text: String) {
-        val incoming = try {
-            val packet = JSONObject(text)
-            if (packet.optString("type") == "notification") {
-                val data = packet.optJSONObject("data")
-                if (data?.optString("kind") == "models") onModelCatalogChanged?.invoke()
-                if (data?.optString("kind") == "ai-team-step-live") AiTeamRunLive.parse(data)?.let { onTeamStepLive?.invoke(it) }
-                if (data?.optString("kind") == "conversation-session-preview") ConversationSessionUpdate.parse(data)?.let { onConversationSessionPreview?.invoke(it) }
-                if (data?.optString("kind") == "silicon-employee-definition") {
-                    data.optString("employeeId").takeIf { it.isNotBlank() }
-                        ?.let { onEmployeeDefinitionChanged?.invoke(it) }
-                }
-            }
-            WsIncoming.parse(packet)
-        } catch (_: Exception) {
-            return
-        }
+    private fun handleFrame(frame: DecodedFrame) {
+        if (frame.incoming.type != "ping") wireFrame?.let { it(frame); return }
+        if (frame.modelsChanged) onModelCatalogChanged?.invoke()
+        if (frame.conversationChanged) onConversationChanged?.invoke()
+        frame.teamLive?.let { onTeamStepLive?.invoke(it) }
+        frame.preview?.let { onConversationSessionPreview?.invoke(it) }
+        frame.employeeId?.let { onEmployeeDefinitionChanged?.invoke(it) }
+        val incoming = frame.incoming
+        if (incoming.sessionId != null && incoming.sessionId != "__system__" && incoming.sessionId != subscribedSessionId) return
 
         when (incoming.type) {
             "ping" -> {
@@ -342,10 +350,13 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
         if (incoming.sessionId == null || incoming.sessionId == subscribedSessionId) {
             onPtyEvent?.invoke(incoming)
         }
-        incoming.toSessionEvent()?.let { onEvent?.invoke(it) }
+        frame.event?.let { onEvent?.invoke(it) }
     }
 
-    private fun sendJson(payload: JSONObject): Boolean = webSocket?.send(payload.toString()) == true
+    private fun sendJson(payload: JSONObject): Boolean {
+        sharedHub?.let { return if (closed) false else it.send(payload) }
+        return webSocket?.send(payload.toString()) == true
+    }
 
     // MARK: - 重连与看门狗
 
@@ -371,8 +382,86 @@ class WandSocket(baseUrl: String, private val appToken: String? = null) {
         }, delay)
     }
 
+    /** Read-only chat leases only; PTY transports retain independent ACK/input ownership. */
+    private class ChatHub(api: WandApi) {
+        val host = WandSocket(api.baseUrl, api.token)
+        private val peers = ChatLeaseSet<WandSocket> { if (it.closed) null else it.subscribedSessionId }
+        private var lastRecovery = 0L
+        init {
+            val weak = java.lang.ref.WeakReference(this)
+            host.wireFrame = { frame -> weak.get()?.peers?.snapshot()?.filter { !it.closed }?.forEach { it.handleFrame(frame) } }
+            host.onConnectionChange = { up ->
+                weak.get()?.peers?.snapshot()?.filter { !it.closed }?.forEach { peer ->
+                    peer.connected = up
+                    if (!up) peer.lastSeqBySession.clear()
+                    peer.onConnectionChange?.invoke(up)
+                    if (up) peer.subscribedSessionId?.let { peer.sendSubscribe(it) }
+                }
+            }
+            host.onAuthenticationFailure = { error -> weak.get()?.peers?.snapshot()?.forEach { it.onAuthenticationFailure?.invoke(error) } }
+        }
+        fun add(peer: WandSocket) {
+            peers.add(peer)
+            if (host.closed) host.connect()
+            else {
+                peer.connected = host.connected
+                peer.onConnectionChange?.invoke(host.connected)
+                if (host.connected) peer.subscribedSessionId?.let { peer.sendSubscribe(it) }
+            }
+        }
+        fun release(id: String) {
+            if (!peers.uses(id)) host.sendJson(JSONObject().put("type", "unsubscribe").put("sessionId", id))
+        }
+        fun remove(peer: WandSocket) {
+            peers.remove(peer)
+            peer.subscribedSessionId?.let(::release)
+            if (peers.isEmpty()) host.close()
+        }
+        fun send(payload: JSONObject): Boolean {
+            if (payload.optString("type") == "subscribe") payload.put("mode", "add")
+            return host.sendJson(payload)
+        }
+        fun recover(peer: WandSocket) {
+            val now = SystemClock.elapsedRealtime()
+            if (host.connected && now - host.lastMessageAt < 35_000) { peer.requestResync(); return }
+            if (now - lastRecovery < 1_000) return
+            lastRecovery = now
+            host.reconnectForForeground()
+        }
+    }
+
+    internal data class DecodedFrame(
+        val incoming: WsIncoming,
+        val event: SessionEvent?,
+        val modelsChanged: Boolean,
+        val teamLive: AiTeamRunLive?,
+        val preview: ConversationSessionUpdate?,
+        val employeeId: String?,
+        val conversationChanged: Boolean,
+    )
+
     companion object {
         private const val TAG = "ws"
+        private val chatHubs = java.util.WeakHashMap<WandApi, java.lang.ref.WeakReference<ChatHub>>()
+        fun sharedChat(api: WandApi): WandSocket {
+            val hub = chatHubs[api]?.get() ?: ChatHub(api).also { chatHubs[api] = java.lang.ref.WeakReference(it) }
+            return WandSocket(api.baseUrl, api.token).also { it.sharedHub = hub }
+        }
+        internal fun decodeFrame(text: String): DecodedFrame? = try {
+            val packet = JSONObject(text)
+            val data = if (packet.optString("type") == "notification") packet.optJSONObject("data") else null
+            val kind = data?.optString("kind")
+            val incoming = WsIncoming.parse(packet)
+            DecodedFrame(
+                incoming = incoming,
+                event = incoming.toSessionEvent(),
+                modelsChanged = kind == "models",
+                conversationChanged = kind in listOf("conversations-changed", "ai-team-run", "silicon-employee-definition", "ai-team-definition"),
+                teamLive = if (data != null && kind == "ai-team-step-live") AiTeamRunLive.parse(data) else null,
+                preview = if (kind == "conversation-session-preview") ConversationSessionUpdate.parse(data) else null,
+                employeeId = if (kind == "silicon-employee-definition") data?.optString("employeeId")?.takeIf { it.isNotBlank() } else null,
+            )
+        } catch (_: Exception) { null }
         /** Split at UTF-8 scalar boundaries below the server per-frame limit. */
         internal fun ptyInputChunks(text: String, maxBytes: Int = 16 * 1024): List<String> {
             if (text.isEmpty()) return emptyList()

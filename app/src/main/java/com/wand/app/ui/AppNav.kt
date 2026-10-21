@@ -8,6 +8,7 @@ import com.wand.app.ui.screens.HomeListMode
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import com.wand.app.data.WandApi
+import com.wand.app.data.SessionSnapshot
 import com.wand.app.ui.theme.WandAppearanceMode
 
 /** 原生界面的页面栈。结构化对话与 PTY 终端均原生承载。 */
@@ -21,7 +22,11 @@ sealed class Screen {
         val workspaceId: String? = null,
         val taskId: String? = null,
         val submitDraftOnOpen: Boolean = false,
-    ) : Screen()
+    ) : Screen() {
+        // One navigation handoff only; the Saver persists IDs, never message bodies.
+        internal var initialSnapshot: SessionSnapshot? = null
+        internal fun takeInitialSnapshot(): SessionSnapshot? = initialSnapshot.also { initialSnapshot = null }
+    }
     data class PendingConversation(
         val draftKey: String,
         val cwd: String? = null,

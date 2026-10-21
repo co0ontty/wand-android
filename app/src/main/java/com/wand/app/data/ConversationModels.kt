@@ -97,6 +97,7 @@ data class ConversationInstance(
     val dissolvedAt: String? = null,
     val dissolvedBy: String? = null,
     val deleting: Boolean = false,
+    val history: ConversationHistory? = null,
 ) {
     val leader: AiTeamMember? get() = team?.members?.firstOrNull { it.isLeader }
     companion object {
@@ -112,10 +113,14 @@ data class ConversationInstance(
                 joined?.keys()?.asSequence()?.associateWith { joined.optInt(it) } ?: emptyMap(),
                 json.arr("tasks")?.parseEach(ConversationTask::parse) ?: emptyList(),
                 ConversationTurn.parseList(json.arr("messages")) ?: emptyList(),
-                json.arr("runDetails")?.parseEach(AiTeamRunDetail::parse) ?: emptyList(), json.str("pinnedAt"), json.str("dissolvedAt"), json.str("dissolvedBy"), json.optBoolean("deleting"))
+                json.arr("runDetails")?.parseEach(AiTeamRunDetail::parse) ?: emptyList(), json.str("pinnedAt"), json.str("dissolvedAt"), json.str("dissolvedBy"), json.optBoolean("deleting"), json.obj("history")?.let(ConversationHistory::parse))
         }
         fun parseList(json: JSONObject): List<ConversationInstance> = json.arr("conversations")?.parseEach(::parse) ?: emptyList()
     }
+}
+
+data class ConversationHistory(val revision: String, val from: String?, val hasEarlier: Boolean, val total: Int) {
+    companion object { fun parse(json: JSONObject) = ConversationHistory(json.optString("revision"), json.str("from"), json.optBoolean("hasEarlier"), json.optInt("total")) }
 }
 
 data class ConversationReceipt(val requestId: String, val state: String, val conversationId: String,

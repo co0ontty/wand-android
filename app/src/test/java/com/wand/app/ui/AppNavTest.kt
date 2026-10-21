@@ -72,6 +72,19 @@ class AppNavTest {
     }
 
     @Test
+    fun navigationSnapshotIsOneShotAndNeverSaved() {
+        val seed = com.wand.app.data.SessionSnapshot.parse(org.json.JSONObject(
+            """{"id":"s","sessionKind":"structured","messages":[{"role":"user","content":[{"type":"text","text":"private-body"}]}]}""",
+        ))
+        val screen = Screen.Chat("s").apply { initialSnapshot = seed }
+        val saved = saveStack(screen)
+        assertTrue(!saved.toString().contains("private-body"))
+        assertEquals(null, (restoreStack(saved).last() as Screen.Chat).takeInitialSnapshot())
+        assertEquals(seed, screen.takeInitialSnapshot())
+        assertEquals(null, screen.takeInitialSnapshot())
+    }
+
+    @Test
     fun roundTrip_chatScreen() {
         val restored = roundTrip(Screen.Chat("session-123"))
         assertEquals(Screen.Chat("session-123"), restored)

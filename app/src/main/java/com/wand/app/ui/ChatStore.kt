@@ -73,7 +73,11 @@ internal fun canChangeBlankConversationDirectory(snapshot: SessionSnapshot?, mes
     canSwitchBlankConversationProvider(snapshot, messageTotal) && snapshot != null &&
         snapshot.workspaceTaskId.isNullOrBlank() && !snapshot.directoryLocked
 
-class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
+class ChatStore(
+    val sessionId: String,
+    val api: WandApi,
+    private var initialSnapshot: SessionSnapshot? = null,
+) : ScopedStore() {
 
     var messages by mutableStateOf<List<ConversationTurn>>(emptyList())
         private set
@@ -174,8 +178,11 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     private val earlierPageSize = 40
     private val earlierBlockPageSize = 40
 
-    private val socket = WandSocket(api.baseUrl, api.token)
-        .apply { blockBudget = WandApi.CHAT_BLOCK_WINDOW }
+    private val socket = WandSocket.sharedChat(api)
+        .apply {
+            blockBudget = WandApi.CHAT_BLOCK_WINDOW
+            byteBudget = WandApi.CHAT_BYTE_WINDOW
+        }
     /**
      * started = 对象是否跑过首次加载；active = 页面当前是否可见。
      * Compose / Navigation 可能复用同一个 ChatStore：shutdown 关 socket 后，
@@ -183,6 +190,9 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
      */
     private var started = false
     private var active = false
+    private var hasConnected = false
+    private var initialAuxiliaryStarted = false
+    private var snapshotRealtimeRevision = 0L
     var queueMutationPending by mutableStateOf(false)
         private set
     private val settingsMutationMutex = Mutex()
@@ -218,7 +228,11 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 socket.onEvent = { event -> handle(event) }
                 socket.onConnectionChange = { up ->
                     connected = up
-                    if (up && active) scope.launch { loadModels(normalizeThinking = false) }
+                    if (up) {
+                        val reconnect = hasConnected
+                        hasConnected = true
+                        if (reconnect && active && snapshot != null) scope.launch { loadModels(normalizeThinking = false) }
+                    }
                 }
                 socket.onModelCatalogChanged = {
                     if (active) scope.launch { loadModels(normalizeThinking = false) }
@@ -229,27 +243,43 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
                 }
                 // 实时连接不能被 REST / 模型目录 / 卡片默认值挡住。旧逻辑等三段请求收尾才
                 // connect，页面看起来已经打开、红条却一直挂着；退回再进才重新建连。
+                val seed = initialSnapshot?.takeIf { it.id == sessionId }
+                initialSnapshot = null
+                if (seed != null) { apply(seed); loading = false }
+                val initialRevision = snapshotRealtimeRevision
                 connectSocket()
                 wlog("chat", "打开会话 session=$sessionId")
                 scope.launch {
                     try {
-                        val snap = api.getSession(sessionId)
+                        if (seed == null) delay(400) // WS paints immediately; REST is bounded fallback only.
+                        val snap = seed ?: snapshot ?: api.getSession(sessionId)
                         wlog(
                             "chat",
                             "REST 快照 session=$sessionId msgs=${snap.messages?.size ?: -1} " +
                                 "status=${snap.status} structured=${snap.isStructured}",
                         )
-                        apply(snap)
+                        check(snap.id == sessionId) { "会话快照身份不一致" }
+                        if (seed == null && snapshotRealtimeRevision == initialRevision) apply(snap)
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         wlog("chat", "REST 快照失败 session=$sessionId：${e.message}", e)
-                        loadError = e.message ?: "加载失败"
+                        if (snapshot == null && snapshotRealtimeRevision == initialRevision) {
+                            loadError = e.message ?: "加载失败"
+                        }
                     }
-                    loadModels()
-                    loadCardDefaults()
                     loading = false
+                    // Auxiliary catalogs never gate first paint or usable input.
+                    loadInitialAuxiliary()
                 }
             }
         }
+    }
+
+    private fun loadInitialAuxiliary() {
+        if (!active || snapshot == null || initialAuxiliaryStarted) return
+        initialAuxiliaryStarted = true
+        scope.launch { loadModels() }
+        scope.launch { loadCardDefaults() }
     }
 
     fun handleEnterForeground() {
@@ -290,14 +320,18 @@ class ChatStore(val sessionId: String, val api: WandApi) : ScopedStore() {
     )
 
     private fun handle(event: SessionEvent) {
-        queueRealtimeRevision += 1
         if (event.sessionId != null && event.sessionId != sessionId) return
+        queueRealtimeRevision += 1
+        if (event is SessionEvent.Initialized || event is SessionEvent.Output ||
+            event is SessionEvent.StatusChanged || event is SessionEvent.Ended) snapshotRealtimeRevision += 1
+        if (event is SessionEvent.Initialized) loadError = null
         val next = ChatSessionEventReducer.reduce(
             current = realtimeState(),
             event = event,
             pending = pendingSessionSettings(),
         )
         applyRealtimeState(next)
+        if (event is SessionEvent.Initialized) loadInitialAuxiliary()
     }
 
     private fun realtimeState() = ChatSessionEventState(

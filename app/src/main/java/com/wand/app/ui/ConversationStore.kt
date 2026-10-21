@@ -99,10 +99,11 @@ class ConversationStore(
     }
     /** One read-only socket for the mounted DM; the existing detail poll repairs reconnect gaps. */
     internal fun watchTaskPreviews(id: String): () -> Unit {
-        val socket = WandSocket(api.baseUrl, api.token)
+        val socket = WandSocket.sharedChat(api)
         socket.onConversationSessionPreview = { update ->
             val detail = details[id]
             if (selectedId == id && update.conversationId == id && detail != null) {
+                scheduleRefresh(id)
                 details[id] = detail.copy(messages = detail.messages.map { turn ->
                     if (turn.sessionLink?.sessionId == update.sessionId) turn.copy(sessionPreview = update.preview) else turn
                 })
@@ -119,6 +120,8 @@ class ConversationStore(
                 if (messages != detail.messages) details[id] = detail.copy(messages = messages)
             }
         }
+        socket.onConversationChanged = { scheduleRefresh(id) }
+        socket.onConnectionChange = { if (it) scheduleRefresh(id) }
         socket.connect()
         return { socket.close() }
     }
@@ -139,6 +142,11 @@ class ConversationStore(
             .put("targets", JSONObject().apply { targets.forEach { (id, t) -> put(id, t.toJson()) } })
             .put("filters", JSONObject(filters.toMap())).put("scrolls", scrolls)
             .put("expandedGroups", org.json.JSONArray(expandedGroups)).put("expandedMessages", org.json.JSONArray(expandedMessages)).toString())
+    }
+    private var refreshNotice: Job? = null
+    private fun scheduleRefresh(id: String) {
+        if (refreshNotice?.isActive == true) return
+        refreshNotice = scope.launch { delay(250); if (selectedId == id) { load(id); refresh() } }
     }
     suspend fun refresh() {
         try {
@@ -183,17 +191,22 @@ class ConversationStore(
         persist()
     }
 
-    suspend fun load(id: String) {
-        if (id.isBlank()) return
+    val historyLoading = mutableStateMapOf<String, Boolean>()
+    suspend fun load(id: String, older: Boolean = false) {
+        if (id.isBlank() || (older && historyLoading[id] == true)) return
+        if (older) historyLoading[id] = true
         val generation = (generations[id] ?: 0) + 1; generations[id] = generation
         try {
-            val detail = api.conversation(id)
+            val detail = api.conversation(id, older = older)
             if (generations[id] == generation) { details[id] = detail; if (selectedId == id) selectedTitle = detail.title; error = null }
-        } catch (e: Exception) { if (generations[id] == generation) error = e.message ?: "读取对话失败" }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (generations[id] == generation) error = e.message ?: "读取对话失败"
+        } finally { if (older) historyLoading.remove(id) }
     }
     fun retry() { scope.launch { refresh(); load(selectedId) } }
     fun start() {
-        refreshJob = scope.launch { while (true) { refresh(); delay(6000) } }
+        refreshJob = scope.launch { while (true) { refresh(); delay(30_000) } }
     }
     fun composer(id: String, target: ConversationTarget? = targets[id]): ChatComposer {
         val key = draftKey(id, target)
@@ -218,5 +231,5 @@ class ConversationStore(
         feedback[key] = receipt.error ?: if (receipt.state == "accepted") "已核对：请求已接受" else "未接受，草稿保留"
         refresh(); load(selectedId)
     }
-    fun shutdown() { persist(); refreshJob?.cancel(); composers.values.forEach(ChatComposer::shutdown); sessionStores.values.forEach(ChatStore::shutdown); sessionSubscribers.clear() }
+    fun shutdown() { persist(); refreshNotice?.cancel(); refreshJob?.cancel(); composers.values.forEach(ChatComposer::shutdown); sessionStores.values.forEach(ChatStore::shutdown); sessionSubscribers.clear() }
 }

@@ -42,7 +42,8 @@ class WandApi(baseUrl: String, val token: String?,
          * 结构化聊天首屏的块级窗口预算：与 Web/iOS 一致，只拉最近这么多内容块。
          * 单条 turn 上百块、1MB 级的长任务全靠它把首屏载荷压到几十 KB。
          */
-        const val CHAT_BLOCK_WINDOW = 60
+        const val CHAT_BLOCK_WINDOW = 12
+        const val CHAT_BYTE_WINDOW = 96 * 1024
     }
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
@@ -166,7 +167,10 @@ class WandApi(baseUrl: String, val token: String?,
         path: String,
         body: JSONObject? = null,
         timeoutSec: Int = 30,
-    ): JSONObject = parseResponse(requestData(method, path, body, timeoutSec)) { JSONObject(it) }
+    ): JSONObject {
+        val text = requestData(method, path, body, timeoutSec)
+        return withContext(Dispatchers.Default) { parseResponse(text) { JSONObject(it) } }
+    }
 
     private suspend fun requestArray(method: String, path: String): JSONArray =
         parseResponse(requestData(method, path)) { JSONArray(it) }
@@ -192,9 +196,27 @@ class WandApi(baseUrl: String, val token: String?,
         ConversationInstance.parse(requestObject("PATCH", "/api/conversations/${encode(id)}/list-state", patch))
             ?: throw WandApiException(null, "对话列表数据无效")
 
-    suspend fun conversation(id: String): ConversationInstance =
-        ConversationInstance.parse(requestObject("GET", "/api/conversations/${encode(id)}"))
-            ?: throw WandApiException(null, "对话数据无效")
+    private val conversationLocks = Array(16) { kotlinx.coroutines.sync.Mutex() }
+    private val conversationViews = object : LinkedHashMap<String, JSONObject>(24, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, JSONObject>?) = size > 24
+    }
+    suspend fun conversation(id: String, older: Boolean = false): ConversationInstance = withContext(Dispatchers.Default) {
+        val lock = conversationLocks[(id.hashCode() and Int.MAX_VALUE) % conversationLocks.size]
+        lock.lock()
+        try {
+            val previous = synchronized(conversationViews) { conversationViews[id] }
+            val history = previous?.optJSONObject("history")
+            val params = listOfNotNull(history?.str("revision")?.let { "since=" + encode(it) },
+                history?.str("from")?.let { "from=" + encode(it) }, if (older) "older=1" else null).joinToString("&")
+            val path = "/api/conversations/${encode(id)}"
+            val update = try { requestObject("GET", path + "/sync" + if (params.isEmpty()) "" else "?$params") }
+                catch (e: WandApiException) { if (e.status == 404) requestObject("GET", path) else throw e }
+            check(update.str("id") == id) { "对话同步身份不一致" }
+            val merged = mergeConversationUpdate(previous, update)
+            synchronized(conversationViews) { conversationViews[id] = merged }
+            ConversationInstance.parse(merged) ?: throw WandApiException(null, "对话数据无效")
+        } finally { lock.unlock() }
+    }
 
     suspend fun conversationReceipt(id: String): ConversationReceipt {
         val receipt = ConversationReceipt.parse(requestObject("GET", "/api/conversations/requests/${encode(id)}"))
@@ -229,13 +251,15 @@ class WandApi(baseUrl: String, val token: String?,
         SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
 
     suspend fun getSession(id: String, blockBudget: Int? = CHAT_BLOCK_WINDOW): SessionSnapshot =
-        SessionSnapshot.parse(
-            requestObject(
-                "GET",
-                "/api/sessions/$id?format=chat" +
-                    (blockBudget?.let { "&blockBudget=$it" } ?: ""),
-            ),
-        )
+        withContext(Dispatchers.Default) {
+            SessionSnapshot.parse(
+                requestObject(
+                    "GET",
+                    "/api/sessions/$id?format=chat&output=omit" +
+                        (blockBudget?.let { "&blockBudget=$it&byteBudget=$CHAT_BYTE_WINDOW" } ?: ""),
+                ),
+            )
+        }
 
     override suspend fun getPiResources(id: String): PiResourcesResponse =
         PiResourcesResponse.parse(requestObject("GET", "/api/sessions/${encode(id)}/pi-settings"))
@@ -300,7 +324,8 @@ class WandApi(baseUrl: String, val token: String?,
         requestObject(
             "GET",
             "/api/sessions/${encode(id)}/messages?turn=$turn" +
-                "&blockOffset=$blockOffset&blockLimit=$blockLimit",
+                "&blockOffset=$blockOffset&blockLimit=$blockLimit" +
+                "&blockBudget=$CHAT_BLOCK_WINDOW&byteBudget=$CHAT_BYTE_WINDOW",
         ),
     )
 

@@ -13,6 +13,9 @@ class SessionFilesApiTest {
     private class HttpFixture(private val responses: List<Pair<Int, String>>) : AutoCloseable {
         private val server = ServerSocket(0)
         val baseUrl = "http://127.0.0.1:${server.localPort}"
+        // Ephemeral ports may be reused by another fixture in the same JVM. An
+        // endpoint pool/cookie from its predecessor is not this test server.
+        init { WandHttp.resetClient(baseUrl) }
         val requests = LinkedBlockingQueue<Pair<String, String>>()
         private val worker = thread(isDaemon = true) {
             responses.forEach { (code, text) ->
@@ -35,7 +38,11 @@ class SessionFilesApiTest {
             }
         }
         fun next() = requests.poll(2, TimeUnit.SECONDS)!!
-        override fun close() { server.close(); worker.join(2_000) }
+        override fun close() {
+            worker.join(2_000)
+            server.close()
+            WandHttp.resetClient(baseUrl)
+        }
     }
 
     @Test fun previewUsesEncodedServerPathAndSaveIncludesExactConcurrencyMetadata() = runBlocking {

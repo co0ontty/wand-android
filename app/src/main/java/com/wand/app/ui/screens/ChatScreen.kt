@@ -156,6 +156,7 @@ import com.wand.app.SessionWatcher
 import com.wand.app.data.ContentBlock
 import com.wand.app.data.matchesModelSearch
 import com.wand.app.data.ConversationTurn
+import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.EscalationRequest
 import com.wand.app.data.PermissionRequestInfo
 import com.wand.app.data.SiliconEmployee
@@ -348,12 +349,13 @@ fun ChatScreen(
     isHapticEnabled: () -> Boolean,
     drafts: SessionDraftStore,
     initialSubmitDraft: Boolean = false,
+    initialSnapshot: () -> SessionSnapshot? = { null },
     taskSessions: List<WorkspaceSessionSummary> = emptyList(),
     onSelectTaskSession: (WorkspaceSessionSummary) -> Unit = {},
     showBack: Boolean = true,
     onBack: () -> Unit,
 ) {
-    val store = remember(sessionId, api) { ChatStore(sessionId, api) }
+    val store = remember(sessionId, api) { ChatStore(sessionId, api, initialSnapshot = initialSnapshot()) }
     val composerScope = rememberCoroutineScope()
     val resources = remember(sessionId, api) { com.wand.app.ui.PiResourcesController(sessionId, api, composerScope) }
     DisposableEffect(resources) { onDispose { resources.dismiss() } }

@@ -618,6 +618,7 @@ private fun SessionDetailScreen(
             isHapticEnabled = actions.settings.isHapticEnabled,
             drafts = sessionDrafts,
             initialSubmitDraft = screen.submitDraftOnOpen,
+            initialSnapshot = screen::takeInitialSnapshot,
             taskSessions = taskSessions,
             onSelectTaskSession = openTaskSession,
             showBack = showBack,
@@ -1400,7 +1401,7 @@ private fun SessionSnapshot.detailScreen(): Screen =
         structured = isStructured,
         workspaceId = workspaceId,
         taskId = workspaceTaskId,
-    )
+    ).also { if (it is Screen.Chat) it.initialSnapshot = this }
 
 private fun Screen.taskIdOrNull(): String? = when (this) {
     is Screen.Chat -> taskId

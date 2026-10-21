@@ -499,9 +499,9 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     }
     val unknown = state.unknownRequests[key]
     val currentTaskMode by rememberUpdatedState(taskMode)
-    LaunchedEffect(id) { while (true) { state.load(id); delay(3000) } }
+    LaunchedEffect(id) { while (true) { state.load(id); delay(15_000) } }
     DisposableEffect(id, detail?.kind) {
-        val close = if (detail?.kind == "dm") state.watchTaskPreviews(id) else null
+        val close = if (id.isNotBlank()) state.watchTaskPreviews(id) else null
         onDispose { close?.invoke() }
     }
     DisposableEffect(id, filter) { onDispose { state.persist() } }
@@ -571,7 +571,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
             isDirectMessage = privateChat,
             hasRunTarget = target != null,
             isDispatch = dispatch,
-            unknown = unknown != null,
+            unknown = false, // unknown delivery was rejected by the send guard above
             sendPhase = composer.sendPhase,
             uploading = composer.uploading,
         )
@@ -887,6 +887,22 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                             Text(if (displayedDetail?.dissolvedAt != null) "恢复后可继续聊天。" else if (displayedId.isBlank()) "可先写草稿，从通讯录选择接收对象后发送。" else if (displayedDetail?.kind == "group") "可以先沟通，也可以派任务。" else "直接说出你想做的事；执行过程和需要确认的内容会显示在这里。", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
                         }
                     }
+                }
+                if (displayedDetail?.history?.hasEarlier == true) item(key = "history-more") {
+                    TextButton(enabled = state.historyLoading[displayedId] != true, onClick = {
+                        following = false
+                        val anchor = turns.firstOrNull()?.let(::conversationMessageKey)
+                        scope.launch {
+                            state.load(displayedId, older = true)
+                            withFrameNanos { }
+                            if (state.selectedId == displayedId && anchor != null) {
+                                val current = state.details[displayedId]
+                                val rows = current?.messages.orEmpty().filter { displayedFilter.isBlank() || it.conversationTarget?.taskId == displayedFilter || it.conversationLink?.taskId == displayedFilter }
+                                val index = rows.indexOfFirst { conversationMessageKey(it) == anchor }
+                                if (index >= 0) messageList.scrollToItem(index + (if (current?.history?.hasEarlier == true) 1 else 0) + (if (state.error != null) 1 else 0))
+                            }
+                        }
+                    }) { Text(if (state.historyLoading[displayedId] == true) "加载中…" else "加载更早消息") }
                 }
                 itemsIndexed(turns, key = { _, turn -> conversationMessageKey(turn) }) { index, turn ->
                     val joined = joinsConversationBubble(turns.getOrNull(index - 1), turn)

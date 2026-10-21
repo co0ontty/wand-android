@@ -176,7 +176,7 @@ class TaskBoardModelsTest {
         assertEquals("待立项", boardTaskStatusLabel("backlog"))
         assertEquals("待办", boardTaskStatusLabel("todo"))
         assertEquals("进行中", boardTaskStatusLabel("doing"))
-        assertEquals("已完成", boardTaskStatusLabel("done"))
+        assertEquals("等你确认", boardTaskStatusLabel("done"))
         assertEquals("紧急", boardTaskPriorityLabel("urgent"))
         assertEquals("无优先级", boardTaskPriorityLabel("none"))
         assertEquals("Pi", boardTaskProviderLabel("pi"))
