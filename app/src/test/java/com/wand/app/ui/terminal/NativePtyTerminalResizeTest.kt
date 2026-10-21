@@ -5,6 +5,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativePtyTerminalResizeTest {
+    @Test fun historicalQueriesNeverEscapeAnAlreadyReadyResync() {
+        assertTrue(shouldForwardPtyInput(ready = true, restoring = false))
+        assertFalse(shouldForwardPtyInput(ready = true, restoring = true))
+        assertFalse(shouldForwardPtyInput(ready = false, restoring = true))
+        assertFalse(shouldForwardPtyInput(ready = false, restoring = false))
+    }
+
     @Test fun resyncAtTheSameSizeDoesNotTriggerAnotherServerResize() {
         val view = 48 to 20
         assertFalse(shouldResizePtyAfterSnapshot(view, view, view))

@@ -705,6 +705,8 @@ private fun SessionDetailScreen(
                 },
                 onTaskGone = { nav.pop() },
                 onOpenSession = { route -> nav.push(route.toScreen()) },
+                // 可引用任务区点子任务：开同一个详情页栈，目标仍是任务看板详情。
+                onOpenTaskDetail = { taskId -> nav.push(Screen.TaskBoard(taskId = taskId)) },
                 onOpenTeamChat = { runId, identifier ->
                     nav.push(Screen.AiTeamChat(runId, identifier.takeIf { it.isNotBlank() }))
                 },

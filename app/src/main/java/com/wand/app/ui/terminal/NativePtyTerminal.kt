@@ -69,6 +69,9 @@ internal fun shouldResizePtyAfterSnapshot(
 ): Boolean = viewSize != null && PtyTerminalSnapshot.validSize(viewSize.first, viewSize.second) &&
     (viewSize != lastSize || (serverSize != null && viewSize != serverSize))
 
+/** Historical DA/DSR queries must not produce new input on an already-ready resync. */
+internal fun shouldForwardPtyInput(ready: Boolean, restoring: Boolean): Boolean = ready && !restoring
+
 /** One native renderer and one ACK-enabled websocket per visible PTY session. */
 internal class NativePtyTerminal(
     private val api: WandApi,
@@ -90,7 +93,9 @@ internal class NativePtyTerminal(
         defaultForeground = Color(TerminalPalette.foregroundArgb),
         defaultBackground = Color(TerminalPalette.backgroundArgb),
         onKeyboardInput = { data ->
-            if (ready.value && !socket.sendPtyInput(String(data, Charsets.UTF_8), userInput = true)) {
+            if (shouldForwardPtyInput(ready.value, restoring) &&
+                !socket.sendPtyInput(String(data, Charsets.UTF_8), userInput = true)
+            ) {
                 onError("终端输入未发送，请检查连接后重试")
             }
         },
@@ -183,7 +188,20 @@ internal class NativePtyTerminal(
                 bracketedPasteMode.reset()
                 bracketedPasteMode.observeReplay(data.terminalState, data.output)
                 val restored = try {
-                    replayTerminalSnapshot(emulator, data.terminalState, data.output, data.ptyCols, data.ptyRows)
+                    val replayed = replayTerminalSnapshot(
+                        emulator, data.terminalState, data.output, data.ptyCols, data.ptyRows,
+                    )
+                    // Keep the final layout resize inside the restore transaction. The
+                    // emulator's resize callback is client-layout feedback, not a replayed
+                    // PTY operation; letting it escape here can race ready=true and send an
+                    // extra/late resize after the snapshot has been painted.
+                    val size = viewSize
+                    if (replayed && size != null &&
+                        PtyTerminalSnapshot.validSize(size.first, size.second)
+                    ) {
+                        emulator.resize(size.second, size.first)
+                    }
+                    replayed
                 } finally {
                     restoring = false
                 }
@@ -196,9 +214,6 @@ internal class NativePtyTerminal(
                 }
                 rejectedSnapshot = false
                 val size = viewSize
-                if (size != null && PtyTerminalSnapshot.validSize(size.first, size.second)) {
-                    emulator.resize(size.second, size.first)
-                }
                 ready.value = true
                 loading.value = false
                 val serverSize = data.terminalState?.finalSize

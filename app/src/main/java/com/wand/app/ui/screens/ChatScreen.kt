@@ -803,6 +803,7 @@ fun ChatScreen(
     }
     CompositionLocalProvider(
         LocalServerBaseUrl provides api.baseUrl,
+        com.wand.app.ui.LocalImageGallery provides { com.wand.app.ui.conversationImagePages(store.messages) },
         LocalChatApi provides api,
         LocalChatSessionId provides sessionId,
         LocalChatWorkingDirectory provides store.snapshot?.cwd,
@@ -1080,12 +1081,17 @@ fun ChatScreen(
             }
         }
         Box(Modifier.fillMaxSize().padding(padding)) {
-            // 顶栏不再画头像：主标题是任务名（独立会话回落会话标题），小字是「员工名 · 目录缩写」，
-            // 运行与异常只以一个状态点呈现，完整状态留给读屏、权限卡、连接横幅和待办进度条。
+            // 顶栏胶囊：左侧是圆圈头像，右侧是任务名（独立会话回落会话标题）与
+            // 「员工名 · 目录缩写」小字，运行与异常只以一个状态点呈现。
             ChatTopIdentityBar(
                 identity = chatTopIdentity(taskName, store.snapshot?.displayTitle,
                     liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel,
                     store.snapshot?.cwd),
+                avatarId = liveEmployee?.id ?: store.snapshot?.employeeId,
+                avatarName = liveEmployee?.name ?: store.snapshot?.employeeName,
+                avatar = liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
+                fileActivity = avatarActivity,
+                thinking = companionThinking(store.messages, store.isResponding, avatarActivity),
                 attention = chatTopAttention(
                     connected = store.connected,
                     blocked = store.pendingEscalation != null || store.legacyPermissionPrompt != null,

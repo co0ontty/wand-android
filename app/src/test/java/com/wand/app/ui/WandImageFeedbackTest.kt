@@ -1,6 +1,9 @@
 package com.wand.app.ui
 
 import coil.network.HttpException
+import com.wand.app.data.ContentBlock
+import com.wand.app.data.ConversationTurn
+import org.json.JSONObject
 import java.io.IOException
 import okhttp3.Protocol
 import okhttp3.Request
@@ -36,6 +39,17 @@ class WandImageFeedbackTest {
         assertEquals(360, WandImageLayout.thumbnailMaxHeightDp)
     }
 
+    @Test fun imageFiguresStayWithinReadingAreaProportions() {
+        for (width in listOf(280f, 390f, 768f)) {
+            assertEquals(minOf(width * 0.8f, 320f), WandImageLayout.figureMaxWidth(width), 0.001f)
+        }
+        for (height in listOf(240f, 600f, 1000f)) {
+            assertEquals(minOf(height * 0.4f, 360f), WandImageLayout.figureMaxHeight(height), 0.001f)
+        }
+        assertEquals(0f, WandImageLayout.figureMaxWidth(-1f), 0f)
+        assertEquals(360f, WandImageLayout.figureMaxHeight(0f), 0f)
+    }
+
     @Test fun viewerStartClampsAndGroupKeepsEveryImage() {
         assertEquals(2, viewerStart(index = 2, count = 3))
         assertEquals(2, viewerStart(index = 7, count = 3))
@@ -50,6 +64,27 @@ class WandImageFeedbackTest {
             viewerPages(listOf("/api/sessions/s/tool-images/0", "data:image/png;base64,AA"),
                 "/api/sessions/s/tool-images/0", directUrl = true),
         )
+    }
+
+    @Test fun conversationGalleryCrossesResultsWithoutLosingSourceModes() {
+        val turns = listOf(
+            ConversationTurn("user", listOf(ContentBlock.Text("[附件已上传，请查看以下文件:\n/work/a.png\n/work/doc.pdf\n]", null))),
+            ConversationTurn("assistant", listOf(
+                ContentBlock.ToolUse("one", "Read", null, JSONObject().put("path", "/work/b.png"), null),
+                ContentBlock.ToolResult("one", "", false, false, null),
+                ContentBlock.ToolResult("two", "", false, false, null, images = listOf("/api/image/c", "/api/image/c", "data:image/png;base64,AA")),
+                ContentBlock.ToolResult("bad", "", true, false, null, images = listOf("/api/image/failed")),
+            )),
+        )
+        val pages = conversationImagePages(turns)
+        assertEquals(listOf(ViewerImagePage("/work/a.png", false), ViewerImagePage("/work/b.png", false),
+            ViewerImagePage("/api/image/c", true), ViewerImagePage("data:image/png;base64,AA", true)), pages)
+        val selected = imageGallerySelection(pages, listOf("/api/image/c"), "/api/image/c", true)
+        assertEquals(2, selected.startIndex)
+        assertEquals(pages, selected.pages)
+        val fallback = imageGallerySelection(emptyList(), listOf("/a", "/b"), "/b", true)
+        assertEquals(1, fallback.startIndex)
+        assertEquals(2, fallback.pages.size)
     }
 
     @Test fun toolImageSourcesBecomeAbsoluteOnlyWhenRelative() {

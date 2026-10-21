@@ -39,6 +39,8 @@ fun WandDetailTopBar(
     backdrop: GlassBackdrop? = null,
     leading: (@Composable () -> Unit)? = null,
     titleContent: (@Composable RowScope.() -> Unit)? = null,
+    /** 自定义居中标题（例如胶囊标题 + 头像），给定时替掉默认的标题/副标题块。 */
+    heading: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
     contentHeight: Dp = 52.dp,
 ) {
@@ -70,6 +72,9 @@ fun WandDetailTopBar(
                     Box { if (leading != null) leading() }
                     Row(verticalAlignment = Alignment.CenterVertically, content = actions)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (heading != null) {
+                            heading()
+                        } else {
                         Text(title, style = MaterialTheme.typography.titleMedium,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                             textAlign = TextAlign.Center, color = WandColors.textPrimary,
@@ -78,6 +83,7 @@ fun WandDetailTopBar(
                             Text(subtitle, style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center, color = WandColors.textMuted,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                         }
                     }
                 },

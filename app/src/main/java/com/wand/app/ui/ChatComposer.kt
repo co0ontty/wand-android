@@ -45,6 +45,8 @@ class ChatComposer(
     private var feedbackJob: Job? = null
     private var unconfirmedSubmission: ComposerSubmission? = null
     private var stagedUploadInProgress = false
+    private var discardGeneration = 0L
+    private var uploadJob: Job? = null
     val draftRevision: Long get() = drafts.revision(sessionId)
 
     val draft: String get() = drafts[sessionId]
@@ -61,6 +63,24 @@ class ChatComposer(
 
     fun editDraft(text: String) {
         if (active) drafts[sessionId] = text
+    }
+
+    /** Cancel only unsent content; never hide an in-flight or unknown delivery. */
+    fun discardUnsentDraft(): Boolean {
+        if (!active || sendPhase == SendPhase.Sending || unconfirmedSubmission != null ||
+            drafts.isUnconfirmed(sessionId, currentPrompt)) return false
+        feedbackJob?.cancel()
+        discardGeneration++
+        uploadJob?.cancel()
+        uploadJob = null
+        uploading = false
+        stagedUploadInProgress = false
+        // Advance the revision even for an empty draft, invalidating late uploads.
+        drafts[sessionId] = ""
+        drafts.setAttachments(sessionId, emptyList())
+        drafts.setStagedAttachments(sessionId, emptyList())
+        sendPhase = SendPhase.Idle
+        return true
     }
 
     val queueRecovery: QueueRecovery? get() = drafts.queueRecovery(sessionId)
@@ -145,13 +165,14 @@ class ChatComposer(
             notice("最多添加 $MAX_COMPOSER_ATTACHMENTS 个附件")
             return false
         }
+        val startedGeneration = discardGeneration
         stagedUploadInProgress = true
         uploading = true
-        scope.launch {
+        uploadJob = scope.launch {
             try {
                 val uploaded = operation(captured)
                 coroutineContext.ensureActive()
-                if (!active) return@launch
+                if (!active || discardGeneration != startedGeneration) return@launch
                 require(uploaded.size == captured.size) { "上传附件数量不匹配" }
                 if (!acceptUploadedStagedAttachments(captured, uploaded)) {
                     notice("附件选择已变化，上传结果未加入草稿；请核对会话附件")
@@ -163,8 +184,10 @@ class ChatComposer(
             } catch (e: Exception) {
                 if (active) notice(e.message ?: "附件上传失败，已保留所选附件")
             } finally {
-                stagedUploadInProgress = false
-                uploading = false
+                if (discardGeneration == startedGeneration) {
+                    stagedUploadInProgress = false
+                    uploading = false
+                }
             }
         }
         return true
@@ -183,8 +206,9 @@ class ChatComposer(
             return false
         }
         val startedRevision = drafts.revision(sessionId)
+        val startedGeneration = discardGeneration
         uploading = true
-        scope.launch {
+        uploadJob = scope.launch {
             try {
                 val uploaded = operation(remainingSlots)
                 coroutineContext.ensureActive()
@@ -197,7 +221,7 @@ class ChatComposer(
             } catch (e: Exception) {
                 if (active) notice(e.message ?: "附件上传失败")
             } finally {
-                uploading = false
+                if (discardGeneration == startedGeneration) uploading = false
             }
         }
         return true

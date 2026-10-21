@@ -95,6 +95,23 @@ data class BoardTaskMilestone(
     }
 }
 
+data class BoardTaskAcceptance(
+    val evidence: String,
+    val blocker: String,
+    val acceptedAt: String?,
+) {
+    companion object {
+        fun parse(item: JSONObject?): BoardTaskAcceptance? {
+            if (item == null) return null
+            return BoardTaskAcceptance(
+                evidence = item.str("evidence") ?: "",
+                blocker = item.str("blocker") ?: "",
+                acceptedAt = item.str("acceptedAt")?.takeIf { it.isNotBlank() },
+            )
+        }
+    }
+}
+
 data class BoardTaskSession(
     val id: String,
     val provider: String,
@@ -104,6 +121,15 @@ data class BoardTaskSession(
     val cwd: String,
     val model: String,
     val thinkingEffort: String,
+    /** 服务端会话摘要：结构化执行是否在飞、任务执行队列及等待消息。 */
+    val executionStatus: String? = null,
+    val inFlight: Boolean? = null,
+    val queuedMessageCount: Int? = null,
+    val employeeName: String? = null,
+    val taskCommentId: String? = null,
+    val purpose: String? = null,
+    val permissionBlocked: Boolean = false,
+    val archived: Boolean = false,
     /** 执行引擎：`sdk` = Wand Agent（进程内 SDK）；缺省 / `cli` 都是命令行。 */
     val engine: String? = null,
 ) {
@@ -126,6 +152,14 @@ data class BoardTaskSession(
                 cwd = item.str("cwd") ?: "",
                 model = item.str("model") ?: "",
                 thinkingEffort = item.str("thinkingEffort") ?: "off",
+                executionStatus = item.str("executionStatus"),
+                inFlight = item.obj("structuredState")?.bool("inFlight") ?: item.bool("inFlight"),
+                queuedMessageCount = item.int("queuedMessageCount")?.coerceAtLeast(0),
+                employeeName = item.str("employeeName")?.takeIf { it.isNotBlank() },
+                taskCommentId = item.str("taskCommentId")?.takeIf { it.isNotBlank() },
+                purpose = item.str("purpose")?.takeIf { it.isNotBlank() },
+                permissionBlocked = item.bool("permissionBlocked") == true,
+                archived = item.bool("archived") == true,
                 engine = item.str("engine")?.trim()?.lowercase()
                     ?.takeIf { it == WandAgentEngine.Sdk.raw && !isTerminalSessionKind(sessionKind) },
             )
@@ -148,6 +182,7 @@ data class BoardTask(
     val sortOrder: Int,
     val agent: BoardTaskAgent?,
     val executionSubject: ExecutionSubject? = null,
+    val acceptance: BoardTaskAcceptance? = null,
     val createdAt: String,
     val updatedAt: String,
     val sessionIds: List<String>,
@@ -156,6 +191,10 @@ data class BoardTask(
     val milestone: BoardTaskMilestone?,
     val workspaceTaskId: String? = null,
     val parentTaskId: String? = null,
+    /** 该任务还有多少条派发在员工并发上限后排队；任务仍留在活动列。 */
+    val queuedCommentCount: Int = 0,
+    val executionStatus: String? = null,
+    val queuedExecutionCount: Int? = null,
 ) {
     companion object {
         fun parse(item: JSONObject): BoardTask? {
@@ -174,6 +213,7 @@ data class BoardTask(
                 sortOrder = item.int("sortOrder") ?: 0,
                 agent = BoardTaskAgent.parse(item.obj("agent")),
                 executionSubject = ExecutionSubject.parse(item.obj("executionSubject")),
+                acceptance = BoardTaskAcceptance.parse(item.obj("acceptance")),
                 createdAt = item.str("createdAt") ?: "",
                 updatedAt = item.str("updatedAt") ?: "",
                 sessionIds = item.arr("sessionIds")?.stringItems(ignoreBlank = true) ?: emptyList(),
@@ -182,6 +222,9 @@ data class BoardTask(
                 milestone = BoardTaskMilestone.parse(item.obj("milestone")),
                 workspaceTaskId = item.str("workspaceTaskId")?.takeIf { it.isNotBlank() },
                 parentTaskId = item.str("parentTaskId")?.takeIf { it.isNotBlank() },
+                queuedCommentCount = item.int("queuedCommentCount")?.coerceAtLeast(0) ?: 0,
+                executionStatus = item.str("executionStatus"),
+                queuedExecutionCount = item.int("queuedExecutionCount")?.coerceAtLeast(0),
             )
         }
 
@@ -198,6 +241,8 @@ data class BoardDispatchResult(
     val cwd: String,
     /** 派发出来的会话形态："pty" / "structured"；老服务端不返回时留空，调用方回落到结构化。 */
     val sessionKind: String = "",
+    /** 员工并发上限已满：派发已记录为排队，暂无会话可打开。 */
+    val queued: Boolean = false,
 ) {
     /** 应当以哪种页面打开新会话：PTY 走终端页，其余走 Chat。 */
     val isStructured: Boolean
@@ -213,16 +258,20 @@ data class BoardDispatchResult(
                 provider = session?.str("provider") ?: "",
                 cwd = session?.str("cwd") ?: "",
                 sessionKind = session?.str("sessionKind") ?: "",
+                queued = item.optBoolean("queued", false),
             )
         }
     }
 }
 
+fun BoardTask.displayStatusLabel(): String = if (status == "doing" && executionStatus == "queued") "排队中" else boardTaskStatusLabel(status)
+
 fun boardTaskStatusLabel(status: String): String = when (status) {
+    "queued" -> "排队中"
     "backlog" -> "待立项"
     "todo" -> "待办"
     "doing" -> "进行中"
-    "done" -> "已完成"
+    "done" -> "等你确认"
     "archived" -> "归档"
     else -> status
 }
@@ -508,6 +557,16 @@ interface TaskBoardPort : TaskChangeSource {
     suspend fun getBoardTask(id: String): BoardTask?
     /** Read-only comments; older servers may not expose the endpoint. */
     suspend fun listTaskComments(id: String): List<TaskComment> = emptyList()
+    /** 评论分页页。老服务端只返回最新一页（[TaskCommentPage.nextCursor] 为空）。 */
+    suspend fun listTaskCommentPage(id: String, limit: Int = 50, before: String? = null): TaskCommentPage {
+        val comments = listTaskComments(id)
+        return TaskCommentPage(comments, comments.size, null)
+    }
+    /** 固定执行轮次结果。老服务端没有该端点时返回 null（不伪造结果）。 */
+    suspend fun taskCommentResult(taskId: String, commentId: String, offset: Int = 0, limit: Int = 40): TaskCommentResult? = null
+    /** 当前任务的直接子任务（可引用对象）。 */
+    suspend fun listBoardTaskChildren(parentId: String): List<BoardTask> =
+        listBoardTasks().filter { it.parentTaskId == parentId }
     suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?): TaskComment =
         throw UnsupportedOperationException("当前客户端未提供评论提交能力。")
     suspend fun createBoardTask(

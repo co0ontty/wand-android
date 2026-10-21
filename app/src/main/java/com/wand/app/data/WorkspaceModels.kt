@@ -372,6 +372,7 @@ data class WorkspaceSessionSummary(
     /** 任务绑定标识；/api/tasks 的 standalone 投影通常不带，但任务摘要会带。 */
     val workspaceTaskId: String? = null,
     val ptyCommandRunning: Boolean? = null,
+    val executionStatus: String? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -401,6 +402,7 @@ data class WorkspaceSessionSummary(
                 viewedCompletionRevision = o.int("viewedCompletionRevision"),
                 workspaceTaskId = o.str("workspaceTaskId")?.takeIf { it.isNotBlank() },
                 ptyCommandRunning = o.bool("ptyCommandRunning"),
+                executionStatus = o.str("executionStatus"),
             )
         }
 
@@ -547,7 +549,11 @@ data class WorkspaceTaskSummary(
     val sessions: List<WorkspaceSessionSummary>,
     /** 服务端未截断前的会话总数。 */
     val totalSessions: Int,
+    val executionStatus: String? = null,
+    val queuedExecutionCount: Int = 0,
 ) {
+    val hasQueuedExecution: Boolean get() = executionStatus == "queued"
+    val hasActiveExecution: Boolean get() = hasQueuedExecution || executionStatus == "running"
     val id: String get() = task.id
     val name: String get() = task.name
     val status: WorkspaceTaskStatus get() = task.status
@@ -566,6 +572,8 @@ data class WorkspaceTaskSummary(
                 totalSessions = o.int("totalSessions")
                     ?: o.arr("sessions")?.length()
                     ?: 0,
+                executionStatus = o.str("executionStatus"),
+                queuedExecutionCount = o.int("queuedExecutionCount")?.coerceAtLeast(0) ?: 0,
             )
         }
     }

@@ -86,6 +86,7 @@ fun WorkspaceSessionSummary.activityStatus(): String {
     if (archived != true && (ptyBusy == true || inFlight == true || status == "thinking")) {
         return if (status == "thinking") "thinking" else "running"
     }
+    if (archived != true && executionStatus == "queued") return "queued"
     if (!isStructured && !isProviderCliSession(provider) && status == "running") {
         return if (ptyCommandRunning == true) "running" else if (effective == "just-completed") effective else "idle"
     }

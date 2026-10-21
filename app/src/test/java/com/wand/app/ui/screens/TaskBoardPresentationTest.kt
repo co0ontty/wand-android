@@ -20,6 +20,17 @@ import org.junit.Test
 
 class TaskBoardPresentationTest {
     @Test
+    fun parallelDeliveryDoesNotInferTaskAcceptance() {
+        val running = session(status = "idle").copy(inFlight = true, queuedMessageCount = 2)
+        assertEquals(BoardTaskSessionState.Running, boardTaskSessionState(running))
+        assertEquals(BoardTaskSessionState.WaitingAuthorization, boardTaskSessionState(running.copy(permissionBlocked = true)))
+        assertEquals(BoardTaskSessionState.Unknown, boardTaskSessionState(session(status = "")))
+        val card = task(status = "done", sessions = listOf(session(status = "exited"), session(status = "idle")))
+        assertEquals(0, boardTaskStats(listOf(card)).accepted)
+        val accepted = card.copy(acceptance = com.wand.app.data.BoardTaskAcceptance("a: report; b: verification", "", "2000-01-01"))
+        assertEquals(1, boardTaskStats(listOf(accepted)).accepted)
+    }
+    @Test
     fun statsCountRemainingAndHighPriority() {
         val stats = boardTaskStats(
             listOf(
@@ -119,15 +130,15 @@ class TaskBoardPresentationTest {
             boardTaskProcessingLabel(task(status = "doing", sessions = listOf(session(status = "running")))),
         )
         assertEquals(
-            "等待验收",
+            "空闲 · 1 · 尚待验收",
             boardTaskProcessingLabel(task(status = "doing", sessions = listOf(session(status = "idle")))),
         )
         assertEquals(
-            "等待验收",
+            "已结束 · 1 · 尚待验收",
             boardTaskProcessingLabel(task(status = "doing", sessions = listOf(session(status = "exited")))),
         )
         assertEquals(
-            "暂停处理",
+            "已结束 · 1 · 尚待验收",
             boardTaskProcessingLabel(task(status = "doing", sessions = listOf(session(status = "stopped")))),
         )
     }
@@ -387,7 +398,7 @@ class TaskBoardPresentationTest {
     fun groupAddButtonDescriptionQuotesStatusName() {
         assertEquals("在「待办」中新建任务", boardGroupAddTaskDescription("todo"))
         assertEquals("在「进行中」中新建任务", boardGroupAddTaskDescription("doing"))
-        assertEquals("在「已完成」中新建任务", boardGroupAddTaskDescription("done"))
+        assertEquals("在「等你确认」中新建任务", boardGroupAddTaskDescription("done"))
         for (status in BOARD_TASK_STATUSES) {
             val description = boardGroupAddTaskDescription(status)
             val label = boardTaskStatusLabel(status)
@@ -574,7 +585,7 @@ class TaskBoardPresentationTest {
         assertFalse(createHandler.contains("openCreateDialog"))
 
         assertTrue(screen.contains("onDispatch(agent, composePrompt.trim(), selected)"))
-        assertTrue(screen.contains("label = \"CLI / 团队兼容派发\""))
+        assertTrue(screen.contains("label = \"新建并行会话（CLI / 团队）\""))
         val detail = java.io.File("src/main/java/com/wand/app/ui/screens/TaskBoardTaskScreen.kt").readText()
         assertTrue(detail.contains("api.dispatchBoardSubject(taskId, subject, agent, prompt, task?.workspaceId)"))
     }

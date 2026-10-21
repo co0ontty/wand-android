@@ -903,6 +903,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                     val protocol = protocols[sourceSession]
                     val toolResults = resultsBySession[sourceSession].orEmpty() + conversationToolResults(protocol?.messages.orEmpty())
                     CompositionLocalProvider(com.wand.app.ui.LocalServerBaseUrl provides state.api.baseUrl,
+                        com.wand.app.ui.LocalImageGallery provides { com.wand.app.ui.conversationImagePages(turns) },
                         LocalChatApi provides state.api, LocalChatSessionId provides sourceSession.orEmpty(),
                         LocalChatWorkingDirectory provides protocol?.snapshot?.cwd) {
                         val messageKey = "$displayedId:${conversationMessageKey(turn)}"
@@ -1017,7 +1018,12 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         Text("工作项目", fontSize = 14.sp)
                         state.projects.forEach { project -> Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(projectId == project.id, { projectId = project.id }); Text(project.name) } }
                         Text("${detail?.team?.members?.joinToString { it.name } ?: employee?.name.orEmpty()} · ${if (detail?.team?.requirePlanApproval == false) "自动开工" else "需批准计划"}", fontSize = 12.sp, color = WandColors.textSecondary)
-                        WandButton("取消派发", { applyComposer(ConversationComposerEvent.DispatchCancel) }, variant = WandButtonVariant.Text)
+                        WandButton("取消派发", {
+                            if (unknown == null && composer.discardUnsentDraft()) {
+                                applyComposer(ConversationComposerEvent.DispatchCancel)
+                                title = ""; continueTask = null
+                            }
+                        }, enabled = composer.sendPhase != SendPhase.Sending && unknown == null, variant = WandButtonVariant.Text)
                     }
                 }, controls = {
                     if (privateChat && target == null && !taskMode && defaultExecutionAgent != null) {

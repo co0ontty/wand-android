@@ -263,6 +263,9 @@ fun SiliconEmployeeEditorScreen(
                                 Text(systemSessionLimitSummary(draft.systemSessionLimit),
                                     modifier = Modifier.padding(top = 12.dp),
                                     style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
+                                Text(maxConcurrentTasksSummary(draft.submittedMaxConcurrentTasks),
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
                             }
                             HorizontalDivider(color = WandColors.border, modifier = Modifier.padding(start = 16.dp))
                             Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -350,6 +353,21 @@ fun SiliconEmployeeEditorScreen(
                             )
                             Text(
                                 "仅保留标题生成等系统辅助功能的最新 N 条已结束记录，保存后永久清理超出部分。留空不限，0 不保留。任务派发、agent 间调用（含决策）、手动聊天与运行中会话不计入，也不会清理。",
+                                color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            WandTextField(
+                                value = draft.maxConcurrentTasksInput,
+                                onValueChange = { input -> edit(draft.copy(maxConcurrentTasksInput = input)) },
+                                label = "并发任务上限",
+                                placeholder = "默认 2",
+                                singleLine = true,
+                                enabled = !busy,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                            )
+                            Text(
+                                "默认 2，可设 1–100；留空保存时恢复默认 2。超出上限的新派发显示为「排队中」，任务仍留在活动任务里；前序任务结束后按先后顺序自动开始。同一任务的多条派发不额外占用名额。",
                                 color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.padding(top = 4.dp),
                             )
@@ -578,6 +596,9 @@ private fun systemSessionLimitSummary(limit: Int?): String = when (limit) {
     0 -> "系统调用历史：0（不保留已结束记录）"
     else -> "系统调用历史：保留最新 $limit 条已结束记录"
 }
+
+private fun maxConcurrentTasksSummary(limit: Int): String =
+    "并发任务：同时 $limit 个，超出排队"
 
 @Composable
 private fun EmployeeDisclosureHeader(

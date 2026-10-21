@@ -28,6 +28,89 @@ class ChatComposerTest {
     private fun file(path: String) = UploadedFile(path.substringAfterLast('/'), path, 3, "text/plain")
 
     @Test
+    fun cancelDispatchDiscardsPayloadAndCannotSubmitAsAnOrdinaryMessage() = runTest {
+        val drafts = SessionDraftStore(mapOf("chat-a" to "TASK-129 不得执行"))
+        var sends = 0
+        val composer = composer(drafts, send = { sends++ })
+        composer.upload { listOf(file("/draft.txt")) }
+        runCurrent()
+        composer.stageAttachments(listOf(StagedComposerAttachment("content://draft", "staged.txt")))
+        assertTrue(composer.discardUnsentDraft())
+        assertEquals("", composer.draft)
+        assertTrue(composer.attachments.isEmpty())
+        assertTrue(composer.stagedAttachments.isEmpty())
+        assertTrue(drafts.savedDrafts().isEmpty())
+        assertTrue(drafts.savedAttachments().isEmpty())
+        assertFalse(composer.submit())
+        runCurrent()
+        assertEquals(0, sends)
+    }
+
+    @Test
+    fun cancelDispatchInvalidatesLateUploadWithoutResurrectingDraft() = runTest {
+        val drafts = SessionDraftStore(mapOf("chat-a" to "cancel"))
+        val composer = composer(drafts)
+        val upload = CompletableDeferred<List<UploadedFile>>()
+        composer.upload { upload.await() }
+        runCurrent()
+        assertTrue(composer.discardUnsentDraft())
+        upload.complete(listOf(file("/late.txt")))
+        runCurrent()
+        assertTrue(composer.attachments.isEmpty())
+        assertFalse(composer.canSubmit)
+    }
+
+    @Test
+    fun cancelledUploadCannotHoldOrUnlockTheNextDraftUpload() = runTest {
+        val composer = composer(SessionDraftStore())
+        val old = CompletableDeferred<List<UploadedFile>>()
+        val newer = CompletableDeferred<List<UploadedFile>>()
+        composer.upload { withContext(NonCancellable) { old.await() } }
+        runCurrent()
+        assertTrue(composer.discardUnsentDraft())
+        assertFalse(composer.uploading)
+        composer.editDraft("new")
+        assertTrue(composer.upload { newer.await() })
+        runCurrent()
+        old.complete(listOf(file("/old.txt")))
+        runCurrent()
+        assertTrue(composer.uploading)
+        newer.complete(listOf(file("/new.txt")))
+        runCurrent()
+        assertEquals(listOf(file("/new.txt")), composer.attachments)
+    }
+
+    @Test
+    fun cancelledStagedUploadCannotAdoptEvenIfTheSameFileIsSelectedAgain() = runTest {
+        val composer = composer(SessionDraftStore())
+        val selected = listOf(StagedComposerAttachment("content://draft", "staged.txt"))
+        val upload = CompletableDeferred<List<UploadedFile>>()
+        composer.stageAttachments(selected)
+        composer.uploadStaged { upload.await() }
+        runCurrent()
+        assertTrue(composer.discardUnsentDraft())
+        upload.complete(listOf(file("/late-staged.txt")))
+        runCurrent()
+        composer.stageAttachments(selected)
+        assertTrue(composer.attachments.isEmpty())
+        assertEquals(selected, composer.stagedAttachments)
+    }
+
+    @Test
+    fun cancelDispatchCannotHideInFlightOrUnknownDelivery() = runTest {
+        val drafts = SessionDraftStore(mapOf("chat-a" to "confirmed"))
+        val ack = CompletableDeferred<Unit>()
+        val composer = composer(drafts, send = { ack.await(); throw com.wand.app.data.ConversationUnconfirmedException("r") })
+        assertTrue(composer.submit())
+        assertFalse(composer.discardUnsentDraft())
+        runCurrent()
+        ack.complete(Unit)
+        runCurrent()
+        assertFalse(composer.discardUnsentDraft())
+        assertEquals("confirmed", composer.draft)
+    }
+
+    @Test
     fun explicitReceiptClearsOnlyUnknownCaptureAndNeverNewInput() = runTest {
         val drafts = SessionDraftStore(mapOf("conversation-a" to "first"))
         val composer = composer(drafts, id = "conversation-a", send = { throw com.wand.app.data.ConversationUnconfirmedException("request-a") })

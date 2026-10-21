@@ -88,8 +88,10 @@ class ConversationDispatchPanelEventTest {
         assertTrue(attach.contains("ConversationComposerEvent.PanelOpen"))
         assertTrue(attach.contains("ConversationComposerEvent.PanelClose"))
         assertFalse("收面板的回调里不得再夹带派发意图", attach.contains("taskMode"))
-        val cancel = screen.substringAfter("WandButton(\"取消派发\"").lineSequence().first()
+        val cancel = screen.substringAfter("WandButton(\"取消派发\"").substringBefore("}, controls =")
+        assertTrue(cancel.contains("composer.discardUnsentDraft()"))
         assertTrue(cancel.contains("ConversationComposerEvent.DispatchCancel"))
+        assertFalse(cancel.contains("::send"))
     }
 
     @Test fun sendUsesTheSharedPathAndKeepsTheCapturedIntent() {

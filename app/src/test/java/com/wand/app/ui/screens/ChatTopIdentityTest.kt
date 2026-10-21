@@ -43,14 +43,18 @@ class ChatTopIdentityTest {
         assertEquals("修复图片显示", chatTopReadback("修复图片显示", "", ""))
     }
 
-    @Test fun sessionBarDrawsNoAvatarAndKeepsOneIdentityOwner() {
+    @Test fun sessionBarUsesCapsuleAvatarAndKeepsOneIdentityOwner() {
         val bar = File("src/main/java/com/wand/app/ui/screens/ChatTopIdentityBar.kt").readText()
         val screen = File("src/main/java/com/wand/app/ui/screens/ChatScreen.kt").readText()
-        assertTrue(screen.contains("chatTopIdentity(taskName, store.snapshot?.displayTitle"))
+        assertTrue(screen.contains("chatTopIdentity(taskTitle, store.snapshot?.displayTitle")
+            || screen.contains("chatTopIdentity(taskName, store.snapshot?.displayTitle"))
         assertTrue(screen.contains("chatTopAttention("))
-        assertFalse("会话页仍在画头像", screen.contains("TopChatCompanion("))
+        assertFalse("会话页仍在画大头像伙伴", screen.contains("TopChatCompanion("))
         assertTrue(bar.contains("contentDescription = chatTopReadback("))
+        // 顶栏头像走胶囊组件：圆圈里同一张脸，IM 私聊仍以头像为身份。
+        assertTrue(bar.contains("WandCapsuleTitle("))
         assertFalse(bar.contains("EmployeeAvatar("))
+        assertTrue(screen.contains("avatarId = liveEmployee?.id"))
         // IM 私聊仍以头像为身份，顶栏头像版伙伴只能被那条链路使用。
         assertTrue(File("src/main/java/com/wand/app/ui/screens/ConversationScreens.kt").readText().contains("TopChatCompanion("))
     }

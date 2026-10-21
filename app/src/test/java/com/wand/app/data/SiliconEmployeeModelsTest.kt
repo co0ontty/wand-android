@@ -27,6 +27,26 @@ class SiliconEmployeeModelsTest {
     }
 
     @Test
+    fun maxConcurrentTasksDefaultsToTwoAndRejectsOutOfRange() {
+        for (limit in listOf<Int?>(null, 1, 3, 100)) {
+            val employee = SiliconEmployee.parse(JSONObject().put("id", "e_queue").put("name", "并发员工")
+                .put("maxConcurrentTasks", limit ?: JSONObject.NULL))!!
+            val expected = limit ?: SiliconEmployee.DEFAULT_MAX_CONCURRENT_TASKS
+            assertEquals(expected, employee.maxConcurrentTasks)
+            val draft = SiliconEmployeeDraft.from(employee)
+            assertEquals(expected.toString(), draft.maxConcurrentTasksInput)
+            assertEquals(expected, draft.toJson().get("maxConcurrentTasks"))
+        }
+        val draft = SiliconEmployeeDraft(name = "员工")
+        for (input in listOf("0", "101", "-1", "1.5", "abc")) {
+            assertNotNull(draft.copy(maxConcurrentTasksInput = input).validationError())
+        }
+        assertEquals(SiliconEmployee.DEFAULT_MAX_CONCURRENT_TASKS, draft.toJson().get("maxConcurrentTasks"))
+        assertEquals(SiliconEmployee.DEFAULT_MAX_CONCURRENT_TASKS,
+            SiliconEmployee.parse(JSONObject().put("id", "legacy"))!!.maxConcurrentTasks)
+    }
+
+    @Test
     fun employeeDraftKeepsCandidateOrderAndRejectsPty() {
         val first = BoardTaskAgent("codex", "gpt", "deep", "full-access", "structured")
         val second = BoardTaskAgent("claude", "sonnet", "off", "managed", "structured")

@@ -2,7 +2,9 @@ package com.wand.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -40,6 +42,7 @@ import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.boardTaskStatusLabel
+import com.wand.app.data.displayStatusLabel
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandBreadcrumb
 import com.wand.app.ui.components.WandCrumb
@@ -47,9 +50,19 @@ import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandButtonVariant
 import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
+import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private object TaskAcceptanceDraftCache {
+    val values = linkedMapOf<String, Pair<String, String>>()
+    fun save(id: String, evidence: String, blocker: String) {
+        if (values.size >= 100 && !values.containsKey(id)) values.remove(values.keys.first())
+        values[id] = evidence to blocker
+    }
+}
 
 /**
  * 看板任务详情页（平板 / 折叠屏展开后的右侧主区，或窄屏推出的独立页面）。
@@ -72,6 +85,8 @@ fun TaskBoardTaskScreen(
      */
     onBackToBoard: () -> Unit = onBack,
     onOpenSession: (TaskSessionRoute) -> Unit,
+    /** 打开另一个任务（可引用任务区点子任务时用）。 */
+    onOpenTaskDetail: (String) -> Unit = {},
     /** 看板卡片「打开群聊」：参数是团队运行 id + 该卡短号，落到 IM 群聊页。 */
     onOpenTeamChat: (runId: String, taskIdentifier: String) -> Unit = { _, _ -> },
     onTaskGone: () -> Unit = onBack,
@@ -95,6 +110,11 @@ fun TaskBoardTaskScreen(
     var error by remember(taskId) { mutableStateOf<String?>(null) }
     var busy by remember(taskId) { mutableStateOf(false) }
     var movingSession by remember(taskId) { mutableStateOf<BoardTaskSession?>(null) }
+    var childTasks by remember(taskId) { mutableStateOf<List<BoardTask>>(emptyList()) }
+    var acceptanceEvidence by remember(taskId) { mutableStateOf("") }
+    var acceptanceBlocker by remember(taskId) { mutableStateOf("") }
+    var acceptanceDraftTaskId by remember(taskId) { mutableStateOf<String?>(null) }
+    var acceptanceDraftDirty by remember(taskId) { mutableStateOf(false) }
 
     fun applyLoaded(loaded: BoardTask?) {
         if (loaded == null) {
@@ -103,6 +123,12 @@ fun TaskBoardTaskScreen(
             return
         }
         task = loaded
+        if (acceptanceDraftTaskId != loaded.id) {
+            acceptanceEvidence = TaskAcceptanceDraftCache.values[loaded.id]?.first ?: loaded.acceptance?.evidence.orEmpty()
+            acceptanceBlocker = TaskAcceptanceDraftCache.values[loaded.id]?.second ?: loaded.acceptance?.blocker.orEmpty()
+            acceptanceDraftTaskId = loaded.id
+            acceptanceDraftDirty = TaskAcceptanceDraftCache.values.containsKey(loaded.id)
+        }
         error = null
     }
 
@@ -124,7 +150,11 @@ fun TaskBoardTaskScreen(
     suspend fun refresh(showProgress: Boolean = false) {
         if (showProgress) loading = true
         try {
-            applyLoaded(api.getBoardTask(taskId))
+            val loaded = api.getBoardTask(taskId)
+            applyLoaded(loaded)
+            if (loaded != null) {
+                childTasks = runCatching { api.listBoardTaskChildren(taskId) }.getOrDefault(emptyList())
+            }
             refreshTeamRun()
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -157,6 +187,7 @@ fun TaskBoardTaskScreen(
         scope.launch {
             try {
                 applyLoaded(api.updateBoardTask(taskId, body))
+                if (body.has("acceptance")) acceptanceDraftDirty = false
                 after()
                 onTaskChanged()
                 refresh()
@@ -251,7 +282,7 @@ fun TaskBoardTaskScreen(
                         ),
                     )
                     Text(
-                        current?.let { boardTaskStatusLabel(it.status) } ?: "加载中",
+                        current?.displayStatusLabel() ?: "加载中",
                         style = MaterialTheme.typography.labelSmall,
                         color = WandColors.textMuted,
                         maxLines = 1,
@@ -297,7 +328,42 @@ fun TaskBoardTaskScreen(
                         modifier = Modifier.padding(top = 12.dp),
                     )
                 }
-                else -> TaskBoardDetailPane(
+                else -> Column(
+                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
+                ) {
+                    val acceptancePane: @Composable () -> Unit = {
+                    TaskBoardAcceptancePane(
+                        task = current,
+                        childTasks = childTasks,
+                        evidence = acceptanceEvidence,
+                        blocker = acceptanceBlocker,
+                        busy = busy,
+                        dirty = acceptanceDraftDirty,
+                        onEvidenceChange = {
+                            acceptanceEvidence = it
+                            acceptanceDraftDirty = true
+                            TaskAcceptanceDraftCache.save(taskId, acceptanceEvidence, acceptanceBlocker)
+                        },
+                        onBlockerChange = {
+                            acceptanceBlocker = it
+                            acceptanceDraftDirty = true
+                            TaskAcceptanceDraftCache.save(taskId, acceptanceEvidence, acceptanceBlocker)
+                        },
+                        onSave = { accepted ->
+                            val evidence = acceptanceEvidence.trim()
+                            val blocker = acceptanceBlocker.trim()
+                            val incompleteChildren = childTasks.any { it.acceptance?.acceptedAt.isNullOrBlank() }
+                            if (accepted && (evidence.isEmpty() || blocker.isNotEmpty() || incompleteChildren)) return@TaskBoardAcceptancePane
+                            val value = org.json.JSONObject()
+                                .put("evidence", acceptanceEvidence)
+                                .put("blocker", acceptanceBlocker)
+                                .put("acceptedAt", if (accepted) Instant.now().toString() else org.json.JSONObject.NULL)
+                            patch(org.json.JSONObject().put("acceptance", value))
+                        },
+                    )
+                    }
+                    TaskBoardDetailPane(
+                    acceptanceContent = acceptancePane,
                     baseUrl = baseUrl,
                     commentsApi = api,
                     task = current,
@@ -345,7 +411,98 @@ fun TaskBoardTaskScreen(
                     },
                     onMoveSession = { movingSession = it },
                     onOpenTeamChat = onOpenTeamChat,
-                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
+                    onOpenTask = onOpenTaskDetail,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 交付与验收单独固定在任务详情顶部，避免被滚动会话列表挤出视口。
+ * 草稿只由输入事件修改；轮询刷新任务实体时不会覆盖未提交内容。
+ */
+@Composable
+private fun TaskBoardAcceptancePane(
+    task: BoardTask,
+    childTasks: List<BoardTask>,
+    evidence: String,
+    blocker: String,
+    busy: Boolean,
+    dirty: Boolean,
+    onEvidenceChange: (String) -> Unit,
+    onBlockerChange: (String) -> Unit,
+    onSave: (Boolean) -> Unit,
+) {
+    val incompleteChildren = childTasks.count { it.acceptance?.acceptedAt.isNullOrBlank() }
+    val accepted = !task.acceptance?.acceptedAt.isNullOrBlank()
+    val canAccept = evidence.trim().isNotEmpty() && blocker.trim().isEmpty() && incompleteChildren == 0
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("交付与验收", style = MaterialTheme.typography.titleSmall, color = WandColors.textPrimary)
+        Text(
+            "由任务负责人统一核对各会话产物。会话空闲、结束、失败或归档，都不代表任务验收通过。",
+            style = MaterialTheme.typography.bodySmall,
+            color = WandColors.textSecondary,
+        )
+        WandTextField(
+            value = evidence,
+            onValueChange = onEvidenceChange,
+            label = "交付证据、产物路径或源会话",
+            placeholder = "填写可复核的交付证据",
+            minLines = 2,
+            maxLines = 6,
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        WandTextField(
+            value = blocker,
+            onValueChange = onBlockerChange,
+            label = "待处理原因、授权或部署阻塞（无则留空）",
+            placeholder = "等待信息／授权／部署／验收：写明原因与下一步；无则留空",
+            minLines = 2,
+            maxLines = 4,
+            enabled = !busy,
+            isError = false,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (childTasks.isNotEmpty()) {
+            Text(
+                if (incompleteChildren == 0) "直接子任务均已验收通过"
+                else "仍有 $incompleteChildren 个直接子任务未验收通过，主目标不能通过",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (incompleteChildren == 0) WandColors.success else WandColors.warning,
+            )
+        }
+        if (accepted) {
+            Text("验收通过 · 已完成", style = MaterialTheme.typography.labelLarge, color = WandColors.success)
+            WandButton(label = "保存并重新验收", onClick = { onSave(false) }, enabled = !busy, variant = WandButtonVariant.Secondary)
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                WandButton(
+                    label = "保存交付与缺口",
+                    onClick = { onSave(false) },
+                    enabled = !busy && dirty,
+                    variant = WandButtonVariant.Secondary,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
+                )
+                WandButton(
+                    label = "确认验收通过",
+                    onClick = { onSave(true) },
+                    enabled = !busy && canAccept,
+                    variant = WandButtonVariant.Success,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }

@@ -63,6 +63,7 @@ import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandBottomSheet
+import com.wand.app.ui.components.WandCapsuleTitle
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIconButton
@@ -113,6 +114,14 @@ fun WorkspaceTaskScreen(
             onMoved = { scope.launch { workflow.refreshTask(taskId); onTaskChanged() } })
     }
     val taskState by workflow.taskState.collectAsState()
+    // 顶栏胶囊头像：优先用当前选中的会话员工，没有会话时回落到默认伙伴。
+    val taskTopSession = (taskState as? WorkspaceTaskState.Content)?.let { state ->
+        state.selectedSessionId?.let { id -> state.orderedSessions.firstOrNull { it.id == id } }
+            ?: state.orderedSessions.firstOrNull { !it.employeeId.isNullOrBlank() }
+    }
+    val taskTopAvatarId = taskTopSession?.employeeId?.takeIf { it.isNotBlank() } ?: "e_wand_default"
+    val taskTopAvatarName = taskTopSession?.employeeName ?: if (taskTopAvatarId == "e_wand_default") "赛博虎妞" else ""
+    val taskTopAvatar = taskTopSession?.employeeAvatar ?: if (taskTopAvatarId == "e_wand_default") "plush-cat:v1:silver" else null
     val targetState by workflow.targetState.collectAsState()
     var selectedTarget by remember { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var employees by remember { mutableStateOf<List<SiliconEmployee>>(emptyList()) }
@@ -237,6 +246,15 @@ fun WorkspaceTaskScreen(
         WandDetailTopBar(
             title = taskName.ifEmpty { "任务" },
             subtitle = workspaceName.ifEmpty { "任务目录" },
+            heading = {
+                WandCapsuleTitle(
+                    title = taskName.ifEmpty { "任务" },
+                    subtitle = workspaceName.ifEmpty { "任务目录" },
+                    avatarId = taskTopAvatarId,
+                    avatarName = taskTopAvatarName,
+                    avatar = taskTopAvatar,
+                )
+            },
             leading = if (showBack) {
                 {
                     WandDetailBackButton(

@@ -18,6 +18,8 @@ data class SiliconEmployee(
     val createdAt: String = "",
     /** system-ai 自动调用历史保留上限；null 表示不限，0 表示不保留已结束记录。 */
     val systemSessionLimit: Int? = null,
+    /** 同时执行的任务上限；旧响应缺省时按默认值 2。超出的派发留在任务里排队。 */
+    val maxConcurrentTasks: Int = DEFAULT_MAX_CONCURRENT_TASKS,
 ) {
     val archived: Boolean get() = !archivedAt.isNullOrBlank()
 
@@ -44,6 +46,7 @@ data class SiliconEmployee(
         const val DEFAULT_EMPLOYEE_TAG = "默认用户"
         const val MAX_TAGS = 8
         const val TAG_MAX_CHARS = 20
+        const val DEFAULT_MAX_CONCURRENT_TASKS = 2
 
         fun parse(value: JSONObject?): SiliconEmployee? {
             val id = value?.str("id")?.takeIf { it.isNotBlank() } ?: return null
@@ -68,6 +71,14 @@ data class SiliconEmployee(
                         else -> null
                     }
                 },
+                maxConcurrentTasks = value.opt("maxConcurrentTasks").let { raw ->
+                    when (raw) {
+                        null, JSONObject.NULL -> null
+                        is Number -> raw.toLong().takeIf { it in Int.MIN_VALUE..Int.MAX_VALUE }?.toInt()
+                        is String -> raw.toIntOrNull()
+                        else -> null
+                    }
+                } ?: DEFAULT_MAX_CONCURRENT_TASKS,
             )
         }
 
@@ -84,8 +95,11 @@ data class SiliconEmployeeDraft(
     val agents: List<BoardTaskAgent> = listOf(BoardTaskAgent.default()),
     val tagInput: String = "",
     val systemSessionLimitInput: String = "",
+    val maxConcurrentTasksInput: String = "",
 ) {
     val systemSessionLimit: Int? get() = systemSessionLimitInput.toIntOrNull()
+    val maxConcurrentTasks: Int? get() = maxConcurrentTasksInput.toIntOrNull()
+    val submittedMaxConcurrentTasks: Int get() = maxConcurrentTasks ?: SiliconEmployee.DEFAULT_MAX_CONCURRENT_TASKS
     fun tags(): List<String> = tagInput.split(',', '，', '、', '\n')
         .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
@@ -104,6 +118,8 @@ data class SiliconEmployeeDraft(
         } -> "「系统用户」「默认用户」是内置标签，不可自定义。"
         systemSessionLimitInput.isNotEmpty() && (systemSessionLimitInput.any { it !in '0'..'9' } || systemSessionLimit == null || (systemSessionLimit ?: -1) !in 0..MAX_SYSTEM_SESSION_LIMIT) ->
             "系统调用历史保留上限必须是 0 到 $MAX_SYSTEM_SESSION_LIMIT 的整数。"
+        maxConcurrentTasksInput.isNotEmpty() && (maxConcurrentTasksInput.any { it !in '0'..'9' } || maxConcurrentTasks == null || (maxConcurrentTasks ?: -1) !in 1..MAX_CONCURRENT_TASKS) ->
+            "并发任务上限必须是 1 到 $MAX_CONCURRENT_TASKS 的整数。"
         agents.isEmpty() -> "至少保留 1 个执行候选。"
         agents.size > 4 -> "最多 4 个执行候选。"
         agents.any { it.kind != "structured" } -> "硅基员工只能使用结构化会话。"
@@ -118,6 +134,7 @@ data class SiliconEmployeeDraft(
         .put("avatar", avatar)
         .put("tags", JSONArray(tags()))
         .put("systemSessionLimit", systemSessionLimit ?: JSONObject.NULL)
+        .put("maxConcurrentTasks", submittedMaxConcurrentTasks)
         .put("agents", agentsJson())
 
     /** 内置员工只允许改执行候选，锁定字段不回传（服务端会拒绝与现值不一致的字段）。 */
@@ -127,6 +144,7 @@ data class SiliconEmployeeDraft(
 
     companion object {
         const val MAX_SYSTEM_SESSION_LIMIT = 10_000
+        const val MAX_CONCURRENT_TASKS = 100
 
         fun from(employee: SiliconEmployee): SiliconEmployeeDraft = SiliconEmployeeDraft(
             name = employee.name,
@@ -136,6 +154,7 @@ data class SiliconEmployeeDraft(
             agents = employee.agents,
             tagInput = employee.displayTags.joinToString("，"),
             systemSessionLimitInput = employee.systemSessionLimit?.toString() ?: "",
+            maxConcurrentTasksInput = employee.maxConcurrentTasks.toString(),
         )
     }
 }

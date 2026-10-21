@@ -17,6 +17,7 @@ internal data class BoardTaskStats(
     val todo: Int,
     val doing: Int,
     val done: Int,
+    val accepted: Int,
     val remaining: Int,
     val high: Int,
 )
@@ -39,6 +40,7 @@ internal fun boardTaskStats(tasks: List<BoardTask>): BoardTaskStats {
         todo = todo,
         doing = doing,
         done = done,
+        accepted = tasks.count { !it.acceptance?.acceptedAt.isNullOrBlank() },
         remaining = todo + doing,
         high = high,
     )
@@ -217,7 +219,7 @@ internal fun boardTaskCardModel(
         extraLabelCount = (labels.size - BOARD_TASK_CARD_LABEL_LIMIT).coerceAtLeast(0),
         due = boardTaskCardDue(task.dueDate, task.status, today),
         processingLabel = boardTaskProcessingLabel(task),
-        running = task.sessions.any { boardSessionRunning(it.status) },
+        running = task.sessions.any(::boardSessionRunning),
         sessions = sessions,
         extraSessionCount = (task.sessions.size - BOARD_TASK_CARD_SESSION_LIMIT).coerceAtLeast(0),
     )
@@ -232,7 +234,7 @@ internal fun boardTaskCardSessions(
         id = session.id,
         provider = session.provider,
         label = boardSessionCardLabel(session),
-        running = boardSessionRunning(session.status),
+        running = boardSessionRunning(session),
         isStructured = session.isStructured,
     )
 }
@@ -287,21 +289,113 @@ private val BOARD_TASK_DUE_PATTERN = Regex("^\\d{4}-\\d{2}-\\d{2}$")
 private fun isSyncedWorkspaceDescriptionLine(line: String): Boolean =
     line.startsWith("项目：") || line.startsWith("目录：") || line.startsWith("分支：")
 
+internal enum class BoardTaskSessionState {
+    Running,
+    WaitingInput,
+    Queued,
+    WaitingAuthorization,
+    Archived,
+    Idle,
+    Finished,
+    Failed,
+    Unknown,
+}
+
+/**
+ * 任务卡只拿到轻量会话 DTO，不能把「没有运行」推断成已暂停。
+ * 优先使用结构化 inFlight / executionStatus；老服务端缺字段时才回落到 status。
+ */
+internal fun boardTaskSessionState(session: BoardTaskSession): BoardTaskSessionState {
+    val status = session.status.trim().lowercase()
+    if (status in setOf("permission", "permission-blocked", "waiting-input", "waiting_input", "needs-input", "needs_input")) {
+        return BoardTaskSessionState.WaitingInput
+    }
+    if (session.archived) return BoardTaskSessionState.Archived
+    if (session.permissionBlocked) return BoardTaskSessionState.WaitingAuthorization
+    if (session.inFlight == true || session.executionStatus == "running" ||
+        (session.inFlight == null && status in setOf("running", "thinking"))) {
+        return BoardTaskSessionState.Running
+    }
+    if (status == "failed") return BoardTaskSessionState.Failed
+    if (status in setOf("exited", "stopped")) return BoardTaskSessionState.Finished
+    if (session.executionStatus == "queued" || status == "queued") return BoardTaskSessionState.Queued
+    if (status in setOf("failed", "error", "errored")) return BoardTaskSessionState.Failed
+    if (status in setOf("exited", "completed", "complete", "done", "finished")) {
+        return BoardTaskSessionState.Finished
+    }
+    if (status == "idle" || status == "ready") return BoardTaskSessionState.Idle
+    return BoardTaskSessionState.Unknown
+}
+
+internal data class BoardTaskSessionSummary(
+    val running: Int = 0,
+    val waitingInput: Int = 0,
+    val queued: Int = 0,
+    val waitingAuthorization: Int = 0,
+    val archived: Int = 0,
+    val idle: Int = 0,
+    val finished: Int = 0,
+    val failed: Int = 0,
+    val unknown: Int = 0,
+) {
+    val total: Int get() = running + waitingInput + queued + waitingAuthorization + archived + idle + finished + failed + unknown
+}
+
+internal fun boardTaskSessionSummary(sessions: List<BoardTaskSession>): BoardTaskSessionSummary {
+    var result = BoardTaskSessionSummary()
+    sessions.forEach { session ->
+        result = when (boardTaskSessionState(session)) {
+            BoardTaskSessionState.Running -> result.copy(running = result.running + 1)
+            BoardTaskSessionState.WaitingInput -> result.copy(waitingInput = result.waitingInput + 1)
+            BoardTaskSessionState.Queued -> result.copy(queued = result.queued + 1)
+            BoardTaskSessionState.WaitingAuthorization -> result.copy(waitingAuthorization = result.waitingAuthorization + 1)
+            BoardTaskSessionState.Archived -> result.copy(archived = result.archived + 1)
+            BoardTaskSessionState.Idle -> result.copy(idle = result.idle + 1)
+            BoardTaskSessionState.Finished -> result.copy(finished = result.finished + 1)
+            BoardTaskSessionState.Failed -> result.copy(failed = result.failed + 1)
+            BoardTaskSessionState.Unknown -> result.copy(unknown = result.unknown + 1)
+        }
+    }
+    return result
+}
+
+internal fun boardTaskSessionSummaryLabel(summary: BoardTaskSessionSummary): String? = buildList {
+    if (summary.running > 0) add("运行中 · ${summary.running}")
+    if (summary.waitingInput > 0) add("等待输入 · ${summary.waitingInput}")
+    if (summary.queued > 0) add("排队 · ${summary.queued}")
+    if (summary.waitingAuthorization > 0) add("等待授权 · ${summary.waitingAuthorization}")
+    if (summary.archived > 0) add("已归档 · ${summary.archived}")
+    if (summary.idle > 0) add("空闲 · ${summary.idle}")
+    if (summary.finished > 0) add("已结束 · ${summary.finished}")
+    if (summary.failed > 0) add("失败 · ${summary.failed}")
+    // 未知状态必须显式保守展示，不能冒充「暂停」或「已完成」。
+    if (summary.unknown > 0) add("状态未知 · ${summary.unknown}")
+}.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+
 internal fun boardSessionRunning(status: String): Boolean = status == "running"
 
+internal fun boardSessionRunning(session: BoardTaskSession): Boolean =
+    boardTaskSessionState(session) == BoardTaskSessionState.Running
+
 internal fun boardSessionFinished(status: String): Boolean =
-    status == "exited" || status == "idle"
+    status in setOf("exited", "completed", "complete", "done", "finished", "idle")
 
 internal fun boardTaskProcessingLabel(task: BoardTask): String? {
     if (task.status != "doing") return null
-    val running = task.sessions.any { boardSessionRunning(it.status) }
-    val finished = task.sessions.isNotEmpty() && task.sessions.all { boardSessionFinished(it.status) }
-    return when {
-        running -> "正在处理..."
-        finished -> "等待验收"
-        task.sessions.isNotEmpty() -> "暂停处理"
-        else -> "等待派发"
+    val summary = boardTaskSessionSummary(task.sessions)
+    val queued = task.queuedExecutionCount ?: task.queuedCommentCount
+    if (summary.total == 0) {
+        return when {
+            task.executionStatus == "running" -> "正在处理..."
+            queued > 0 -> "排队中 · $queued 条等待执行"
+            else -> "等待派发"
+        }
     }
+    if (summary.running == summary.total) return "正在处理..."
+    if (summary.queued > 0 && summary.total == 1) return "排队中 · ${summary.queued} 条等待执行"
+    if (!task.acceptance?.acceptedAt.isNullOrBlank()) return "验收通过 · 已完成"
+    if (!task.acceptance?.blocker.isNullOrBlank()) return "待处理：${task.acceptance?.blocker}"
+    return boardTaskSessionSummaryLabel(summary)?.plus(" · 尚待验收")
 }
 
 // MARK: - 新建对话框的「指派对象」（对齐 Web 看板新建的第一次指派，§5.1）

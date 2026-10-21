@@ -19,6 +19,7 @@ data class WandStatusPresentation(
 fun wandStatusPresentation(status: String?): WandStatusPresentation {
     val normalized = status.orEmpty().trim().lowercase().replace('_', '-')
     return when (normalized) {
+        "queued" -> WandStatusPresentation(normalized, "排队中", WandStatusTone.Neutral, false)
         "running" -> WandStatusPresentation(normalized, "运行中", WandStatusTone.Success, true)
         "thinking" -> WandStatusPresentation(normalized, "思考中", WandStatusTone.Success, true)
         "waiting-input" -> WandStatusPresentation(normalized, "等待输入", WandStatusTone.Permission, true)

@@ -684,6 +684,9 @@ class WandApi(baseUrl: String, val token: String?,
         BoardTask.parse(requestObject("GET", "/api/wand-tasks/${encode(id)}"))
 
     override suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?): TaskComment {
+        if (employeeId.isNullOrEmpty()) {
+            TaskCommentMention.validationMessage(body, "")?.let { throw WandApiException(400, it) }
+        }
         val payload = JSONObject().put("requestId", requestId).put("body", body)
         employeeId?.let { payload.put("employeeId", it) }; sourceCommentId?.let { payload.put("sourceCommentId", it) }
         val response = requestObject("POST", "/api/wand-tasks/${encode(id)}/comments", payload)
@@ -694,6 +697,27 @@ class WandApi(baseUrl: String, val token: String?,
         TaskComment.parseList(requestObject("GET", "/api/wand-tasks/${encode(id)}/comments"), id)
     } catch (error: WandApiException) {
         if (error.status == 404) emptyList() else throw error
+    }
+
+    override suspend fun listTaskCommentPage(id: String, limit: Int, before: String?): TaskCommentPage = try {
+        val query = buildString {
+            append("?limit=").append(limit.coerceIn(1, 100))
+            if (!before.isNullOrBlank()) append("&before=").append(encode(before))
+        }
+        val response = requestObject("GET", "/api/wand-tasks/${encode(id)}/comments$query")
+        TaskCommentPage(
+            comments = TaskComment.parseList(response, id),
+            totalCount = response.optInt("totalCount", 0),
+            nextCursor = response.optString("nextCursor").takeUnless { it.isBlank() || it == "null" },
+        )
+    } catch (error: WandApiException) {
+        if (error.status == 404) TaskCommentPage(emptyList(), 0, null) else throw error
+    }
+
+    /** 固定执行轮次结果：读不到就报「不可读」，不拿模型正文冒充结果。 */
+    override suspend fun taskCommentResult(taskId: String, commentId: String, offset: Int, limit: Int): TaskCommentResult {
+        val path = "/api/wand-tasks/${encode(taskId)}/comments/${encode(commentId)}/result?offset=$offset&limit=$limit"
+        return TaskCommentResult.parse(requestObject("GET", path))
     }
 
     override suspend fun createBoardTask(
@@ -784,6 +808,7 @@ class WandApi(baseUrl: String, val token: String?,
             if (agentsOnly) JSONObject()
                 .put("agents", draft.agentsJson())
                 .put("systemSessionLimit", draft.systemSessionLimit ?: JSONObject.NULL)
+                .put("maxConcurrentTasks", draft.submittedMaxConcurrentTasks)
             else draft.toJson()))
             ?: throw WandApiException(500, "保存员工响应无效。")
 

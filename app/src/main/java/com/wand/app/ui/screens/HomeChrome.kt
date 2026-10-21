@@ -1068,28 +1068,25 @@ private fun HomeTaskBlock(
                         color = if (selected) WandColors.textPrimary else WandColors.textSecondary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
-                        maxLines = 2,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                     )
-                    if (task.isIsolated) {
-                        Icon(
-                            WandIcons.commit,
-                            contentDescription = "隔离 worktree",
-                            tint = WandColors.success,
-                            modifier = Modifier
-                                .padding(start = 6.dp)
-                                .size(13.dp),
-                        )
+                    if (task.hasQueuedExecution) {
+                        Text("排队中", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary,
+                            maxLines = 1, softWrap = false,
+                            modifier = Modifier.padding(start = 4.dp).width(IntrinsicSize.Max))
                     }
                 }
-                Text(
-                    summaryText(global = false, segments = taskSummarySegments(task.sessions.size, done, counts)),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (task.totalSessions > 0) {
+                    Text(
+                        summaryText(global = false, segments = taskSummarySegments(task.sessions.size, done, counts)),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = WandColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             Box {
                 WandIconButton(
@@ -1157,7 +1154,7 @@ private fun HomeTaskBlock(
                     .fillMaxWidth()
                     .padding(start = 2.dp, bottom = 2.dp),
             ) {
-                if (task.sessions.isEmpty()) {
+                if (task.sessions.isEmpty() && !task.hasQueuedExecution) {
                     Text(
                         "＋ 添加第一个会话",
                         style = MaterialTheme.typography.labelMedium,

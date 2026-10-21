@@ -25,7 +25,7 @@ internal fun homeSessionPulse(status: String?): HomeSessionPulse {
     val normalized = status?.trim()?.lowercase()?.replace('_', '-').orEmpty()
     return when (normalized) {
         // reconnecting 仍在推进任务，只是链路抖动，归到「在跑」而不是「等你」。
-        "running", "thinking", "reconnecting" -> HomeSessionPulse.Running
+        "queued", "running", "thinking", "reconnecting" -> HomeSessionPulse.Running
         // permission / waiting-input 是真的在等用户；failed 也需要人去看一眼。
         // permission-blocked、waiting_input 是同一语义的别名。
         "permission", "permission-blocked", "waiting-input", "failed" -> HomeSessionPulse.NeedsYou
@@ -125,7 +125,7 @@ internal fun attentionOnlyGroups(groups: List<TaskDirectoryGroup>): List<TaskDir
 enum class HomeFoldMode(val label: String, val actionLabel: String) {
     Expand("展开", "全部展开"),
     Collapse("收起", "全部收起"),
-    Running("在跑", "只看在跑、刚完成、失败和待处理的会话");
+    Running("在跑", "只看排队中、在跑、刚完成、失败和待处理的会话");
 
     /** 这一档下这一层是不是展开的（「在跑」只筛内容，不折起来）。 */
     val expanded: Boolean get() = this != Collapse
@@ -162,7 +162,7 @@ internal fun foldVisibleTasks(
     fold: HomeFoldMode,
     tasks: List<WorkspaceTaskSummary>,
 ): List<WorkspaceTaskSummary> =
-    if (!fold.filtersRunning) tasks else tasks.filter { foldVisibleSessions(fold, it.sessions).isNotEmpty() }
+    if (!fold.filtersRunning) tasks else tasks.filter { it.hasActiveExecution || foldVisibleSessions(fold, it.sessions).isNotEmpty() }
 
 /** 「最近对话」里的一组分同样处理。 */
 internal fun foldVisibleConversations(
@@ -207,7 +207,7 @@ internal fun foldModeGroups(
 /** 一个任务只留在跑、失败和待处理的会话；一条都不剩时返回 null。 */
 private fun runningFoldTask(task: WorkspaceTaskSummary): WorkspaceTaskSummary? {
     val sessions = task.sessions.filter(::sessionKeptByRunningFold)
-    return if (sessions.isEmpty()) null else task.copy(sessions = sessions, totalSessions = sessions.size)
+    return if (sessions.isEmpty() && !task.hasActiveExecution) null else task.copy(sessions = sessions, totalSessions = sessions.size)
 }
 
 /**

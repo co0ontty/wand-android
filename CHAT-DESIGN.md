@@ -16,6 +16,14 @@
 - 消息 LazyColumn 在顶栏与输入栏之间持有滚动；手动上翻不自动抢回，IME/navigationBarsInsets 沿用。平板正文居中限宽，字号使用sp。
 - 空/错误/加载使用原生共享状态；错误保留输入，明确重试入口。长代码横向滚动与复制保留。
 
+## 工具图片预览占比
+
+工具返回/Read 图片直接展示，不套回工具调用卡片。保持原始宽高比、完整显示、不裁切；宽不超过当前可用区域的 80%、高不超过聊天阅读视口的 40%，并受 320×360dp 上限约束。图片使用既有细边框 token，避免手机截图看起来像真实应用页面；点击保留原有分组全屏查看。视口复用 `LocalChatViewportHeightPx`（缺失时以当前窗口高度回落），尺寸随键盘/横屏重算。上传附件缩略图和待发送预览不变，与 iOS 的工具图片预览语义一致。
+
+## 全屏图片按需左右切换
+
+全屏图片使用当前已加载对话的轻量地址索引，跨消息、跨工具结果左右切图；只在点击进入时计算，不在每次流式文字更新时扫描。打开后快照固定，新增消息不改变当前页。文件路径和工具直链保留各自加载模式；原生HorizontalPager不保留屏外页（beyondViewportPageCount=0），滑动需要相邻页时才加载，不一次性下载整组，不额外请求历史。放大后拖动平移，回到1倍后左右翻页；页码、首尾边界、返回/关闭与原缩放行为保持。
+
 ## 头像
 
 消费 Web 最终 renderer.ts + plush-cat-appearance.ts（初二连续下巴、下唇/下颌体积，虎妞轻修整）及读写 v3 file-props.ts，不另做猫脸。赛博虎妞=plush-cat:v1:silver，勤劳的初二=plush-cat:v1:orange，系统 ID 优先锁定；其他员工 UTF-16 稳定ID hash/plush:v1 参数与Web一致，自定义图仍保留。嘟嘟=plush-dog:v1:shiba:red-scarf（柴犬头 + 红针织围巾），离线肖像与共享 WebGL 场景同源。
@@ -56,3 +64,7 @@ components/EmployeeAvatar.kt、PlushAvatar.kt + 新 SharedPlushScene.kt；screen
 ## 空任务直接内嵌空白对话（2026-10-20）
 
 与 iOS 同组改动：任务详情在无会话时原先是 `EmptyTaskWelcome`（「开始这个任务」/执行对象列表），现 `WorkspaceTaskScreen` 的空会话分支改为调用注入的 `emptyTaskContent(cwd)`，由 `WandApp` 传入绑定当前任务的 `PendingConversationScreen(embedded = true)`。embedded 只收掉重复的 chrome：不再画自己的 `WandDetailTopBar`，任务页仍是唯一一条顶栏；创建、草稿、排队与未知结果确认继续由 `PendingConversationScreen` + `PendingCreationStore` 原链路负责，不另写状态机。`workspaceTaskId = screen.taskId` 固定归属，创建后按既有路由进入 Chat 或 PTY。回归见 `WorkspaceEmptyTaskChatTest`（空任务注入绑定会话、不再出现旧欢迎页、embedded 保留单条顶栏）。本轮无可用设备，真机视觉未验收。
+
+### 派发取消不转发草稿
+
+与 iOS 一致：显式「取消派发」先由会话级 ChatComposer 丢弃未发送正文、附件和暂存选择，使迟到上传失效，再退出派发模式；不能让旧任务草稿变成普通消息。正在提交/送达未知时保留核对状态，不允许取消掩盖真实请求。附件菜单、键盘与目录面板的普通收起不取消派发意图，也不发送。回归：ChatComposerTest 与 ConversationDispatchPanelEventTest。

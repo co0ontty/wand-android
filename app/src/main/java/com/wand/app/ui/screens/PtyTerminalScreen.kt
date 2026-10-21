@@ -104,9 +104,8 @@ import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.applyProvisionalSessionTopic
 import com.wand.app.ui.ptyComposerSubmitChunks
 import com.wand.app.ui.sessionChromeTitle
-import com.wand.app.ui.sessionWorkingDirectoryLabel
+import com.wand.app.ui.sessionCwdLeaf
 import com.wand.app.ui.sessionTopicBlocklist
-import com.wand.app.ui.components.TailMarqueePathText
 import com.wand.app.ui.components.WandDetailBackButton
 import com.wand.app.ui.components.WandDetailTopBar
 import androidx.activity.compose.BackHandler
@@ -119,8 +118,7 @@ import com.wand.app.ui.components.WandInlinePanelAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandSnackbarHost
 import com.wand.app.ui.components.showWandNotice
-import com.wand.app.ui.components.WandProviderMark
-import com.wand.app.ui.components.WandProviderMarkVariant
+import com.wand.app.ui.components.WandCapsuleTitle
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -525,29 +523,27 @@ private fun PtyTopBar(
             null
         },
         titleContent = {
-            WandProviderMark(provider = snapshot?.provider, variant = WandProviderMarkVariant.Tinted)
-            Column(modifier = Modifier.weight(1f)) {
-                ChatTopicTitle(
-                    text = sessionChromeTitle(
-                        title = snapshot?.title,
-                        liveTitle = SessionTitleStore.titleOf(sessionId),
-                        blockedTitles = sessionTopicBlocklist(
-                            taskName = taskName,
-                            workspaceName = workspaceName,
-                            cwd = snapshot?.cwd,
-                        ),
-                        fallback = "终端会话",
+            // 胶囊标题：左侧圆圈头像，右侧是当前标题与「员工名 · 目录缩写」小字。
+            WandCapsuleTitle(
+                title = sessionChromeTitle(
+                    title = snapshot?.title,
+                    liveTitle = SessionTitleStore.titleOf(sessionId),
+                    blockedTitles = sessionTopicBlocklist(
+                        taskName = taskName,
+                        workspaceName = workspaceName,
+                        cwd = snapshot?.cwd,
                     ),
-                    generating = snapshot?.titleGenerating == true ||
-                        SessionTitleStore.isGenerating(sessionId),
-                )
-                TailMarqueePathText(
-                    path = sessionWorkingDirectoryLabel(snapshot?.cwd),
-                    fontSize = 11.sp,
-                    color = WandColors.textMuted,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+                    fallback = "终端会话",
+                ),
+                subtitle = listOfNotNull(
+                    snapshot?.employeeName?.takeIf { it.isNotBlank() },
+                    sessionCwdLeaf(snapshot?.cwd),
+                ).joinToString(" · "),
+                avatarId = snapshot?.employeeId?.takeIf { it.isNotBlank() } ?: "e_wand_default",
+                avatarName = snapshot?.employeeName,
+                avatar = snapshot?.employeeAvatar,
+                modifier = Modifier.weight(1f),
+            )
         },
         actions = {
             if (taskSessions.size > 1) {

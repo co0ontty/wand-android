@@ -47,6 +47,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
+import com.wand.app.ui.screens.LocalChatViewportHeightPx
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +70,8 @@ import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.wand.app.data.WandHttp
+import com.wand.app.data.ContentBlock
+import com.wand.app.data.ConversationTurn
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandShapes
@@ -188,10 +194,79 @@ private fun ImageLoadFeedback(message: String? = null, dark: Boolean = false, on
 object WandImageLayout {
     const val thumbnailMaxWidthDp = 320
     const val thumbnailMaxHeightDp = 360
+    const val figureWidthFraction = 0.8f
+    const val figureHeightFraction = 0.4f
+
+    fun figureMaxWidth(availableWidth: Float): Float =
+        (availableWidth.coerceAtLeast(0f) * figureWidthFraction).coerceAtMost(thumbnailMaxWidthDp.toFloat())
+
+    fun figureMaxHeight(viewportHeight: Float): Float =
+        if (viewportHeight > 0f) (viewportHeight * figureHeightFraction).coerceAtMost(thumbnailMaxHeightDp.toFloat())
+        else thumbnailMaxHeightDp.toFloat()
+}
+
+/** Constrain the native Fit image's proposal; never crop a screenshot to fake a smaller preview. */
+@Composable
+private fun Modifier.imageFigureBounds(): Modifier {
+    val viewportPx = LocalChatViewportHeightPx.current
+    val density = LocalDensity.current
+    val viewportHeight = if (viewportPx > 0) viewportPx / density.density else LocalConfiguration.current.screenHeightDp.toFloat()
+    val heightLimit = with(density) { WandImageLayout.figureMaxHeight(viewportHeight).dp.roundToPx() }
+    return layout { measurable, constraints ->
+        val widthLimit = with(density) {
+            WandImageLayout.figureMaxWidth(constraints.maxWidth / density.density).dp.roundToPx()
+        }
+        val placeable = measurable.measure(constraints.copy(
+            minWidth = 0, minHeight = 0,
+            maxWidth = widthLimit.coerceAtMost(constraints.maxWidth),
+            maxHeight = heightLimit.coerceAtMost(constraints.maxHeight),
+        ))
+        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+    }
 }
 
 /** 全屏查看器的一页：站内路径（走 /api/file-raw）或直链（工具图片 URL / data URI）。 */
 data class ViewerImagePage(val source: String, val directUrl: Boolean)
+
+/** Only the currently loaded conversation; opening the viewer freezes this projection. */
+val LocalImageGallery = compositionLocalOf<() -> List<ViewerImagePage>> { { emptyList() } }
+
+internal fun conversationImagePages(turns: List<ConversationTurn>): List<ViewerImagePage> {
+    val results = turns.flatMap { it.content }.filterIsInstance<ContentBlock.ToolResult>().associateBy { it.toolUseId }
+    val pages = linkedSetOf<ViewerImagePage>()
+    for (turn in turns) for (block in turn.content) {
+        when (block) {
+            is ContentBlock.Text -> if (turn.role == "user") {
+                parseUserAttachmentText(block.text).paths.filter(WandImage::isImagePath)
+                    .forEach { pages.add(ViewerImagePage(it, false)) }
+            }
+            is ContentBlock.ToolUse -> {
+                val result = results[block.id]
+                if (result != null && !result.isError) {
+                    if (result.images.isNotEmpty()) result.images.forEach { pages.add(ViewerImagePage(it, true)) }
+                    else if (block.name == "Read") {
+                        val path = block.input.optString("file_path").ifBlank { block.input.optString("path") }
+                        if (WandImage.isImagePath(path)) pages.add(ViewerImagePage(path, false))
+                    }
+                }
+            }
+            is ContentBlock.ToolResult -> if (!block.isError) block.images.forEach { pages.add(ViewerImagePage(it, true)) }
+            else -> Unit
+        }
+    }
+    return pages.toList()
+}
+
+internal data class ImageGallerySelection(val pages: List<ViewerImagePage>, val startIndex: Int)
+
+internal fun imageGallerySelection(gallery: List<ViewerImagePage>, group: List<String>, current: String, direct: Boolean, localIndex: Int = 0): ImageGallerySelection {
+    val page = ViewerImagePage(current, direct || current.startsWith("data:"))
+    val index = gallery.indexOf(page)
+    if (index >= 0) return ImageGallerySelection(gallery.toList(), index)
+    val pages = viewerPages(group, current, direct)
+    return ImageGallerySelection(pages,
+        if (pages.getOrNull(localIndex) == page) localIndex else pages.indexOf(page).coerceAtLeast(0))
+}
 
 /** 全屏查看器的起始页下标钳制：分组为空或越界都退回第一张（对齐 iOS wandImageViewerStart）。 */
 internal fun viewerStart(index: Int, count: Int): Int = if (count <= 0) 0 else index.coerceIn(0, count - 1)
@@ -230,7 +305,7 @@ fun WandAsyncImage(
     )
 }
 
-/** Read 读到图片的直出形态：占满可用宽度、按原始比例完整展示，不套工具调用卡片。 */
+/** Read 图片直接展示，按聊天阅读区占比收口；保留原始比例和点击查看原图。 */
 @Composable
 fun WandImageFigure(
     path: String,
@@ -245,9 +320,9 @@ fun WandImageFigure(
         group = group,
         groupIndex = groupIndex,
         onFailure = null,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.imageFigureBounds(),
         shape = WandShapes.md,
-        bordered = false,
+        bordered = true,
     )
 }
 
@@ -280,19 +355,21 @@ private fun RemoteImageContent(
             .clickable { showViewer = true },
     )
 
+    val gallery = LocalImageGallery.current
     if (showViewer) {
+        val selection = remember { imageGallerySelection(gallery(), group, path, direct = false, localIndex = groupIndex) }
         FullscreenImageViewer(
-            pages = viewerPages(group, path, directUrl = false),
+            pages = selection.pages,
             baseUrl = baseUrl,
-            startIndex = viewerStart(groupIndex, group.size),
+            startIndex = selection.startIndex,
             onDismiss = { showViewer = false },
         )
     }
 }
 
 /**
- * 工具图片结果的直出形态：占满可用宽度、按原始比例完整展示，不再套工具调用卡片，
- * 也不再受缩略图长宽上限约束；加载/失败/重试与全屏查看入口保持不变。
+ * 工具图片直接展示，不套工具调用卡片；按阅读区占比限制长宽并用细边框标明预览，
+ * 加载/失败/重试与全屏查看入口保持不变。
  */
 @Composable
 fun WandToolImageFigure(
@@ -307,9 +384,9 @@ fun WandToolImageFigure(
         baseUrl = baseUrl,
         group = group,
         groupIndex = groupIndex,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.imageFigureBounds(),
         shape = WandShapes.md,
-        bordered = false,
+        bordered = true,
     )
 }
 
@@ -327,8 +404,11 @@ private fun ToolImageContent(
     var failed by remember(baseUrl, source, retry) { mutableStateOf(false) }
     var decoded by remember(baseUrl, source, retry) { mutableStateOf<ImageBitmap?>(null) }
     var showViewer by remember(baseUrl, source) { mutableStateOf(false) }
-    val viewerPages = viewerPages(group, source, directUrl = true)
-    val viewerStart = viewerStart(groupIndex, group.size)
+    val gallery = LocalImageGallery.current
+    val selection = remember(showViewer) {
+        if (showViewer) imageGallerySelection(gallery(), group, source, direct = true, localIndex = groupIndex)
+        else ImageGallerySelection(emptyList(), 0)
+    }
     val shapeModifier = modifier
         .clip(shape)
         .then(if (bordered) Modifier.border(1.dp, WandColors.border, shape) else Modifier)
@@ -351,7 +431,7 @@ private fun ToolImageContent(
             contentScale = ContentScale.Fit,
             modifier = shapeModifier.clickable { showViewer = true },
         )
-        if (showViewer) FullscreenImageViewer(viewerPages, baseUrl, { showViewer = false }, viewerStart)
+        if (showViewer) FullscreenImageViewer(selection.pages, baseUrl, { showViewer = false }, selection.startIndex)
         return
     }
 
@@ -375,7 +455,7 @@ private fun ToolImageContent(
         error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), onRetry = { retry += 1 }) },
         modifier = shapeModifier.clickable { showViewer = true },
     )
-    if (showViewer) FullscreenImageViewer(viewerPages, baseUrl, { showViewer = false }, viewerStart)
+    if (showViewer) FullscreenImageViewer(selection.pages, baseUrl, { showViewer = false }, selection.startIndex)
 }
 
 /** 工具图片可能是绝对 URL 或 `/api/…` 站内路径，统一成可直接加载的绝对地址。 */
@@ -449,6 +529,8 @@ fun FullscreenImageViewer(
         ) {
             HorizontalPager(
                 state = pagerState,
+                // No off-screen image downloads; the neighbor is composed only as a swipe needs it.
+                beyondViewportPageCount = 0,
                 // 放大后横向手势让给平移，不触发翻页。
                 userScrollEnabled = scale <= 1.01f,
                 modifier = Modifier.fillMaxSize(),

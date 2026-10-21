@@ -24,6 +24,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.wand.app.ui.components.statusBreath
+import com.wand.app.ui.components.WandCapsuleTitle
+import com.wand.app.ui.components.AvatarFileActivity
 import com.wand.app.ui.sessionCwdLeaf
 import com.wand.app.ui.theme.WandColors
 
@@ -78,8 +80,8 @@ internal fun chatTopIdentityClearance(): Dp =
     maxOf(ChatFloatingControlsClearance, chatTopIdentityTextHeight() + 8.dp)
 
 /**
- * 会话顶栏身份区：不放头像，主标题是任务名，小字是「员工名 · 目录缩写」。运行与异常只以一个
- * 状态点呈现，具体文案交给权限卡、连接横幅和待办进度条，这条栏不再重复说话；读屏仍播报完整状态。
+ * 会话顶栏身份区：胶囊里左侧是圆圈头像，右侧是任务名主标题与「员工名 · 目录缩写」小字。
+ * 运行与异常只以一个状态点呈现，具体文案交给权限卡、连接横幅和待办进度条，读屏仍播报完整状态。
  */
 @Composable
 internal fun ChatTopIdentityBar(
@@ -87,6 +89,11 @@ internal fun ChatTopIdentityBar(
     attention: ChatTopAttention,
     statusText: String,
     modifier: Modifier = Modifier,
+    avatarId: String? = null,
+    avatarName: String? = null,
+    avatar: String? = null,
+    fileActivity: AvatarFileActivity = AvatarFileActivity.Idle,
+    thinking: Boolean = false,
 ) {
     val dotColor = when (attention) {
         ChatTopAttention.Quiet -> null
@@ -95,8 +102,9 @@ internal fun ChatTopIdentityBar(
         ChatTopAttention.Fault -> WandColors.danger
     }
     Box(modifier.fillMaxWidth().height(chatTopIdentityClearance()), contentAlignment = Alignment.Center) {
-        Column(
-            // 左右让开返回键与文件/更多按钮，沿用头像版同一可用宽度。
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = FloatingControlsBackInset, end = FloatingControlsActionsInset)
@@ -104,36 +112,23 @@ internal fun ChatTopIdentityBar(
                     contentDescription = chatTopReadback(identity.title, identity.subtitle, statusText)
                     if (statusText.isNotEmpty()) liveRegion = LiveRegionMode.Polite
                 },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val tone = dotColor
-                if (tone != null) {
-                    Box(
-                        Modifier.size(6.dp)
-                            .then(if (attention == ChatTopAttention.Running) Modifier.statusBreath() else Modifier)
-                            .background(tone, CircleShape),
-                    )
-                }
-                Text(
-                    identity.title,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = WandColors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            val tone = dotColor
+            if (tone != null) {
+                Box(
+                    Modifier.size(6.dp)
+                        .then(if (attention == ChatTopAttention.Running) Modifier.statusBreath() else Modifier)
+                        .background(tone, CircleShape),
                 )
             }
-            Text(
-                identity.subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = WandColors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
-                modifier = Modifier.fillMaxWidth(),
+            WandCapsuleTitle(
+                title = identity.title,
+                subtitle = identity.subtitle,
+                avatarId = avatarId?.takeIf { it.isNotBlank() } ?: "e_wand_default",
+                avatarName = avatarName,
+                avatar = avatar,
+                fileActivity = fileActivity,
+                thinking = thinking,
             )
         }
     }

@@ -100,6 +100,7 @@ import com.wand.app.data.boardTaskPriorityLabel
 import com.wand.app.data.boardTaskAgentLabel
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
+import com.wand.app.data.displayStatusLabel
 import com.wand.app.data.patchBoardTaskBody
 import com.wand.app.ui.components.BrandLogos
 import com.wand.app.ui.components.EmptyState
@@ -452,7 +453,7 @@ private fun TaskBoardList(
                         "backlog" to "待立项",
                         "todo" to "待办",
                         "doing" to "进行中",
-                        "done" to "已完成",
+                        "done" to "等你确认",
                         "archived" to "归档",
                     ),
                     selected = statusFilter,
@@ -668,7 +669,7 @@ private fun TaskBoardHero(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             BoardMetric("待办", stats.todo, boardStatusColor("todo"), Modifier.weight(1f))
             BoardMetric("进行中", stats.doing, boardStatusColor("doing"), Modifier.weight(1f))
-            BoardMetric("已完成", stats.done, boardStatusColor("done"), Modifier.weight(1f))
+            BoardMetric("已验收", stats.accepted, boardStatusColor("done"), Modifier.weight(1f))
         }
         if (showSearch) BoardSearchCapsule(value = query, onValueChange = onQueryChange)
     }
@@ -826,7 +827,7 @@ private fun BoardSectionHeader(
         if (onToggle != null) {
             Icon(
                 WandIcons.expand,
-                contentDescription = if (expanded) "收起已完成任务" else "展开已完成任务",
+                contentDescription = if (expanded) "收起待确认任务" else "展开待确认任务",
                 tint = WandColors.textMuted,
                 modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = rotation },
             )
@@ -922,7 +923,7 @@ private fun BoardTaskCard(
                 lineHeight = 21.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                textDecoration = if (done) TextDecoration.LineThrough else TextDecoration.None,
+                textDecoration = if (!task.acceptance?.acceptedAt.isNullOrBlank()) TextDecoration.LineThrough else TextDecoration.None,
                 modifier = Modifier.weight(1f).padding(top = 12.dp),
             )
             model.identifier?.let { identifier ->
@@ -937,6 +938,7 @@ private fun BoardTaskCard(
                 )
             }
         }
+        Text(if (!task.acceptance?.acceptedAt.isNullOrBlank()) "验收通过 · 已完成" else if (!task.acceptance?.blocker.isNullOrBlank()) "待处理：${task.acceptance?.blocker}" else "未验收", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary, modifier = Modifier.padding(top = 6.dp))
         model.body?.let { body ->
             Text(
                 body,
@@ -1154,7 +1156,7 @@ private fun BoardStatusCheck(
         modifier = modifier
             .size(48.dp).clip(CircleShape)
             .toggleable(value = done, role = Role.Checkbox, onValueChange = { onClick() })
-            .semantics { contentDescription = if (done) "重新打开任务" else "完成任务" }
+            .semantics { contentDescription = if (done) "重新打开任务" else "转为等你确认" }
             .padding(15.dp)
             .border(1.5.dp, stroke, CircleShape)
             .background(fill),
@@ -1163,7 +1165,7 @@ private fun BoardStatusCheck(
         when {
             done -> Icon(
                 WandIcons.check,
-                contentDescription = "标为未完成",
+                contentDescription = "重新打开任务",
                 tint = Color.White,
                 modifier = Modifier.size(11.dp),
             )
@@ -1317,12 +1319,17 @@ internal fun TaskBoardDetailPane(
     onMoveSession: (com.wand.app.data.BoardTaskSession) -> Unit,
     baseUrl: String = "",
     commentsApi: TaskBoardPort? = null,
+    /** 打开另一个任务（可引用任务区点子任务时用）。 */
+    onOpenTask: (String) -> Unit = {},
     /** 「打开群聊」：参数是团队运行 id，由上层落到 IM 群聊页。 */
     onOpenTeamChat: (runId: String, taskIdentifier: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
+    acceptanceContent: @Composable () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var title by remember(task.id, task.title) { mutableStateOf(task.title) }
+    /** 当前任务的直接子任务：既是「可引用任务」区的内容，也是评论里 #TASK-xxx 的可选范围。 */
+    var childTasks by remember(task.id) { mutableStateOf<List<com.wand.app.data.BoardTask>>(emptyList()) }
     var agent by remember(task.id, task.agent) { mutableStateOf(task.agent ?: lastAgent) }
     var dispatchSubjectKey by remember(task.id, task.executionSubject?.key) {
         mutableStateOf(task.executionSubject?.takeIf { it.type == "team" }?.key ?: "cli")
@@ -1338,6 +1345,10 @@ internal fun TaskBoardDetailPane(
         }
     }
     val done = task.status == "done" || task.status == "archived"
+    LaunchedEffect(commentsApi, task.id) {
+        val api = commentsApi
+        childTasks = if (api == null) emptyList() else runCatching { api.listBoardTaskChildren(task.id) }.getOrDefault(emptyList())
+    }
     val workspaceChoices = buildList {
         add("" to "未归属工作区（使用临时目录）")
         val seen = workspaces.map { it.id }.toSet()
@@ -1377,7 +1388,7 @@ internal fun TaskBoardDetailPane(
                 modifier = Modifier.weight(1f),
             )
             WandButton(
-                label = if (done) "重新打开" else "完成任务",
+                label = if (done) "重新打开" else "转为等你确认",
                 onClick = { onPatch(patchBoardTaskBody(status = boardTaskToggledStatus(task.status))) },
                 enabled = !busy,
                 variant = WandButtonVariant.Secondary,
@@ -1389,11 +1400,13 @@ internal fun TaskBoardDetailPane(
             Text(task.description, style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary, modifier = Modifier.padding(vertical = 8.dp))
         }
-        commentsApi?.let { TaskComments(it, task.id, employees, onOpenSession) }
+        acceptanceContent()
+        TaskReferenceableTasks(childTasks, onOpenTask)
+        commentsApi?.let { TaskComments(it, task.id, employees, childTasks, onOpenSession, onOpenTask) }
         HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             WandChoice(
-                label = "状态 · ${boardTaskStatusLabel(task.status)}",
+                label = "状态 · ${task.displayStatusLabel()}",
                 options = BOARD_TASK_DETAIL_STATUSES.map { it to boardTaskStatusLabel(it) },
                 onSelect = { if (!busy && it != task.status) onPatch(patchBoardTaskBody(status = it)) },
                 enabled = !busy,
@@ -1412,6 +1425,8 @@ internal fun TaskBoardDetailPane(
             )
         }
         Text("任务内的会话", color = WandColors.textSecondary, style = MaterialTheme.typography.labelLarge)
+        Text("${task.sessions.size} 个关联会话 · ${boardTaskSessionSummaryLabel(boardTaskSessionSummary(task.sessions)).orEmpty()}", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+        Text("独立范围才并行；同目录或同文件重叠先协调串行，或隔离后合并。业务子任务须独立验收，不包含模型内部子 Agent。", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
         val agentGroups = groupBoardSessionsByAgent(task.sessions, task.agent)
         if (agentGroups.isEmpty()) {
             Text(
@@ -1438,7 +1453,7 @@ internal fun TaskBoardDetailPane(
                     )
                 } else {
                     group.sessions.forEach { session ->
-                        val running = boardSessionRunning(session.status)
+                        val running = boardSessionRunning(session)
                         Column(Modifier.fillMaxWidth().heightIn(min = 64.dp)
                             .clickable { onOpenSession(session.id, session.isStructured) }
                             .padding(vertical = 8.dp)) {
@@ -1470,7 +1485,8 @@ internal fun TaskBoardDetailPane(
                                     Text(
                                         listOfNotNull(
                                             boardAgentModelName(models, group.provider, session.model).takeIf { it.isNotBlank() },
-                                            boardSessionStatusLabel(session.status),
+                                            session.employeeName,
+                                            boardTaskSessionSummaryLabel(boardTaskSessionSummary(listOf(session))),
                                         ).joinToString(" · "),
                                         color = WandColors.textMuted,
                                         style = MaterialTheme.typography.labelSmall,
@@ -1483,6 +1499,9 @@ internal fun TaskBoardDetailPane(
                                 Icon(WandIcons.chevronRight, contentDescription = null,
                                     tint = WandColors.textMuted, modifier = Modifier.size(16.dp))
                             }
+                            Text("目的与范围：${session.purpose ?: session.title}", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+                            Text(session.cwd, style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                            Text("继续已有会话 · 产物在原会话及评论执行记录核对", style = MaterialTheme.typography.labelSmall, color = WandColors.brand)
                         }
                     }
                 }
@@ -1588,7 +1607,7 @@ internal fun TaskBoardDetailPane(
         } else {
             // 有会话时默认收起派发表单，但入口必须一眼可见：整行主按钮，不再是一个 36dp 的 +。
             WandButton(
-                label = "CLI / 团队兼容派发",
+                label = "新建并行会话（CLI / 团队）",
                 onClick = {
                     composePrompt = ""
                     composeOpen = true
@@ -1630,14 +1649,6 @@ internal fun TaskBoardDetailPane(
  */
 internal fun boardCreateDispatches(status: String): Boolean = status == "doing"
 
-
-private fun boardSessionStatusLabel(status: String): String = when (status) {
-    "running" -> "进行中"
-    "idle" -> "空闲"
-    "exited" -> "已结束"
-    "failed" -> "失败"
-    else -> status.ifBlank { "会话" }
-}
 
 @Composable
 private fun boardStatusColor(status: String): Color = when (status) {

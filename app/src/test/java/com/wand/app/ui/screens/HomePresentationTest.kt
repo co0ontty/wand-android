@@ -16,6 +16,19 @@ import java.time.Instant
 import java.time.ZoneId
 
 class HomePresentationTest {
+    @Test
+    fun queuedTasksAndSessionsRemainVisibleInRunningFiltersWithoutFakeSessions() {
+        val pending = session("pending", "idle").copy(executionStatus = "queued")
+        assertEquals(HomeSessionPulse.Running, sessionPulse(pending))
+        assertTrue(sessionKeptByRunningFold(pending))
+        val queued = task("queued", emptyList()).copy(executionStatus = "queued", queuedExecutionCount = 2)
+        assertEquals(listOf(queued), foldVisibleTasks(HomeFoldMode.Running, listOf(queued)))
+        assertEquals("queued", foldModeGroups(HomeFoldMode.Running, listOf(group(tasks = listOf(queued)))).single().tasks.single().id)
+        assertEquals("排队中", com.wand.app.ui.components.wandStatusPresentation("queued").label)
+        assertFalse(com.wand.app.ui.components.wandStatusPresentation("queued").breathing)
+        assertTrue(foldVisibleTasks(HomeFoldMode.Running, listOf(task("idle", emptyList()))).isEmpty())
+    }
+
     private val now = Instant.parse("2026-09-25T12:00:00Z").toEpochMilli()
     private val utc = ZoneId.of("UTC")
 

@@ -60,7 +60,7 @@ class PiResourcesController(private val id: String, private val port: PiResource
                 if (!open || key != revision) return@launch
                 check(saved == expected) { "服务端未确认 Skill 开关或锁定，请重新读取核对" }
                 data = current.copy(selection = saved.selection, lockedSkills = saved.lockedSkills)
-                phase = "saved"; message = "已保存 · 下一轮生效"
+                phase = "saved"; message = "已保存 · 下一轮生效，并成为新建 Pi 会话的默认"
             } catch (_: CancellationException) {
             } catch (error: Exception) {
                 if (!open || key != revision) return@launch
@@ -83,7 +83,7 @@ class PiResourcesController(private val id: String, private val port: PiResource
                     "服务端未确认自动配置或手选项，请重新读取核对"
                 }
                 data = current.copy(autoResources = saved.enabled, selection = saved.selection)
-                phase = "saved"; message = "已保存 · 自动配置从下一轮生效"
+                phase = "saved"; message = "已保存 · 自动配置从下一轮生效，并成为新建 Pi 会话的默认"
             } catch (_: CancellationException) {
             } catch (error: Exception) {
                 if (!open || key != revision) return@launch
@@ -103,7 +103,7 @@ class PiResourcesController(private val id: String, private val port: PiResource
                 if (!open || key != revision) return@launch
                 check(saved == mode) { "服务端未确认 CodeMode 设置，请重新读取核对" }
                 data = current.copy(codemode = saved); phase = "saved"
-                message = "已保存 · CodeMode 从下一轮生效"
+                message = "已保存 · CodeMode 从下一轮生效，并成为新建 Pi 会话的默认"
             } catch (_: CancellationException) {
             } catch (error: Exception) {
                 if (!open || key != revision) return@launch
