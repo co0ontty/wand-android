@@ -51,6 +51,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import com.wand.app.ui.screens.LocalChatViewportHeightPx
+import com.wand.app.ui.screens.markdownImagePages
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -239,6 +240,8 @@ internal fun conversationImagePages(turns: List<ConversationTurn>): List<ViewerI
             is ContentBlock.Text -> if (turn.role == "user") {
                 parseUserAttachmentText(block.text).paths.filter(WandImage::isImagePath)
                     .forEach { pages.add(ViewerImagePage(it, false)) }
+            } else {
+                pages.addAll(markdownImagePages(block.text))
             }
             is ContentBlock.ToolUse -> {
                 val result = results[block.id]
@@ -378,6 +381,8 @@ fun WandToolImageFigure(
     modifier: Modifier = Modifier,
     group: List<String> = emptyList(),
     groupIndex: Int = 0,
+    directUrl: Boolean = true,
+    contentDescription: String = "工具返回图片",
 ) {
     ToolImageContent(
         source = source,
@@ -387,6 +392,8 @@ fun WandToolImageFigure(
         modifier = modifier.imageFigureBounds(),
         shape = WandShapes.md,
         bordered = true,
+        directUrl = directUrl,
+        contentDescription = contentDescription,
     )
 }
 
@@ -399,6 +406,8 @@ private fun ToolImageContent(
     modifier: Modifier,
     shape: Shape,
     bordered: Boolean,
+    directUrl: Boolean = true,
+    contentDescription: String = "工具返回图片",
 ) {
     var retry by remember(baseUrl, source) { mutableStateOf(0) }
     var failed by remember(baseUrl, source, retry) { mutableStateOf(false) }
@@ -406,7 +415,7 @@ private fun ToolImageContent(
     var showViewer by remember(baseUrl, source) { mutableStateOf(false) }
     val gallery = LocalImageGallery.current
     val selection = remember(showViewer) {
-        if (showViewer) imageGallerySelection(gallery(), group, source, direct = true, localIndex = groupIndex)
+        if (showViewer) imageGallerySelection(gallery(), group, source, direct = directUrl, localIndex = groupIndex)
         else ImageGallerySelection(emptyList(), 0)
     }
     val shapeModifier = modifier
@@ -427,7 +436,7 @@ private fun ToolImageContent(
         }
         Image(
             bitmap = bitmap,
-            contentDescription = "工具返回图片",
+            contentDescription = contentDescription,
             contentScale = ContentScale.Fit,
             modifier = shapeModifier.clickable { showViewer = true },
         )
@@ -438,18 +447,15 @@ private fun ToolImageContent(
     val context = LocalContext.current
     val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
     val loader = WandImage.imageLoader(context, endpoint)
-    val absolute = if (source.startsWith("http://") || source.startsWith("https://")) {
-        source
-    } else {
-        endpoint + if (source.startsWith("/")) source else "/$source"
-    }
+    val absolute = if (!directUrl) WandImage.fileRawUrl(endpoint, source)
+        else absoluteToolImageSource(source, endpoint)
     val model = remember(absolute, retry, loader) {
         ImageRequest.Builder(context).data(absolute).setParameter("wandImageRetry", retry).build()
     }
     SubcomposeAsyncImage(
         model = model,
         imageLoader = loader,
-        contentDescription = "工具返回图片",
+        contentDescription = contentDescription,
         contentScale = ContentScale.Fit,
         loading = { ImageLoadFeedback() },
         error = { state -> ImageLoadFeedback(wandImageFailureMessage(state.result.throwable), onRetry = { retry += 1 }) },

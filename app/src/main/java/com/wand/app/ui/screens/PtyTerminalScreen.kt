@@ -542,34 +542,46 @@ private fun PtyTopBar(
                 avatarId = snapshot?.employeeId?.takeIf { it.isNotBlank() } ?: "e_wand_default",
                 avatarName = snapshot?.employeeName,
                 avatar = snapshot?.employeeAvatar,
+                backdrop = backdrop,
                 modifier = Modifier.weight(1f),
             )
         },
         actions = {
-            if (taskSessions.size > 1) {
-                var taskSessionsOpen by remember(sessionId) { mutableStateOf(false) }
+            var moreOpen by remember(sessionId) { mutableStateOf(false) }
+            var taskSessionsOpen by remember(sessionId) { mutableStateOf(false) }
+            SessionFilesAnchor(api, sessionId, snapshot?.cwd, onOpen = onOpenFiles) { filesEnabled, openFiles ->
                 Box {
-                    IconButton(onClick = { taskSessionsOpen = true }) {
-                        Icon(WandIcons.workspace, contentDescription = "切换任务会话", tint = WandColors.textPrimary)
+                    IconButton(onClick = { moreOpen = true }) {
+                        Icon(WandIcons.more, contentDescription = "终端菜单", tint = WandColors.textPrimary)
                     }
-                    DropdownMenu(
-                        expanded = taskSessionsOpen,
-                        onDismissRequest = { taskSessionsOpen = false },
-                    ) {
+                    DropdownMenu(moreOpen, onDismissRequest = { moreOpen = false }) {
+                        SessionIconActions(buildList {
+                            add(SessionIconAction("会话文件", WandIcons.folder, enabled = filesEnabled, onClick = openFiles))
+                            val git = quickCommit.status
+                            val changed = git?.files.orEmpty().size
+                            val ahead = git?.ahead ?: 0
+                            if (git?.isGit == true && (changed > 0 || ahead > 0 || quickCommit.entryLocked)) {
+                                add(SessionIconAction(
+                                    when (quickCommit.entryPhase) {
+                                        com.wand.app.ui.QuickCommitEntryPhase.Loading -> "快捷提交执行中"
+                                        com.wand.app.ui.QuickCommitEntryPhase.Done -> "快捷提交完成"
+                                        com.wand.app.ui.QuickCommitEntryPhase.Idle -> "变更与提交，$changed 个文件变更，$ahead 个提交待推送"
+                                    },
+                                    if (quickCommit.entryPhase == com.wand.app.ui.QuickCommitEntryPhase.Done) WandIcons.statusDone else WandIcons.commit,
+                                    enabled = !quickCommit.entryLocked, onClick = onOpenQuickCommit,
+                                ))
+                            }
+                            if (taskSessions.size > 1) add(SessionIconAction("切换任务会话", WandIcons.workspace) { taskSessionsOpen = true })
+                        }, onDismiss = { moreOpen = false })
+                    }
+                    DropdownMenu(taskSessionsOpen, onDismissRequest = { taskSessionsOpen = false }) {
                         orderWorkspaceSessions(taskSessions).forEach { session ->
-                            DropdownMenuItem(
-                                text = { Text(session.title?.takeIf(String::isNotBlank) ?: "终端会话") },
-                                onClick = {
-                                    taskSessionsOpen = false
-                                    onSelectTaskSession(session)
-                                },
-                            )
+                            DropdownMenuItem(text = { Text(session.title?.takeIf(String::isNotBlank) ?: "终端会话") },
+                                onClick = { taskSessionsOpen = false; onSelectTaskSession(session) })
                         }
                     }
                 }
             }
-            SessionFilesButton(api, sessionId, snapshot?.cwd, onOpen = onOpenFiles)
-            GitChangesButton(quickCommit, compact = true) { onOpenQuickCommit() }
         },
     )
 }
@@ -604,7 +616,7 @@ private fun PtyBottomBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(TerminalTray)
+                .background(TerminalBackground)
                 .imePadding()
                 .navigationBarsPadding(),
         ) {

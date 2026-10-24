@@ -39,10 +39,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.Row
@@ -54,6 +50,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -81,7 +78,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -540,7 +536,9 @@ fun ChatScreen(
         subagentDockActivities(collectSubagentActivities(store.messages, store.isResponding))
     }
     val progressTodos = remember(store.messages, store.status) {
-        if (store.status == "running") currentTodos(store.messages) else emptyList()
+        if (store.status == "running") currentTodos(store.messages).takeUnless { items ->
+            items.isNotEmpty() && items.all { it.status == "completed" }
+        }.orEmpty() else emptyList()
     }
     val showActivityDock = shouldShowStructuredActivityDock(
         isStructured = store.isStructured,
@@ -575,7 +573,7 @@ fun ChatScreen(
         // 只在用户手动浏览时保阅读位置；贴底跟随补页时交给贴底逻辑重新贴底，不抢滚动。
         if (scrollMode == ChatScrollMode.Manual) {
             val firstContent = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                it.key != "chat-bottom"
+                it.key != "chat-bottom" && it.key != "execution-progress"
             }
             earlierLoadAnchor = EarlierLoadAnchor(
                 itemKey = firstContent?.key,
@@ -598,7 +596,7 @@ fun ChatScreen(
             userPulledToTop = pulledToTop,
             loadedRowCount = displayItems.size,
             measuredRowHeightsPx = listState.layoutInfo.visibleItemsInfo
-                .filter { it.key != "chat-bottom" }
+                .filter { it.key != "chat-bottom" && it.key != "execution-progress" }
                 .map { it.size },
             viewportHeightPx = listViewportHeightPx,
         )
@@ -817,9 +815,7 @@ fun ChatScreen(
         avatarFileActivity(store.messages, store.isResponding && store.status == "running" &&
             store.pendingEscalation == null && store.legacyPermissionPrompt == null)
     }
-    Scaffold(
-        containerColor = WandColors.bgPrimary,
-        contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
+    ChatDetailScaffold(
         snackbarHost = { WandSnackbarHost(snackbarHostState) },
         bottomBar = { BottomBar(
             backdrop = activeBackdrop,
@@ -1094,6 +1090,7 @@ fun ChatScreen(
                 avatar = liveEmployee?.avatar ?: store.snapshot?.employeeAvatar,
                 fileActivity = avatarActivity,
                 thinking = companionThinking(store.messages, store.isResponding, avatarActivity),
+                backdrop = glassBackdrop,
                 attention = chatTopAttention(
                     connected = store.connected,
                     blocked = store.pendingEscalation != null || store.legacyPermissionPrompt != null,
@@ -1112,6 +1109,10 @@ fun ChatScreen(
                 },
             )
 
+            SessionFilesAnchor(api, sessionId, store.snapshot?.cwd,
+                onOpen = { resources.dismiss(); quickCommit.closePanel(); attachOpen = false; focusManager.clearFocus() },
+                modifier = Modifier.align(Alignment.TopCenter),
+            ) { filesEnabled, openFiles ->
             FloatingChatControls(showBack = showBack, onBack = onBack,
                 identity = liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel ?: "当前会话",
                 cwd = store.snapshot?.cwd, onTarget = { targetPickerOpen = true },
@@ -1120,10 +1121,8 @@ fun ChatScreen(
                 onStop = { stopRequest++; Unit }.takeIf { store.isResponding },
                 taskSessions = taskSessions,
                 onSelectTaskSession = onSelectTaskSession,
-                modifier = Modifier.align(Alignment.TopCenter),
-                files = { SessionFilesButton(api, sessionId, store.snapshot?.cwd) {
-                    resources.dismiss(); quickCommit.closePanel(); attachOpen = false; focusManager.clearFocus()
-                } })
+                filesEnabled = filesEnabled, onFiles = openFiles)
+            }
         }
     }
     }
@@ -1856,123 +1855,75 @@ private fun shortModelLabel(store: ChatStore): String {
  * promote 的中断/preserveQueue 语义在 ChatStore.promoteQueued 里按 inFlight 自动决定。
  */
 @Composable
-private fun QueueBar(store: ChatStore, composer: ChatComposer, presentation: ChatInputPresentation) {
-    var expanded by rememberSaveable(store.sessionId) { mutableStateOf(false) }
+private fun QueueBar(
+    store: ChatStore,
+    composer: ChatComposer,
+    presentation: ChatInputPresentation,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    maxHeight: Dp,
+) {
     val queue = store.queuedMessages
     val recovery = composer.queueRecovery
-    BackHandler(enabled = expanded) { expanded = false }
-    LaunchedEffect(composer.sendPhase, queue.isEmpty()) {
-        if (composer.sendPhase == SendPhase.Sending || queue.isEmpty()) expanded = false
-    }
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        animationSpec = WandMotion.respectMotion(!reduceMotionEnabled(), WandMotion.tweenFast()),
-        label = "queue-expand-rotate",
-    )
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        // 标题行：图标 + 计数 + 展开/收起；整行可点。
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .clickable(role = Role.Button, onClickLabel = if (expanded) "收起排队消息" else "展开排队消息") { expanded = !expanded }
-                .heightIn(min = ComposerActionTouchSize)
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-        ) {
-            Icon(
-                WandIcons.history,
-                contentDescription = null,
-                tint = WandColors.textMuted,
-                modifier = Modifier.size(14.dp),
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ComposerAccessoryHeader(
+                icon = WandIcons.send,
+                title = "待发",
+                preview = recovery?.message ?: queue.firstOrNull().orEmpty(),
+                count = if (queue.isEmpty()) "" else "${queue.size}",
+                expanded = expanded,
+                onToggle = { onExpandedChange(!expanded) },
+                modifier = Modifier.weight(1f),
             )
-            Text(
-                "已排队 ${queue.size} 条消息",
-                fontSize = 12.sp,
-                color = WandColors.textMuted,
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            Icon(
-                WandIcons.expand,
-                contentDescription = if (expanded) "收起" else "展开",
-                tint = WandColors.textMuted,
-                modifier = Modifier
-                    .size(16.dp)
-                    .graphicsLayer { rotationZ = rotation },
-            )
-        }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn(WandMotion.tweenFast()),
-            exit = fadeOut(WandMotion.tweenFast()),
-        ) {
-            Column(modifier = Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                queue.forEachIndexed { index, text ->
-                    QueueItemRow(
-                        index = index,
-                        text = text,
-                        enabled = !store.queueMutationPending && recovery == null,
-                        onPromote = { store.promoteQueued(index); expanded = false },
-                        onDelete = { store.deleteQueued(index) },
-                        onEdit = {
-                            if (composer.retrieveQueued(index, text, store::retrieveQueued)) {
-                                expanded = false
-                                presentation.edit()
-                            }
-                        },
-                    )
-                }
-                // 全部清空：右对齐，提示性按钮。
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(onClick = { store.clearQueued(); expanded = false },
-                        enabled = !store.queueMutationPending && recovery == null) {
-                        Icon(
-                            WandIcons.delete,
-                            contentDescription = null,
-                            tint = WandColors.danger,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Spacer(modifier = Modifier.size(4.dp))
-                        Text(
-                            "全部清空",
-                            fontSize = 12.sp,
-                            color = WandColors.danger,
-                        )
-                    }
+            if (expanded && queue.isNotEmpty()) {
+                TextButton(onClick = { store.clearQueued(); onExpandedChange(false) },
+                    enabled = !store.queueMutationPending && recovery == null) {
+                    Text("清空", style = MaterialTheme.typography.labelSmall, color = WandColors.danger)
                 }
             }
         }
-        if (recovery != null) {
-            Column(modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
-                Text(recovery.message, color = WandColors.textMuted, fontSize = 12.sp)
-                if (recovery.phase != QueueRecoveryPhase.Retrieving) {
-                    SelectionContainer {
-                        Text(recovery.text, color = WandColors.textPrimary, fontSize = 13.sp,
-                            modifier = Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState()))
+        if (expanded) Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState())) {
+            if (recovery != null) {
+                Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite }) {
+                    Text(recovery.message, color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall)
+                    when (recovery.phase) {
+                        QueueRecoveryPhase.Ready -> TextButton(
+                            enabled = composer.sendPhase != SendPhase.Sending,
+                            onClick = { if (composer.restoreQueuedOriginal()) presentation.edit() },
+                        ) { Text("加入当前输入继续编辑") }
+                        QueueRecoveryPhase.Unconfirmed -> TextButton(
+                            enabled = composer.sendPhase != SendPhase.Sending,
+                            onClick = { if (composer.restoreQueuedOriginal(confirmedNotExecuted = true)) presentation.edit() },
+                        ) { Text("确认已移出且未执行，恢复原文") }
+                        QueueRecoveryPhase.Rejected -> TextButton(onClick = composer::dismissRejectedQueueRecovery) {
+                            Text("保留队列，关闭提示")
+                        }
+                        QueueRecoveryPhase.Retrieving -> Unit
+                    }
+                    if (recovery.phase != QueueRecoveryPhase.Retrieving) {
+                        SelectionContainer {
+                            Text(recovery.text, color = WandColors.textPrimary, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
-                when (recovery.phase) {
-                    QueueRecoveryPhase.Ready -> TextButton(
-                        enabled = composer.sendPhase != SendPhase.Sending,
-                        onClick = { if (composer.restoreQueuedOriginal()) presentation.edit() },
-                    ) { Text("加入当前输入继续编辑") }
-                    QueueRecoveryPhase.Unconfirmed -> TextButton(
-                        enabled = composer.sendPhase != SendPhase.Sending,
-                        onClick = { if (composer.restoreQueuedOriginal(confirmedNotExecuted = true)) presentation.edit() },
-                    ) { Text("确认已移出且未执行，恢复原文") }
-                    QueueRecoveryPhase.Rejected -> TextButton(onClick = composer::dismissRejectedQueueRecovery) {
-                        Text("保留队列，关闭提示")
-                    }
-                    QueueRecoveryPhase.Retrieving -> Unit
-                }
+            }
+            queue.forEachIndexed { index, text ->
+                QueueItemRow(
+                    index = index,
+                    text = text,
+                    enabled = !store.queueMutationPending && recovery == null,
+                    onPromote = { store.promoteQueued(index); onExpandedChange(false) },
+                    onDelete = { store.deleteQueued(index) },
+                    onEdit = {
+                        if (composer.retrieveQueued(index, text, store::retrieveQueued)) {
+                            onExpandedChange(false)
+                            presentation.edit()
+                        }
+                    },
+                )
+                if (index < queue.lastIndex) HorizontalDivider(Modifier.padding(horizontal = 8.dp), color = WandColors.border)
             }
         }
     }
@@ -1987,39 +1938,27 @@ private fun QueueItemRow(
     onDelete: () -> Unit,
     onEdit: () -> Unit,
 ) {
+    var actionsOpen by remember(index, text, enabled) { mutableStateOf(false) }
     Row(
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(WandColors.surfaceSoft)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
     ) {
-        Text(
-            "${index + 1}.",
-            fontSize = 12.sp,
-            color = WandColors.textMuted,
-        )
-        Text(
-            text,
-            fontSize = 13.sp,
-            color = WandColors.textPrimary,
-            maxLines = 6,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(onClick = onEdit, enabled = enabled, modifier = Modifier.size(48.dp)) {
-            Icon(WandIcons.edit, contentDescription = "取回到输入框编辑", tint = WandColors.brand,
-                modifier = Modifier.size(20.dp))
+        Text("${index + 1}.", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted,
+            modifier = Modifier.padding(top = 14.dp))
+        Box(Modifier.weight(1f).heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
+            Text(text, style = MaterialTheme.typography.bodySmall, color = WandColors.textPrimary)
         }
-        IconButton(onClick = onPromote, enabled = enabled, modifier = Modifier.size(48.dp)) {
-            Icon(WandIcons.send, contentDescription = "立即发送", tint = WandColors.brand,
-                modifier = Modifier.size(20.dp))
-        }
-        IconButton(onClick = onDelete, enabled = enabled, modifier = Modifier.size(48.dp)) {
-            Icon(WandIcons.close, contentDescription = "删除", tint = WandColors.textMuted,
-                modifier = Modifier.size(20.dp))
+        Box {
+            IconButton(onClick = { actionsOpen = true }, enabled = enabled, modifier = Modifier.size(48.dp)) {
+                Icon(WandIcons.more, contentDescription = "第 ${index + 1} 条待发消息的操作",
+                    tint = WandColors.textSecondary, modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(expanded = actionsOpen && enabled, onDismissRequest = { actionsOpen = false }) {
+                DropdownMenuItem(text = { Text("取回编辑") }, onClick = { actionsOpen = false; onEdit() })
+                DropdownMenuItem(text = { Text("立即发送") }, onClick = { actionsOpen = false; onPromote() })
+                DropdownMenuItem(text = { Text("删除") }, onClick = { actionsOpen = false; onDelete() })
+            }
         }
     }
 }
@@ -2103,6 +2042,40 @@ private fun BottomBar(
     // 草稿订阅收敛在这里：打字只重组底部栏，不再波及消息列表。
     val draft = composer.draft
     val onDraftChange: (String) -> Unit = composer::editDraft
+    var accessoryPanel by rememberSaveable(store.sessionId) { mutableStateOf<ComposerAccessoryPanel?>(null) }
+    var writingSurfaceHeightPx by remember(store.sessionId) { mutableStateOf(0) }
+    val hasQueue = store.queuedMessages.isNotEmpty() || composer.queueRecovery != null
+    val writingSurfaceHeight = with(LocalDensity.current) { writingSurfaceHeightPx.toDp() }.coerceAtLeast(52.dp)
+    val accessoryMaxHeight = composerAccessoryMaxHeight(writingSurfaceHeight,
+        (if (progressTodos.isNotEmpty()) 1 else 0) + (if (hasQueue) 1 else 0))
+    val accessoryKeyboardVisible = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var accessoryKeyboardWasVisible by remember(store.sessionId) { mutableStateOf(false) }
+    val showAccessory: (ComposerAccessoryPanel) -> Unit = { panel ->
+        accessoryPanel = panel
+    }
+    LaunchedEffect(accessoryPanel, accessoryMaxHeight, accessoryKeyboardVisible) {
+        val action = composerAccessoryKeyboardAction(accessoryKeyboardWasVisible,
+            accessoryKeyboardVisible, accessoryPanel != null, accessoryMaxHeight)
+        accessoryKeyboardWasVisible = accessoryKeyboardVisible
+        // A fresh edit wins over disclosure. Existing input yields to a newly
+        // expanded list or a viewport that became too short after rotation.
+        when (action) {
+            ComposerAccessoryKeyboardAction.CollapsePanel -> accessoryPanel = null
+            ComposerAccessoryKeyboardAction.DismissInput -> presentation.dismiss()
+            ComposerAccessoryKeyboardAction.Keep -> Unit
+        }
+    }
+    BackHandler(accessoryPanel != null) { accessoryPanel = null }
+    LaunchedEffect(composer.sendPhase, hasQueue, progressTodos.isEmpty()) {
+        if (composer.sendPhase == SendPhase.Sending ||
+            accessoryPanel == ComposerAccessoryPanel.Queue && !hasQueue ||
+            accessoryPanel == ComposerAccessoryPanel.Todos && progressTodos.isEmpty()) accessoryPanel = null
+    }
+    LaunchedEffect(composer.queueRecovery?.phase) {
+        if (composer.queueRecovery?.phase?.let { it != QueueRecoveryPhase.Retrieving } == true) {
+            showAccessory(ComposerAccessoryPanel.Queue)
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -2145,7 +2118,7 @@ private fun BottomBar(
         }
         // 结构化会话没有「会话已结束 / 恢复会话」的概念：一个回合结束后只是回到 idle，
         // 直接继续输入即可（服务端 sendMessage 自动 --resume 续接）。不再渲染结束态横幅。
-        // Agent 状态坞排在待办/权限/队列之后，作为输入栏上方的最后一项贴着输入框。
+        // Agent 状态在前；待办与队列紧邻同一输入框，列表只按需展开。
         AnimatedVisibility(
             visible = activityDockVisible && (subagentActivities.isNotEmpty() || progressTodos.isEmpty()),
             enter = fadeIn(WandMotion.tweenFast()) +
@@ -2166,17 +2139,23 @@ private fun BottomBar(
             }
         }
         InputBar(
+            onWritingSurfaceHeightChange = { writingSurfaceHeightPx = it },
             accessory = {
-                if (progressTodos.isNotEmpty() || store.queuedMessages.isNotEmpty() || composer.queueRecovery != null) {
-                    Column(Modifier.padding(bottom = 4.dp)) {
-                        if (progressTodos.isNotEmpty()) {
-                            TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage, detailsInSheet = true,
-                                onDetailsOpenChange = { presentation.overlayOpen = it })
-                        }
-                        if (store.queuedMessages.isNotEmpty() || composer.queueRecovery != null) {
-                            QueueBar(store = store, composer = composer, presentation = presentation)
-                        }
-                    }
+                if (progressTodos.isNotEmpty()) {
+                    TodoProgressBar(
+                        todos = progressTodos, usage = lastAssistantUsage,
+                        expanded = accessoryPanel == ComposerAccessoryPanel.Todos,
+                        onExpandedChange = { if (it) showAccessory(ComposerAccessoryPanel.Todos) else accessoryPanel = null },
+                        maxHeight = accessoryMaxHeight,
+                    )
+                }
+                if (hasQueue) {
+                    QueueBar(
+                        store = store, composer = composer, presentation = presentation,
+                        expanded = accessoryPanel == ComposerAccessoryPanel.Queue,
+                        onExpandedChange = { if (it) showAccessory(ComposerAccessoryPanel.Queue) else accessoryPanel = null },
+                        maxHeight = accessoryMaxHeight,
+                    )
                 }
             },
             backdrop = backdrop,
@@ -2216,6 +2195,7 @@ internal val ComposerExpandedInputMaxHeight = 132.dp
 @Composable
 private fun InputBar(
     accessory: @Composable () -> Unit,
+    onWritingSurfaceHeightChange: (Int) -> Unit,
     backdrop: GlassBackdrop?,
     store: ChatStore,
     attachmentPickerOpen: Boolean,
@@ -2249,6 +2229,7 @@ private fun InputBar(
     SharedMessageComposer(
         backdrop = backdrop,
         accessory = accessory,
+        onWritingSurfaceHeightChange = onWritingSurfaceHeightChange,
         sessionKey = store.sessionId,
         draft = draft,
         onDraftChange = onDraftChange,

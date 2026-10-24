@@ -107,6 +107,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     var pendingId by remember { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var navigationMenu by remember { mutableStateOf(false) }
+    var rangeMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     fun isBusy(): Boolean = pendingId != null || batchBusy
     fun update(itemId: String, patch: JSONObject) {
@@ -180,28 +181,31 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     Column(Modifier.fillMaxSize().imePadding().then(layer.host(create, setOf("actions", "form", "search", "list")) { close() }).onKeyEvent { event ->
         if (event.key == Key.Escape && event.type == KeyEventType.KeyUp && (create || query.isNotEmpty())) { close(true); true } else false
     }) {
-        Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-            Text(if (listTier == ConversationListTier.All.storageValue) "消息" else ConversationListTier.of(listTier).label,
-                Modifier.padding(horizontal = 104.dp), fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Box(Modifier.align(Alignment.CenterEnd).size(width = 96.dp, height = 48.dp), contentAlignment = Alignment.Center) {
-            Box(Modifier.fillMaxWidth().height(44.dp).clip(CircleShape).background(WandColors.surface).border(0.6.dp, WandColors.border, CircleShape))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (listTier == ConversationListTier.All.storageValue) "聊天" else ConversationListTier.of(listTier).label,
+                Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            TextButton(onClick = { create = !create },
+                modifier = Modifier.heightIn(min = 48.dp).focusRequester(createTrigger).then(layer.region("actions"))) { Text(if (create) "收起" else "建群") }
             Box {
-                WandIconButton(WandIcons.more, "消息菜单", { navigationMenu = true }, enabled = !create, iconSize = 20.dp)
-                DropdownMenu(navigationMenu, onDismissRequest = { navigationMenu = false }) {
-                    ConversationListTier.entries.forEach { tier -> DropdownMenuItem(
-                        text = { Text(if (tier == ConversationListTier.All) "全部消息" else tier.label) },
-                        trailingIcon = { if (tier.storageValue == listTier) Icon(WandIcons.check, null, tint = WandColors.brand) },
-                        onClick = { listTier = tier.storageValue; navigationMenu = false }) }
-                    HorizontalDivider()
-                    DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(WandIcons.settings, null) }, onClick = { navigationMenu = false; onOpenSettings() })
-                    DropdownMenuItem(text = { Text("切换服务器") }, leadingIcon = { Icon(WandIcons.swapServer, null) }, onClick = { navigationMenu = false; onSwitchServer() })
-                    onCollapseSidebar?.let { collapse -> DropdownMenuItem(text = { Text("收起侧栏") }, onClick = { navigationMenu = false; collapse() }) }
+                TextButton(onClick = { navigationMenu = true }, enabled = !create, modifier = Modifier.heightIn(min = 48.dp)) { Text("更多") }
+                DropdownMenu(navigationMenu, onDismissRequest = { navigationMenu = false; rangeMenu = false }) {
+                    if (rangeMenu) {
+                        DropdownMenuItem(text = { Text("消息范围") }, leadingIcon = { Icon(WandIcons.back, "返回更多") },
+                            onClick = { rangeMenu = false })
+                        HorizontalDivider()
+                        ConversationListTier.entries.forEach { tier -> DropdownMenuItem(
+                            text = { Text(if (tier == ConversationListTier.All) "全部消息" else tier.label) },
+                            trailingIcon = { if (tier.storageValue == listTier) Icon(WandIcons.check, null, tint = WandColors.brand) },
+                            onClick = { listTier = tier.storageValue; navigationMenu = false; rangeMenu = false }) }
+                    } else {
+                        DropdownMenuItem(text = { Text("消息范围") }, trailingIcon = { Icon(WandIcons.chevronRight, null) },
+                            onClick = { rangeMenu = true })
+                        DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(WandIcons.settings, null) }, onClick = { navigationMenu = false; onOpenSettings() })
+                        DropdownMenuItem(text = { Text("切换服务器") }, leadingIcon = { Icon(WandIcons.swapServer, null) }, onClick = { navigationMenu = false; onSwitchServer() })
+                        onCollapseSidebar?.let { collapse -> DropdownMenuItem(text = { Text("收起侧栏") }, onClick = { navigationMenu = false; collapse() }) }
+                    }
                 }
-            }
-            WandIconButton(if (create) WandIcons.close else WandIcons.add, if (create) "关闭建群" else "发起群聊",
-                onClick = { create = !create }, iconSize = 20.dp, modifier = Modifier.focusRequester(createTrigger).then(layer.region("actions")))
-            }
             }
         }
         if (!create) WandInlineSearchField(true, query, { query = it }, null, "搜索聊天或任务",
@@ -243,13 +247,13 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 val selected = state.selectedId == item.id
                 val managedSelected = item.id in selectedIds
                 val archived = isConversationArchived(item)
-                val summary = if (item.dissolvedAt != null) "群聊已解散 · 点击查看或恢复" else item.preview.ifBlank { if (item.kind == "group") "尚未有消息" else "还没有消息" }
+                val summary = if (item.external != null) "钉钉 · " + item.preview.ifBlank { item.external.statusText } else if (item.dissolvedAt != null) "群聊已解散 · 点击查看或恢复" else item.preview.ifBlank { if (item.kind == "group") "尚未有消息" else "还没有消息" }
                 // 归档的对话不再是「等你回复/在跑」，只留给归档标记；否则和未归档的排成一样。
                 val status = if (archived) null else item.tasks.flatMap { it.runs }.firstOrNull { it.status in listOf("waiting_user", "awaiting_approval", "failed", "running") }?.status
                 Column {
                   // 操作从长按菜单改成从右往左划出的抽屉；多选态下没有滑动手势，整行只做选中切换。
                   ConversationSwipeRowCard(
-                    actions = if (selecting) emptyList() else conversationSwipeActions(item.kind, item.pinnedAt != null, item.dissolvedAt != null),
+                    actions = if (selecting) emptyList() else conversationSwipeActions(item.kind, item.pinnedAt != null, item.dissolvedAt != null, external = item.external != null),
                     revealed = swipedId == item.id,
                     onRevealedChange = { open -> swipedId = if (open) item.id else swipedId?.takeIf { it != item.id } },
                     onAction = { action ->
@@ -346,7 +350,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 } }
             }),
             dismiss = WandDialogAction("取消", enabled = !isBusy(), onClick = { deleteId = null })) {
-            Text(if (state.items.firstOrNull { it.id == deleting }?.kind == "group") "将删除这个群聊、所有关联任务，以及它们的消息、执行记录和资源文件。此操作无法撤销。" else "将永久删除此私聊的消息记录和会话文件。员工资料及已经派出的群聊任务保留。此操作无法撤销。")
+            Text(if (state.items.firstOrNull { it.id == deleting }?.external != null) "仅删除 Wand 中的本地群镜像、消息和关联执行；不退出或解散钉钉群，也不删除其他群共用的机器人。" else if (state.items.firstOrNull { it.id == deleting }?.kind == "group") "将删除这个群聊、所有关联任务，以及它们的消息、执行记录和资源文件。此操作无法撤销。" else "将永久删除此私聊的消息记录和会话文件。员工资料及已经派出的群聊任务保留。此操作无法撤销。")
             actionError?.let { Text(it, color = WandColors.danger) }
         }
     }
@@ -459,6 +463,10 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     var memberVersion by metadata::memberVersion
     var members by rememberSaveable(id) { mutableStateOf(false) }
     var headerMenu by remember(id) { mutableStateOf(false) }
+    var managementAction by remember(id) { mutableStateOf<ConversationManagementAction?>(null) }
+    var managementBusy by remember(id) { mutableStateOf(false) }
+    var managementError by remember(id) { mutableStateOf<String?>(null) }
+    val managementActions = detail?.let { conversationManagementActions(it.kind, it.dissolvedAt != null, it.external != null, it.deleting) }.orEmpty()
     var invite by rememberSaveable(id) { mutableStateOf(false) }
     var titleOpen by rememberSaveable(id) { mutableStateOf(false) }
     var taskDetails by rememberSaveable(id) { mutableStateOf(false) }
@@ -515,6 +523,34 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
         val (nextMenu, nextTaskMode) = conversationComposerState(menu, taskMode, event)
         menu = nextMenu; taskMode = nextTaskMode
     }
+    fun manageGroup(action: ConversationManagementAction) {
+        if (managementBusy || action !in managementActions) return
+        managementAction = null; managementError = null; managementBusy = true
+        scope.launch {
+            try {
+                if (action == ConversationManagementAction.Delete) {
+                    state.remove(id)
+                    if (alive.value && currentId == id && showBack) onBack()
+                } else {
+                    state.updateListState(id, JSONObject().put("dissolved", action == ConversationManagementAction.Dissolve))
+                    invite = false; members = false; taskDetails = false
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                managementError = failure.message ?: "更新失败，请从更多菜单重试。"
+            } finally { managementBusy = false }
+        }
+    }
+    managementAction?.let { action ->
+        val external = detail?.external != null
+        WandDialog(title = action.title(external) + "？", onDismissRequest = { managementAction = null },
+            confirm = WandDialogAction(action.title(external), destructive = true, enabled = !managementBusy,
+                onClick = { manageGroup(action) }),
+            dismiss = WandDialogAction("取消", onClick = { managementAction = null })) {
+            Text(action.explanation(external))
+        }
+    }
     fun closeLayer(restoreFocus: Boolean = true): Boolean {
         val trigger = when { menu -> menuTrigger; invite -> inviteTrigger; members -> memberTrigger; taskDetails -> taskTrigger; titleOpen -> titleTrigger; else -> return false }
         // 系统返回只结束临时面板/输入法和页面栈；普通消息卡的展开不吞返回。
@@ -564,6 +600,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     }
     fun send() {
         if (detail == null || detail.unavailableReason != null || unknown != null || !actionOperation.canSubmit) return
+        if (detail.external != null && (taskMode || composer.attachments.isNotEmpty())) { state.feedback[key] = "钉钉群只发送文字，不派发内部任务；附件和草稿保留。"; return }
         if (taskMode && (projectId.isBlank() || detail.memberVersion != memberVersion)) { state.feedback[key] = "请选择工作项目并核对当前成员版本"; return }
         val capturedKey = key; val capturedId = id; val dispatch = taskMode
         val capturedPreference = executionChoice.forMessage(
@@ -668,6 +705,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
     }
     val receiver = if (taskMode) "${if (continueTask != null) "继续此任务" else "派新任务"} · 我 + ${detail?.team?.members?.joinToString { it.name } ?: employee?.name.orEmpty()}"
         else if (target != null && run != null) "${if (run.run.status == "awaiting_approval") "计划意见" else if (run.run.status == "waiting_user") "回复任务" else "补充任务"} · ${detail.tasks.firstOrNull { it.task.id == target.taskId }?.task?.title} · 第 ${run.run.roundNumber ?: 1} 轮"
+        else if (detail?.external != null) "钉钉群消息 · 请在钉钉原生 @员工；最终正文回群"
         else if (detail?.kind == "group") "群内沟通 · 发给负责人 ${detail.leader?.name}，群内可见" else "每条消息开启独立会话"
     BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -713,24 +751,52 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 WandIconButton(WandIcons.more, "聊天菜单", { headerMenu = true }, variant = WandIconButtonVariant.Chrome,
                     modifier = Modifier.focusRequester(memberTrigger).then(layer.region("member-trigger")))
                 DropdownMenu(headerMenu, onDismissRequest = { headerMenu = false }) {
-                    if (detail?.kind == "group") DropdownMenuItem(text = { Text("群成员 · ${detail.team?.members.orEmpty().size + 1}") },
-                        onClick = { headerMenu = false; members = !members; taskDetails = false; invite = false })
-                    else employee?.let { person -> DropdownMenuItem(text = { Text("员工资料") }, onClick = { headerMenu = false; onOpenEmployee(person.id) }) }
-                    DropdownMenuItem(text = { Text(conversationTaskSummary(detail)) }, leadingIcon = { Icon(WandIcons.todo, null) },
-                        onClick = { headerMenu = false; taskDetails = !taskDetails; members = false; invite = false })
-                    if (detail?.kind == "group") DropdownMenuItem(text = { Text("派新任务") }, enabled = detail.dissolvedAt == null && !detail.deleting,
-                        onClick = { headerMenu = false; composeTask() })
-                    detail?.communicationSessionId?.let { sid -> DropdownMenuItem(text = { Text("执行过程") }, onClick = { headerMenu = false; onOpenSession(sid) }) }
-                    DropdownMenuItem(text = { Text("通讯录") }, onClick = { headerMenu = false; onContacts() })
+                    SessionIconActions(buildList {
+                        if (detail?.kind == "group") add(SessionIconAction(
+                            if (detail.external != null) "已接入员工 · ${detail.external.bindings.size}" else "群成员 · ${detail.team?.members.orEmpty().size + 1}",
+                            WandIcons.agent,
+                        ) { members = !members; taskDetails = false; invite = false })
+                        else employee?.let { person -> add(SessionIconAction("员工资料", WandIcons.agent) { onOpenEmployee(person.id) }) }
+                        if (detail?.external == null) add(SessionIconAction(conversationTaskSummary(detail), WandIcons.todo) {
+                            taskDetails = !taskDetails; members = false; invite = false
+                        })
+                        if (detail?.kind == "group" && detail.external == null) add(SessionIconAction("派新任务", WandIcons.add,
+                            enabled = detail.dissolvedAt == null && !detail.deleting) { composeTask() })
+                        detail?.communicationSessionId?.let { sid -> add(SessionIconAction("执行过程", WandIcons.toolResult) { onOpenSession(sid) }) }
+                        add(SessionIconAction("通讯录", WandIcons.contacts, onClick = onContacts))
+                        managementActions.forEach { action -> add(SessionIconAction(action.title(detail?.external != null),
+                            when (action) {
+                                ConversationManagementAction.Dissolve -> WandIcons.archive
+                                ConversationManagementAction.Restore -> WandIcons.refresh
+                                ConversationManagementAction.Delete -> WandIcons.delete
+                            }, enabled = !managementBusy, destructive = action != ConversationManagementAction.Restore) {
+                                applyComposer(ConversationComposerEvent.PanelClose)
+                                if (action == ConversationManagementAction.Restore) manageGroup(action) else managementAction = action
+                            }) }
+                    }, onDismiss = { headerMenu = false })
                 }
             }
         }
-        WandInlinePanel(titleOpen, growFrom = Alignment.Top) { Text("${displayTitle ?: employee?.name.orEmpty()} · ${if (detail?.kind == "group") "${detail.team?.members.orEmpty().size + 1} 人 · ${detail.team?.members.orEmpty().size} 位员工" else "私聊"}", Modifier.padding(8.dp)) }
+        if (managementBusy) Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            Text("正在更新群聊…", style = MaterialTheme.typography.bodySmall)
+        }
+        managementError?.let { Text(it, Modifier.fillMaxWidth().padding(8.dp).semantics { liveRegion = LiveRegionMode.Polite }, color = WandColors.danger, style = MaterialTheme.typography.bodySmall) }
+        WandInlinePanel(titleOpen, growFrom = Alignment.Top) { Text("${displayTitle ?: employee?.name.orEmpty()} · ${detail?.external?.statusText ?: if (detail?.kind == "group") "${detail.team?.members.orEmpty().size + 1} 人 · ${detail.team?.members.orEmpty().size} 位员工" else "私聊"}", Modifier.padding(8.dp)) }
         WandInlinePanel(members, growFrom = Alignment.Top) { Column(Modifier.fillMaxWidth().heightIn(max = panelHeight).background(WandColors.surface).verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp).heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("群成员 · ${detail?.team?.members.orEmpty().size + 1}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Text(if (detail?.external != null) "已接入员工（非完整群成员）" else "群成员 · ${detail?.team?.members.orEmpty().size + 1}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 WandButton(if (invite) "收起邀请" else "邀请成员", { invite = !invite }, variant = WandButtonVariant.Text,
-                    enabled = detail?.dissolvedAt == null && detail?.deleting != true, modifier = Modifier.focusRequester(inviteTrigger).then(layer.region("invite-trigger")))
+                    enabled = detail?.dissolvedAt == null && detail?.deleting != true && detail?.external == null, modifier = Modifier.focusRequester(inviteTrigger).then(layer.region("invite-trigger")))
+            }
+            detail?.external?.let { origin ->
+                Text(origin.syncError ?: "普通群消息同步展示。请在钉钉原生 @员工，工具过程不会发到钉钉。", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+                origin.bindings.forEach { binding ->
+                    val boundEmployee = state.employees.firstOrNull { it.id == binding.employeeId }
+                    WandListItem(headlineContent = { Text(boundEmployee?.name ?: "员工已不可用") },
+                        supportingContent = { Text(if (binding.state == "ready") "已接通" else if (binding.state == "paused") "已暂停" else "接入待核实") },
+                        modifier = Modifier.clickable(enabled = boundEmployee != null) { onOpenEmployee(binding.employeeId) })
+                }
             }
             detail?.team?.members.orEmpty().forEach { m ->
                 WandListItem(
@@ -884,7 +950,7 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         } else {
                             Icon(WandIcons.toolResult, null, Modifier.size(32.dp), tint = WandColors.textMuted)
                             Text(if (displayedDetail?.dissolvedAt != null) "群聊已解散" else if (displayedId.isBlank()) "选择员工，开始聊天" else if (displayedFilter.isNotBlank()) "此任务暂无消息" else if (displayedDetail?.kind == "group") "群已建立" else "还没有消息", style = MaterialTheme.typography.bodyLarge)
-                            Text(if (displayedDetail?.dissolvedAt != null) "恢复后可继续聊天。" else if (displayedId.isBlank()) "可先写草稿，从通讯录选择接收对象后发送。" else if (displayedDetail?.kind == "group") "可以先沟通，也可以派任务。" else "直接说出你想做的事；执行过程和需要确认的内容会显示在这里。", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
+                            Text(if (displayedDetail?.dissolvedAt != null) "恢复后可继续聊天。" else if (displayedId.isBlank()) "可先写草稿，从通讯录选择接收对象后发送。" else if (displayedDetail?.external != null) "正在同步钉钉群；普通群消息不启动员工，最终回答回群。" else if (displayedDetail?.kind == "group") "可以先沟通，也可以派任务。" else "直接说出你想做的事；执行过程和需要确认的内容会显示在这里。", style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
                         }
                     }
                 }
@@ -947,19 +1013,15 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
         }
         if (detail?.dissolvedAt != null) Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("${conversationDay(detail.dissolvedAt)} ${conversationListClock(detail.dissolvedAt)} · ${detail.dissolvedBy ?: "我"}解散了群聊", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
-            var restoring by remember(id) { mutableStateOf(false) }
-            var restoreError by remember(id) { mutableStateOf<String?>(null) }
-            TextButton(enabled = !restoring, onClick = { restoring = true; restoreError = null; scope.launch {
-                try { state.updateListState(id, JSONObject().put("dissolved", false)); state.load(id) }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (failure: Exception) { restoreError = failure.message ?: "恢复失败，请重试" }
-                finally { restoring = false }
-            } }) { Text(if (restoring) "正在恢复…" else "恢复群聊", textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline) }
-            restoreError?.let { Text(it, color = WandColors.danger) }
+            if (ConversationManagementAction.Restore in managementActions) {
+                TextButton(enabled = !managementBusy, onClick = { manageGroup(ConversationManagementAction.Restore) }) {
+                    Text(if (managementBusy) "正在更新…" else "恢复群聊", textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
+                }
+            }
         } else Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = if (privateChat) 0.dp else 16.dp, vertical = if (privateChat) 0.dp else 4.dp)) {
             val feedback = actionOperation.feedback.ifBlank { state.feedback[key] ?: detail?.unavailableReason.orEmpty() }.takeUnless { it == "已发送" }.orEmpty()
             if (feedback.isNotBlank()) Text(feedback, Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
-                .background(WandColors.surface).padding(horizontal = 14.dp, vertical = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
+                .padding(horizontal = 14.dp, vertical = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted)
             if (actionOperation.unknown != null) WandButton("核对操作", { actionOperation.reconcile(state.api::conversationReceipt) }, variant = WandButtonVariant.Text)
             val permissions = protocols.values.filter { it.pendingEscalation != null || it.legacyPermissionPrompt != null }
             if (permissions.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max = panelHeight).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1019,12 +1081,13 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                 menuContent = {
                     if (!taskMode) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (detail?.kind == "group") WandButton("派新任务", { composeTask() }, enabled = id.isNotBlank(), variant = WandButtonVariant.Text)
+                            if (detail?.kind == "group" && detail.external == null) WandButton("派新任务", { composeTask() }, enabled = id.isNotBlank(), variant = WandButtonVariant.Text)
                             if (target == null) detail?.leader?.let { leader -> WandButton("@${leader.name}", {
                                 composer.editDraft(mentionConversationLeader(composer.draft, leader.name)); applyComposer(ConversationComposerEvent.PanelClose)
                             }, variant = WandButtonVariant.Text) }
                         }
-                        WandTextField(chatCwd, { chatCwd = it }, label = "工作目录", singleLine = true)
+                        if (detail?.external == null) WandTextField(chatCwd, { chatCwd = it }, label = "工作目录", singleLine = true)
+                        else Text("钉钉群仅发送文字，不派发内部团队任务；请在钉钉中原生 @员工。", style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
                         if (running) WandButton("停止本轮", ::stop, variant = WandButtonVariant.DangerText)
                         if (detail?.kind == "dm") employee?.let { peer -> WandButton("员工执行配置", { applyComposer(ConversationComposerEvent.PanelClose); onOpenEmployee(peer.id) }, variant = WandButtonVariant.Text) }
                         detail?.communicationSessionId?.let { sid -> WandButton(if (detail.kind == "dm") "历史私聊执行窗口" else "工具与资源", { applyComposer(ConversationComposerEvent.PanelClose); onOpenSession(sid) }, variant = WandButtonVariant.Text) }

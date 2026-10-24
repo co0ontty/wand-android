@@ -78,7 +78,6 @@ import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInPlaceSwap
 import com.wand.app.ui.components.WandListItem
 import com.wand.app.ui.components.WandListItemIconSlot
-import com.wand.app.ui.components.WandMorphIconButton
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
@@ -87,7 +86,11 @@ import com.wand.app.ui.theme.reduceMotionEnabled
 
 /** Anchored below the session toolbar, not a new page or a bottom sheet. */
 @Composable
-internal fun SessionFilesButton(api: WandApi, sessionId: String, cwd: String?, onOpen: () -> Unit = {}) {
+internal fun SessionFilesAnchor(
+    api: WandApi, sessionId: String, cwd: String?, onOpen: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    content: @Composable (enabled: Boolean, open: () -> Unit) -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val files = remember(sessionId, api) { SessionFilesController(api, scope) }
     DisposableEffect(files) { onDispose { files.shutdown() } }
@@ -100,23 +103,16 @@ internal fun SessionFilesButton(api: WandApi, sessionId: String, cwd: String?, o
     val panelHeight = (config.screenHeightDp.dp - 100.dp - keyboard).coerceIn(160.dp, 600.dp)
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    Box {
-        WandMorphIconButton(
-            expanded = files.open,
-            collapsedIcon = WandIcons.folder,
-            expandedIcon = WandIcons.close,
-            contentDescription = if (files.open) "关闭会话文件" else "会话文件",
-            tint = WandColors.textPrimary,
-            touchSize = 48.dp,
-            enabled = !cwd.isNullOrBlank(),
-            onClick = {
-                if (files.open) files.requestClose() else {
-                    keyboardController?.hide()
-                    onOpen()
-                    files.open(cwd.orEmpty())
-                }
-            },
-        )
+    Box(modifier) {
+        // Keep the file controller and editor mounted after its menu item closes.
+        // A transient DropdownMenu must never own an open file's draft/lifecycle.
+        content(!cwd.isNullOrBlank()) {
+            if (!cwd.isNullOrBlank()) {
+                keyboardController?.hide()
+                onOpen()
+                files.open(cwd)
+            }
+        }
         if (files.open || visibility.currentState || !visibility.isIdle) {
             Popup(
                 popupPositionProvider = remember(density) { SessionFilesPosition(with(density) { 12.dp.roundToPx() }) },

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,6 +27,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -282,28 +285,15 @@ fun ContactsScreen(
             onOpenSettings = onOpenSettings,
             onSwitchServer = onSwitchServer,
             onCollapseSidebar = onCollapseSidebar,
+            menuActions = { dismiss ->
+                DropdownMenuItem(text = { Text(if (dispatchOpen) "收起派工" else "派工") },
+                    onClick = { dismiss(); if (dispatchOpen) closeDispatchPanel()
+                        else { closeCreatePanel(); groupPresetId = null; dispatchOpen = true } })
+            },
             trailingActions = {
-                WandMorphIconButton(
-                    expanded = dispatchOpen,
-                    collapsedIcon = WandIcons.thinking,
-                    expandedIcon = WandIcons.close,
-                    contentDescription = if (dispatchOpen) "收起临时派工" else "临时派工（决策选人）",
-                    enabled = !anyBusy,
-                    onClick = {
-                        if (dispatchOpen) closeDispatchPanel() else { closeCreatePanel(); groupPresetId = null; dispatchOpen = true }
-                    },
-                )
-                WandMorphIconButton(
-                    expanded = templatesOpen,
-                    collapsedIcon = WandIcons.add,
-                    expandedIcon = WandIcons.close,
-                    contentDescription = if (templatesOpen) "收起创建" else "创建员工或团队",
-                    enabled = !anyBusy,
-                    onClick = {
-                        // 两个面板互斥：它们是同位展开的，同时开会让原位语义变得摸不到。
-                        if (templatesOpen) closeCreatePanel() else { closeDispatchPanel(); groupPresetId = null; templatesOpen = true }
-                    },
-                )
+                TextButton(enabled = !anyBusy, onClick = {
+                    if (templatesOpen) closeCreatePanel() else { closeDispatchPanel(); groupPresetId = null; templatesOpen = true }
+                }) { Text(if (templatesOpen) "收起" else "新建") }
             },
         )
         Box(
@@ -595,7 +585,9 @@ private fun ContactPersonRow(
         WandColors.textMuted
     }
     ContactDirectoryRow(
+        id = "employee:" + employee.id,
         title = employee.name,
+        onProfile = onAvatar,
         subtitle = subtitle,
         subtitleColor = subtitleColor,
         enabled = enabled,
@@ -635,7 +627,9 @@ private fun ContactTeamRow(
 ) {
     val fill = contactAccentFill(contactAccentIndex(team.id))
     ContactDirectoryRow(
+        id = "team:" + team.id,
         title = team.name,
+        onProfile = onAvatar,
         subtitle = "${team.members.size} 位成员" + team.description.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
         subtitleColor = WandColors.textMuted,
         enabled = enabled,
@@ -670,7 +664,10 @@ private fun ContactTeamRow(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun ContactDirectoryRow(
+    id: String,
+    onProfile: () -> Unit,
     title: String,
     subtitle: String?,
     subtitleColor: Color,
@@ -683,6 +680,10 @@ private fun ContactDirectoryRow(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth()) {
+        HomeSwipeRow(id, enabled = enabled, actions = listOf(
+            HomeRowAction("message", "聊天", WandIcons.chat, WandColors.brand, onOpen),
+            HomeRowAction("profile", "资料", WandIcons.agent, WandColors.info, onProfile),
+        )) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -695,7 +696,8 @@ private fun ContactDirectoryRow(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = ContactRowMinHeight)
-                    .clickable(enabled = enabled, role = Role.Button, onClick = onOpen)
+                    .combinedClickable(enabled = enabled, role = Role.Button, onClick = onOpen,
+                        onLongClickLabel = "查看资料", onLongClick = onProfile)
                     .semantics { contentDescription = openDescription }
                     .padding(start = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -721,6 +723,7 @@ private fun ContactDirectoryRow(
                 }
                 Icon(WandIcons.chevronRight, null, Modifier.size(24.dp), tint = if (enabled) WandColors.textSecondary else WandColors.textMuted)
             }
+        }
         }
         WandInlinePanel(visible = error != null, growFrom = Alignment.Top) {
             Text(

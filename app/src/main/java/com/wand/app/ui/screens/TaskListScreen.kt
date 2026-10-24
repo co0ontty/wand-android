@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.wand.app.ui.theme.glassBackdropSource
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.ui.draw.clip
@@ -240,6 +242,8 @@ fun TaskListScreen(
     var confirmOrganize by remember { mutableStateOf(false) }
     var reviewTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
     var deleteDirectoryTarget by remember { mutableStateOf<TaskDirectoryGroup?>(null) }
+    val homeSwipeOwner = remember { mutableStateOf<String?>(null) }
+    val homeBackdrop = com.wand.app.ui.theme.rememberGlassBackdrop()
     val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val dragState = rememberWandDragReorderState()
 
@@ -251,6 +255,9 @@ fun TaskListScreen(
     // 两个小节各一个档位（控制长在各自表头文字的右边）：卡片与卡内所有层都跟随自己那一区。
     val recentFold = state.recentFold
     val workspaceFold = state.workspaceFold
+    LaunchedEffect(homeListMode, workspaceQuery, attentionOnly, selecting, recentFold, workspaceFold, homeListState.isScrollInProgress) {
+        homeSwipeOwner.value = null
+    }
     val runningOnly = recentFold.filtersRunning || workspaceFold.filtersRunning
     // 内容不由投影删减：一级行（员工、工作区）永远留着，卡片按区档位决定露哪几行。
     val searchedGroups = searchHomeGroups(allGroups, workspaceQuery, contactsEmployees)
@@ -1163,6 +1170,7 @@ fun TaskListScreen(
     // 这两种情况不叠根壳的 HomeTopBar。
     val modeOwnsTopBar = homeListMode == HomeListMode.Contacts ||
         (homeListMode == HomeListMode.Im && conversationList != null)
+    CompositionLocalProvider(LocalHomeSwipeOwner provides homeSwipeOwner) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1174,12 +1182,12 @@ fun TaskListScreen(
             .then(if (homeListMode == HomeListMode.Im) Modifier.imePadding() else Modifier),
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().glassBackdropSource(homeBackdrop)) {
                 if (!modeOwnsTopBar) HomeTopBar(
                     title = if (homeListMode == HomeListMode.Tasks) "任务" else "工作区",
                     serverDisplayName = serverDisplayName,
                     interactionEnabled = interactionEnabled,
-                    onNewTask = if (homeListMode == HomeListMode.Sessions) ({ onNewConversation(null, null, null, null, null, false) }) else null,
+                    onNewTask = if (homeListMode == HomeListMode.Sessions) ({ onNewConversation(null, null, null, null, null, true) }) else null,
                     newTaskEnabled = interactionEnabled && !selecting && !recentCreationBusy() && !newTaskOpen && !newTaskSubmitting,
                     onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
                     onSwitchServer = { invalidateRecentConversationOpening(); onSwitchServer() },
@@ -1456,25 +1464,13 @@ fun TaskListScreen(
                                 },
                             )
                         }
-                        if (!hasVisibleContent) {
-                            item(key = "session-empty-note") {
-                                EmptyState(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    icon = if (attentionOnly) WandIcons.check else WandIcons.terminal,
-                                    title = if (attentionOnly) sessionEmptyCopy.title else "还没有对话",
-                                    subtitle = if (attentionOnly) sessionEmptyCopy.subtitle
-                                        else "点终端右侧的 ＋ 新建，或从通讯录发起对话。",
-                                )
-                            }
-                        } else {
-                            item(key = "workspace-tree-header") {
-                                HomeSectionHeaderRow(
-                                    title = "任务与工作区",
-                                    emphasized = false,
-                                    fold = workspaceFold,
-                                    onSelectFold = { mode -> selectSectionFold(FOLD_SECTION_WORKSPACE, mode) },
-                                )
-                            }
+                        item(key = "workspace-tree-header") {
+                            HomeSectionHeaderRow(
+                                title = "任务与工作区",
+                                emphasized = false,
+                                fold = workspaceFold,
+                                onSelectFold = { mode -> selectSectionFold(FOLD_SECTION_WORKSPACE, mode) },
+                            )
                         }
                     val canReorder = !selecting && !attentionOnly && workspaceQuery.isBlank() && visibleGroups.size > 1
                     itemsIndexed(visibleGroups, key = { _, group -> group.id }) { _, group ->
@@ -1536,7 +1532,7 @@ fun TaskListScreen(
                                 onOpenSession(taskSessionRoute(session, group, task))
                             },
                             onMoveSession = { moveSessionTarget = it },
-                            onNewTask = { onNewConversation(group.workspaceCwd, group.workspaceId.takeUnless { group.synthetic }, null, null, null, false) },
+                            onNewTask = { onNewConversation(group.workspaceCwd, group.workspaceId.takeUnless { group.synthetic }, null, null, null, true) },
                             onRenameDirectory = {
                                 renameDirectoryDraft = group.workspaceName
                                 renameDirectoryTarget = group
@@ -1577,6 +1573,18 @@ fun TaskListScreen(
                             onReview = { reviewTarget = group },
                         )
                     }
+                        if (!hasVisibleContent) {
+                            item(key = "session-empty-note") {
+                                EmptyState(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    icon = if (attentionOnly) WandIcons.check else WandIcons.terminal,
+                                    title = if (attentionOnly) sessionEmptyCopy.title else "还没有对话",
+                                    subtitle = if (attentionOnly) sessionEmptyCopy.subtitle
+                                        else "点终端右侧的 ＋ 新建，或从通讯录发起对话。",
+                                )
+                            }
+                        }
+
                         }
                     }
                     }
@@ -1589,6 +1597,7 @@ fun TaskListScreen(
             if (!selecting) {
                 HomeMenuPill(
                     mode = homeListMode,
+                    backdrop = homeBackdrop,
                     enabled = interactionEnabled,
                     onSelect = { item ->
                         when (item) {
@@ -1607,6 +1616,7 @@ fun TaskListScreen(
                 )
             }
         }
+    }
     }
 }
 

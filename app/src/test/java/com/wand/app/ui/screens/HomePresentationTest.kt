@@ -16,6 +16,17 @@ import java.time.Instant
 import java.time.ZoneId
 
 class HomePresentationTest {
+    @org.junit.Test fun executionStatesAreExplicitAndNotDerivedFromBusinessColumns() {
+        org.junit.Assert.assertEquals(HomeExecutionState.Idle, homeExecutionStateFromStatus("idle"))
+        org.junit.Assert.assertEquals(HomeExecutionState.Running, homeExecutionStateFromStatus("thinking"))
+        org.junit.Assert.assertEquals(HomeExecutionState.Queued, homeExecutionStateFromStatus("queued"))
+        org.junit.Assert.assertEquals(HomeExecutionState.NeedsYou, homeExecutionStateFromStatus("permission_blocked"))
+        org.junit.Assert.assertEquals(HomeExecutionState.Failed, homeExecutionStateFromStatus("failed"))
+        org.junit.Assert.assertEquals(HomeExecutionState.Completed, homeExecutionStateFromStatus("done"))
+        org.junit.Assert.assertEquals(HomeExecutionState.Archived, homeExecutionStateFromStatus("archived"))
+        org.junit.Assert.assertEquals(7, HomeExecutionState.entries.map { it.label }.toSet().size)
+    }
+
     @Test
     fun queuedTasksAndSessionsRemainVisibleInRunningFiltersWithoutFakeSessions() {
         val pending = session("pending", "idle").copy(executionStatus = "queued")

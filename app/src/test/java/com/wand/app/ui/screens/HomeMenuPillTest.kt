@@ -9,6 +9,16 @@ import java.io.File
 
 /** 产品入口命名与既有根模式映射；导航改视觉不改变各模式恢复语义。 */
 class HomeMenuPillTest {
+    @Test fun nativeNavigationOwnsTheIndicatorAndSelectionMotion() {
+        val navigation = source("screens/HomeChrome.kt").substringAfter("internal fun HomeMenuPill(")
+            .substringBefore("// MARK: - 共享微件")
+        assertTrue(navigation.contains("material3.NavigationBar("))
+        assertTrue(navigation.contains("NavigationBarItem("))
+        assertTrue(navigation.contains("glassSurface(backdrop"))
+        assertFalse(navigation.contains("drawBehind"))
+        assertFalse(navigation.contains("Animatable"))
+    }
+
     @Test fun itemsPutChatAndPeopleBeforeWorkTools() {
         assertEquals(listOf("聊天", "通讯录", "工作区", "任务"), HomeMenuPillItem.entries.map { it.label })
         assertEquals(listOf("打开聊天", "打开通讯录", "打开工作区", "打开任务面板"),
@@ -46,8 +56,8 @@ class HomeMenuPillTest {
         val navigation = source("screens/HomeChrome.kt").substringAfter("internal fun HomeMenuPill(")
             .substringBefore("// MARK: - 共享微件")
         // 按真实约束测量中文标签，多行由字体缩放决定，不再丢图标或强制插入换行。
-        assertTrue(navigation.contains("constraints = Constraints(maxWidth"))
-        assertTrue(navigation.contains("labels.maxOf { it.lineCount }"))
+        assertTrue(navigation.contains("alwaysShowLabel = true"))
+        assertTrue(navigation.contains("maxLines = 2"))
         assertTrue(navigation.contains("Icon(item.icon"))
         assertFalse(navigation.contains("enabled && !selected"))
     }

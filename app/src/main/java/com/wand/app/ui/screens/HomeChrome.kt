@@ -48,6 +48,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -117,6 +118,9 @@ import com.wand.app.ui.components.statusColor
 import com.wand.app.ui.components.WandStatusTone
 import com.wand.app.ui.components.wandStatusPresentation
 import com.wand.app.ui.components.WandBrandTag
+import com.wand.app.ui.theme.GlassBackdrop
+import com.wand.app.ui.theme.WandGlass
+import com.wand.app.ui.theme.glassSurface
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandMotion
 import com.wand.app.ui.theme.WandShapes
@@ -151,6 +155,7 @@ internal fun HomeTopBar(
     newTaskEnabled: Boolean = interactionEnabled,
     /** 模式专属动作（如通讯录的派工 / 创建）：同一根顶栏的右侧槽位，不另开一条标题栏。 */
     trailingActions: (@Composable () -> Unit)? = null,
+    menuActions: (@Composable (onDismiss: () -> Unit) -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var restoreMenuFocus by remember { mutableStateOf(false) }
@@ -165,25 +170,16 @@ internal fun HomeTopBar(
         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier.size(WandSizes.minTouchTarget).clip(WandShapes.full)
-                .clickable(enabled = interactionEnabled, role = Role.Button,
-                    onClickLabel = "切换服务器", onClick = onSwitchServer)
-                .semantics { contentDescription = "当前服务器：${serverDisplayName.ifBlank { "未命名" }}，切换服务器" },
-            contentAlignment = Alignment.Center,
-        ) {
-            WandBrandMark(size = 26)
+        Column(Modifier.weight(1f).clickable(enabled = interactionEnabled, role = Role.Button,
+            onClickLabel = "切换服务器", onClick = onSwitchServer).heightIn(min = 48.dp),
+            verticalArrangement = Arrangement.Center) {
+            Text(title, style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold, color = WandColors.textPrimary, maxLines = 1)
+            Text(serverDisplayName.ifBlank { "当前服务器" }, style = MaterialTheme.typography.labelSmall,
+                color = WandColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
-            textAlign = TextAlign.Center, color = WandColors.textPrimary, maxLines = 1)
         if (onNewTask != null) {
-            WandIconButton(
-                icon = WandIcons.add,
-                contentDescription = "全局新建会话，选择执行对象和工作目录",
-                onClick = onNewTask,
-                enabled = newTaskEnabled,
-                tint = WandColors.brand,
-            )
+            androidx.compose.material3.TextButton(onClick = onNewTask, enabled = newTaskEnabled) { Text("新建") }
         }
         trailingActions?.invoke()
         if (onCollapseSidebar != null) {
@@ -196,25 +192,11 @@ internal fun HomeTopBar(
             )
         }
         Box {
-            WandMorphIconButton(
-                expanded = menuOpen,
-                collapsedIcon = WandIcons.more,
-                expandedIcon = WandIcons.close,
-                contentDescription = if (menuOpen) "关闭更多选项" else "更多选项",
-                onClick = {
-                    if (menuOpen) {
-                        menuOpen = false
-                        restoreMenuFocus = true
-                    } else {
-                        menuOpen = true
-                    }
-                },
+            androidx.compose.material3.TextButton(
+                onClick = { menuOpen = !menuOpen },
                 enabled = interactionEnabled,
                 modifier = Modifier.focusRequester(menuFocusRequester),
-                touchSize = WandSizes.minTouchTarget,
-                iconSize = 20.dp,
-                rotationDegrees = 0f,
-            )
+            ) { Text("更多") }
             DropdownMenu(
                 expanded = menuOpen,
                 onDismissRequest = {
@@ -223,6 +205,12 @@ internal fun HomeTopBar(
                 },
                 containerColor = WandColors.bgElevated,
             ) {
+                menuActions?.invoke { menuOpen = false }
+                DropdownMenuItem(
+                    text = { Text("切换服务器") },
+                    leadingIcon = { Icon(WandIcons.swapServer, contentDescription = null) },
+                    onClick = { menuOpen = false; onSwitchServer() },
+                )
                 DropdownMenuItem(
                     text = { Text("设置") },
                     leadingIcon = { Icon(WandIcons.settings, contentDescription = null) },
@@ -683,6 +671,13 @@ internal fun HomeWorkspaceCard(
         organizationPanelOpen = false
         menuOpen = false
     }
+    val directoryActions = listOf(
+        HomeRowAction("new", "新建任务", WandIcons.add, WandColors.brand, onNewTask),
+        HomeRowAction("organize", "整理", WandIcons.thinking, WandColors.info) { organizationPanelOpen = true },
+    ) + (if (group.isGlobal) emptyList() else listOf(
+        HomeRowAction("rename", "重命名", WandIcons.rename, WandColors.warning, onRenameDirectory))) +
+        (if (!group.synthetic && !group.isGlobal) listOf(
+            HomeRowAction("delete", "删除", WandIcons.delete, WandColors.danger, onDeleteDirectory)) else emptyList())
     // 空工作区没有可折叠的内容：渲染成一行紧凑条目，点它直接去建任务，
     // 而不是留一张带折叠控制、点了没反应的卡片。
     val isEmpty = group.tasks.isEmpty() && group.standaloneSessions.isEmpty()
@@ -701,6 +696,7 @@ internal fun HomeWorkspaceCard(
         shape = WandShapes.lg,
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
     ) {
+        HomeSwipeRow("directory:" + group.id, directoryActions, enabled = !selecting && !dragging) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -717,25 +713,17 @@ internal fun HomeWorkspaceCard(
                 .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(28.dp)
-                    .clip(WandShapes.full)
-                    .background(if (group.isGlobal) WandColors.textMuted else WandColors.brand),
-            )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 12.dp, end = 6.dp),
+                    .padding(start = 2.dp, end = 6.dp),
             ) {
                 Text(
                     group.workspaceName.ifEmpty { "任务目录" },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleMedium,
                     color = WandColors.textPrimary,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (!group.isGlobal && group.workspaceCwd.isNotBlank()) {
@@ -761,8 +749,7 @@ internal fun HomeWorkspaceCard(
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = WandColors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
             Box {
@@ -815,6 +802,7 @@ internal fun HomeWorkspaceCard(
                     }
                 }
             }
+        }
         }
         WandInlinePanel(visible = organizationPanelOpen && organizationController != null, growFrom = Alignment.Top) {
             if (organizationController != null) ConversationOrganizationPanel(
@@ -1035,6 +1023,11 @@ private fun HomeTaskBlock(
                 .background(railColor),
         )
         Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+        HomeSwipeRow(id = "task:" + task.id, enabled = !selecting, actions = listOf(
+            HomeRowAction("new", "新建会话", WandIcons.add, WandColors.brand, onNewWindow),
+            HomeRowAction("rename", "重命名", WandIcons.edit, WandColors.info, onRename),
+            HomeRowAction("archive", "归档", WandIcons.archive, WandColors.warning, onArchive),
+        )) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1065,19 +1058,17 @@ private fun HomeTaskBlock(
                         // 任务名是这一层的小标题，不能和会话标题长得一样大，
                         // 否则整列文字看起来是平铺的一堆句子。
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (selected) WandColors.textPrimary else WandColors.textSecondary,
+                        color = if (homeExecutionState(task) == HomeExecutionState.Running) WandColors.success
+                            else if (selected) WandColors.textPrimary else WandColors.textSecondary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    if (task.hasQueuedExecution) {
-                        Text("排队中", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary,
-                            maxLines = 1, softWrap = false,
-                            modifier = Modifier.padding(start = 4.dp).width(IntrinsicSize.Max))
-                    }
+
                 }
+                HomeExecutionBadge(homeExecutionState(task))
                 if (task.totalSessions > 0) {
                     Text(
                         summaryText(global = false, segments = taskSummarySegments(task.sessions.size, done, counts)),
@@ -1133,6 +1124,7 @@ private fun HomeTaskBlock(
                     }
                 }
             }
+        }
         }
         AnimatedVisibility(
             visible = expanded,
@@ -1550,6 +1542,11 @@ internal fun HomeSessionRow(
     // 权限态只在 WS 事件里，轮询摘要没有；首页要显示它必须先看实时 overlay。
     val permissionBlocked = SessionTitleStore.permissionBlockedOf(session.id) == true
     val presentation = wandStatusPresentation(if (permissionBlocked) "permission" else status)
+    HomeSwipeRow(id = "session:" + session.id, enabled = !selecting, actions = listOf(
+        HomeRowAction("open", "打开", WandIcons.chat, WandColors.brand, onClick),
+        HomeRowAction("move", "移动", WandIcons.folder, WandColors.info, onMove),
+        HomeRowAction("delete", "删除", WandIcons.delete, WandColors.danger, onDelete),
+    )) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1694,6 +1691,7 @@ internal fun HomeSessionRow(
                 }
             }
         }
+        SessionStatusPill(presentation)
         Box {
             WandIconButton(
                 icon = WandIcons.more,
@@ -1725,6 +1723,7 @@ internal fun HomeSessionRow(
             }
         }
         trailingAction()
+    }
     }
 }
 
@@ -1792,43 +1791,13 @@ private fun TeamSourceTag(teamName: String) {
  */
 @Composable
 private fun SessionStatusPill(presentation: WandStatusPresentation) {
-    val color = presentation.tone.statusColor()
-    // 「空闲」是绝大多数会话的常态：它只留一个安静的灰点，
-    // 不写文字、不占胶囊，让真正需要看的「运行中 / 等待授权」跳出来。
-    if (presentation.normalized == "idle") {
-        Box(
-            modifier = Modifier
-                .padding(vertical = 2.dp)
-                .semantics { contentDescription = "空闲" },
-            contentAlignment = Alignment.Center,
-        ) {
-            StatusDot(presentation.normalized, modifier = Modifier.size(6.dp))
-        }
-        return
-    }
-    Row(
-        modifier = Modifier
-            .clip(WandShapes.full)
-            .background(color.copy(alpha = 0.14f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Text(
-            presentation.label,
-            style = MaterialTheme.typography.labelMedium,
-            color = color,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-        )
-    }
+    HomeExecutionBadge(homeExecutionStateFromStatus(presentation.normalized))
 }
 
 // MARK: - 底部悬浮菜单胶囊
 
 /** 根导航保留既有枚举与持久化模式，用户只看到明确的产品概念。 */
-internal val HomeMenuPillHeight = 60.dp
-internal val HomeMenuPillInset = 4.dp
+internal val HomeMenuPillHeight = 80.dp
 
 internal enum class HomeMenuPillItem(val label: String, val description: String) {
     Im("聊天", "打开聊天"),
@@ -1860,65 +1829,33 @@ internal fun HomeMenuPill(
     enabled: Boolean,
     onSelect: (HomeMenuPillItem) -> Unit,
     modifier: Modifier = Modifier,
+    backdrop: GlassBackdrop? = null,
 ) {
     val selectedIndex = homeMenuPillSelection(mode)
-    val textMeasurer = rememberTextMeasurer()
-    val labelStyle = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp, lineHeight = 14.sp)
-    val density = LocalDensity.current
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()
-        .shadow(6.dp, WandShapes.full, ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.08f))
-        .clip(WandShapes.full)
-        .background(WandColors.bgElevated.copy(alpha = 0.98f))
-        .border(0.5.dp, WandColors.border, WandShapes.full)) {
-        val labelWidth = ((maxWidth - HomeMenuPillInset * 2) / HomeMenuPillItem.entries.size - 8.dp).coerceAtLeast(1.dp)
-        val labels = HomeMenuPillItem.entries.map {
-            textMeasurer.measure(it.label, style = labelStyle, maxLines = 3,
-                constraints = Constraints(maxWidth = with(density) { labelWidth.roundToPx().coerceAtLeast(1) }))
-        }
-        val labelLines = labels.maxOf { it.lineCount }
-        val labelHeight = with(density) { labels.maxOf { it.size.height }.toDp() }
-        val height = maxOf(HomeMenuPillHeight, 20.dp + 3.dp + labelHeight + 20.dp)
-        Row(Modifier.fillMaxWidth().heightIn(min = height).padding(HomeMenuPillInset)) {
-            HomeMenuPillItem.entries.forEach { item ->
-                HomeMenuPillButton(item, item.ordinal == selectedIndex, labelLines, height - HomeMenuPillInset * 2, enabled) { onSelect(item) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RowScope.HomeMenuPillButton(
-    item: HomeMenuPillItem,
-    selected: Boolean,
-    labelLines: Int,
-    height: Dp,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val color by animateColorAsState(
-        targetValue = if (selected) WandColors.brandText else WandColors.textSecondary,
-        animationSpec = WandMotion.respectMotion(reduceMotionEnabled().not(), WandMotion.tweenFast()),
-        label = "homeNavigationColor",
-    )
-    Column(
-        modifier = Modifier.weight(1f).heightIn(min = height)
-            .clip(WandShapes.full)
-            .background(if (selected) WandColors.surfaceSoft else Color.Transparent)
-            .clickable(enabled = enabled, role = Role.Tab,
-                onClickLabel = item.description, onClick = onClick)
-            .semantics {
-                contentDescription = if (selected) "当前${item.label}" else item.description
-                this.selected = selected
-            }
-            .padding(horizontal = 4.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+    androidx.compose.material3.NavigationBar(
+        modifier = modifier.fillMaxWidth().glassSurface(backdrop, WandShapes.full, WandGlass.regular, drawRim = true),
+        containerColor = Color.Transparent,
+        tonalElevation = 0.dp,
+        windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
     ) {
-        Icon(item.icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.height(3.dp))
-        Text(item.label, style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp, lineHeight = 14.sp),
-            color = color, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = labelLines, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        HomeMenuPillItem.entries.forEach { item ->
+            NavigationBarItem(
+                selected = item.ordinal == selectedIndex,
+                enabled = enabled,
+                onClick = { onSelect(item) },
+                icon = { Icon(item.icon, contentDescription = null) },
+                label = { Text(item.label, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                alwaysShowLabel = true,
+                colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                    selectedIconColor = WandColors.brandText,
+                    selectedTextColor = WandColors.brandText,
+                    indicatorColor = WandColors.brandSoft,
+                    unselectedIconColor = WandColors.textSecondary,
+                    unselectedTextColor = WandColors.textSecondary,
+                ),
+                modifier = Modifier.semantics { contentDescription = item.description },
+            )
+        }
     }
 }
 

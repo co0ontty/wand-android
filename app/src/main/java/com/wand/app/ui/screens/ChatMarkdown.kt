@@ -31,6 +31,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import com.wand.app.ui.LocalImageGallery
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +59,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
+import com.wand.app.ui.WandToolImageFigure
 import com.wand.app.ui.FullscreenImageViewer
 import com.wand.app.ui.ViewerImagePage
 import com.wand.app.ui.LocalServerBaseUrl
@@ -104,105 +108,157 @@ fun MarkdownText(text: String, inlineDecoration: InlineMarkdownDecoration? = Loc
     val bodyColor = if (compact) WandColors.textMuted else WandColors.textPrimary
     val blocks = remember(text) { parseMarkdownBlocks(text) }
     val subtleInset = WandColors.textPrimary.copy(alpha = 0.045f)
-    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp)) {
-        blocks.forEach { block ->
-            when (block) {
-                is MarkdownBlock.Paragraph -> SelectionContainer {
-                    Text(
-                        inlineMarkdown(block.text, inlineDecoration),
-                        fontSize = bodySize,
-                        lineHeight = bodyHeight,
-                        color = bodyColor,
-                        textAlign = TextAlign.Start,
-                    )
-                }
-                is MarkdownBlock.Heading -> SelectionContainer {
-                    Text(
-                        inlineMarkdown(block.text, inlineDecoration),
-                        fontSize = when (block.level) {
-                            1 -> 20.sp
-                            2 -> 18.sp
-                            3 -> 16.sp
-                            else -> 15.sp
-                        },
-                        lineHeight = when (block.level) {
-                            1 -> 26.sp
-                            2 -> 24.sp
-                            else -> 22.sp
-                        },
-                        fontWeight = FontWeight.SemiBold,
-                        color = bodyColor,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.padding(top = if (block.level <= 2) 8.dp else 6.dp),
-                    )
-                }
-                is MarkdownBlock.ListItem -> Row(
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    modifier = Modifier.padding(start = (block.indent * 14).dp),
-                ) {
-                    if (block.checked != null) {
-                        Icon(
-                            if (block.checked) WandIcons.statusDone else WandIcons.statusPending,
-                            contentDescription = if (block.checked) "已完成" else "未完成",
-                            tint = if (block.checked) WandColors.success else WandColors.textMuted,
-                            modifier = Modifier.padding(top = 2.dp).size(15.dp),
-                        )
-                    } else {
-                        Text(
-                            block.marker,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = WandColors.brand,
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
-                    }
-                    SelectionContainer {
-                        Text(
-                            inlineMarkdown(block.text, inlineDecoration),
+    val pages = remember(text) { markdownImagePages(text) }
+    val gallery = LocalImageGallery.current
+    CompositionLocalProvider(LocalImageGallery provides { (gallery() + pages).distinct() }) {
+        Column(verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp)) {
+            blocks.forEach { block ->
+                when (block) {
+                    is MarkdownBlock.Paragraph -> SelectionContainer {
+                        MarkdownInlineContent(
+                            block.text, inlineDecoration = inlineDecoration,
                             fontSize = bodySize,
                             lineHeight = bodyHeight,
                             color = bodyColor,
                             textAlign = TextAlign.Start,
-                            modifier = Modifier.weight(1f),
                         )
                     }
-                }
-                is MarkdownBlock.Quote -> Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(WandShapes.sm)
-                        .background(WandColors.textPrimary.copy(alpha = 0.035f))
-                        .padding(horizontal = 10.dp, vertical = 9.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(3.dp)
-                            .height(IntrinsicSize.Max)
-                            .background(WandColors.brand, WandShapes.full),
-                    )
-                    SelectionContainer {
-                        Text(
-                            inlineMarkdown(block.text, inlineDecoration),
-                            fontSize = 14.sp,
-                            lineHeight = 21.sp,
-                            color = WandColors.textSecondary,
+                    is MarkdownBlock.Heading -> SelectionContainer {
+                        MarkdownInlineContent(
+                            block.text, inlineDecoration = inlineDecoration,
+                            fontSize = when (block.level) {
+                                1 -> 20.sp
+                                2 -> 18.sp
+                                3 -> 16.sp
+                                else -> 15.sp
+                            },
+                            lineHeight = when (block.level) {
+                                1 -> 26.sp
+                                2 -> 24.sp
+                                else -> 22.sp
+                            },
+                            fontWeight = FontWeight.SemiBold,
+                            color = bodyColor,
                             textAlign = TextAlign.Start,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.padding(top = if (block.level <= 2) 8.dp else 6.dp),
                         )
                     }
+                    is MarkdownBlock.ListItem -> Row(
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        modifier = Modifier.padding(start = (block.indent * 14).dp),
+                    ) {
+                        if (block.checked != null) {
+                            Icon(
+                                if (block.checked) WandIcons.statusDone else WandIcons.statusPending,
+                                contentDescription = if (block.checked) "已完成" else "未完成",
+                                tint = if (block.checked) WandColors.success else WandColors.textMuted,
+                                modifier = Modifier.padding(top = 2.dp).size(15.dp),
+                            )
+                        } else {
+                            Text(
+                                block.marker,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WandColors.brand,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                        SelectionContainer {
+                            MarkdownInlineContent(
+                                block.text, inlineDecoration = inlineDecoration,
+                                fontSize = bodySize,
+                                lineHeight = bodyHeight,
+                                color = bodyColor,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    is MarkdownBlock.Quote -> Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(WandShapes.sm)
+                            .background(WandColors.textPrimary.copy(alpha = 0.035f))
+                            .padding(horizontal = 10.dp, vertical = 9.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(IntrinsicSize.Max)
+                                .background(WandColors.brand, WandShapes.full),
+                        )
+                        SelectionContainer {
+                            MarkdownInlineContent(
+                                block.text, inlineDecoration = inlineDecoration,
+                                fontSize = 14.sp,
+                                lineHeight = 21.sp,
+                                color = WandColors.textSecondary,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    is MarkdownBlock.Code -> MarkdownCodeBlock(block, subtleInset)
+                    is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows, inlineDecoration)
+                    MarkdownBlock.Divider -> HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = WandColors.border,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
                 }
-                is MarkdownBlock.Code -> MarkdownCodeBlock(block, subtleInset)
-                is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows, inlineDecoration)
-                MarkdownBlock.Divider -> HorizontalDivider(
-                    thickness = 0.5.dp,
-                    color = WandColors.border,
-                    modifier = Modifier.padding(vertical = 4.dp),
-                )
             }
         }
     }
+}
+
+@Composable
+private fun MarkdownInlineContent(
+    text: String,
+    fontSize: TextUnit,
+    lineHeight: TextUnit,
+    color: Color,
+    textAlign: TextAlign,
+    modifier: Modifier = Modifier,
+    fontWeight: FontWeight = FontWeight.Normal,
+    inlineDecoration: InlineMarkdownDecoration?,
+) {
+    val pieces = remember(text) { splitMarkdownImages(text) }
+    val baseUrl = LocalServerBaseUrl.current
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        pieces.forEach { piece ->
+            when (piece) {
+                is MarkdownImagePiece.Text -> if (piece.text.isNotBlank()) {
+                    Text(inlineMarkdown(piece.text.trim('\n', '\r'), inlineDecoration),
+                        fontSize = fontSize, lineHeight = lineHeight, color = color,
+                        textAlign = textAlign, fontWeight = fontWeight)
+                }
+                is MarkdownImagePiece.Image -> {
+                    val page = remember(piece.source) { markdownImagePage(piece.source) }
+                    if (page != null && baseUrl.isNotBlank()) {
+                        WandToolImageFigure(source = page.source, baseUrl = baseUrl,
+                            directUrl = page.directUrl, contentDescription = piece.alt.ifBlank { "回复图片" })
+                    } else {
+                        Text((piece.alt.takeIf { it.isNotBlank() }?.plus("：") ?: "") + "图片暂时无法显示，请核对连接与图片地址。",
+                            fontSize = 12.sp, color = WandColors.textSecondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Only rendered inline content enters the gallery, never fenced or inline code examples. */
+internal fun markdownImagePages(text: String): List<ViewerImagePage> = parseMarkdownBlocks(text).flatMap { block ->
+    val raw = when (block) {
+        is MarkdownBlock.Paragraph -> block.text
+        is MarkdownBlock.Heading -> block.text
+        is MarkdownBlock.ListItem -> block.text
+        is MarkdownBlock.Quote -> block.text
+        else -> return@flatMap emptyList()
+    }
+    splitMarkdownImages(raw).filterIsInstance<MarkdownImagePiece.Image>().mapNotNull { markdownImagePage(it.source) }
 }
 
 /** 代码块：语言标题常驻，原生复制操作提供明确触控反馈。 */

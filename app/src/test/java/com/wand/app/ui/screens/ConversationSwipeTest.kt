@@ -28,6 +28,23 @@ class ConversationSwipeTest {
     }
 
     @Test
+    fun detailManagementMatchesGroupStateAndNeverDissolvesExternalGroups() {
+        assertEquals(listOf(ConversationManagementAction.Dissolve, ConversationManagementAction.Delete),
+            conversationManagementActions("group", dissolved = false, external = false, deleting = false))
+        assertEquals(listOf(ConversationManagementAction.Restore, ConversationManagementAction.Delete),
+            conversationManagementActions("group", dissolved = true, external = false, deleting = false))
+        assertEquals(listOf(ConversationManagementAction.Delete),
+            conversationManagementActions("group", dissolved = false, external = true, deleting = false))
+        assertEquals(emptyList<ConversationManagementAction>(),
+            conversationManagementActions("group", dissolved = false, external = false, deleting = true))
+        assertEquals(emptyList<ConversationManagementAction>(),
+            conversationManagementActions("dm", dissolved = false, external = false, deleting = false))
+        assertEquals("删除本地群镜像", ConversationManagementAction.Delete.title(external = true))
+        org.junit.Assert.assertTrue(ConversationManagementAction.Delete.explanation(true).contains("不退出或解散钉钉群"))
+        org.junit.Assert.assertTrue(ConversationManagementAction.Dissolve.explanation(false).contains("不会因此停止"))
+    }
+
+    @Test
     fun batchPinReversesOnlyWhenEverythingSelectedIsPinned() {
         assertNull(conversationBatchAction(emptyList()))
         assertEquals(ConversationBatchAction.Pin, conversationBatchAction(listOf(false)))

@@ -74,6 +74,21 @@ data class ConversationTask(val task: BoardTask, val runs: List<AiTeamRun>, val 
     }
 }
 
+data class DingTalkGroupBinding(val id: String, val employeeId: String, val state: String)
+data class DingTalkGroupOrigin(val provider: String, val groupId: String, val syncState: String,
+    val syncError: String?, val historyComplete: Boolean, val bindings: List<DingTalkGroupBinding>) {
+    val statusText: String get() = when (syncState) {
+        "live" -> "钉钉群 · ${bindings.size} 名已接入员工"
+        "at_only" -> "钉钉群 · 仅同步 @消息"
+        else -> "钉钉群 · 消息同步尚未就绪"
+    }
+    companion object {
+        fun parse(json: JSONObject) = DingTalkGroupOrigin(json.optString("provider"), json.optString("groupId"),
+            json.optString("syncState"), json.str("syncError"), json.optBoolean("historyComplete"),
+            json.arr("bindings")?.parseEach { DingTalkGroupBinding(it.optString("id"), it.optString("employeeId"), it.optString("state")) } ?: emptyList())
+    }
+}
+
 data class ConversationInstance(
     val id: String,
     val kind: String,
@@ -98,6 +113,7 @@ data class ConversationInstance(
     val dissolvedBy: String? = null,
     val deleting: Boolean = false,
     val history: ConversationHistory? = null,
+    val external: DingTalkGroupOrigin? = null,
 ) {
     val leader: AiTeamMember? get() = team?.members?.firstOrNull { it.isLeader }
     companion object {
@@ -113,7 +129,7 @@ data class ConversationInstance(
                 joined?.keys()?.asSequence()?.associateWith { joined.optInt(it) } ?: emptyMap(),
                 json.arr("tasks")?.parseEach(ConversationTask::parse) ?: emptyList(),
                 ConversationTurn.parseList(json.arr("messages")) ?: emptyList(),
-                json.arr("runDetails")?.parseEach(AiTeamRunDetail::parse) ?: emptyList(), json.str("pinnedAt"), json.str("dissolvedAt"), json.str("dissolvedBy"), json.optBoolean("deleting"), json.obj("history")?.let(ConversationHistory::parse))
+                json.arr("runDetails")?.parseEach(AiTeamRunDetail::parse) ?: emptyList(), json.str("pinnedAt"), json.str("dissolvedAt"), json.str("dissolvedBy"), json.optBoolean("deleting"), json.obj("history")?.let(ConversationHistory::parse), json.obj("external")?.let(DingTalkGroupOrigin::parse))
         }
         fun parseList(json: JSONObject): List<ConversationInstance> = json.arr("conversations")?.parseEach(::parse) ?: emptyList()
     }

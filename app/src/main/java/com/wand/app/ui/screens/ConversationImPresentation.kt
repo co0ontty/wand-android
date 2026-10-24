@@ -73,6 +73,7 @@ internal fun filterConversationList(
 internal fun conversationIdentityStatus(detail: ConversationInstance?): String {
     if (detail == null) return "正在加载对话"
     if (detail.deleting) return "正在删除对话"
+    detail.external?.let { return it.statusText }
     if (detail.dissolvedAt != null) return "群聊已解散"
     if (!detail.unavailableReason.isNullOrBlank()) return "当前对象暂不可用"
     val runs = detail.tasks.flatMap { it.runs }

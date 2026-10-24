@@ -22,11 +22,11 @@ import com.wand.app.ui.theme.WandColors
 internal val FloatingControlTouch = 48.dp
 internal val FloatingControlRowInset = 4.dp
 internal val ChatFloatingControlsClearance = FloatingControlTouch + FloatingControlRowInset * 2
-/** Shared center line for the back button, the three logos, and the companion. */
+/** Shared center line for the back button, the more button, and the companion. */
 internal val FloatingControlCenter = FloatingControlRowInset + FloatingControlTouch / 2
-/** 顶栏内容区左右各自让开的宽度：一边是返回键，另一边是文件与更多按钮。 */
+/** 顶栏内容区左右各自让开的宽度：返回与更多各一个按钮，文件收在更多内。 */
 internal val FloatingControlsBackInset = 12.dp + FloatingControlTouch
-internal val FloatingControlsActionsInset = 12.dp + FloatingControlTouch * 2 + FloatingControlRowInset
+internal val FloatingControlsActionsInset = 12.dp + FloatingControlTouch
 
 /** Floating controls have 48dp targets; the reading viewport clears them without a toolbar. */
 @Composable
@@ -37,7 +37,8 @@ internal fun FloatingChatControls(
     onStop: (() -> Unit)? = null,
     taskSessions: List<WorkspaceSessionSummary> = emptyList(),
     onSelectTaskSession: (WorkspaceSessionSummary) -> Unit = {},
-    modifier: Modifier = Modifier, files: @Composable () -> Unit,
+    filesEnabled: Boolean, onFiles: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var moreOpen by remember { mutableStateOf(false) }
     var taskSessionsOpen by remember { mutableStateOf(false) }
@@ -70,32 +71,16 @@ internal fun FloatingChatControls(
         if (showBack) FloatingChatIconButton(WandIcons.back, "返回", onBack)
         else Spacer(Modifier.size(FloatingControlTouch))
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            // 「文件」自己持有点击与形变动画，所以圆底画在它身后：可见 40dp、触控仍是 48dp，和另两枚同一套几何。
-            Box(Modifier.size(FloatingControlTouch), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(40.dp).clip(CircleShape).background(WandColors.surface))
-                files()
-            }
             Box {
-                FloatingChatIconButton(WandIcons.more, "更多：会话对象、工作目录与变更", { moreOpen = !moreOpen })
+                FloatingChatIconButton(WandIcons.more, "更多：$identity，${cwd?.takeIf { it.isNotBlank() } ?: "未选择工作目录"}，会话对象与变更", { moreOpen = !moreOpen })
                 DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
-                    if (taskSessions.size > 1) {
-                        DropdownMenuItem(
-                            text = { Text("切换任务会话") },
-                            onClick = { moreOpen = false; taskSessionsOpen = true },
-                        )
-                    }
-                    DropdownMenuItem(text = {
-                        Column(Modifier.widthIn(max = 240.dp)) {
-                            Text(identity, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(cwd?.takeIf { it.isNotBlank() } ?: "未选择工作目录",
-                                style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text("查看或切换对象与目录", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }, onClick = { moreOpen = false; onTarget() })
-                    DropdownMenuItem(text = { Text("查看变更与提交") }, enabled = gitEnabled,
-                        onClick = { moreOpen = false; onGit() })
-                    if (onStop != null) DropdownMenuItem(text = { Text("停止当前任务") },
-                        onClick = { moreOpen = false; onStop() })
+                    SessionIconActions(buildList {
+                        add(SessionIconAction("会话文件", WandIcons.folder, enabled = filesEnabled, onClick = onFiles))
+                        add(SessionIconAction("对象与目录", WandIcons.agent, onClick = onTarget))
+                        add(SessionIconAction("变更与提交", WandIcons.commit, enabled = gitEnabled, onClick = onGit))
+                        if (taskSessions.size > 1) add(SessionIconAction("切换任务会话", WandIcons.workspace) { taskSessionsOpen = true })
+                        if (onStop != null) add(SessionIconAction("停止当前任务", WandIcons.stop, destructive = true, onClick = onStop))
+                    }, onDismiss = { moreOpen = false })
                 }
             }
         }

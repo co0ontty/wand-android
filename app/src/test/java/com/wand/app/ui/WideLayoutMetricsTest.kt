@@ -15,6 +15,17 @@ class WideLayoutMetricsTest {
     }
 
     @Test
+    fun foldingAndRotationKeepNarrowLandscapeOutOfSplitView() {
+        assertFalse(usesWideListDetail(390.dp, 844.dp))
+        assertFalse(usesWideListDetail(844.dp, 390.dp))
+        assertTrue(usesWideListDetail(720.dp, 960.dp))
+        assertTrue(usesWideListDetail(960.dp, 720.dp))
+        for (width in listOf(720.dp, 960.dp)) {
+            assertTrue(width - wideListPaneWidth(width) >= 360.dp)
+        }
+    }
+
+    @Test
     fun mediumWindowsUseACompactProportionalSidebar() {
         assertEquals(232.dp, wideListPaneWidth(640.dp))
         assertEquals(252.dp, wideListPaneWidth(700.dp))

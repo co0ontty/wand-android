@@ -9,22 +9,61 @@ class ComposerStatusLayoutTest {
 
     @Test fun progressOwnsItsUsageAndTheGenericStatusDoesNotCreateASecondDock() {
         val screen = source("ChatScreen")
-        assertTrue(screen.contains("TodoProgressBar(progressTodos, backdrop, usage = lastAssistantUsage, detailsInSheet = true"))
+        assertTrue(screen.contains("todos = progressTodos, usage = lastAssistantUsage"))
+        assertFalse(screen.contains("item(key = \"execution-progress\")"))
+        assertTrue(screen.contains("val bottomIndex = headerOffset + displayItems.size"))
+        val accessory = screen.substringAfter("accessory = {").substringBefore("backdrop = backdrop")
+        assertTrue(accessory.indexOf("TodoProgressBar(") < accessory.indexOf("QueueBar("))
+        assertFalse(screen.contains("detailsInSheet = true"))
         assertTrue(screen.contains("visible = activityDockVisible && (subagentActivities.isNotEmpty() || progressTodos.isEmpty())"))
         assertTrue(screen.contains("showUsage = progressTodos.isEmpty()"))
         assertTrue(screen.contains("hasDetailedProgress = progressTodos.isNotEmpty() || subagentActivities.isNotEmpty()"))
     }
 
-    @Test fun detailsGrowAboveTheStableSummaryAndLongTasksKeepTheirFullText() {
+    @Test fun executionProgressHasCompactSummaryAndFullTextInBoundedExpansion() {
         val progress = source("ChatActionBlocks").substringAfter("fun TodoProgressBar(")
-        assertTrue(progress.indexOf("WandInlinePanel(") < progress.indexOf(".clickable(role = Role.Button"))
-        assertTrue(progress.contains("growFrom = Alignment.Bottom"))
-        assertTrue(progress.contains(".heightIn(max = 240.dp)"))
-        assertTrue(progress.contains(".verticalScroll(rememberScrollState())"))
+        assertFalse(progress.contains("WandInlinePanel("))
+        assertFalse(progress.contains("WandBottomSheet("))
+        assertFalse(progress.contains(".clickable("))
+        assertTrue(progress.contains("ComposerAccessoryHeader("))
+        assertTrue(progress.contains("if (expanded) Column("))
+        assertTrue(progress.contains("heightIn(max = maxHeight).verticalScroll("))
         assertTrue(progress.contains("Text(todo.content,"))
         assertTrue(progress.contains("UsageSummaryRow(usage, isLive = false)"))
-        assertTrue(progress.contains("maxLines = 2"))
+        assertFalse(progress.contains("maxLines ="))
         assertFalse(progress.contains("rememberInfiniteTransition"))
+    }
+
+    @Test fun accessoryExpansionSharesOneOwnerAndMeasuresOnlyTheWritingSurface() {
+        val screen = source("ChatScreen")
+        assertTrue(screen.contains("mutableStateOf<ComposerAccessoryPanel?>(null)"))
+        assertTrue(screen.contains("accessoryPanel == ComposerAccessoryPanel.Todos"))
+        assertTrue(screen.contains("accessoryPanel == ComposerAccessoryPanel.Queue"))
+        assertTrue(screen.contains("onWritingSurfaceHeightChange = { writingSurfaceHeightPx = it }"))
+        assertTrue(screen.contains("ComposerAccessoryKeyboardAction.DismissInput -> presentation.dismiss()"))
+        assertTrue(screen.contains("ComposerAccessoryKeyboardAction.CollapsePanel -> accessoryPanel = null"))
+        assertTrue(screen.contains("LaunchedEffect(accessoryPanel, accessoryMaxHeight, accessoryKeyboardVisible)"))
+        val capsule = source("FocusCapsuleComposer")
+        assertTrue(capsule.indexOf("accessory()") < capsule.indexOf("onSizeChanged { onWritingSurfaceHeightChange"))
+        val queue = screen.substringAfter("private fun QueueBar(").substringBefore("private fun QueueItemRow(")
+        assertTrue(queue.contains("heightIn(max = maxHeight).verticalScroll("))
+        assertTrue(queue.contains("store.promoteQueued(index)"))
+        assertTrue(queue.contains("store.deleteQueued(index)"))
+        assertTrue(queue.contains("composer.retrieveQueued(index, text, store::retrieveQueued)"))
+        assertTrue(queue.contains("confirmedNotExecuted = true"))
+        assertTrue(queue.indexOf("when (recovery.phase)") < queue.indexOf("Text(recovery.text,"))
+    }
+
+    @Test fun dockBackgroundsFollowReadingSurfaceAndInputKeepsItsBorder() {
+        val terminal = source("PtyTerminalScreen").substringAfter("private fun PtyBottomBar(")
+        assertTrue(terminal.contains(".background(TerminalBackground)"))
+        assertFalse(terminal.contains(".background(TerminalTray)"))
+        val capsule = source("FocusCapsuleComposer")
+        assertTrue(capsule.contains("color = WandColors.surface"))
+        assertTrue(capsule.contains("border = BorderStroke(1.dp"))
+        assertFalse(source("ComposerAccessory").contains(".background("))
+        assertFalse(source("PendingConversationScreen").substringAfter("ChatDetailScaffold(bottomBar = {")
+            .substringBefore("SharedMessageComposer(").contains(".background("))
     }
 
     @Test fun statusSitsOutsideTheWritingSurfaceAndActionsShareTheBottomToolbar() {

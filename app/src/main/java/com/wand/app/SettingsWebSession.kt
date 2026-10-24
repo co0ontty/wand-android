@@ -7,10 +7,11 @@ import com.wand.app.data.WandHttp
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /** Settings keep the current endpoint's authentication and never put credentials into URLs or JS. */
-internal class SettingsWebSession(baseUrl: String) {
+internal class SettingsWebSession(baseUrl: String, section: String? = null) {
     val baseUrl = ServerProfiles.canonicalBaseUrl(baseUrl).toHttpUrl().newBuilder()
         .username("").password("").build().toString().trimEnd('/')
-    val startUrl = "${this.baseUrl}/settings?client=app"
+    val initialSection = section.takeIf { it == "connectors" }
+    val startUrl = "${this.baseUrl}/settings?client=app" + if (initialSection != null) "&section=connectors" else ""
 
     fun accepts(url: String): Boolean {
         val parsed = url.toHttpUrlOrNull() ?: return false

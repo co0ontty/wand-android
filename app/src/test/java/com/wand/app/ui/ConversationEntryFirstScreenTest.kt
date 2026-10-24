@@ -27,6 +27,21 @@ class ConversationEntryFirstScreenTest {
     private fun source(name: String): String = File("src/main/java/com/wand/app/ui/$name.kt").readText()
     private fun screen(name: String): String = File("src/main/java/com/wand/app/ui/screens/$name.kt").readText()
 
+    @Test fun recentHistoryPrecedesWorkspaceDirectoriesAndTitlesKeepReadingSpace() {
+        val workspace = screen("TaskListScreen")
+        val directories = workspace.indexOf("itemsIndexed(visibleGroups")
+        val history = workspace.indexOf("item(key = \"recent-conversation-header\")")
+        assertTrue(history >= 0 && directories > history)
+        val chat = screen("ConversationScreens")
+        assertFalse(chat.contains("Modifier.padding(horizontal = 104.dp)"))
+        // Group titles now reserve one action on each side; private chats use their shared companion.
+        assertTrue(chat.contains("padding(horizontal = 56.dp).heightIn(min = 48.dp)"))
+        assertTrue(chat.contains("Text(displayTitle ?: employee?.name ?: \"消息\", maxLines = 2"))
+        assertTrue(chat.contains("WandIconButton(WandIcons.more, \"聊天菜单\""))
+        val board = screen("TaskBoardScreen").substringAfter("private fun TaskBoardHero(")
+        assertTrue(board.indexOf("BoardSearchCapsule(") < board.indexOf("BoardMetric("))
+    }
+
     @Test fun rememberedAndAsyncDefaultSelectionNeverOpensDetailFromTheListRoot() = runTest {
         var preference = "{}"
         val store = ConversationStore(WandApi("http://127.0.0.1:1", null), SessionDraftStore(), backgroundScope, { preference }, { preference = it })

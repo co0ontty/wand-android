@@ -42,7 +42,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -253,6 +252,11 @@ fun SettingsScreen(
                                         context.startActivity(Intent(context, WebSettingsActivity::class.java)
                                             .putExtra(WebSettingsActivity.EXTRA_SERVER_ID, connection.serverId))
                                     },
+                                    onOpenDingTalk = {
+                                        context.startActivity(Intent(context, WebSettingsActivity::class.java)
+                                            .putExtra(WebSettingsActivity.EXTRA_SERVER_ID, connection.serverId)
+                                            .putExtra(WebSettingsActivity.EXTRA_SECTION, "connectors"))
+                                    },
                                 )
                                 SettingsDestination.Appearance -> {
                                     SettingsSection(
@@ -333,20 +337,27 @@ fun SettingsScreen(
                                         UpdateControlDeck(
                                             appVersion = settings.appVersion,
                                             betaChannel = betaChannel,
-                                            keepAlive = keepAlive,
                                             onCheckUpdate = settings.manualCheckUpdate,
-                                            onKeepAliveChange = { enabled ->
-                                                keepAlive = enabled
-                                                if (enabled) {
-                                                    notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                                }
-                                                settings.setKeepAlive(enabled)
-                                            },
                                             onBetaChannelChange = {
                                                 betaChannel = it
                                                 settings.setBetaChannel(it)
                                             },
                                         )
+                                    }
+                                }
+                                SettingsDestination.Notifications -> {
+                                    SettingsSection(title = "") {
+                                        SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                                            SwitchRow(
+                                                label = "后台保活", checked = keepAlive, icon = WandIcons.keepAlive,
+                                                description = "在通知栏保留服务，减少后台断连。",
+                                                onChange = { enabled ->
+                                                    keepAlive = enabled
+                                                    if (enabled) notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                                    settings.setKeepAlive(enabled)
+                                                },
+                                            )
+                                        }
                                     }
                                 }
                                 SettingsDestination.Diagnostics -> {
@@ -484,7 +495,7 @@ private fun SettingsContentLayout(
 internal enum class SettingsDestination(val title: String) {
     Index("设置"), Appearance("外观与反馈"), Traffic("流量与实时内容"),
     Models("模型分组"), Server("服务器"),
-    Updates("应用与更新"), Diagnostics("诊断"), About("关于");
+    Notifications("通知与后台"), Updates("应用与更新"), Diagnostics("诊断"), About("关于");
 }
 
 internal class SettingsNavigation(initial: SettingsDestination = SettingsDestination.Index) {
@@ -535,6 +546,7 @@ private fun SettingsDirectory(
     appVersion: String,
     onOpen: (SettingsDestination) -> Unit,
     onOpenWeb: () -> Unit,
+    onOpenDingTalk: () -> Unit,
 ) {
     SettingsCard {
         ActionRow(connection.serverDisplayName.ifBlank { "当前服务器" }, WandIcons.server,
@@ -546,12 +558,16 @@ private fun SettingsDirectory(
             RowDivider()
             ActionRow("流量与实时内容", WandIcons.web) { onOpen(SettingsDestination.Traffic) }
             RowDivider()
+            ActionRow("通知与后台", WandIcons.keepAlive) { onOpen(SettingsDestination.Notifications) }
+            RowDivider()
             ActionRow("应用与更新", WandIcons.update, "v$appVersion") { onOpen(SettingsDestination.Updates) }
         }
     }
     SettingsSection("服务配置") {
         SettingsCard {
             ActionRow("模型分组", WandIcons.tune) { onOpen(SettingsDestination.Models) }
+            RowDivider()
+            ActionRow("钉钉群聊接入", WandIcons.contacts, onClick = onOpenDingTalk)
             RowDivider()
             ActionRow("完整 Web 设置", WandIcons.web, onClick = onOpenWeb)
         }
@@ -807,23 +823,16 @@ private fun NotificationFeedbackContent(
     )
 }
 
-/** 更新与后台行为共用连续设置行，不占据额外的宣传区。 */
+/** 更新通道与版本操作同组；通知和后台行为由独立设置分组持有。 */
 @Composable
 private fun UpdateControlDeck(
     appVersion: String,
     betaChannel: Boolean,
-    keepAlive: Boolean,
     onCheckUpdate: () -> Unit,
-    onKeepAliveChange: (Boolean) -> Unit,
     onBetaChannelChange: (Boolean) -> Unit,
 ) {
     SettingsCard(modifier = Modifier.fillMaxWidth()) {
         ActionRow("检查更新", WandIcons.update, "v$appVersion", onClick = onCheckUpdate)
-        RowDivider()
-        SwitchRow(
-            label = "后台保活", checked = keepAlive, icon = WandIcons.keepAlive,
-            description = "在通知栏保留服务，减少后台断连。", onChange = onKeepAliveChange,
-        )
         RowDivider()
         SwitchRow(
             label = "Beta 通道", checked = betaChannel, icon = WandIcons.beta,
@@ -1052,12 +1061,6 @@ private fun SwitchRow(
             Switch(
                 checked = checked,
                 onCheckedChange = null,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color.White,
-                    checkedTrackColor = WandColors.brand,
-                    uncheckedThumbColor = WandColors.textMuted,
-                    uncheckedTrackColor = WandColors.surfaceSoft,
-                ),
             )
         },
     )

@@ -2,6 +2,8 @@ package com.wand.app.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,6 +16,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.ImeAction
@@ -46,6 +49,7 @@ internal fun FocusCapsuleComposer(
     exteriorAction: (@Composable (send: () -> Unit) -> Unit)? = null,
     actionCount: Int = 0,
     accessory: @Composable () -> Unit = {},
+    onWritingSurfaceHeightChange: (Int) -> Unit = {},
 ) {
     var state by remember(sessionKey) { mutableStateOf(MinimalComposerState()) }
     var focusRevision by remember(sessionKey) { mutableIntStateOf(0) }
@@ -123,13 +127,13 @@ internal fun FocusCapsuleComposer(
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         // Execution status belongs to the conversation, outside the writing surface.
         accessory()
-        Box(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().onSizeChanged { onWritingSurfaceHeightChange(it.height) }) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(if (expanded) 20.dp else 24.dp),
                 color = WandColors.surface,
                 tonalElevation = 0.dp,
-                border = BorderStroke(0.8.dp, if (focused) WandColors.focusRing else WandColors.border),
+                border = BorderStroke(1.dp, if (focused) WandColors.focusRing else WandColors.borderStrong),
             ) {
                 Column {
                     if (expanded && attachments.isNotEmpty()) PendingAttachmentsPreview(
@@ -152,8 +156,8 @@ internal fun FocusCapsuleComposer(
                         entry = { Text(
                             when { attachments.isNotEmpty() -> "草稿 · ${attachments.size} 附件"; draft.isNotEmpty() -> "草稿 · ${draft.length} 字"; else -> "发消息…" },
                             Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "展开键盘输入", onClick = edit)
-                                .wrapContentHeight(Alignment.CenterVertically),
-                            color = WandColors.textSecondary, style = MaterialTheme.typography.bodyMedium,
+                                .padding(start = 8.dp, end = 12.dp).wrapContentHeight(Alignment.CenterVertically),
+                            color = WandColors.textSecondary, style = MaterialTheme.typography.bodyLarge,
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
                         ) }, trailing = {
                         if (exteriorAction == null && expanded) Row { trailingActions(edit, send) }
@@ -167,7 +171,7 @@ internal fun FocusCapsuleComposer(
     }
     // Panels are modal focus owners, never stacked above the input and IME.
     if (attachOpen) WandBottomSheet(onDismissRequest = { onAttachOpenChange(false) }) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth()) {
                 WandInlinePanelAction(WandIcons.image, "从相册选择", enabled = !uploading,
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp),

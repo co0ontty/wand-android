@@ -194,15 +194,17 @@ private fun ModelGroupEditor(group: ModelGroup, catalog: ModelsResponse?, busy: 
                 else Text("仅用已验证且仍免费的模型；新成员追加到末尾，收费或下架的自动跳过。",
                     color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall)
                 group.models.forEachIndexed { index, id ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.fillMaxWidth()) {
                         Text("${if (index == 0) "首选" else "候选 ${index + 1}"} · ${models.firstOrNull { it.id == id }?.label ?: id}",
-                            modifier = Modifier.weight(1f), color = WandColors.textPrimary, style = MaterialTheme.typography.bodySmall)
-                        WandIconButton(WandIcons.arrowUp, "上移模型 ${index + 1}", variant = WandIconButtonVariant.Quiet,
-                            enabled = !busy && index > 0, onClick = { onChange(moveGroupModel(group, index, -1)) })
-                        WandIconButton(WandIcons.expand, "下移模型 ${index + 1}", variant = WandIconButtonVariant.Quiet,
-                            enabled = !busy && index < group.models.lastIndex, onClick = { onChange(moveGroupModel(group, index, 1)) })
-                        if (!group.builtIn) WandIconButton(WandIcons.close, "移除模型 ${index + 1}", variant = WandIconButtonVariant.Quiet,
-                            enabled = !busy, onClick = { onChange(group.copy(models = group.models.filterNot { it == id })) })
+                            color = WandColors.textPrimary, style = MaterialTheme.typography.bodyMedium)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            WandIconButton(WandIcons.arrowUp, "上移模型 ${index + 1}", variant = WandIconButtonVariant.Quiet,
+                                enabled = !busy && index > 0, onClick = { onChange(moveGroupModel(group, index, -1)) })
+                            WandIconButton(WandIcons.expand, "下移模型 ${index + 1}", variant = WandIconButtonVariant.Quiet,
+                                enabled = !busy && index < group.models.lastIndex, onClick = { onChange(moveGroupModel(group, index, 1)) })
+                            if (!group.builtIn) WandIconButton(WandIcons.close, "移除模型 ${index + 1}", variant = WandIconButtonVariant.Quiet,
+                                enabled = !busy, onClick = { onChange(group.copy(models = group.models.filterNot { it == id })) })
+                        }
                     }
                 }
                 if (group.models.isEmpty()) Text(if (group.openCodeFree) "服务端正在维护 OpenCode 免费分组；暂时没有实测可用模型。" else if (group.builtIn) "尚无已验证的免费模型，请先在 Web 设置 OpenRouter Key 并同步。" else "请添加至少一个具体模型。",

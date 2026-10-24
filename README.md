@@ -110,7 +110,7 @@ DEX 使用 `useLegacyPackaging = true` 压缩，优先降低自分发下载体�
 调用就是一个块），按「整条 turn」下发会拉回 MB 级首屏载荷，在弱网/弱机上表现为“会话打开很
 慢或打不开”。Android 与 Web / iOS 走同一套块级窗口：
 
-- `WandApi.getSession(blockBudget = WandApi.CHAT_BLOCK_WINDOW)`（`60`）与
+- `WandApi.getSession(blockBudget = WandApi.CHAT_BLOCK_WINDOW)`（`12`）与
   `WandSocket.blockBudget` 都在 `subscribe` 里声明预算；服务端只回最近这么多块，并附
   `leadingBlockOffset` / `leadingBlockTotal`。
 - `ChatStore.loadEarlier()` 两阶段：先把 `messages[0]` 被切掉的头部按块翻（

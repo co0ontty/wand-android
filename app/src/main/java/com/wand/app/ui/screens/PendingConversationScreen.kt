@@ -1,7 +1,12 @@
 package com.wand.app.ui.screens
 
 import android.net.Uri
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,6 +14,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
+import com.wand.app.data.SESSION_MODE_OPTIONS
+import com.wand.app.data.supportedSessionModeIds
+import com.wand.app.ui.components.WandDialog
+import com.wand.app.ui.components.WandDialogAction
+import com.wand.app.ui.components.WandInlinePanelAction
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -31,18 +42,16 @@ import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.BoardTaskAgent
-import com.wand.app.data.WandAgentEngine
 import com.wand.app.data.WorkspaceSessionKind
 import com.wand.app.data.WorkspaceSessionTarget
-import com.wand.app.data.agentToolOption
+import com.wand.app.ui.sessionCwdLeaf
 import com.wand.app.ui.ChatComposer
 import com.wand.app.ui.SessionDraftStore
 import com.wand.app.ui.StagedComposerAttachment
-import com.wand.app.ui.components.WandButton
-import com.wand.app.ui.components.WandButtonVariant
-import com.wand.app.ui.components.WandDetailTopBar
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
+
+private enum class PendingChoice { Object, Tool, Kind, Task, TaskName, Model, Mode, Thinking }
 
 @Composable
 internal fun PendingConversationScreen(
@@ -67,6 +76,10 @@ internal fun PendingConversationScreen(
      */
     embedded: Boolean = false,
 ) {
+    val focusManager = LocalFocusManager.current
+    val inputPresentation = remember(draftKey) { ChatInputPresentation() }
+    var choice by remember(draftKey) { mutableStateOf<PendingChoice?>(null) }
+    var attachOpen by remember(draftKey) { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val composer = remember(draftKey, drafts) {
@@ -234,7 +247,7 @@ internal fun PendingConversationScreen(
     }
     LaunchedEffect(target, selectedEmployeeCandidate, draftKey, modelsRetry, manuallySpecifiedExecution) {
         val provider = target.provider
-        if (provider == null || (selectedEmployeeId != null && !manuallySpecifiedExecution)) { models = null; modelsError = null; return@LaunchedEffect }
+        if (provider == null) { models = null; modelsError = null; modelsLoading = false; return@LaunchedEffect }
         modelsLoading = true
         modelsError = null
         try {
@@ -261,6 +274,7 @@ internal fun PendingConversationScreen(
             busy = true
             error = null
             creationStarted = true
+            val submittedDescription = composer.draft.trim()
             scope.launch {
                 var creatingSession = false
                 var acceptedTaskNotPersisted = false
@@ -324,6 +338,7 @@ internal fun PendingConversationScreen(
                                         val acceptedTask = taskState.createTask(
                                             name = taskTitle.trim(), cwd = cwdValue, worktree = selectedWorktree,
                                             workspaceId = actualWorkspaceId,
+                                            description = submittedDescription,
                                         )
                                         acceptedTask?.task?.id?.also { taskId ->
                                             try {
@@ -474,189 +489,258 @@ internal fun PendingConversationScreen(
         onDismiss = { directoryOpen = false },
     )
 
-    Column(Modifier.fillMaxSize().imePadding()) {
-        if (!embedded) WandDetailTopBar(
-            title = "新建对话",
-            subtitle = taskName ?: "输入工作内容，发送后创建会话",
-            actions = { TextButton(onClick = onCancel, enabled = !busy) { Text("取消") } },
+    val optionsEnabled = !busy && !creationStarted
+    val modelOptions = selectedAgent?.let { agent ->
+        com.wand.app.data.boardAgentModelOptions(models, agent.provider)
+            .map { it.id to it.label }.distinctBy { it.first }.toMutableList().apply {
+                if (none { it.first == model }) add(model to if (model == "default") "默认模型" else model)
+            }
+    }.orEmpty()
+    val effortOptions = selectedAgent?.let { agent ->
+        com.wand.app.ui.thinkingEffortOptions(
+            agent.provider, model, models?.defaultModelFor(agent.provider),
+            models?.modelsFor(agent.provider).orEmpty(), models?.thinkingEffortsFor(agent.provider).orEmpty(),
         )
-        if (!defaultsReady && !defaultsError && !hasKnownSession) CircularProgressIndicator(Modifier.padding(8.dp))
-        if (defaultsError && !hasKnownSession) {
-            Text("无法加载创建配置，请重试。", color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
-            TextButton(onClick = { defaultsRetry += 1 }) { Text("重试加载配置") }
+    }.orEmpty()
+    val openChoice: (PendingChoice) -> Unit = { next ->
+        if (optionsEnabled) {
+            attachOpen = false
+            focusManager.clearFocus()
+            choice = next
         }
-        if (employeesLoading) CircularProgressIndicator(Modifier.padding(8.dp))
-        employeesError?.let { message ->
-            Text(message, color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
-            TextButton(onClick = { employeesError = null; employeeRetry += 1 }) { Text("重试加载员工") }
+    }
+    val useTarget: (WorkspaceSessionTarget) -> Unit = { next ->
+        target = next
+        model = "default"
+        effort = taskState.defaultThinkingEffort
+        executionMode = taskState.defaultMode
+        selectedKind = when {
+            next.isShell -> WorkspaceSessionKind.Pty
+            next.isSdk -> WorkspaceSessionKind.Structured
+            else -> taskState.defaultSessionKind
         }
-        selectedEmployee?.let { employee ->
-            Text(
-                "员工候选执行：${employee.agents.joinToString(" → ") { candidate ->
-                    com.wand.app.data.agentToolLabel(candidate.provider, candidate.engine)
-                }}",
-                color = WandColors.textSecondary,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
+    }
+    val restoreEmployee = {
+        selectedEmployee?.agents?.firstOrNull()?.let { candidate ->
+            manuallySpecifiedExecution = false
+            selectedEmployeeCandidate = candidate
+            target = WorkspaceSessionTarget.fromPreference(candidate.provider, candidate.engine) ?: WorkspaceSessionTarget.Claude
+            model = candidate.model
+            effort = candidate.thinkingEffort
+            executionMode = candidate.mode
+            selectedKind = WorkspaceSessionKind.Structured
         }
-        if (employeesError == null && employees?.isNotEmpty() == true) {
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TextButton(onClick = {
+        Unit
+    }
+    val closeChoice = { choice = null }
+    when (choice) {
+        PendingChoice.Object -> ComposerChoiceSheet(
+            title = "执行对象",
+            options = employees.orEmpty().map { "employee:${it.id}" to it.name } +
+                WorkspaceSessionTarget.OPTIONS.map { "tool:${it.name}" to it.label },
+            selected = selectedEmployeeId?.let { "employee:$it" } ?: "tool:${target.name}",
+            searchable = true, searchPlaceholder = "搜索员工或工具",
+            onSelect = { id ->
+                if (id.startsWith("employee:")) {
+                    selectedEmployeeId = id.removePrefix("employee:")
+                    selectedEmployeeCandidate = employees.orEmpty().firstOrNull { it.id == selectedEmployeeId }?.agents?.firstOrNull()
+                    manuallySpecifiedExecution = false
+                } else {
                     selectedEmployeeId = null
                     selectedEmployeeCandidate = null
                     manuallySpecifiedExecution = false
-                    target = WorkspaceSessionTarget.fromPreference(taskState.defaultProvider, taskState.defaultEngine)
-                        ?: WorkspaceSessionTarget.Claude
-                    model = "default"
-                    effort = taskState.defaultThinkingEffort
-                    executionMode = taskState.defaultMode
-                    selectedKind = taskState.defaultSessionKind
-                }, enabled = !busy) { Text(if (selectedEmployeeId == null) "● CLI" else "CLI") }
-                employees.orEmpty().forEach { employee ->
-                    TextButton(onClick = {
-                        selectedEmployeeId = employee.id
-                        selectedEmployeeCandidate = employee.agents.firstOrNull()
-                        manuallySpecifiedExecution = false
-                    }, enabled = !busy) {
-                        Text(if (selectedEmployeeId == employee.id) "● ${employee.name}" else employee.name)
-                    }
+                    WorkspaceSessionTarget.OPTIONS.firstOrNull { "tool:${it.name}" == id }?.let(useTarget)
                 }
-            }
-        }
-        if (selectedEmployee != null && manuallySpecifiedExecution) {
-            TextButton(onClick = {
-                manuallySpecifiedExecution = false
-                selectedEmployeeCandidate = selectedEmployee.agents.firstOrNull()
-                selectedEmployeeCandidate?.let { candidate ->
-                    target = WorkspaceSessionTarget.fromPreference(candidate.provider, candidate.engine) ?: WorkspaceSessionTarget.Claude
-                    model = candidate.model
-                    effort = candidate.thinkingEffort
-                    executionMode = candidate.mode
-                    selectedKind = WorkspaceSessionKind.Structured
-                }
-            }, enabled = !busy) { Text("恢复${selectedEmployee.name}的候选执行设置") }
-        } else if (selectedEmployeeId != null && employees != null && selectedEmployee == null) {
-            Text("所选员工当前不可用；已改用 CLI。", color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
-        }
-        if (workspaceTaskId == null) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { createMode = false }) { Text(if (!createMode) "● 不归属任务" else "不归属任务") }
-                TextButton(onClick = { createMode = true }) { Text(if (createMode) "● 新建任务" else "新建任务") }
-            }
-        }
-        if (createMode) WandTextField(
-            value = taskTitle, onValueChange = { taskTitle = it }, label = "任务名称",
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), singleLine = true,
+                closeChoice()
+            }, onDismiss = closeChoice,
         )
-        if (createMode && workspaceTaskId == null) TextButton(
-            onClick = {
-                selectedWorktree = !selectedWorktree
-                worktreeOverridden = true
-            }, enabled = !busy,
+        PendingChoice.Tool -> ComposerChoiceSheet(
+            title = "执行工具",
+            options = WorkspaceSessionTarget.OPTIONS.filter { !it.isShell || selectedEmployeeId == null }.map { it.name to it.label },
+            selected = target.name,
+            onSelect = { id ->
+                WorkspaceSessionTarget.OPTIONS.firstOrNull { it.name == id }?.let(useTarget)
+                if (selectedEmployeeId != null) manuallySpecifiedExecution = true
+                closeChoice()
+            }, onDismiss = closeChoice,
+        )
+        PendingChoice.Kind -> ComposerChoiceSheet(
+            title = "会话模式",
+            options = (if (target.isSdk) listOf(WorkspaceSessionKind.Structured) else WorkspaceSessionKind.entries).map { it.name to it.label },
+            selected = selectedKind.name,
+            onSelect = { id ->
+                WorkspaceSessionKind.entries.firstOrNull { it.name == id }?.let { selectedKind = it }
+                if (selectedEmployeeId != null) manuallySpecifiedExecution = true
+                closeChoice()
+            }, onDismiss = closeChoice,
+        )
+        PendingChoice.Task -> ComposerChoiceSheet(
+            title = "任务归属",
+            options = buildList {
+                add("none" to "不归属任务")
+                add("new" to "新建任务")
+                if (createMode) {
+                    add("name" to "任务名称 · ${taskTitle.ifBlank { "按首条消息命名" }}")
+                    add("shared" to if (!selectedWorktree) "共用目录 · 当前" else "共用目录")
+                    add("worktree" to if (selectedWorktree) "独立工作树 · 当前" else "独立工作树")
+                }
+            },
+            selected = if (createMode) "new" else "none",
+            onSelect = { id ->
+                when (id) {
+                    "none" -> createMode = false
+                    "new" -> createMode = true
+                    "name" -> choice = PendingChoice.TaskName
+                    "shared", "worktree" -> { selectedWorktree = id == "worktree"; worktreeOverridden = true }
+                }
+                if (id != "name") closeChoice()
+            }, onDismiss = closeChoice,
+        )
+        PendingChoice.TaskName -> WandDialog(
+            title = "任务名称", onDismissRequest = closeChoice,
+            confirm = WandDialogAction("完成", closeChoice),
         ) {
-            Text(if (selectedWorktree) "目录方式：独立工作树" else "目录方式：共用目录")
+            WandTextField(value = taskTitle, onValueChange = { taskTitle = it },
+                placeholder = "留空时按首条消息命名", modifier = Modifier.fillMaxWidth(), singleLine = true)
         }
-        if (workspaceTaskId == null) TextButton(onClick = { directoryOpen = true }, enabled = !busy) {
-            Text("运行目录：${selectedCwd.ifBlank { "请选择" }}")
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TextButton(onClick = {
-                val options = WorkspaceSessionTarget.OPTIONS.filter { it != WorkspaceSessionTarget.Shell || selectedEmployeeId == null }
-                val next = options[(options.indexOf(target).coerceAtLeast(0) + 1) % options.size]
-                target = next
-                model = "default"
-                effort = "off"
-                executionMode = "default"
+        PendingChoice.Model -> ComposerChoiceSheet(
+            title = "模型", options = modelOptions, selected = model, searchable = true,
+            onSelect = { id ->
+                model = id
                 if (selectedEmployeeId != null) manuallySpecifiedExecution = true
-            }, enabled = !busy) {
-                val label = target.provider?.let { com.wand.app.data.agentToolLabel(it, target.engine?.raw) } ?: target.label
-                Text("工具：$label")
-            }
-            if (target != WorkspaceSessionTarget.Shell) {
-                val kinds = if (target.isSdk) listOf(WorkspaceSessionKind.Structured) else WorkspaceSessionKind.entries
-                TextButton(onClick = {
-                    selectedKind = kinds[(kinds.indexOf(selectedKind).coerceAtLeast(0) + 1) % kinds.size]
-                    if (selectedEmployeeId != null) manuallySpecifiedExecution = true
-                }, enabled = !busy && kinds.size > 1) { Text("模式：${selectedKind.label}") }
-            }
-            if (target.isShell && (composer.draft.isNotBlank() || composer.attachments.isNotEmpty() || composer.stagedAttachments.isNotEmpty())) {
-                Text("空白终端不接收首条输入；请移除文字和附件后打开。", color = WandColors.textSecondary)
-            }
-            selectedAgent?.let { agent ->
-                val modelOptions = com.wand.app.data.boardAgentModelOptions(models, agent.provider)
-                    .map { it.id to it.label }.distinctBy { it.first }.toMutableList()
-                if (modelOptions.none { it.first == model }) modelOptions.add(model to if (model == "default") "默认模型" else model)
-                TextButton(onClick = {
-                val current = modelOptions.indexOfFirst { it.first == model }.coerceAtLeast(0)
-                model = modelOptions[(current + 1) % modelOptions.size].first
-                if (selectedEmployeeId != null) manuallySpecifiedExecution = true
-                val efforts = com.wand.app.ui.thinkingEffortOptions(
-                    agent.provider, model, models?.defaultModelFor(agent.provider),
-                    models?.modelsFor(agent.provider).orEmpty(), models?.thinkingEffortsFor(agent.provider).orEmpty(),
-                )
-                if (efforts.none { it.id == effort }) effort = "off"
-            }, enabled = !busy && modelOptions.isNotEmpty()) {
-                Text("模型：${modelOptions.firstOrNull { it.first == model }?.second ?: model}")
-            }
-                val effortOptions = com.wand.app.ui.thinkingEffortOptions(
-                    agent.provider, model, models?.defaultModelFor(agent.provider),
-                    models?.modelsFor(agent.provider).orEmpty(), models?.thinkingEffortsFor(agent.provider).orEmpty(),
-                )
-                TextButton(onClick = {
-                    val current = effortOptions.indexOfFirst { it.id == effort }.coerceAtLeast(0)
-                    effort = effortOptions[(current + 1) % effortOptions.size].id
-                    if (selectedEmployeeId != null) manuallySpecifiedExecution = true
-                }, enabled = !busy && effortOptions.isNotEmpty()) {
-                    Text("思考：${effortOptions.firstOrNull { it.id == effort }?.shortLabel ?: effort}")
+                selectedAgent?.let { agent ->
+                    val available = com.wand.app.ui.thinkingEffortOptions(
+                        agent.provider, id, models?.defaultModelFor(agent.provider),
+                        models?.modelsFor(agent.provider).orEmpty(), models?.thinkingEffortsFor(agent.provider).orEmpty(),
+                    )
+                    if (available.none { it.id == effort }) effort = "off"
                 }
-            }
-        }
-        if (modelsLoading) CircularProgressIndicator(Modifier.padding(8.dp))
-        modelsError?.let { message ->
-            Text(message, color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
-            TextButton(onClick = { modelsError = null; modelsRetry += 1 }) { Text("重试加载模型") }
-        }
-        selectedAgent?.let { agent ->
-            val options = com.wand.app.data.boardAgentModelOptions(models, agent.provider)
-                .map { it.id to it.label }.distinctBy { it.first }.toMutableList()
-            if (options.none { it.first == model }) options.add(model to if (model == "default") "默认模型" else model)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                options.take(8).forEach { (id, label) ->
-                    TextButton(onClick = {
-                        model = id
-                        if (selectedEmployeeId != null) manuallySpecifiedExecution = true
-                    }, enabled = !busy) { Text(if (id == model) "● $label" else label) }
-                }
-            }
-        }
-        val attachmentPicker = picker
-        SharedMessageComposer(
-            backdrop = null,
-            sessionKey = draftKey,
-            draft = composer.draft,
-            onDraftChange = composer::editDraft,
-            attachments = composer.attachments,
-            stagedAttachments = composer.stagedAttachments,
-            onRemoveStagedAttachment = { item -> composer.stageAttachments(emptyList()); drafts.setStagedAttachments(draftKey, composer.stagedAttachments.filterNot { it == item }) },
-            baseUrl = api.baseUrl,
-            onRemoveAttachment = composer::removeAttachment,
-            uploading = busy || picker.open,
-            attachOpen = false,
-            onAttachOpenChange = {},
-            onPickPhoto = attachmentPicker.pickPhoto,
-            onPickFile = attachmentPicker.pickFile,
-            canSubmit = canSubmit,
-            onSend = submit,
-            allowRefocus = true,
-            onExpandedChange = {},
-            trailingActions = { _, _ -> },
-            controls = {},
+                closeChoice()
+            }, onDismiss = closeChoice,
         )
-        error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
-        taskState.mutationError?.let { message -> if (error == null) Text(message, color = WandColors.danger, modifier = Modifier.padding(16.dp)) }
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.End) {
-            if (busy) CircularProgressIndicator()
-            WandButton(label = if (target.isShell && canCreateEmptyShell) "打开终端" else if (creationStarted && !hasKnownSession) "正在确认…" else "发送", onClick = submit, enabled = canSubmit, icon = WandIcons.send)
+        PendingChoice.Mode -> ComposerChoiceSheet(
+            title = "权限", options = SESSION_MODE_OPTIONS.filter { it.id in supportedSessionModeIds(target.provider) }
+                .map { it.id to "${it.label} · ${it.description}" }, selected = executionMode,
+            onSelect = { executionMode = it; if (selectedEmployeeId != null) manuallySpecifiedExecution = true; closeChoice() },
+            onDismiss = closeChoice,
+        )
+        PendingChoice.Thinking -> ComposerChoiceSheet(
+            title = "思考深度", options = effortOptions.map { it.id to it.menuLabel }, selected = effort,
+            onSelect = { effort = it; if (selectedEmployeeId != null) manuallySpecifiedExecution = true; closeChoice() },
+            onDismiss = closeChoice,
+        )
+        null -> Unit
+    }
+
+    ChatDetailScaffold(bottomBar = {
+        Column(Modifier.imePadding()) {
+            SharedMessageComposer(
+                backdrop = null,
+                sessionKey = draftKey,
+                draft = composer.draft,
+                onDraftChange = composer::editDraft,
+                attachments = composer.attachments,
+                stagedAttachments = composer.stagedAttachments,
+                onRemoveStagedAttachment = { item -> drafts.setStagedAttachments(draftKey, composer.stagedAttachments.filterNot { it == item }) },
+                baseUrl = api.baseUrl,
+                onRemoveAttachment = composer::removeAttachment,
+                uploading = busy || picker.open,
+                presentation = inputPresentation,
+                editorOverlayOpen = directoryOpen || choice != null,
+                deliveryPhase = if (busy) com.wand.app.ui.SendPhase.Sending else com.wand.app.ui.SendPhase.Idle,
+                actionCount = 1,
+                exteriorAction = { send ->
+                    ComposerSendStopActions(
+                        presentation = composerActionPresentation(if (busy) com.wand.app.ui.SendPhase.Sending else com.wand.app.ui.SendPhase.Idle, false, true, canSubmit),
+                        stopDescription = "停止", onSend = send, onStop = {}, canSubmit = canSubmit,
+                        sendDescription = if (target.isShell && canCreateEmptyShell) "打开终端" else "发送",
+                    )
+                },
+                attachOpen = attachOpen,
+                onAttachOpenChange = { attachOpen = it; if (it) choice = null },
+                onPickPhoto = picker.pickPhoto,
+                onPickFile = picker.pickFile,
+                canSubmit = canSubmit,
+                onSend = { choice = null; attachOpen = false; submit() },
+                allowRefocus = true,
+                onExpandedChange = {},
+                trailingActions = { _, _ -> },
+                menuContent = {
+                    WandInlinePanelAction(WandIcons.agent, "执行对象 · ${selectedEmployee?.name ?: target.label}", enabled = optionsEnabled,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), onClick = { openChoice(PendingChoice.Object) })
+                    if (workspaceTaskId == null) {
+                        WandInlinePanelAction(WandIcons.todo, "任务 · ${if (createMode) taskTitle.ifBlank { "新建任务" } else "不归属任务"}", enabled = optionsEnabled,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), onClick = { openChoice(PendingChoice.Task) })
+                        WandInlinePanelAction(WandIcons.folder, "目录 · ${sessionCwdLeaf(selectedCwd).orEmpty().ifBlank { "请选择" }}", enabled = optionsEnabled,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            onClick = { attachOpen = false; focusManager.clearFocus(); directoryOpen = true })
+                    }
+                    WandInlinePanelAction(WandIcons.settings, "执行工具 · ${target.label}", enabled = optionsEnabled,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), onClick = { openChoice(PendingChoice.Tool) })
+                    if (!target.isShell) WandInlinePanelAction(WandIcons.terminal, "会话模式 · ${selectedKind.label}", enabled = optionsEnabled && !target.isSdk,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), onClick = { openChoice(PendingChoice.Kind) })
+                    if (selectedEmployee != null && manuallySpecifiedExecution) WandInlinePanelAction(
+                        WandIcons.refresh, "恢复${selectedEmployee.name}的候选设置", enabled = optionsEnabled,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        onClick = { restoreEmployee(); attachOpen = false },
+                    )
+                },
+                controls = {
+                    ComposerSettingsRow(
+                        model = modelOptions.firstOrNull { it.first == model }?.second ?: model,
+                        mode = SESSION_MODE_OPTIONS.firstOrNull { it.id == executionMode }?.label ?: executionMode,
+                        thinking = effortOptions.firstOrNull { it.id == effort }?.shortLabel ?: effort,
+                        enabled = optionsEnabled && !target.isShell,
+                        onModel = { openChoice(PendingChoice.Model) },
+                        onMode = { openChoice(PendingChoice.Mode) },
+                        onThinking = { openChoice(PendingChoice.Thinking) },
+                    )
+                },
+            )
+        }
+    }) { padding ->
+        val direction = LocalLayoutDirection.current
+        val topClearance = if (embedded) 0.dp else chatTopIdentityClearance()
+        Column(
+            Modifier.fillMaxSize().padding(
+                start = padding.calculateStartPadding(direction), end = padding.calculateEndPadding(direction),
+                top = padding.calculateTopPadding() + topClearance, bottom = padding.calculateBottomPadding(),
+            ).verticalScroll(rememberScrollState()),
+        ) {
+            if ((!defaultsReady && !defaultsError && !hasKnownSession) || employeesLoading || modelsLoading) {
+                CircularProgressIndicator(Modifier.padding(16.dp))
+            }
+            if (defaultsError && !hasKnownSession) {
+                Text("无法加载创建配置，请重试。", color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
+                TextButton(onClick = { defaultsRetry += 1 }) { Text("重试加载配置") }
+            }
+            employeesError?.let { message ->
+                Text(message, color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
+                TextButton(onClick = { employeesError = null; employeeRetry += 1 }) { Text("重试加载员工") }
+            }
+            modelsError?.let { message ->
+                Text(message, color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
+                TextButton(onClick = { modelsError = null; modelsRetry += 1 }) { Text("重试加载模型") }
+            }
+            if (target.isShell && !canCreateEmptyShell) {
+                Text("空白终端不接收首条输入；请移除文字和附件后打开。", color = WandColors.textSecondary,
+                    modifier = Modifier.padding(16.dp))
+            }
+            error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            taskState.mutationError?.let { message -> if (error == null) Text(message, color = WandColors.danger, modifier = Modifier.padding(16.dp)) }
+        }
+        if (!embedded) Box(Modifier.fillMaxSize().padding(padding)) {
+            ChatTopIdentityBar(
+                identity = chatTopIdentity(taskName, if (createMode) "新建任务" else "新对话", selectedEmployee?.name, selectedCwd),
+                attention = ChatTopAttention.Quiet, statusText = "发送后开始工作",
+                avatarId = selectedEmployee?.id, avatarName = selectedEmployee?.name, avatar = selectedEmployee?.avatar,
+            )
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = FloatingControlRowInset),
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                FloatingChatIconButton(WandIcons.back, "返回") { if (!busy) onCancel() }
+                FloatingChatIconButton(WandIcons.more, "对话选项") { if (optionsEnabled) { choice = null; attachOpen = true } }
+            }
         }
     }
+
 }

@@ -32,6 +32,19 @@ class WorkspaceEmptyTaskChatTest {
     @Test
     fun embeddedPendingConversationKeepsASingleTopBar() {
         val pending = screen("PendingConversationScreen")
-        assertTrue(pending.contains("if (!embedded) WandDetailTopBar("))
+        assertTrue(pending.contains("if (!embedded) Box("))
+        assertTrue(pending.contains("ChatTopIdentityBar("))
+        assertTrue(pending.contains("ChatDetailScaffold("))
+        assertFalse(pending.contains("WandDetailTopBar("))
+        assertTrue(screen("ChatScreen").contains("ChatDetailScaffold("))
+        assertTrue(pending.contains("presentation = inputPresentation"))
+        assertTrue(pending.contains("ComposerSendStopActions("))
+        assertFalse(pending.contains("WandButton(label ="))
+        assertTrue(pending.contains("ComposerSettingsRow("))
+        assertTrue(pending.contains("ComposerChoiceSheet("))
+        assertTrue(pending.contains("editorOverlayOpen = directoryOpen || choice != null"))
+        assertFalse(pending.contains("optionsOpen"))
+        assertFalse(pending.contains("(current + 1) %"))
+        assertTrue(screen("FocusCapsuleComposer").contains("verticalScroll(rememberScrollState())"))
     }
 }

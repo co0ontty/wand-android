@@ -43,6 +43,8 @@ internal fun SharedPlushScene(asset: String, size: Dp, activity: AvatarFileActiv
     val view = remember(asset, context) {
         WebView(context).apply {
             setBackgroundColor(AndroidColor.TRANSPARENT)
+            clipChildren = false
+            clipToPadding = false
             importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
             isFocusable = false
             isClickable = false

@@ -1,8 +1,10 @@
 package com.wand.app.ui.screens
 
 import com.wand.app.data.TaskDirectoryGroup
+import com.wand.app.data.BoardTask
 import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.WorkspaceTaskSummary
+import com.wand.app.data.WorkspaceTaskStatus
 import com.wand.app.data.activityStatus
 import com.wand.app.ui.SessionTitleStore
 import com.wand.app.ui.withLiveTitle
@@ -20,6 +22,54 @@ import java.time.ZoneId
 
 /** 会话在首页关心的三态：在跑、等你、安静。其余状态一律归 Quiet。 */
 internal enum class HomeSessionPulse { Running, NeedsYou, Quiet }
+
+internal enum class HomeExecutionState(val label: String) {
+    Running("运行中"), Queued("排队中"), NeedsYou("待处理"), Failed("失败"),
+    Completed("已完成"), Idle("未运行"), Archived("已归档")
+}
+
+internal fun homeExecutionStateFromStatus(status: String): HomeExecutionState = when (status.lowercase().replace('_', '-')) {
+    "running", "thinking", "reconnecting" -> HomeExecutionState.Running
+    "queued" -> HomeExecutionState.Queued
+    "permission", "permission-blocked", "waiting-input" -> HomeExecutionState.NeedsYou
+    "failed" -> HomeExecutionState.Failed
+    "done", "completed" -> HomeExecutionState.Completed
+    "archived" -> HomeExecutionState.Archived
+    else -> HomeExecutionState.Idle
+}
+
+internal fun homeExecutionState(session: WorkspaceSessionSummary): HomeExecutionState {
+    if (session.archived == true) return HomeExecutionState.Archived
+    if (SessionTitleStore.permissionBlockedOf(session.id) == true) return HomeExecutionState.NeedsYou
+    return homeExecutionStateFromStatus(session.withLiveTitle().activityStatus())
+}
+
+internal fun homeExecutionState(task: BoardTask): HomeExecutionState {
+    val sessions = task.sessions.filter { !it.archived }
+    return when {
+        sessions.any { it.permissionBlocked || it.status in listOf("waiting-input", "waiting_input") } -> HomeExecutionState.NeedsYou
+        sessions.any { it.status == "failed" } -> HomeExecutionState.Failed
+        task.executionStatus == "running" || sessions.any { it.executionStatus == "running" || it.inFlight == true ||
+            (it.isStructured && it.inFlight == null && it.status in listOf("running", "thinking")) } -> HomeExecutionState.Running
+        task.executionStatus == "queued" || (task.executionStatus == null && task.queuedCommentCount > 0) ||
+            sessions.any { it.executionStatus == "queued" || it.status == "queued" } -> HomeExecutionState.Queued
+        task.status == "archived" -> HomeExecutionState.Archived
+        task.status == "done" -> HomeExecutionState.Completed
+        else -> HomeExecutionState.Idle
+    }
+}
+
+internal fun homeExecutionState(task: WorkspaceTaskSummary): HomeExecutionState {
+    val states = task.sessions.filter { it.archived != true }.map(::homeExecutionState)
+    return when {
+        HomeExecutionState.NeedsYou in states -> HomeExecutionState.NeedsYou
+        HomeExecutionState.Failed in states -> HomeExecutionState.Failed
+        task.executionStatus == "running" || HomeExecutionState.Running in states -> HomeExecutionState.Running
+        task.hasQueuedExecution || HomeExecutionState.Queued in states -> HomeExecutionState.Queued
+        task.status == WorkspaceTaskStatus.Done -> HomeExecutionState.Completed
+        else -> HomeExecutionState.Idle
+    }
+}
 
 internal fun homeSessionPulse(status: String?): HomeSessionPulse {
     val normalized = status?.trim()?.lowercase()?.replace('_', '-').orEmpty()

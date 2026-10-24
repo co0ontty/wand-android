@@ -51,8 +51,8 @@ internal fun TopChatCompanion(
     val compact = LocalConfiguration.current.screenHeightDp < 420
     BoxWithConstraints(Modifier.fillMaxWidth().height(topCompanionClearance())) {
         val size = if (compact) 48.dp else 56.dp
-        val left = 60.dp
-        val iconRowStart = maxWidth - 112.dp
+        val left = FloatingControlsBackInset
+        val iconRowStart = maxWidth - FloatingControlsActionsInset
         val right = iconRowStart - size
         val start = if (compact) left else (left + right) / 2
         val end = if (compact) left else maxOf(start, right)
@@ -86,7 +86,7 @@ internal fun TopChatCompanion(
         val textHeight = with(density) {
             MaterialTheme.typography.labelMedium.lineHeight.toDp() * 2 + MaterialTheme.typography.labelSmall.lineHeight.toDp()
         } + 2.dp
-        val labelWidth = if (compact) (maxWidth - 60.dp - 112.dp - size - 8.dp).coerceAtLeast(24.dp)
+        val labelWidth = if (compact) (maxWidth - FloatingControlsBackInset - FloatingControlsActionsInset - size - 8.dp).coerceAtLeast(24.dp)
             else minOf(with(density) { x.toDp() } + size / 2 - 12.dp,
                 maxWidth - 12.dp - with(density) { x.toDp() } - size / 2).coerceAtLeast(24.dp) * 2
         val labelX = if (compact) with(density) { x.toDp() } + size + 8.dp

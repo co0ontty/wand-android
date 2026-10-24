@@ -17,10 +17,13 @@ class WandCapsuleTitleTest {
         assertTrue(capsule.contains("fun WandCapsuleTitle("))
         assertTrue("胶囊头像没有走统一头像组件", capsule.contains("EmployeeAvatar("))
         assertTrue("胶囊不是圆角胶囊形", capsule.contains("RoundedCornerShape(percent = 50)"))
-        // 头像圆心与胶囊左端圆弧同心，四周留白等宽。
-        assertTrue("头像没有按同心圆摆位", capsule.contains("capsuleHeight / 2 - avatarSize / 2"))
+        // Portrait rendering is intentionally larger than the non-clipping layout slot.
+        assertTrue(capsule.contains("maxOf(48.dp, avatarSize)"))
+        assertTrue(capsule.contains("Modifier.requiredSize(renderSize)"))
+        assertTrue(capsule.contains("Modifier.matchParentSize().glassSurface("))
+        assertFalse(capsule.contains(".clipToBounds()"))
         assertTrue("胶囊高度没有跟着头像走", capsule.contains("avatarSize + capsuleInset * 2"))
-        assertFalse("头像还探在胶囊外", capsule.contains("Spacer(Modifier.width(7.dp))"))
+        assertFalse("背景不能裁剪头像层", capsule.contains(".background(fill, RoundedCornerShape"))
     }
 
     @Test fun capsuleCarriesFileActivityAndThinkingEffects() {

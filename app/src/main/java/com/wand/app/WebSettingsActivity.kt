@@ -71,7 +71,7 @@ class WebSettingsActivity : AppCompatActivity() {
             return
         }
         profile = selected
-        session = SettingsWebSession(profile.baseUrl)
+        session = SettingsWebSession(profile.baseUrl, intent.getStringExtra(EXTRA_SECTION))
         WindowCompat.setDecorFitsSystemWindows(window, true)
         val browser = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -138,7 +138,7 @@ class WebSettingsActivity : AppCompatActivity() {
         setContent {
             WandTheme {
                 Column(Modifier.fillMaxSize()) {
-                    WandDetailTopBar(title = "完整 Web 设置",
+                    WandDetailTopBar(title = if (session.initialSection == "connectors") "钉钉群聊接入" else "完整 Web 设置",
                         leading = { WandDetailBackButton(onClick = { finish() }) })
                     if (loadingProgress < 100) LinearProgressIndicator(progress = { loadingProgress / 100f }, modifier = Modifier.fillMaxWidth())
                     loadError?.let { error ->
@@ -223,5 +223,6 @@ class WebSettingsActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_SERVER_ID = "server_id"
+        const val EXTRA_SECTION = "settings_section"
     }
 }

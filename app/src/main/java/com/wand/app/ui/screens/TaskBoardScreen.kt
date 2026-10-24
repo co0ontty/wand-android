@@ -656,9 +656,10 @@ private fun TaskBoardHero(
     showSearch: Boolean = true,
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (showSearch) BoardSearchCapsule(value = query, onValueChange = onQueryChange)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(projectName, color = WandColors.textPrimary,
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
@@ -666,12 +667,13 @@ private fun TaskBoardHero(
             Text("${stats.remaining} 项未完成", color = WandColors.textSecondary,
                 style = MaterialTheme.typography.bodySmall)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            maxItemsInEachRow = if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) 1 else 3) {
             BoardMetric("待办", stats.todo, boardStatusColor("todo"), Modifier.weight(1f))
             BoardMetric("进行中", stats.doing, boardStatusColor("doing"), Modifier.weight(1f))
             BoardMetric("已验收", stats.accepted, boardStatusColor("done"), Modifier.weight(1f))
         }
-        if (showSearch) BoardSearchCapsule(value = query, onValueChange = onQueryChange)
     }
 }
 
@@ -738,6 +740,13 @@ private fun BoardMetric(
     color: Color,
     modifier: Modifier = Modifier,
 ) {
+    if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) {
+        Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f), color = WandColors.textSecondary, style = MaterialTheme.typography.labelSmall)
+            Text(value.toString(), color = color, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        }
+        return
+    }
     Column(modifier = modifier) {
         Text(label, color = WandColors.textSecondary, style = MaterialTheme.typography.labelSmall)
         Text(
@@ -861,6 +870,9 @@ private fun BoardTaskItem(
         onRevealedChange = onRevealedChange,
         onAction = onSwipeAction,
         modifier = modifier,
+        extraActions = listOf(HomeRowAction("detail", "详情", WandIcons.read, WandColors.info, onOpen)) +
+            if (task.status in listOf("archived", "done")) emptyList() else listOf(
+                HomeRowAction("archive", "归档", WandIcons.archive, WandColors.warning) { onSwipeAction(BoardTaskSwipeAction.Archive) }),
     ) {
         BoardTaskCard(
             task = task,
@@ -938,6 +950,7 @@ private fun BoardTaskCard(
                 )
             }
         }
+        HomeExecutionBadge(homeExecutionState(task))
         Text(if (!task.acceptance?.acceptedAt.isNullOrBlank()) "验收通过 · 已完成" else if (!task.acceptance?.blocker.isNullOrBlank()) "待处理：${task.acceptance?.blocker}" else "未验收", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary, modifier = Modifier.padding(top = 6.dp))
         model.body?.let { body ->
             Text(

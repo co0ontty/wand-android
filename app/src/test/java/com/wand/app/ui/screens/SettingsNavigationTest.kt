@@ -7,6 +7,19 @@ import org.junit.Test
 class SettingsNavigationTest {
     private val saverScope = object : SaverScope { override fun canBeSaved(value: Any) = true }
 
+    @Test fun notificationsAndUpdatesHaveIndependentStableOwners() {
+        val navigation = SettingsNavigation()
+        navigation.open(SettingsDestination.Notifications)
+        navigation.back()
+        navigation.open(SettingsDestination.Updates)
+        assertEquals("通知与后台", SettingsDestination.Notifications.title)
+        assertEquals("应用与更新", SettingsDestination.Updates.title)
+        assertEquals(listOf(SettingsDestination.Index, SettingsDestination.Notifications, SettingsDestination.Updates), navigation.visited.toList())
+        val saved = with(SettingsNavigation.Saver) { saverScope.save(navigation) }!!
+        val restored = SettingsNavigation.Saver.restore(saved)!!
+        assertEquals(navigation.visited.toList(), restored.visited.toList())
+    }
+
     @Test fun backFromAnyDetailReturnsToDirectoryBeforeLeavingSettings() {
         val navigation = SettingsNavigation()
         assertFalse(navigation.back())

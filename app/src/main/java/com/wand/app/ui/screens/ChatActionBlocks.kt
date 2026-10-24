@@ -968,86 +968,47 @@ internal fun activeTodoIndex(todos: List<TodoEntry>): Int? {
     return inferred.takeIf { it >= 0 }
 }
 
-/** 当前事项为主，步数为辅；任务与用量向上展开，底部触发点和输入操作不位移。 */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+/** Read-only execution progress stays beside the composer, with one compact summary. */
 @Composable
-fun TodoProgressBar(todos: List<TodoEntry>, backdrop: GlassBackdrop? = null, usage: TurnUsage? = null,
-    detailsInSheet: Boolean = false, onDetailsOpenChange: (Boolean) -> Unit = {}) {
+internal fun TodoProgressBar(
+    todos: List<TodoEntry>,
+    usage: TurnUsage? = null,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    maxHeight: androidx.compose.ui.unit.Dp,
+) {
     if (todos.isEmpty()) return
     val completed = todos.count { it.status == "completed" }
     val activeIndex = activeTodoIndex(todos)
-    val currentStep = activeIndex?.plus(1) ?: minOf(completed + 1, todos.size)
-    val activeTask = activeIndex?.let { todos[it].activeForm?.takeIf(String::isNotBlank) ?: todos[it].content }
-        ?.takeIf(String::isNotBlank) ?: "准备中…"
-    var expanded by remember { mutableStateOf(false) }
-    val motionEnabled = !reduceMotionEnabled()
-
-    LaunchedEffect(expanded) { onDetailsOpenChange(expanded) }
-    val details: @Composable () -> Unit = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
-                    .verticalScroll(rememberScrollState()).padding(12.dp),
-            ) {
-                todos.forEachIndexed { index, todo ->
-                    val isActive = index == activeIndex
-                    val rowBackground by animateColorAsState(
-                        if (isActive) WandColors.brandSoft else Color.Transparent,
-                        WandMotion.respectMotion(motionEnabled, WandMotion.tweenFast()),
-                        label = "todoRowBackground",
-                    )
-                    Row(
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth().clip(WandShapes.sm).background(rowBackground)
-                            .semantics(mergeDescendants = true) {
-                                stateDescription = when {
-                                    todo.status == "completed" -> "已完成：${todo.content}"
-                                    isActive -> "进行中：${todo.content}"
-                                    else -> "待处理：${todo.content}"
-                                }
-                            }.padding(8.dp),
-                    ) {
-                        Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
-                            when {
-                                todo.status == "completed" -> Icon(WandIcons.check, null,
-                                    tint = WandColors.success, modifier = Modifier.size(14.dp))
-                                isActive -> Box(Modifier.size(7.dp).background(WandColors.brand, CircleShape))
-                                else -> Box(Modifier.size(7.dp).border(1.dp, WandColors.textMuted, CircleShape))
-                            }
-                        }
-                        Text(todo.content, style = MaterialTheme.typography.bodySmall,
-                            color = if (isActive) WandColors.textPrimary else WandColors.textSecondary,
-                            textDecoration = if (todo.status == "completed") TextDecoration.LineThrough else null)
-                    }
-                }
-                if (usage != null) {
-                    HorizontalDivider(color = WandColors.border, modifier = Modifier.padding(vertical = 4.dp))
-                    UsageSummaryRow(usage, isLive = false)
+    Column(Modifier.fillMaxWidth()) {
+        ComposerAccessoryHeader(
+            icon = WandIcons.todo,
+            title = "待办",
+            preview = activeIndex?.let { todos[it].activeForm?.takeIf(String::isNotBlank) ?: todos[it].content } ?: "已完成",
+            count = "$completed/${todos.size}",
+            expanded = expanded,
+            onToggle = { onExpandedChange(!expanded) },
+        )
+        if (expanded) Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            HorizontalDivider(color = WandColors.border)
+            todos.forEachIndexed { index, todo ->
+                val active = index == activeIndex
+                val done = todo.status == "completed"
+                Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {
+                    stateDescription = (if (done) "已完成" else if (active) "进行中" else "待处理") + "：" + todo.content
+                }, verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(if (done) WandIcons.statusDone else if (active) WandIcons.play else WandIcons.statusPending,
+                        contentDescription = null, modifier = Modifier.size(18.dp),
+                        tint = if (done) WandColors.success else if (active) WandColors.brand else WandColors.textSecondary)
+                    Text(todo.content, style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                        modifier = Modifier.weight(1f),
+                        color = if (active) WandColors.textPrimary else WandColors.textSecondary)
+                    if (active) Text("进行中", style = MaterialTheme.typography.labelSmall, color = WandColors.brand)
                 }
             }
-    }
-    if (detailsInSheet && expanded) com.wand.app.ui.components.WandBottomSheet(onDismissRequest = { expanded = false }) {
-        Text("任务进度", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
-        details()
-    }
-    WandCard(shape = WandShapes.lg, contentPadding = PaddingValues(0.dp)) {
-        if (!detailsInSheet) WandInlinePanel(visible = expanded, growFrom = Alignment.Bottom) { details() }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-                .clickable(role = Role.Button, onClickLabel = if (expanded) "收起任务进度" else "展开任务进度") { expanded = !expanded }
-                .semantics(mergeDescendants = true) {
-                    stateDescription = "已完成 $completed 项，共 ${todos.size} 项；正在执行第 $currentStep 步：$activeTask；${if (expanded) "详情已展开" else "详情已收起"}"
-                }.heightIn(min = ComposerActionTouchSize).padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            Box(Modifier.size(7.dp).background(WandColors.brand, CircleShape))
-            Text(activeTask, style = MaterialTheme.typography.labelLarge, color = WandColors.textPrimary,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text("$currentStep / ${todos.size}", style = MaterialTheme.typography.labelMedium,
-                color = WandColors.textSecondary, maxLines = 1)
-            ExpandChevron(expanded = expanded, tint = WandColors.textSecondary, size = 18.dp)
+            if (usage != null) UsageSummaryRow(usage, isLive = false)
         }
     }
 }

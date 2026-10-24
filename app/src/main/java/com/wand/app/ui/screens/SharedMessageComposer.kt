@@ -5,12 +5,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
@@ -36,9 +34,10 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
 import com.wand.app.ui.SendPhase
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import com.wand.app.ui.WandFileChip
 import com.wand.app.data.UploadedFile
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandInlinePanelAction
@@ -56,15 +55,13 @@ private fun StagedAttachmentsPreview(
     attachments: List<com.wand.app.ui.StagedComposerAttachment>,
     onRemove: (com.wand.app.ui.StagedComposerAttachment) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().padding(start = 2.dp, end = 2.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    ComposerAttachmentStrip(Modifier.padding(start = 2.dp, end = 2.dp, bottom = 6.dp)) {
         attachments.forEach { attachment ->
-            Row(Modifier.clickable(onClickLabel = "移除附件：${attachment.name}") { onRemove(attachment) }
-                .background(com.wand.app.ui.theme.WandColors.surfaceSoft, RoundedCornerShape(10.dp))
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Icon(WandIcons.close, contentDescription = "移除附件：${attachment.name}", modifier = Modifier.size(16.dp).padding(start = 2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                WandFileChip(path = attachment.name, modifier = Modifier.widthIn(max = 190.dp))
+                IconButton(onClick = { onRemove(attachment) }, modifier = Modifier.size(48.dp)) {
+                    Icon(WandIcons.close, contentDescription = "移除附件：${attachment.name}", modifier = Modifier.size(18.dp))
+                }
             }
         }
     }
@@ -111,13 +108,17 @@ internal fun SharedMessageComposer(
     exteriorAction: (@Composable (send: () -> Unit) -> Unit)? = null,
     actionCount: Int = 0,
     accessory: @Composable () -> Unit = {},
+    onWritingSurfaceHeightChange: (Int) -> Unit = {},
 ) {
     if (presentation != null) {
         FocusCapsuleComposer(presentation, sessionKey, draft, onDraftChange, attachments, baseUrl,
             onRemoveAttachment, uploading, attachOpen, onAttachOpenChange, onPickPhoto, onPickFile,
             canSubmit, onSend, deliveryPhase,
             editorOverlayOpen, resourcePanelOpen, onExpandedChange, trailingActions, controls,
-            resourcePanel, menuContent, exteriorAction, actionCount, accessory)
+            resourcePanel, menuContent, exteriorAction, actionCount, {
+                accessory()
+                if (stagedAttachments.isNotEmpty()) StagedAttachmentsPreview(stagedAttachments, onRemoveStagedAttachment)
+            }, onWritingSurfaceHeightChange)
         return
     }
     val focusRequester = remember(sessionKey) { FocusRequester() }

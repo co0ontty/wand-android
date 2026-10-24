@@ -1,49 +1,11 @@
 package com.wand.app.ui.screens
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
-import com.wand.app.ui.theme.WandMotion
-import com.wand.app.ui.theme.WandShapes
-import com.wand.app.ui.theme.reduceMotionEnabled
-import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 /** 会话行从右往左划开后露出的动作。 */
 internal enum class ConversationSwipeAction { Pin, Unpin, Dissolve, Restore, Delete }
@@ -52,9 +14,9 @@ internal enum class ConversationSwipeAction { Pin, Unpin, Dissolve, Restore, Del
  * 划开可见的动作：置顶态只给反向动作，解散/恢复只给群聊，删除兜底。
  * 返回空集合时行退化成普通点击（多选态用这条）。
  */
-internal fun conversationSwipeActions(kind: String, pinned: Boolean, dissolved: Boolean): List<ConversationSwipeAction> = buildList {
+internal fun conversationSwipeActions(kind: String, pinned: Boolean, dissolved: Boolean, external: Boolean = false): List<ConversationSwipeAction> = buildList {
     add(if (pinned) ConversationSwipeAction.Unpin else ConversationSwipeAction.Pin)
-    if (kind == "group") add(if (dissolved) ConversationSwipeAction.Restore else ConversationSwipeAction.Dissolve)
+    if (kind == "group" && !external) add(if (dissolved) ConversationSwipeAction.Restore else ConversationSwipeAction.Dissolve)
     add(ConversationSwipeAction.Delete)
 }
 
@@ -82,6 +44,29 @@ internal fun conversationSwipeActionColor(action: ConversationSwipeAction): Colo
     ConversationSwipeAction.Delete -> WandColors.danger
 }
 
+internal enum class ConversationManagementAction { Dissolve, Restore, Delete }
+
+internal fun conversationManagementActions(kind: String, dissolved: Boolean, external: Boolean, deleting: Boolean): List<ConversationManagementAction> {
+    if (kind != "group" || deleting) return emptyList()
+    return buildList {
+        if (!external) add(if (dissolved) ConversationManagementAction.Restore else ConversationManagementAction.Dissolve)
+        add(ConversationManagementAction.Delete)
+    }
+}
+
+internal fun ConversationManagementAction.title(external: Boolean = false): String = when (this) {
+    ConversationManagementAction.Dissolve -> "解散群聊"
+    ConversationManagementAction.Restore -> "恢复群聊"
+    ConversationManagementAction.Delete -> if (external) "删除本地群镜像" else "删除群聊"
+}
+
+internal fun ConversationManagementAction.explanation(external: Boolean): String = when (this) {
+    ConversationManagementAction.Delete -> if (external)
+        "仅删除 Wand 中的本地群镜像、消息和关联执行；不退出或解散钉钉群，也不删除其他群共用的机器人。此操作无法撤销。"
+    else "将删除这个群聊、所有关联任务，以及它们的消息、执行记录和资源文件。不会删除其他对话或工作区。此操作无法撤销。"
+    else -> "解散后保留历史记录和关联任务，恢复后可继续聊天。已在执行的任务不会因此停止。"
+}
+
 /** 多选条上的批量置顶动作：选中项里有未置顶的就置顶，全已置顶则反向取消。 */
 internal enum class ConversationBatchAction { Pin, Unpin }
 
@@ -90,11 +75,6 @@ internal fun conversationBatchAction(pinnedFlags: List<Boolean>): ConversationBa
     pinnedFlags.all { it } -> ConversationBatchAction.Unpin
     else -> ConversationBatchAction.Pin
 }
-
-/** 单个动作按钮的期望宽度；露出总宽再按行宽封顶，窄屏不至于把内容全推走。 */
-private val ConversationSwipeActionWidth = 72.dp
-private val ConversationSwipeActionGap = 6.dp
-private val ConversationSwipeMaxRevealRatio = .58f
 
 /**
  * 从右往左划开会话行，右侧露出动作抽屉。
@@ -113,102 +93,8 @@ internal fun ConversationSwipeRowCard(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    if (actions.isEmpty()) {
-        Box(modifier) { content() }
-        return
-    }
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        val density = LocalDensity.current
-        val gapPx = with(density) { ConversationSwipeActionGap.toPx() }
-        val desiredPx = with(density) { (ConversationSwipeActionWidth * actions.size + ConversationSwipeActionGap * (actions.size - 1)).toPx() }
-        val revealWidthPx = minOf(desiredPx, with(density) { maxWidth.toPx() } * ConversationSwipeMaxRevealRatio)
-        val actionWidth = with(density) { ((revealWidthPx - gapPx * (actions.size - 1)) / actions.size).toDp() }
-        val offset = remember { Animatable(0f) }
-        val scope = rememberCoroutineScope()
-        val latestOnRevealedChange = rememberUpdatedState(onRevealedChange)
-        val reduceMotion = reduceMotionEnabled()
-
-        suspend fun settle(target: Float) {
-            if (reduceMotion) offset.snapTo(target) else offset.animateTo(target, WandMotion.tweenFast())
-        }
-
-        // 别的行被划开、或动作已落地时，本行同步回位。
-        LaunchedEffect(revealed, revealWidthPx) { settle(if (revealed) -revealWidthPx else 0f) }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .draggable(
-                    orientation = Orientation.Horizontal,
-                    state = rememberDraggableState { delta ->
-                        scope.launch { offset.snapTo((offset.value + delta).coerceIn(-revealWidthPx, 0f)) }
-                    },
-                    onDragStopped = { velocity ->
-                        val open = boardTaskSwipeShouldReveal(offset.value, revealWidthPx, velocity)
-                        latestOnRevealedChange.value(open)
-                        settle(if (open) -revealWidthPx else 0f)
-                    },
-                ),
-        ) {
-            Row(
-                modifier = Modifier.matchParentSize(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ConversationSwipeActionGap, Alignment.End),
-            ) {
-                actions.forEach { action ->
-                    ConversationSwipeButton(
-                        action = action,
-                        width = actionWidth,
-                        onClick = {
-                            onAction(action)
-                            latestOnRevealedChange.value(false)
-                        },
-                    )
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset { IntOffset(offset.value.roundToInt(), 0) }
-                    .background(cardBackground),
-            ) {
-                content()
-                if (revealed) {
-                    val interaction = remember { MutableInteractionSource() }
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .clickable(interactionSource = interaction, indication = null) { latestOnRevealedChange.value(false) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConversationSwipeButton(action: ConversationSwipeAction, width: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
-    val label = conversationSwipeActionLabel(action)
-    Column(
-        modifier = Modifier
-            .width(width)
-            .fillMaxHeight()
-            .clip(WandShapes.md)
-            .background(conversationSwipeActionColor(action))
-            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
-            .padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(conversationSwipeActionIcon(action), contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-        Text(
-            label,
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-    }
+    HomeActionSwipeCard(actions.map { action ->
+        HomeRowAction(action.name, conversationSwipeActionLabel(action), conversationSwipeActionIcon(action),
+            conversationSwipeActionColor(action)) { onAction(action) }
+    }, revealed, onRevealedChange, cardBackground, modifier, content)
 }

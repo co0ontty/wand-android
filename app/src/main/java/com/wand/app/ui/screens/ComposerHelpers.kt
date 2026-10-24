@@ -17,6 +17,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -213,6 +214,20 @@ internal fun buildAttachmentPrompt(attachments: List<UploadedFile>, body: String
 
 private const val MAX_ATTACHMENT_BYTES = 10 * 1_024 * 1_024
 
+/** Uploaded and local draft attachments share one bounded horizontal viewport. */
+@Composable
+internal fun ComposerAttachmentStrip(
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        content = content,
+    )
+}
+
 @Composable
 internal fun PendingAttachmentsPreview(
     attachments: List<UploadedFile>,
@@ -223,13 +238,7 @@ internal fun PendingAttachmentsPreview(
     if (attachments.isEmpty()) return
     // 暂存图片同属一组，全屏后左右滑动切换（对齐 iOS PendingAttachmentsPreview）。
     val imagePaths = attachments.map { it.savedPath }.filter { WandImage.isImagePath(it) }
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Top,
-        modifier = modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-    ) {
+    ComposerAttachmentStrip(modifier) {
         attachments.forEach { file ->
             Box {
                 if (baseUrl.isNotBlank() && WandImage.isImagePath(file.savedPath)) {

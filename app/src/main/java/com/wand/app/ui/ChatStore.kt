@@ -73,6 +73,15 @@ internal fun canChangeBlankConversationDirectory(snapshot: SessionSnapshot?, mes
     canSwitchBlankConversationProvider(snapshot, messageTotal) && snapshot != null &&
         snapshot.workspaceTaskId.isNullOrBlank() && !snapshot.directoryLocked
 
+/** Only an authoritative queue payload supersedes a pending queue receipt. */
+internal fun SessionEvent.updatesQueue(): Boolean = when (this) {
+    is SessionEvent.Initialized -> true
+    is SessionEvent.Output -> changes.queuedMessages != null
+    is SessionEvent.StatusChanged -> changes.queuedMessages != null
+    is SessionEvent.Ended -> changes.queuedMessages != null
+    else -> false
+}
+
 class ChatStore(
     val sessionId: String,
     val api: WandApi,
@@ -303,6 +312,7 @@ class ChatStore(
     // MARK: - 推送合流
 
     private fun apply(snap: SessionSnapshot) {
+        queueRealtimeRevision += 1
         applyRealtimeState(
             ChatSessionEventReducer.applySnapshot(
                 current = realtimeState(),
@@ -321,7 +331,7 @@ class ChatStore(
 
     private fun handle(event: SessionEvent) {
         if (event.sessionId != null && event.sessionId != sessionId) return
-        queueRealtimeRevision += 1
+        if (event.updatesQueue()) queueRealtimeRevision += 1
         if (event is SessionEvent.Initialized || event is SessionEvent.Output ||
             event is SessionEvent.StatusChanged || event is SessionEvent.Ended) snapshotRealtimeRevision += 1
         if (event is SessionEvent.Initialized) loadError = null

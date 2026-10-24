@@ -352,7 +352,7 @@ fun SiliconEmployeeEditorScreen(
                                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                             )
                             Text(
-                                "仅保留标题生成等系统辅助功能的最新 N 条已结束记录，保存后永久清理超出部分。留空不限，0 不保留。任务派发、agent 间调用（含决策）、手动聊天与运行中会话不计入，也不会清理。",
+                                "0–10000，留空不限，0 不保留。仅保留标题生成等系统辅助功能的最新 N 条已结束记录，保存后永久清理超出部分。任务派发、agent 间调用（含决策）、手动聊天与运行中会话不计入，也不会清理。",
                                 color = WandColors.textMuted, style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.padding(top = 4.dp),
                             )

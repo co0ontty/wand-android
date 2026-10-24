@@ -108,7 +108,9 @@ class TeamChatV2ResumeTest {
         assertTrue(markdown.contains("fun MarkdownText(text: String, inlineDecoration: InlineMarkdownDecoration? = LocalMarkdownInlineDecoration.current)"))
         assertTrue(markdown.contains("remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler, inlineDecoration)"))
         assertEquals("段落、标题、列表、引用各一处", 4,
-            Regex("inlineMarkdown\\(block\\.text, inlineDecoration\\)").findAll(markdown).count())
+            Regex("block\\.text, inlineDecoration = inlineDecoration,").findAll(markdown).count())
+        assertTrue(markdown.contains("private fun MarkdownInlineContent("))
+        assertTrue(markdown.contains("inlineMarkdown(piece.text.trim('\\n', '\\r'), inlineDecoration)"))
         assertTrue(markdown.contains("MarkdownTable(block.headers, block.rows, inlineDecoration)"))
         assertTrue(markdown.contains("inlineMarkdown(cell, inlineDecoration)"))
         assertTrue(markdown.contains("is MarkdownBlock.Code -> MarkdownCodeBlock(block, subtleInset)"))

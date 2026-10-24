@@ -28,6 +28,7 @@ import com.wand.app.ui.components.WandCapsuleTitle
 import com.wand.app.ui.components.AvatarFileActivity
 import com.wand.app.ui.sessionCwdLeaf
 import com.wand.app.ui.theme.WandColors
+import com.wand.app.ui.theme.GlassBackdrop
 
 /**
  * 会话顶栏身份：主标题优先任务名，没有归属任务（独立会话）时回落会话标题；小字为
@@ -94,6 +95,7 @@ internal fun ChatTopIdentityBar(
     avatar: String? = null,
     fileActivity: AvatarFileActivity = AvatarFileActivity.Idle,
     thinking: Boolean = false,
+    backdrop: GlassBackdrop? = null,
 ) {
     val dotColor = when (attention) {
         ChatTopAttention.Quiet -> null
@@ -129,6 +131,7 @@ internal fun ChatTopIdentityBar(
                 avatar = avatar,
                 fileActivity = fileActivity,
                 thinking = thinking,
+                backdrop = backdrop,
             )
         }
     }
