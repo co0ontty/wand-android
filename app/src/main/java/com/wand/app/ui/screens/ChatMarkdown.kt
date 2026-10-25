@@ -527,6 +527,7 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
     var pendingExternalLink by remember { mutableStateOf<String?>(null) }
+    var externalLinkError by remember { mutableStateOf<String?>(null) }
     var serverFilePreview by remember { mutableStateOf<String?>(null) }
     // 未识别的服务端文件（图片/文本以外）统一走「先下载再交给系统打开」这一条路。
     fun openServerFile(path: String) {
@@ -552,7 +553,7 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
                 )),
                 linkInteractionListener = { link ->
                     (link as? LinkAnnotation.Url)?.url?.let { target ->
-                        val serverPath = WandServerFileLink.serverPath(target)
+                        val serverPath = WandServerFileLink.downloadPath(target, baseUrl)
                         if (serverPath != null && baseUrl.isNotBlank()) {
                             if (WandImage.isImagePath(serverPath) || WandTextPreview.isPreviewableText(serverPath)) {
                                 serverFilePreview = serverPath
@@ -560,6 +561,7 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
                                 openServerFile(serverPath)
                             }
                         } else {
+                            externalLinkError = null
                             pendingExternalLink = target
                         }
                     }
@@ -576,8 +578,11 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
             confirm = WandDialogAction(
                 label = "打开浏览器",
                 onClick = {
-                    pendingExternalLink = null
-                    if (target.isNotBlank()) runCatching { uriHandler.openUri(target) }
+                    if (target.isNotBlank()) {
+                        runCatching { uriHandler.openUri(target) }
+                            .onSuccess { pendingExternalLink = null }
+                            .onFailure { externalLinkError = "系统未能打开此链接，请复制到浏览器重试。服务器下载链接需要在浏览器中单独登录。" }
+                    }
                 },
             ),
             dismiss = WandDialogAction("取消", { pendingExternalLink = null }),
@@ -589,6 +594,9 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
+            externalLinkError?.let { message ->
+                Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 

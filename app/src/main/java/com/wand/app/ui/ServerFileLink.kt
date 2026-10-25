@@ -61,6 +61,30 @@ object WandServerFileLink {
         return value.takeIf { it.startsWith("/") }
     }
 
+    /** File URLs from the active endpoint use its authenticated downloader, never browser cookies.
+     * Different hosts/ports/base paths are not implicitly trusted aliases.
+     */
+    fun downloadPath(target: String, baseUrl: String): String? {
+        serverPath(target)?.let { return it }
+        if (baseUrl.isBlank()) return null
+        return runCatching {
+            val uri = URI(target)
+            val base = URI(WandHttp.normalizeBaseUrl(baseUrl))
+            if (uri.rawUserInfo != null) return null
+            if (uri.scheme == null) {
+                if (uri.host != null || !target.startsWith("/api/file-raw?") || uri.rawPath != "/api/file-raw") return null
+            } else {
+                if (!WandHttp.isSameOrigin(target, baseUrl) || uri.rawPath != base.rawPath.trimEnd('/') + "/api/file-raw") return null
+            }
+            val paths = uri.rawQuery.orEmpty().split('&').map { it.split('=', limit = 2) }
+                .filter { URLDecoder.decode(it[0], StandardCharsets.UTF_8.name()) == "path" }
+            if (paths.size != 1 || paths[0].size != 2) return null
+            // Decode exactly once, retaining literal percent characters in filenames.
+            val path = URLDecoder.decode(paths[0][1], StandardCharsets.UTF_8.name())
+            path.takeIf { it.startsWith('/') && !it.startsWith("//") && it.none { ch -> ch.isISOControl() } }
+        }.getOrNull()
+    }
+
     /** Download only: the caller presents in-place status, without launching an external app or a Toast. */
     suspend fun download(context: Context, baseUrl: String, serverPath: String, token: String? = null): String =
         downloadToDownloads(context, baseUrl, serverPath, token).fileName
