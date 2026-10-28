@@ -24,13 +24,15 @@ class PiResourcesControllerTest {
         val automaticSaves = mutableListOf<Pair<String, Boolean>>()
         val skillSaves = mutableListOf<Pair<String, PiSkillSelectionAck>>()
         var pendingSkill: CompletableDeferred<PiSkillSelectionAck>? = null
+        var skillAck: ((PiSkillSelectionAck) -> PiSkillSelectionAck)? = null
         override suspend fun setPiSkillSelection(id: String, selection: PiSkillSelectionAck): PiSkillSelectionAck {
             skillSaves += id to selection
             pendingSkill?.let { return withContext(NonCancellable) { it.await() } }
             if (failure) throw Exception("保存失败")
             if (wrongAck) return selection.copy(lockedSkills = emptyList())
-            response = response.copy(selection = selection.selection, lockedSkills = selection.lockedSkills)
-            return selection
+            val saved = skillAck?.invoke(selection) ?: selection
+            response = response.copy(selection = saved.selection, lockedSkills = saved.lockedSkills)
+            return saved
         }
         override suspend fun setPiAutoResources(id: String, enabled: Boolean): PiAutoResourcesAck {
             automaticSaves += id to enabled
@@ -220,6 +222,66 @@ class PiResourcesControllerTest {
         val old = PiResourcesController("b", oldPort, this)
         old.toggle(); runCurrent(); old.setSkillMode("skill-a", PiSkillMode.Locked); runCurrent()
         assertTrue(oldPort.skillSaves.isEmpty()); old.dismiss()
+    }
+    @Test fun unlockingRemovedSkillClearsItsSelectionAndLockWithoutChangingOtherResources() = runTest {
+        val port = Port(first.copy(skillLocksAvailable = true,
+            selection = PiResourceSelection(listOf("skill-a", "skill-removed"), listOf("mcp-b")),
+            lockedSkills = listOf("skill-a", "skill-removed")))
+        val controller = PiResourcesController("a", port, this)
+        controller.toggle(); runCurrent()
+        controller.setSkillMode("skill-removed", PiSkillMode.On); runCurrent()
+        val expected = PiSkillSelectionAck(PiResourceSelection(listOf("skill-a"), listOf("mcp-b")), listOf("skill-a"))
+        assertEquals(expected, port.skillSaves.single().second)
+        assertEquals("saved", controller.phase)
+        assertEquals(PiSkillMode.Off, controller.data?.skillMode("skill-removed"))
+        controller.dismiss(); controller.toggle(); runCurrent()
+        assertEquals(expected.selection, controller.data?.selection)
+        assertEquals(expected.lockedSkills, controller.data?.lockedSkills)
+        controller.dismiss()
+    }
+    @Test fun serverCanClearOnlyTheUnlockedSkillWhenItWasUninstalledAfterThePanelLoaded() = runTest {
+        val port = Port(first.copy(skillLocksAvailable = true,
+            selection = PiResourceSelection(listOf("skill-a", "skill-b"), listOf("mcp-c")),
+            lockedSkills = listOf("skill-a", "skill-b")))
+        port.skillAck = { submitted -> submitted.copy(selection = submitted.selection.copy(
+            skills = submitted.selection.skills.filterNot { it == "skill-a" })) }
+        val controller = PiResourcesController("a", port, this)
+        controller.toggle(); runCurrent()
+        controller.setSkillMode("skill-a", PiSkillMode.On); runCurrent()
+        assertTrue("skill-a" in port.skillSaves.single().second.selection.skills)
+        assertEquals("saved", controller.phase)
+        assertEquals(PiResourceSelection(listOf("skill-b"), listOf("mcp-c")), controller.data?.selection)
+        assertEquals(listOf("skill-b"), controller.data?.lockedSkills)
+        assertEquals(PiSkillMode.Off, controller.data?.skillMode("skill-a"))
+        controller.dismiss(); controller.toggle(); runCurrent()
+        assertEquals(PiSkillMode.Off, controller.data?.skillMode("skill-a"))
+        controller.dismiss()
+    }
+    @Test fun normalizedUnlockAckCannotAddOrRemoveOtherResourcesOrChangeLocks() = runTest {
+        val initial = first.copy(skillLocksAvailable = true,
+            selection = PiResourceSelection(listOf("skill-a", "skill-b"), listOf("mcp-c", "mcp-d")),
+            lockedSkills = listOf("skill-a", "skill-b"))
+        val submitted = initial.withSkillMode("skill-a", PiSkillMode.On)
+        val invalid = listOf(
+            submitted.copy(selection = submitted.selection.copy(skills = listOf("skill-a", "skill-b", "skill-c"))),
+            submitted.copy(selection = submitted.selection.copy(skills = listOf("skill-a"))),
+            submitted.copy(selection = submitted.selection.copy(skills = emptyList())),
+            submitted.copy(selection = submitted.selection.copy(skills = listOf("skill-b", "skill-a"))),
+            submitted.copy(selection = submitted.selection.copy(mcpServers = listOf("mcp-d", "mcp-c"))),
+            submitted.copy(selection = submitted.selection.copy(mcpServers = emptyList())),
+            submitted.copy(lockedSkills = emptyList()),
+        )
+        for (ack in invalid) {
+            val port = Port(initial).apply { skillAck = { ack } }
+            val controller = PiResourcesController("a", port, this)
+            controller.toggle(); runCurrent()
+            controller.setSkillMode("skill-a", PiSkillMode.On); runCurrent()
+            assertEquals("failed", controller.phase)
+            assertTrue(controller.message.contains("未确认"))
+            assertEquals(initial.selection, controller.data?.selection)
+            assertEquals(initial.lockedSkills, controller.data?.lockedSkills)
+            controller.dismiss()
+        }
     }
     @Test fun lateSkillSaveCannotReopenOrOverwriteAnotherSessionAndBusyDoesNotDoubleSave() = runTest {
         val port = Port(first.copy(skillLocksAvailable = true))

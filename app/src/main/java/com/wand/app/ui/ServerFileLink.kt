@@ -14,7 +14,10 @@ import com.wand.app.data.WandHttp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.IOException
 import java.net.URI
 import java.net.URLDecoder
@@ -57,7 +60,6 @@ object WandServerFileLink {
             value = decodePercentPath(value)
         }
 
-        value = value.replace(COLON_LINE_SUFFIX, "")
         return value.takeIf { it.startsWith("/") }
     }
 
@@ -89,31 +91,68 @@ object WandServerFileLink {
     suspend fun download(context: Context, baseUrl: String, serverPath: String, token: String? = null): String =
         downloadToDownloads(context, baseUrl, serverPath, token).fileName
 
+    /** Only classify the editor suffix here; the real filename is always requested first. */
+    fun previewTypePath(serverPath: String): String = serverPath.replace(COLON_LINE_SUFFIX, "")
+
+    /** Preserve in-app text/image preview for editor links, including older servers. */
+    suspend fun resolvePreviewPath(baseUrl: String, serverPath: String): String {
+        if (previewTypePath(serverPath) == serverPath) return serverPath
+        return withContext(Dispatchers.IO) {
+            val result = requestFile(baseUrl, serverPath, method = "HEAD")
+            result.response.use { response ->
+                if (!response.isSuccessful) throw IllegalStateException("服务端返回 HTTP ${response.code}")
+                result.path
+            }
+        }
+    }
+
+    internal data class FileResponse(val path: String, val response: Response)
+
+    /** A numeric colon suffix can be a real filename. Retry only a missing/non-file path. */
+    internal suspend fun requestFile(
+        baseUrl: String, serverPath: String, method: String = "GET", token: String? = null,
+        client: OkHttpClient = WandHttp.clientFor(baseUrl),
+    ): FileResponse {
+        val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
+        val stripped = previewTypePath(serverPath)
+        val candidates = if (stripped == serverPath) listOf(serverPath) else listOf(serverPath, stripped)
+        for ((index, candidate) in candidates.withIndex()) {
+            coroutineContext.ensureActive()
+            val url = "$endpoint/api/file-raw".toHttpUrl().newBuilder()
+                .addQueryParameter("download", "1")
+                .addQueryParameter("path", candidate)
+                .build()
+            val request = Request.Builder().url(url).method(method, null).build()
+            val first = client.newCall(request).execute()
+            val response = if (first.code == 401 && !token.isNullOrBlank()) {
+                first.close()
+                WandAuth.loginWithToken(endpoint, token, client)
+                client.newCall(request).execute()
+            } else first
+            if ((response.code == 400 || response.code == 404) && index + 1 < candidates.size) {
+                response.close()
+                continue
+            }
+            return FileResponse(candidate, response)
+        }
+        error("没有可下载的文件路径")
+    }
+
     private suspend fun downloadToDownloads(
         context: Context, baseUrl: String, serverPath: String, token: String? = null,
     ): DownloadedFile = withContext(Dispatchers.IO) {
-        val endpoint = WandHttp.normalizeBaseUrl(baseUrl)
-        val url = Uri.parse("$endpoint/api/file-raw")
-            .buildUpon()
-            .appendQueryParameter("download", "1")
-            .appendQueryParameter("path", serverPath)
-            .build()
-            .toString()
-        val request = Request.Builder().url(url).get().build()
+        val result = requestFile(baseUrl, serverPath, token = token)
+        saveDownload(context, result.response, result.path)
+    }
 
-        val client = WandHttp.clientFor(endpoint)
-        val first = client.newCall(request).execute()
-        val authenticated = if (first.code == 401 && !token.isNullOrBlank()) {
-            first.close()
-            WandAuth.loginWithToken(endpoint, token, client)
-            client.newCall(request).execute()
-        } else first
-        authenticated.use { response ->
+    private suspend fun saveDownload(context: Context, response: Response, fallbackPath: String): DownloadedFile =
+        withContext(Dispatchers.IO) {
+        response.use {
             if (!response.isSuccessful) {
                 throw IllegalStateException("服务端返回 HTTP ${response.code}")
             }
             val body = response.body ?: throw IllegalStateException("服务端没有返回文件内容")
-            val fileName = safeFileName(serverPath.substringAfterLast('/'))
+            val fileName = safeFileName(downloadFileName(response, fallbackPath))
             val mime = resolveMimeType(fileName, response.header("Content-Type"))
             val resolver = context.contentResolver
             val values = ContentValues().apply {
@@ -155,6 +194,27 @@ object WandServerFileLink {
     /** Downloads into the public Downloads/Wand folder, then opens it when an app supports the MIME type. */
     suspend fun downloadAndOpen(context: Context, baseUrl: String, serverPath: String) {
         val downloaded = downloadToDownloads(context, baseUrl, serverPath)
+        openDownloaded(context, downloaded)
+    }
+
+    /** Metadata preview limits must never remove the explicit full-file download path. */
+    suspend fun downloadTargetAndOpen(context: Context, baseUrl: String, target: MessageLinkTarget.File) {
+        val downloaded = withContext(Dispatchers.IO) {
+            saveDownload(context, WandMessageLinkTransport.request(baseUrl, target.downloadUrl), target.path)
+        }
+        openDownloaded(context, downloaded)
+    }
+
+    suspend fun downloadPreviewAndOpen(context: Context, baseUrl: String, url: String) {
+        val downloaded = withContext(Dispatchers.IO) {
+            val response = WandMessageLinkTransport.requestPreviewFile(baseUrl, url)
+            val name = response.request.url.pathSegments.lastOrNull()?.takeIf { it.isNotBlank() } ?: "wand-file"
+            saveDownload(context, response, name)
+        }
+        openDownloaded(context, downloaded)
+    }
+
+    private suspend fun openDownloaded(context: Context, downloaded: DownloadedFile) {
         withContext(Dispatchers.Main) {
             val openMime = downloaded.mime.takeUnless { it == "application/octet-stream" } ?: "*/*"
             val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -180,6 +240,14 @@ object WandServerFileLink {
     private fun safeFileName(value: String): String {
         val cleaned = value.replace(UNSAFE_FILE_NAME, "_").trim().take(180)
         return cleaned.takeUnless { it.isEmpty() || it == "." || it == ".." } ?: "wand-file"
+    }
+
+    internal fun downloadFileName(response: Response, fallbackPath: String): String {
+        // The server may itself resolve an editor suffix; its UTF-8 filename is authoritative.
+        val encoded = Regex("(?:^|;)\\s*filename\\*\\s*=\\s*UTF-8''([^;]+)", RegexOption.IGNORE_CASE)
+            .find(response.header("Content-Disposition").orEmpty())?.groupValues?.get(1)
+        return encoded?.let { decodePercentPath(it.trim()) }?.takeIf { it.isNotEmpty() }
+            ?: fallbackPath.substringAfterLast('/')
     }
 
     private fun resolveMimeType(fileName: String, responseType: String?): String {

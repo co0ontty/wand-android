@@ -28,7 +28,7 @@ class PiAutomaticConfigurationTest {
 
     @Test fun skillLocksAndAtomicAckRequireRealServerConfirmation() {
         val json = JSONObject("""{"settings":{"resources":{"skills":["skill-a"],"mcpServers":["mcp-b"]},
-          "lockedSkills":["skill-a"]},"resourceCatalog":{"supported":true},"skillLocksAvailable":true}""")
+          "lockedSkills":["skill-a"]},"resourceCatalog":{"supported":true,"skills":[{"id":"skill-a","name":"skill-a"}]},"skillLocksAvailable":true}""")
         val response = PiResourcesResponse.parse(json)
         assertTrue(response.skillLocksAvailable)
         assertEquals(PiSkillMode.Locked, response.skillMode("skill-a"))
@@ -42,6 +42,23 @@ class PiAutomaticConfigurationTest {
         assertNull(PiSkillSelectionAck.parse(JSONObject("""{"resources":{"skills":[],"mcpServers":[]},"lockedSkills":[42]}""")))
         assertNull(PiSkillSelectionAck.parse(JSONObject("""{"resources":{"skills":[],"mcpServers":[]},"lockedSkills":["a","a"]}""")))
         assertFalse(PiResourcesResponse.parse(JSONObject("""{"settings":{}}""")).skillLocksAvailable)
+    }
+
+    @Test fun malformedSkillAckCannotHideChangedResourcesThroughParsing() {
+        for (resources in listOf(
+            """{"skills":["skill-a","skill-a"],"mcpServers":[]}""",
+            """{"skills":[42],"mcpServers":[]}""",
+            """{"skills":[""],"mcpServers":[]}""",
+            """{"skills":[],"mcpServers":["mcp-a","mcp-a"]}""",
+            """{"skills":[],"mcpServers":[false]}""",
+            """{"skills":[],"mcpServers":"mcp-a"}""",
+            """{"skills":[]}""",
+        )) {
+            assertNull(PiSkillSelectionAck.parse(JSONObject("""{"resources":$resources,"lockedSkills":[]}""")))
+        }
+        val oversized = org.json.JSONArray((1..65).map { "skill-$it" })
+        assertNull(PiSkillSelectionAck.parse(JSONObject().put("resources", JSONObject()
+            .put("skills", oversized).put("mcpServers", org.json.JSONArray())).put("lockedSkills", org.json.JSONArray())))
     }
 
     @Test fun conversationTurnParsesBoundedServerLabelAndDoesNotConstructAChoiceFromToolOutput() {

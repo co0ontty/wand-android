@@ -19,18 +19,19 @@ class HomeMenuPillTest {
         assertFalse(navigation.contains("Animatable"))
     }
 
-    @Test fun itemsPutChatAndPeopleBeforeWorkTools() {
-        assertEquals(listOf("聊天", "通讯录", "工作区", "任务"), HomeMenuPillItem.entries.map { it.label })
-        assertEquals(listOf("打开聊天", "打开通讯录", "打开工作区", "打开任务面板"),
+    @Test fun itemsKeepContactsOutOfHomeNavigation() {
+        assertEquals(listOf("聊天", "工作区", "知识库", "任务"), HomeMenuPillItem.entries.map { it.label })
+        assertEquals(listOf("打开聊天", "打开工作区", "打开知识库", "打开任务面板"),
             HomeMenuPillItem.entries.map { it.description })
     }
 
     @Test fun selectionFollowsModesAfterChangingDisplayOrder() {
-        // 四项都是根壳里的页签，通讯录不再是一个「点了就跳走」的按钮。
+        // 通讯录不占根导航位置，进入次级目录时不误选其他页签。
         assertEquals(HomeMenuPillItem.Chats.ordinal, homeMenuPillSelection(HomeListMode.Sessions))
         assertEquals(HomeMenuPillItem.Tasks.ordinal, homeMenuPillSelection(HomeListMode.Tasks))
         assertEquals(HomeMenuPillItem.Im.ordinal, homeMenuPillSelection(HomeListMode.Im))
-        assertEquals(HomeMenuPillItem.Contacts.ordinal, homeMenuPillSelection(HomeListMode.Contacts))
+        assertEquals(-1, homeMenuPillSelection(HomeListMode.Contacts))
+        assertEquals(HomeMenuPillItem.Knowledge.ordinal, homeMenuPillSelection(HomeListMode.Knowledge))
     }
 
     @Test fun phoneAndTabletRetainTheSameNavigationAndDirectoryReturnPath() {

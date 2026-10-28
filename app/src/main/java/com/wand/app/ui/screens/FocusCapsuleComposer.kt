@@ -50,6 +50,7 @@ internal fun FocusCapsuleComposer(
     actionCount: Int = 0,
     accessory: @Composable () -> Unit = {},
     onWritingSurfaceHeightChange: (Int) -> Unit = {},
+    placeholder: String = "发消息…",
 ) {
     var state by remember(sessionKey) { mutableStateOf(MinimalComposerState()) }
     var focusRevision by remember(sessionKey) { mutableIntStateOf(0) }
@@ -140,7 +141,7 @@ internal fun FocusCapsuleComposer(
                         attachments, baseUrl, onRemoveAttachment, Modifier.padding(8.dp))
                     // Keep the original field mounted, including selection and IME composition.
                     Box(if (expanded) Modifier else Modifier.height(0.dp).clipToBounds().clearAndSetSemantics { }) {
-                        ComposerInputField(draft, { state = state.edit(); onDraftChange(it) }, "发消息…", focused,
+                        ComposerInputField(draft, { state = state.edit(); onDraftChange(it) }, placeholder, focused,
                             { focused = it }, requester, expanded = true, framed = false, showClearAction = false,
                             modifier = Modifier.focusProperties { canFocus = expanded },
                             maxLines = 4, maxHeight = 112.dp,
@@ -154,7 +155,7 @@ internal fun FocusCapsuleComposer(
                             onAttachOpenChange = { state = state.edit(); onAttachOpenChange(it) })
                         }, controls = { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = controls) },
                         entry = { Text(
-                            when { attachments.isNotEmpty() -> "草稿 · ${attachments.size} 附件"; draft.isNotEmpty() -> "草稿 · ${draft.length} 字"; else -> "发消息…" },
+                            when { attachments.isNotEmpty() -> "草稿 · ${attachments.size} 附件"; draft.isNotEmpty() -> "草稿 · ${draft.length} 字"; else -> placeholder },
                             Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = "展开键盘输入", onClick = edit)
                                 .padding(start = 8.dp, end = 12.dp).wrapContentHeight(Alignment.CenterVertically),
                             color = WandColors.textSecondary, style = MaterialTheme.typography.bodyLarge,

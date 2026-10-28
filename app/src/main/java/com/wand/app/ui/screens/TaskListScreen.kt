@@ -138,6 +138,7 @@ fun TaskListScreen(
      * 不是任务树，两个端口虽然由同一个 WandApi 实现，但不必在这里合并成一个宽接口。
      */
     directoryApi: WandApi? = null,
+    knowledgeController: com.wand.app.ui.KnowledgeController? = null,
     directoryConversations: com.wand.app.ui.ConversationStore? = null,
     onOpenConversation: (String) -> Unit = {},
     serverDisplayName: String,
@@ -262,10 +263,6 @@ fun TaskListScreen(
     // 内容不由投影删减：一级行（员工、工作区）永远留着，卡片按区档位决定露哪几行。
     val searchedGroups = searchHomeGroups(allGroups, workspaceQuery, contactsEmployees)
     val visibleGroups = if (attentionOnly) attentionOnlyGroups(searchedGroups) else searchedGroups
-    val recentGroups = searchHomeRecentGroups(recentHomeGroups(
-        recentHomeConversations(allGroups, limit = Int.MAX_VALUE), contactsEmployees,
-        limit = Int.MAX_VALUE,
-    ), workspaceQuery, contactsEmployees, attentionOnly)
     val contactConversations = recentHomeConversations(allGroups, limit = Int.MAX_VALUE)
 
     /** 某个区的档位：在跑档同时让开「只看等你」（两道筛选互斥），并清掉列表多选态。 */
@@ -285,7 +282,9 @@ fun TaskListScreen(
         selecting = false
         selectedTaskIds = emptySet()
         selectedSessionIds = emptySet()
-        onHomeListModeChange(mode)
+        if (homeListMode == HomeListMode.Knowledge && knowledgeController != null) {
+            knowledgeController.guard { onHomeListModeChange(mode) }
+        } else onHomeListModeChange(mode)
     }
     fun createRecentTerminal(group: HomeGroup, target: WorkspaceSessionTarget) {
         if (!interactionEnabled || selecting || newTaskOpen || recentCreationBusy() ||
@@ -464,10 +463,10 @@ fun TaskListScreen(
     }
 
     LaunchedEffect(state.newTaskRequest) {
-        if (state.consumeNewTaskRequest()) beginNewTask()
+        if (state.consumeNewTaskRequest()) onNewConversation(null, null, null, null, null, true)
     }
     LaunchedEffect(state.newSessionRequest) {
-        if (state.consumeNewSessionRequest()) onNewConversation(null, null, null, null, null, false)
+        if (state.consumeNewSessionRequest()) onNewConversation(null, null, null, null, null, true)
     }
     // 每次打开对话框拉一次团队；失败回落空列表 = 不显示团队区，绝不挡新建任务本身。
     // 不进 30s/轮询环：团队定义只在 Web 端编辑，频率对不上。
@@ -1168,7 +1167,7 @@ fun TaskListScreen(
 
     // 通讯录自带顶栏（搜索框就在页头），IM 列表在 conversationList 非空时也自带；
     // 这两种情况不叠根壳的 HomeTopBar。
-    val modeOwnsTopBar = homeListMode == HomeListMode.Contacts ||
+    val modeOwnsTopBar = homeListMode == HomeListMode.Knowledge || homeListMode == HomeListMode.Contacts ||
         (homeListMode == HomeListMode.Im && conversationList != null)
     CompositionLocalProvider(LocalHomeSwipeOwner provides homeSwipeOwner) {
     Column(
@@ -1179,7 +1178,7 @@ fun TaskListScreen(
             // here so the dashboard chrome never sits underneath the clock/camera cutout.
             .statusBarsPadding()
             .navigationBarsPadding()
-            .then(if (homeListMode == HomeListMode.Im) Modifier.imePadding() else Modifier),
+            .then(if (homeListMode == HomeListMode.Im || homeListMode == HomeListMode.Knowledge) Modifier.imePadding() else Modifier),
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Column(Modifier.fillMaxSize().glassBackdropSource(homeBackdrop)) {
@@ -1209,7 +1208,7 @@ fun TaskListScreen(
                 }
                 // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
                 // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
-                if (homeListMode != HomeListMode.Im && homeListMode != HomeListMode.Contacts &&
+                if (homeListMode != HomeListMode.Knowledge && homeListMode != HomeListMode.Im && homeListMode != HomeListMode.Contacts &&
                     homeActivityStripVisible(showingBoard, activityStats)
                 ) {
                     HomeActivityStrip(
@@ -1261,6 +1260,10 @@ fun TaskListScreen(
                             bottomClearance = menuClearance,
                         )
                     }
+                } else if (projection == HomeListMode.Knowledge.storageValue) {
+                    if (knowledgeController == null) LoadingState(modifier = Modifier.fillMaxSize(), text = "正在打开知识库…")
+                    else KnowledgeScreen(knowledgeController, bottomClearance = menuClearance, serverDisplayName = serverDisplayName,
+                        onOpenSettings = onOpenSettings, onSwitchServer = onSwitchServer)
                 } else if (projection == HomeListMode.Contacts.storageValue) {
                     // 通讯录与工作区/任务共享同一张列表壳：底栏、系统栏、清屏都在这里，
                     // 内容自己只管页头与名单。
@@ -1374,95 +1377,12 @@ fun TaskListScreen(
                             // 独立圆角表面之间留出背景缝隙；卡片内部仍由各自的行布局管理。
                             verticalArrangement = Arrangement.spacedBy(WandSpacing.xs),
                         ) {
-                        if (workspaceQuery.isNotBlank() && visibleGroups.isEmpty() && recentGroups.isEmpty()) {
+                        if (workspaceQuery.isNotBlank() && visibleGroups.isEmpty()) {
                             item(key = "workspace-search-empty") {
                                 Text("没有匹配的会话，试试员工名、任务名或目录。",
                                     color = WandColors.textMuted,
                                     modifier = Modifier.padding(vertical = 12.dp))
                             }
-                        }
-                        item(key = "recent-conversation-header") {
-                            HomeSectionHeaderRow(
-                                title = "最近对话",
-                                emphasized = true,
-                                fold = recentFold,
-                                onSelectFold = { mode -> selectSectionFold(FOLD_SECTION_RECENT, mode) },
-                            )
-                        }
-                        // 按一级归属（员工/团队/PTY 终端/空白终端）分组成卡片：
-                        // 身份头始终保留，具体会话放在二级。
-                        items(recentGroups, key = { "recent:${it.key}" }) { group ->
-                            val employee = homeGroupAssignableEmployee(group, contactsEmployees)
-                            val terminal = recentTerminals[group.key]
-                            val binding = homeGroupConversationBinding(group)
-                            HomeGroupCard(
-                                group = group,
-                                employees = contactsEmployees,
-                                fold = if (workspaceQuery.isNotBlank()) HomeFoldMode.Expand else state.groupFold(FOLD_SECTION_RECENT, group.key),
-                                onToggleFold = if (recentFold == HomeFoldMode.Expand) null else ({
-                                    invalidateRecentConversationOpening()
-                                    state.toggleTemporaryExpansion(FOLD_SECTION_RECENT, group.key)
-                                }),
-                                nowMillis = nowMillis,
-                                selectedSessionId = selectedSessionId,
-                                selecting = selecting,
-                                selectedSessionIds = selectedSessionIds,
-                                onToggleManaged = { sessionId -> selectedSessionIds =
-                                    if (sessionId in selectedSessionIds) selectedSessionIds - sessionId
-                                    else selectedSessionIds + sessionId },
-                                onEnterSelection = { sessionId ->
-                                    selecting = true
-                                    selectedTaskIds = emptySet()
-                                    selectedSessionIds = setOf(sessionId)
-                                },
-                                onOpenSession = { recent ->
-                                    invalidateRecentConversationOpening()
-                                    if (terminal?.creationUnconfirmed == true) {
-                                        recentTerminals.remove(group.key)
-                                    }
-                                    onOpenSession(taskSessionRoute(recent.session, recent.group,
-                                        recent.task))
-                                },
-                                onDelete = { session ->
-                                    invalidateRecentConversationOpening()
-                                    deleteSessionTarget = session
-                                    state.clearMutationError()
-                                },
-                                onMove = { invalidateRecentConversationOpening(); moveSessionTarget = it },
-                                conversationCreating = terminal?.busy == true,
-                                conversationCreated = terminal?.snapshot != null,
-                                conversationError = terminal?.error,
-                                conversationEnabled = interactionEnabled && !newTaskOpen &&
-                                    (group.kind.isTerminal || (employee != null && binding != null)) &&
-                                    terminal?.creationUnconfirmed != true && !recentCreationBusy(),
-                                terminalMenuOpen = terminalMenuKey == group.key,
-                                onToggleTerminalMenu = {
-                                    val opening = terminalMenuKey != group.key
-                                    invalidateRecentConversationOpening()
-                                    terminalMenuKey = group.key.takeIf { opening }
-                                },
-                                onDismissTerminalMenu = { terminalMenuKey = null },
-                                onSelectTerminalTarget = { createRecentTerminal(group, it) },
-                                menuResetKey = recentConversationOpeningId,
-                                onCreateConversation = create@{
-                                    if (group.kind == HomeGroupKind.BlankTerminal) {
-                                        createRecentTerminal(group, WorkspaceSessionTarget.Shell)
-                                        return@create
-                                    }
-                                    if (!interactionEnabled || selecting || newTaskOpen || employee == null ||
-                                        binding == null || recentCreationBusy()) return@create
-                                    state.clearMutationError()
-                                    invalidateRecentConversationOpening()
-                                    onNewConversation(
-                                        binding.cwd,
-                                        binding.workspaceId,
-                                        null,
-                                        null,
-                                        employee.id,
-                                        false,
-                                    )
-                                },
-                            )
                         }
                         item(key = "workspace-tree-header") {
                             HomeSectionHeaderRow(
@@ -1604,7 +1524,7 @@ fun TaskListScreen(
                             HomeMenuPillItem.Chats -> selectHomeMode(HomeListMode.Sessions)
                             HomeMenuPillItem.Tasks -> selectHomeMode(HomeListMode.Tasks)
                             HomeMenuPillItem.Im -> selectHomeMode(HomeListMode.Im)
-                            HomeMenuPillItem.Contacts -> selectHomeMode(HomeListMode.Contacts)
+                            HomeMenuPillItem.Knowledge -> selectHomeMode(HomeListMode.Knowledge)
                         }
                     },
                     modifier = Modifier

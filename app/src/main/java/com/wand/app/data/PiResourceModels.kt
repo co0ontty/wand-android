@@ -40,10 +40,14 @@ data class PiResourcesResponse(
         id in lockedSkills -> PiSkillMode.Locked
         else -> PiSkillMode.On
     }
-    fun withSkillMode(id: String, mode: PiSkillMode): PiSkillSelectionAck = PiSkillSelectionAck(
-        (selection ?: PiResourceSelection()).toggle(PiResourceKind.Skill, id, mode != PiSkillMode.Off),
-        if (mode == PiSkillMode.Locked) (lockedSkills + id).distinct() else lockedSkills.filterNot { it == id },
-    )
+    fun withSkillMode(id: String, mode: PiSkillMode): PiSkillSelectionAck {
+        // Unlocking a removed Skill also clears its stale selection; installed Skills stay enabled.
+        val enabled = mode != PiSkillMode.Off && (mode != PiSkillMode.On || skills.any { it.id == id })
+        return PiSkillSelectionAck(
+            (selection ?: PiResourceSelection()).toggle(PiResourceKind.Skill, id, enabled),
+            if (mode == PiSkillMode.Locked) (lockedSkills + id).distinct() else lockedSkills.filterNot { it == id },
+        )
+    }
     companion object {
         fun parse(json: JSONObject): PiResourcesResponse {
             val catalog = json.optJSONObject("resourceCatalog")
@@ -77,14 +81,26 @@ data class PiAutoResourcesAck(val enabled: Boolean, val selection: PiResourceSel
 
 data class PiSkillSelectionAck(val selection: PiResourceSelection, val lockedSkills: List<String>) {
     fun toJson(): JSONObject = JSONObject().put("resources", selection.toJson()).put("lockedSkills", JSONArray(lockedSkills))
+    /** The server may discover an uninstall after this panel loaded, but may only narrow explicitly unlocked Skills. */
+    fun confirms(submitted: PiSkillSelectionAck, previousLocks: List<String>): Boolean {
+        if (lockedSkills != submitted.lockedSkills || selection.mcpServers != submitted.selection.mcpServers) return false
+        val unlocked = previousLocks.filterNot { it in submitted.lockedSkills }.toSet()
+        val removed = submitted.selection.skills.filterNot { it in selection.skills }.toSet()
+        return unlocked.containsAll(removed) && selection.skills == submitted.selection.skills.filterNot { it in removed }
+    }
     companion object {
         fun parse(settings: JSONObject?): PiSkillSelectionAck? {
-            val selection = PiResourceSelection.parse(settings?.optJSONObject("resources")) ?: return null
-            val locks = settings?.optJSONArray("lockedSkills") ?: return null
-            if (locks.length() > 64 || (0 until locks.length()).any { locks.opt(it) !is String || locks.optString(it).isBlank() }) return null
-            val ids = locks.strings()
-            if (ids.size != locks.length()) return null
-            return PiSkillSelectionAck(selection, ids)
+            val resources = settings?.optJSONObject("resources") ?: return null
+            val skills = resourceIds(resources.optJSONArray("skills")) ?: return null
+            val servers = resourceIds(resources.optJSONArray("mcpServers")) ?: return null
+            val locks = resourceIds(settings.optJSONArray("lockedSkills")) ?: return null
+            return PiSkillSelectionAck(PiResourceSelection(skills, servers), locks)
+        }
+        private fun resourceIds(values: JSONArray?): List<String>? {
+            if (values == null || values.length() > 64 || (0 until values.length()).any {
+                values.opt(it) !is String || values.optString(it).isBlank()
+            }) return null
+            return values.strings().takeIf { it.size == values.length() }
         }
     }
 }

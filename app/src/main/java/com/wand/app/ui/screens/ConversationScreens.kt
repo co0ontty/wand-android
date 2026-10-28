@@ -91,9 +91,60 @@ internal fun ConversationGroupAvatar(instance: ConversationInstance, size: andro
     }
 }
 
+private fun conversationWorkSessions(groups: List<TaskDirectoryGroup>): List<HomeRecentConversation> =
+    recentHomeConversations(groups, limit = Int.MAX_VALUE).filter { it.session.teamChat == null }
+
+internal fun conversationPersonSessions(groups: List<TaskDirectoryGroup>): Map<String, List<HomeRecentConversation>> =
+    conversationWorkSessions(groups).filter { it.session.employeeId != null }.groupBy { it.session.employeeId!! }
+
+internal fun conversationUnboundSessions(groups: List<TaskDirectoryGroup>): List<HomeRecentConversation> =
+    conversationWorkSessions(groups).filter { it.session.employeeId == null }
+
+internal fun provisionalConversationPeople(
+    groups: List<TaskDirectoryGroup>,
+    existing: List<ConversationInstance>,
+    employees: List<SiliconEmployee>,
+): List<ConversationInstance> {
+    val owned = existing.mapNotNull { if (it.kind == "dm") it.peerEmployeeId else null }.toSet()
+    return conversationPersonSessions(groups).mapNotNull { (employeeId, sessions) ->
+        if (employeeId in owned || sessions.isEmpty()) return@mapNotNull null
+        val latest = sessions.first()
+        val name = employees.firstOrNull { it.id == employeeId }?.name?.takeIf { it.isNotBlank() }
+            ?: latest.session.employeeName?.takeIf { it.isNotBlank() } ?: "员工"
+        ConversationInstance(
+            id = employeeConversationId(employeeId), kind = "dm", title = name, peerEmployeeId = employeeId,
+            team = null, memberVersion = 1, sessionId = null, communicationSessionId = null, sourceTemplateId = null,
+            nameSource = "auto", preview = latest.session.title?.takeIf { it.isNotBlank() } ?: "有工作会话，尚未开始私聊",
+            messageAt = latest.session.startedAt.orEmpty(), unavailableReason = null, memberUnavailableReasons = emptyMap(),
+            joinedVersions = emptyMap(), tasks = emptyList(), messages = emptyList(), runDetails = emptyList(),
+        )
+    }
+}
+
+@Composable
+private fun ConversationOwnedSessions(
+    sessions: List<HomeRecentConversation>,
+    onOpenSession: (TaskSessionRoute) -> Unit,
+    heading: String? = null,
+) {
+    Column(Modifier.fillMaxWidth().padding(start = 28.dp, end = 8.dp, bottom = 8.dp)) {
+        if (heading != null) Text(heading, Modifier.padding(vertical = 8.dp), color = WandColors.textMuted, style = MaterialTheme.typography.labelMedium)
+        sessions.forEach { item ->
+            Column(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable {
+                onOpenSession(taskSessionRoute(item.session, item.group, item.task))
+            }.padding(vertical = 6.dp)) {
+                Text(item.session.title ?: "会话", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
+                Text(listOfNotNull(item.session.status, item.group.workspaceName).joinToString(" · "),
+                    color = WandColors.textMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
 @Composable
 internal fun ConversationList(state: ConversationStore, bottomClearance: androidx.compose.ui.unit.Dp = 68.dp, onOpenEmployee: (String) -> Unit = {},
-    onOpenSettings: () -> Unit = {}, onSwitchServer: () -> Unit = {}, onCollapseSidebar: (() -> Unit)? = null, onSelect: (String) -> Unit) {
+    onOpenSettings: () -> Unit = {}, onSwitchServer: () -> Unit = {}, onCollapseSidebar: (() -> Unit)? = null,
+    groups: List<TaskDirectoryGroup> = emptyList(), onOpenSession: (TaskSessionRoute) -> Unit = {}, onSelect: (String) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var create by rememberSaveable { mutableStateOf(false) }
     var listTier by rememberSaveable { mutableStateOf(ConversationListTier.All.storageValue) }
@@ -108,6 +159,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     var actionError by remember { mutableStateOf<String?>(null) }
     var navigationMenu by remember { mutableStateOf(false) }
     var rangeMenu by remember { mutableStateOf(false) }
+    var expandedPeople by remember { mutableStateOf(setOf<String>()) }
     val scope = rememberCoroutineScope()
     fun isBusy(): Boolean = pendingId != null || batchBusy
     fun update(itemId: String, patch: JSONObject) {
@@ -217,7 +269,11 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 ConversationGroupEditor(state, onClose = { close(true) }, onAccepted = { create = false; onSelect(it) })
             }
         }
-        val rows = filterConversationList(state.items, ConversationListTier.of(listTier), query)
+        val personSessions = conversationPersonSessions(groups)
+        val unboundSessions = conversationUnboundSessions(groups)
+        val provisional = provisionalConversationPeople(groups, state.items, state.employees)
+        val rows = filterConversationList(state.items + provisional, ConversationListTier.of(listTier), query)
+        val persistedIds = state.items.map { it.id }.toSet()
         val selectedRows = rows.filter { it.id in selectedIds }
         val batchAction = conversationBatchAction(selectedRows.map { it.pinnedAt != null })
         if (selecting && !create) ConversationManageBar(
@@ -250,10 +306,13 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 val summary = if (item.external != null) "钉钉 · " + item.preview.ifBlank { item.external.statusText } else if (item.dissolvedAt != null) "群聊已解散 · 点击查看或恢复" else item.preview.ifBlank { if (item.kind == "group") "尚未有消息" else "还没有消息" }
                 // 归档的对话不再是「等你回复/在跑」，只留给归档标记；否则和未归档的排成一样。
                 val status = if (archived) null else item.tasks.flatMap { it.runs }.firstOrNull { it.status in listOf("waiting_user", "awaiting_approval", "failed", "running") }?.status
+                val ownedSessions = item.peerEmployeeId?.let { personSessions[it] }.orEmpty()
+                val sessionsOpen = item.id in expandedPeople || query.isNotBlank()
+                val provisionalRow = item.id !in persistedIds
                 Column {
                   // 操作从长按菜单改成从右往左划出的抽屉；多选态下没有滑动手势，整行只做选中切换。
                   ConversationSwipeRowCard(
-                    actions = if (selecting) emptyList() else conversationSwipeActions(item.kind, item.pinnedAt != null, item.dissolvedAt != null, external = item.external != null),
+                    actions = if (selecting || provisionalRow) emptyList() else conversationSwipeActions(item.kind, item.pinnedAt != null, item.dissolvedAt != null, external = item.external != null),
                     revealed = swipedId == item.id,
                     onRevealedChange = { open -> swipedId = if (open) item.id else swipedId?.takeIf { it != item.id } },
                     onAction = { action ->
@@ -294,11 +353,18 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                                     Modifier.weight(1f), fontSize = 14.sp, lineHeight = 20.sp, color = WandColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        if (!selecting && listTier != ConversationListTier.Archived.storageValue && item.tasks.isNotEmpty()) WandMorphIconButton(expanded, WandIcons.expand, WandIcons.expand,
+                        if (!selecting && item.kind == "dm" && ownedSessions.isNotEmpty()) IconButton(
+                            onClick = { expandedPeople = if (item.id in expandedPeople) expandedPeople - item.id else expandedPeople + item.id },
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(WandIcons.chevronRight, if (sessionsOpen) "收起${item.title}的会话" else "展开${item.title}的会话",
+                                Modifier.rotate(if (sessionsOpen) 90f else 0f).size(18.dp), tint = WandColors.textMuted)
+                        } else if (!selecting && listTier != ConversationListTier.Archived.storageValue && item.tasks.isNotEmpty()) WandMorphIconButton(expanded, WandIcons.expand, WandIcons.expand,
                             if (expanded) "收起群任务" else "展开群任务", { if (item.id in state.expandedGroups) state.expandedGroups.remove(item.id) else state.expandedGroups.add(item.id) }, touchSize = 48.dp, rotationDegrees = 180f)
                         else if (!selecting) Icon(WandIcons.chevronRight, null, Modifier.padding(horizontal = 10.dp).size(16.dp), tint = WandColors.textMuted)
                     }
                   }
+                  if (sessionsOpen && ownedSessions.isNotEmpty()) ConversationOwnedSessions(ownedSessions, onOpenSession)
                     WandInlinePanel(expanded && listTier != ConversationListTier.Archived.storageValue, growFrom = Alignment.Top) {
                     Column {
                     matchingTasks.forEach { task ->
@@ -315,7 +381,10 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                     ConversationInsetDivider(start = 68.dp)
                 }
             }
-            if (rows.isEmpty() && !state.loading && state.error == null) item {
+            if (unboundSessions.isNotEmpty()) item(key = "other-sessions") {
+                ConversationOwnedSessions(unboundSessions, onOpenSession, heading = "其他会话")
+            }
+            if (rows.isEmpty() && unboundSessions.isEmpty() && !state.loading && state.error == null) item {
                 val empty = conversationListEmptyState(query, ConversationListTier.of(listTier))
                 EmptyState(icon = WandIcons.toolResult, title = empty.title, subtitle = empty.explanation,
                     actionText = empty.action, onAction = {
@@ -987,7 +1056,9 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                     CompositionLocalProvider(com.wand.app.ui.LocalServerBaseUrl provides state.api.baseUrl,
                         com.wand.app.ui.LocalImageGallery provides { com.wand.app.ui.conversationImagePages(turns) },
                         LocalChatApi provides state.api, LocalChatSessionId provides sourceSession.orEmpty(),
-                        LocalChatWorkingDirectory provides protocol?.snapshot?.cwd) {
+                        LocalChatWorkingDirectory provides protocol?.snapshot?.cwd,
+                        com.wand.app.ui.LocalMessageLinkContext provides if (turn.conversationLink != null) com.wand.app.ui.MessageLinkContext()
+                            else com.wand.app.ui.MessageLinkContext(sourceSession, protocol?.snapshot?.cwd)) {
                         val messageKey = "$displayedId:${conversationMessageKey(turn)}"
                         TeamTurnArrival(playing = arrivals[conversationMessageKey(turn)] == true, own = turn.role == "user",
                             onConsumed = { arrivals.remove(conversationMessageKey(turn)) }) {

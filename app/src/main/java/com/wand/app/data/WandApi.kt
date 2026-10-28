@@ -35,7 +35,7 @@ data class ToolContentDetail(
 class WandApi(baseUrl: String, val token: String?,
     private val readConversationRequests: () -> String = { "{}" },
     private val saveConversationRequests: (String) -> Unit = {},
-) : MissionsPort, WorkspacePort, TaskBoardPort, PiResourcesPort, SessionFilesPort, ConversationOrganizationPort {
+) : MissionsPort, WorkspacePort, TaskBoardPort, PiResourcesPort, SessionFilesPort, ConversationOrganizationPort, KnowledgePort {
 
     companion object {
         /**
@@ -80,6 +80,7 @@ class WandApi(baseUrl: String, val token: String?,
 
     private fun execute(request: Request, timeoutSec: Int): Pair<Int, String> {
         val requestClient = when {
+            request.method != "GET" && request.url.encodedPath.startsWith("/api/knowledge") -> queueRemovalClient
             request.method == "DELETE" && request.url.encodedPath.startsWith("/api/structured-sessions/") &&
                 request.url.encodedPath.contains("/queued/") -> queueRemovalClient
             timeoutSec == 30 -> client
@@ -176,6 +177,26 @@ class WandApi(baseUrl: String, val token: String?,
         parseResponse(requestData(method, path)) { JSONArray(it) }
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+    // Knowledge mutations have version checks and must never retry an unknown network outcome.
+    override suspend fun knowledgeOwners(): KnowledgeOwners =
+        KnowledgeOwners.parse(requestObject("GET", "/api/knowledge/owners"))
+
+    override suspend fun knowledgeLibrary(scope: KnowledgeScope, ownerId: String): KnowledgeLibrary =
+        KnowledgeLibrary.parse(requestObject("GET", "/api/knowledge?scope=${scope.wire}&ownerId=${encode(ownerId)}"))
+
+    override suspend fun createKnowledge(scope: KnowledgeScope, ownerId: String, draft: KnowledgeDraft): KnowledgeDocument =
+        KnowledgeDocument.parse(requestObject("POST", "/api/knowledge", draft.json(scope, ownerId)).getJSONObject("entry"))
+
+    override suspend fun updateKnowledge(document: KnowledgeDocument, draft: KnowledgeDraft): KnowledgeDocument =
+        KnowledgeDocument.parse(requestObject("PATCH", "/api/knowledge/${encode(document.id)}",
+            draft.json(document.scope, document.ownerId).put("revision", document.revision)).getJSONObject("entry"))
+
+    override suspend fun deleteKnowledge(document: KnowledgeDocument) {
+        val response = requestObject("DELETE", "/api/knowledge/${encode(document.id)}", JSONObject()
+            .put("scope", document.scope.wire).put("ownerId", document.ownerId).put("revision", document.revision))
+        if (!response.optBoolean("ok")) throw WandApiException(null, "删除结果未确认，请刷新目录核对")
+    }
 
     // MARK: - 会话
 

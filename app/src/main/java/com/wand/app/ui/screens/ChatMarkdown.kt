@@ -68,12 +68,18 @@ import com.wand.app.ui.TextPreviewDialog
 import com.wand.app.ui.WandImage
 import com.wand.app.ui.WandServerFileLink
 import com.wand.app.ui.WandTextPreview
+import com.wand.app.ui.HtmlPreviewDialog
+import com.wand.app.ui.LocalMessageLinkContext
+import com.wand.app.ui.MessageLinkTarget
+import com.wand.app.ui.WandMessageLinks
+import com.wand.app.ui.WandMessageLinkTransport
 import com.wand.app.ui.components.WandDialog
 import com.wand.app.ui.components.WandDialogAction
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.WandShapes
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 /** 结构化聊天使用的 Markdown 解析与 Compose 渲染。 */
 
@@ -524,11 +530,16 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
     val codeColor = WandColors.brand.copy(alpha = 0.82f)
     val context = LocalContext.current
     val baseUrl = LocalServerBaseUrl.current
+    val sourceContext = LocalMessageLinkContext.current.let {
+        if (it.sessionId.isNullOrBlank()) it else com.wand.app.ui.MessageLinkContext(it.sessionId)
+    }
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
-    var pendingExternalLink by remember { mutableStateOf<String?>(null) }
-    var externalLinkError by remember { mutableStateOf<String?>(null) }
-    var serverFilePreview by remember { mutableStateOf<String?>(null) }
+    var pendingExternalLink by remember(baseUrl, sourceContext) { mutableStateOf<String?>(null) }
+    var externalLinkError by remember(baseUrl, sourceContext) { mutableStateOf<String?>(null) }
+    var serverFilePreview by remember(baseUrl, sourceContext) { mutableStateOf<String?>(null) }
+    var htmlPreview by remember(baseUrl, sourceContext) { mutableStateOf<MessageLinkTarget.Preview?>(null) }
+    var linkRequestGeneration by remember(baseUrl, sourceContext) { mutableStateOf(0) }
     // 未识别的服务端文件（图片/文本以外）统一走「先下载再交给系统打开」这一条路。
     fun openServerFile(path: String) {
         scope.launch {
@@ -542,9 +553,34 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
                 }
         }
     }
+    fun openFileTarget(resolved: MessageLinkTarget.File, generation: Int) {
+        scope.launch {
+            try {
+                val path = WandMessageLinkTransport.resolveFilePath(baseUrl, resolved)
+                if (generation != linkRequestGeneration) return@launch
+                val typePath = WandServerFileLink.previewTypePath(path)
+                if (WandImage.isImageFilePath(typePath) || WandTextPreview.isPreviewableText(typePath)) {
+                    serverFilePreview = path
+                } else {
+                    openServerFile(path)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: WandMessageLinkTransport.NeedsDownload) {
+                if (generation == linkRequestGeneration) {
+                    runCatching { WandServerFileLink.downloadTargetAndOpen(context, baseUrl, resolved) }
+                        .onFailure { Toast.makeText(context, "文件下载失败：${it.message ?: "请重试"}", Toast.LENGTH_LONG).show() }
+                }
+            } catch (error: Exception) {
+                if (generation == linkRequestGeneration) {
+                    Toast.makeText(context, "文件读取失败：${error.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
     // 字符级解析循环不便宜；重组但文本未变时直接复用上一次的 AnnotatedString。
     // 流式输出期间每个 chunk 只在文本真正变化时重建一次，而不是每次重组都重建。
-    val annotated = remember(raw, linkColor, codeColor, context, baseUrl, scope, uriHandler, inlineDecoration) {
+    val annotated = remember(raw, linkColor, codeColor, context, baseUrl, sourceContext, scope, uriHandler, inlineDecoration) {
         parseInlineMarkdown(raw, codeColor, inlineDecoration) { url ->
             LinkAnnotation.Url(
                 url = url,
@@ -553,16 +589,21 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
                 )),
                 linkInteractionListener = { link ->
                     (link as? LinkAnnotation.Url)?.url?.let { target ->
-                        val serverPath = WandServerFileLink.downloadPath(target, baseUrl)
-                        if (serverPath != null && baseUrl.isNotBlank()) {
-                            if (WandImage.isImagePath(serverPath) || WandTextPreview.isPreviewableText(serverPath)) {
-                                serverFilePreview = serverPath
+                        val generation = ++linkRequestGeneration
+                        when (val resolved = WandMessageLinks.resolve(target, baseUrl, sourceContext)) {
+                            is MessageLinkTarget.Preview -> htmlPreview = resolved
+                            is MessageLinkTarget.File -> if (resolved.previewUrl != null) {
+                                htmlPreview = MessageLinkTarget.Preview(resolved.previewUrl, resolved.path, resolved)
                             } else {
-                                openServerFile(serverPath)
+                                openFileTarget(resolved, generation)
                             }
-                        } else {
-                            externalLinkError = null
-                            pendingExternalLink = target
+                            is MessageLinkTarget.External -> {
+                                externalLinkError = null
+                                pendingExternalLink = resolved.url
+                            }
+                            is MessageLinkTarget.Unavailable -> {
+                                Toast.makeText(context, resolved.message, Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                 },
@@ -601,7 +642,7 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
     }
 
     serverFilePreview?.let { previewPath ->
-        if (WandImage.isImagePath(previewPath)) {
+        if (WandImage.isImageFilePath(WandServerFileLink.previewTypePath(previewPath))) {
             FullscreenImageViewer(
                 pages = listOf(ViewerImagePage(previewPath, directUrl = false)),
                 baseUrl = baseUrl,
@@ -618,6 +659,23 @@ private fun inlineMarkdown(raw: String, inlineDecoration: InlineMarkdownDecorati
                 },
             )
         }
+    }
+    htmlPreview?.let { preview ->
+        HtmlPreviewDialog(baseUrl, preview.url, preview.label, onDismiss = { htmlPreview = null }, onExternalLink = {
+            htmlPreview = null
+            externalLinkError = null
+            pendingExternalLink = it
+        }, onNonHtml = {
+            htmlPreview = null
+            if (preview.file != null) openFileTarget(preview.file, linkRequestGeneration)
+            else scope.launch {
+                try { WandServerFileLink.downloadPreviewAndOpen(context, baseUrl, preview.url) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    Toast.makeText(context, "文件下载失败：${failure.message ?: "请重试"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        })
     }
     return annotated
 }

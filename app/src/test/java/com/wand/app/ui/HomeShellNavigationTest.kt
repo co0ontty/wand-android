@@ -10,7 +10,7 @@ class HomeShellNavigationTest {
     private fun restore(nav: NavState): NavState = NavState.Saver.restore(with(NavState.Saver) { saverScope.save(nav) }!!)!!
 
     @Test fun absentPreferenceStartsImButExistingWorkPreferencesRemainWork() {
-        for ((value, expected) in listOf("" to HomeListMode.Im, "im" to HomeListMode.Im, "sessions" to HomeListMode.Sessions, "board" to HomeListMode.Tasks, "corrupt" to HomeListMode.Im)) {
+        for ((value, expected) in listOf("" to HomeListMode.Im, "im" to HomeListMode.Im, "sessions" to HomeListMode.Sessions, "board" to HomeListMode.Tasks, "knowledge" to HomeListMode.Knowledge, "corrupt" to HomeListMode.Im)) {
             assertEquals(expected, NavState().initializeHomeMode(value))
         }
     }
@@ -64,6 +64,16 @@ class HomeShellNavigationTest {
         assertEquals(HomeListMode.Contacts, nav.homeMode)
         val restored = restore(nav)
         assertEquals(HomeListMode.Contacts, restored.homeMode)
+        restored.selectHomeMode(HomeListMode.Tasks)
+        assertEquals(Screen.TaskBoard(taskId = "t"), restored.current)
+    }
+
+    @Test fun knowledgeIsRootModeAndKeepsExistingWorkPath() {
+        val nav = NavState().apply { initializeHomeMode("board"); push(Screen.TaskBoard(taskId = "t")) }
+        nav.selectHomeMode(HomeListMode.Knowledge)
+        assertEquals(listOf(Screen.SessionList), nav.stack.toList())
+        val restored = restore(nav)
+        assertEquals(HomeListMode.Knowledge, restored.homeMode)
         restored.selectHomeMode(HomeListMode.Tasks)
         assertEquals(Screen.TaskBoard(taskId = "t"), restored.current)
     }

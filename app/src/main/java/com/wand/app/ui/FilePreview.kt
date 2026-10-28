@@ -73,7 +73,7 @@ object WandTextPreview {
     /** 是否值得做应用内文本预览（按扩展名，大小写不敏感）。 */
     fun isPreviewableText(path: String?): Boolean {
         if (path.isNullOrBlank()) return false
-        val clean = path.trim().substringBefore('?').substringBefore('#')
+        val clean = path.trim()
         val name = clean.substringAfterLast('/').lowercase()
         if (name in BARE_TEXT_NAMES) return true
         val extension = name.substringAfterLast('.', "")

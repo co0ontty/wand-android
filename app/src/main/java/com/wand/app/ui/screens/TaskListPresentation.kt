@@ -41,13 +41,15 @@ enum class HomeListMode(val storageValue: String) {
      * 它曾经是一条 push 进导航栈的页面记录，于是底栏跟着根屏一起退场，
      * 看起来像另一套壳；这里改为模式，底栏常驻、通讯录项按页签高亮。
      */
-    Contacts("contacts");
+    Contacts("contacts"),
+    Knowledge("knowledge");
 
     companion object {
         fun fromStorage(value: String?): HomeListMode = when (value) {
             "sessions" -> Sessions
             "board" -> Tasks
             "contacts" -> Contacts
+            "knowledge" -> Knowledge
             else -> Im
         }
     }
@@ -73,6 +75,13 @@ internal data class HomeRecentConversation(
     val task: com.wand.app.data.WorkspaceTaskSummary?,
     val session: WorkspaceSessionSummary,
 )
+
+/** 人物下的会话可跨工作区：只显示工作区名，缺名称时取目录末段。 */
+internal fun homeConversationWorkspaceName(group: TaskDirectoryGroup): String? {
+    if (group.isGlobal) return null
+    val name = group.workspaceName.trim().ifBlank { group.workspaceCwd.trim() }
+    return sessionCwdLeaf(name)
+}
 
 /** 「最近」的唯一排序：新的在前，时间相同用 id 保证稳定。 */
 internal val homeRecentConversationOrder: Comparator<HomeRecentConversation> =

@@ -450,7 +450,6 @@ private fun TaskBoardList(
                     options = listOf(
                         "" to "全部",
                         "backlog" to "待立项",
-                        "backlog" to "待立项",
                         "todo" to "待办",
                         "doing" to "进行中",
                         "done" to "等你确认",

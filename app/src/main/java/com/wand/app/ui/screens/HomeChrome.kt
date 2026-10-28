@@ -136,7 +136,7 @@ import com.wand.app.ui.withLiveTitle
  * - 一层标题栏，服务器切换收在品牌图标，消息页使用自己的标题栏；
  * - 灰白底面、克制的蓝色动作、细描边悬浮底栏；
  * - 需要动手的会话有明确的状态胶囊，而不是只有一个小圆点；
- * - 手机首页与平板展开侧栏共用底部导航：「聊天 / 通讯录 / 工作区 / 任务」直接可达，
+ * - 手机首页与平板展开侧栏共用底部导航：「聊天 / 工作区 / 知识库 / 任务」直接可达，
  *   溢出菜单不重复这些入口。
  * 这里只做展示，所有状态计算走 HomePresentation 的纯函数。
  */
@@ -1495,6 +1495,7 @@ private fun HomeGroupSessionRow(
         label = listSessionLabel(session.withLiveTitle(), 0),
         secondary = secondary,
         showEmployeeCliBadge = false,
+        workspaceName = homeConversationWorkspaceName(conversation.group),
         nowMillis = nowMillis,
         selected = session.id == selectedSessionId,
         selecting = selecting,
@@ -1522,6 +1523,7 @@ internal fun HomeSessionRow(
     secondary: Boolean = false,
     /** 最近对话的人物入口不显示某一个 CLI；具体会话仍可显示实际工具。 */
     showEmployeeCliBadge: Boolean = true,
+    workspaceName: String? = null,
     nowMillis: Long,
     selected: Boolean,
     selecting: Boolean = false,
@@ -1606,7 +1608,7 @@ internal fun HomeSessionRow(
                 }
             }
             if (secondary) {
-                // 二级行只有一行：标题（是什么东西）+ 团队来源，状态由左侧 logo 呼吸灯表达，取消文字标签。
+                // 人物下的会话：标题独占首行，执行状态与工作区在第二行。
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1622,15 +1624,34 @@ internal fun HomeSessionRow(
                                 modifier = Modifier.logoBreathingGlow(presentation, cornerRadius = 6.dp))
                         }
                     }
-                    Text(
-                        label,
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = WandColors.textPrimary,
-                        lineHeight = 19.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = WandColors.textPrimary,
+                            lineHeight = 19.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Row(
+                            modifier = Modifier.padding(top = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            SessionStatusPill(presentation)
+                            workspaceName?.let { name ->
+                                Text("·", style = MaterialTheme.typography.labelMedium, color = WandColors.textMuted)
+                                Text(
+                                    name,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = WandColors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
                     session.teamStep?.teamName?.takeIf { it.isNotBlank() }
                         ?.let { TeamSourceTag(it) }
                 }
@@ -1691,7 +1712,7 @@ internal fun HomeSessionRow(
                 }
             }
         }
-        SessionStatusPill(presentation)
+        if (!secondary) SessionStatusPill(presentation)
         Box {
             WandIconButton(
                 icon = WandIcons.more,
@@ -1801,25 +1822,26 @@ internal val HomeMenuPillHeight = 80.dp
 
 internal enum class HomeMenuPillItem(val label: String, val description: String) {
     Im("聊天", "打开聊天"),
-    Contacts("通讯录", "打开通讯录"),
     Chats("工作区", "打开工作区"),
+    Knowledge("知识库", "打开知识库"),
     Tasks("任务", "打开任务面板");
 
     val icon: ImageVector
         get() = when (this) {
             Im -> WandIcons.chat
-            Contacts -> WandIcons.contacts
             Chats -> WandIcons.workspace
+            Knowledge -> WandIcons.read
             Tasks -> WandIcons.todo
         }
 }
 
-/** 四项都是根壳里的视图页签（含通讯录），选中态由当前 [HomeListMode] 决定。 */
+/** 四项根导航由当前 [HomeListMode] 决定选中态；通讯录保留为次级页面。 */
 internal fun homeMenuPillSelection(mode: HomeListMode): Int = when (mode) {
     HomeListMode.Sessions -> HomeMenuPillItem.Chats.ordinal
     HomeListMode.Tasks -> HomeMenuPillItem.Tasks.ordinal
     HomeListMode.Im -> HomeMenuPillItem.Im.ordinal
-    HomeListMode.Contacts -> HomeMenuPillItem.Contacts.ordinal
+    HomeListMode.Contacts -> -1
+    HomeListMode.Knowledge -> HomeMenuPillItem.Knowledge.ordinal
 }
 
 /** 参考 APP 的细描边悬浮胶囊；字体放大时以实际测量扩高，不压缩文字或触控区域。 */

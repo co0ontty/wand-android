@@ -232,12 +232,15 @@ fun TurnView(
     /** 消息级 fold scope（列表 item key）。空串时退化结构 token，见 [cardMessageScope]。 */
     foldScope: String = "",
 ) {
+    val messageLinkSource = com.wand.app.ui.messageLinkContextForTurn(turn, com.wand.app.ui.LocalMessageLinkContext.current)
     if (turn.notice) {
         ChatNoticeView(turn)
         return
     }
     if (turn.role == "user") {
-        UserTurnView(turn, compact = compactUser, showTime = showHeader, tail = userTail)
+        CompositionLocalProvider(com.wand.app.ui.LocalMessageLinkContext provides messageLinkSource) {
+            UserTurnView(turn, compact = compactUser, showTime = showHeader, tail = userTail)
+        }
         return
     }
     val messageScope = cardMessageScope(
@@ -305,7 +308,8 @@ fun TurnView(
         }
         if (showContent && (!showHeader || !collapsed || activityOnly)) {
             if (parentBlocks.isNotEmpty()) {
-                CompositionLocalProvider(LocalChatTurnCreatedAt provides turn.createdAt) {
+                CompositionLocalProvider(LocalChatTurnCreatedAt provides turn.createdAt,
+                    com.wand.app.ui.LocalMessageLinkContext provides messageLinkSource) {
                     SegmentBlocks(
                         blocks = parentBlocks,
                         isLastTurn = isLastTurn,

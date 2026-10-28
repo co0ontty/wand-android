@@ -22,6 +22,19 @@ import org.junit.Test
 
 class TaskListPresentationTest {
     @Test
+    fun personSessionWorkspaceNameIsCompactAndDoesNotInventGlobalOwnership() {
+        val group = group()
+        assertEquals("Repo", homeConversationWorkspaceName(group))
+        assertEquals("产品工作区", homeConversationWorkspaceName(group.copy(workspaceName = " 产品工作区 ")))
+        assertEquals("wand", homeConversationWorkspaceName(group.copy(workspaceName = "/work/wand/")))
+        assertEquals("wand", homeConversationWorkspaceName(group.copy(workspaceName = "C:\\work\\wand\\")))
+        assertEquals("repo", homeConversationWorkspaceName(group.copy(workspaceName = " ")))
+        assertNull(homeConversationWorkspaceName(group.copy(workspaceName = "", workspaceCwd = "/")))
+        assertNull(homeConversationWorkspaceName(group.copy(global = true)))
+        assertNull(homeConversationWorkspaceName(group.copy(workspaceId = GLOBAL_WORKSPACE_ID)))
+    }
+
+    @Test
     fun taskSessionRouteCarriesStableTaskIdentity() {
         val group = group()
         val task = task()

@@ -123,7 +123,7 @@ internal fun rememberAttachmentPickerActions(
     val pickPhoto = remember(photoPicker) {
         {
             photoRequest.launch(currentOnUris.value) {
-                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
             }
         }
     }

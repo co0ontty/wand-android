@@ -111,6 +111,9 @@ object WandImage {
         return IMAGE_PATH_RE.matcher(clean).find()
     }
 
+    /** Decoded filenames may contain literal # and ?, unlike a URL reference. */
+    fun isImageFilePath(path: String): Boolean = IMAGE_PATH_RE.matcher(path).find()
+
     /**
      * 构造 /api/file-raw 取图 URL。用 Uri.Builder 追加 query，path 自动正确编码
      * （空格 %20 而非 +，对齐网页 encodeURIComponent）。

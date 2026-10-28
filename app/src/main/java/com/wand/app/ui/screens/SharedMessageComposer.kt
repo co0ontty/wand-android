@@ -109,6 +109,7 @@ internal fun SharedMessageComposer(
     actionCount: Int = 0,
     accessory: @Composable () -> Unit = {},
     onWritingSurfaceHeightChange: (Int) -> Unit = {},
+    placeholder: String? = null,
 ) {
     if (presentation != null) {
         FocusCapsuleComposer(presentation, sessionKey, draft, onDraftChange, attachments, baseUrl,
@@ -118,7 +119,7 @@ internal fun SharedMessageComposer(
             resourcePanel, menuContent, exteriorAction, actionCount, {
                 accessory()
                 if (stagedAttachments.isNotEmpty()) StagedAttachmentsPreview(stagedAttachments, onRemoveStagedAttachment)
-            }, onWritingSurfaceHeightChange)
+            }, onWritingSurfaceHeightChange, placeholder = placeholder ?: "发消息…")
         return
     }
     val focusRequester = remember(sessionKey) { FocusRequester() }
@@ -246,7 +247,7 @@ internal fun SharedMessageComposer(
                 ComposerInputField(
                     value = draft,
                     onValueChange = { collapsePending = false; minimal = minimal.edit(); onDraftChange(it) },
-                    placeholder = if (compactVisual) "继续输入" else "发送消息",
+                    placeholder = placeholder ?: if (compactVisual) "继续输入" else "发送消息",
                     framed = false,
                     compact = compactVisual,
                     showClearAction = !compactVisual && exteriorAction == null,

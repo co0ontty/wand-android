@@ -29,9 +29,8 @@ class ConversationEntryFirstScreenTest {
 
     @Test fun recentHistoryPrecedesWorkspaceDirectoriesAndTitlesKeepReadingSpace() {
         val workspace = screen("TaskListScreen")
-        val directories = workspace.indexOf("itemsIndexed(visibleGroups")
-        val history = workspace.indexOf("item(key = \"recent-conversation-header\")")
-        assertTrue(history >= 0 && directories > history)
+        assertFalse(workspace.contains("recent-conversation-header"))
+        assertTrue(screen("ConversationScreens").contains("其他会话"))
         val chat = screen("ConversationScreens")
         assertFalse(chat.contains("Modifier.padding(horizontal = 104.dp)"))
         // Group titles now reserve one action on each side; private chats use their shared companion.

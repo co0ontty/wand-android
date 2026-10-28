@@ -3,6 +3,8 @@ package com.wand.app.ui.screens
 import android.net.Uri
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -15,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
 import com.wand.app.data.SESSION_MODE_OPTIONS
 import com.wand.app.data.supportedSessionModeIds
 import com.wand.app.ui.components.WandDialog
@@ -25,6 +29,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import com.wand.app.ui.components.WandTextField
@@ -36,9 +42,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
+import com.wand.app.data.SiliconEmployee
+import com.wand.app.data.normalizeWorkspacePath
 import com.wand.app.data.SessionSnapshot
 import com.wand.app.data.WandApi
 import com.wand.app.data.BoardTaskAgent
@@ -49,9 +62,17 @@ import com.wand.app.ui.ChatComposer
 import com.wand.app.ui.SessionDraftStore
 import com.wand.app.ui.StagedComposerAttachment
 import com.wand.app.ui.components.WandIcons
+import com.wand.app.ui.components.EmployeeAvatar
+import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.theme.WandColors
 
 private enum class PendingChoice { Object, Tool, Kind, Task, TaskName, Model, Mode, Thinking }
+
+internal fun pendingInitialEmployeeId(explicitId: String?): String =
+    explicitId?.takeIf(String::isNotBlank) ?: "e_wand_default"
+
+internal fun pendingEmployeeIsReady(selectedId: String?, loading: Boolean, error: String?, employee: SiliconEmployee?): Boolean =
+    selectedId == null || (!loading && error == null && employee?.id == selectedId && !employee.archived && employee.agents.isNotEmpty())
 
 @Composable
 internal fun PendingConversationScreen(
@@ -95,11 +116,11 @@ internal fun PendingConversationScreen(
     DisposableEffect(composer) {
         onDispose { composer.shutdown() }
     }
-    var target by remember(draftKey) { mutableStateOf(WorkspaceSessionTarget.fromPreference(taskState.defaultProvider, taskState.defaultEngine) ?: WorkspaceSessionTarget.Claude) }
+    var target by remember(draftKey) { mutableStateOf(WorkspaceSessionTarget.Claude) }
     var model by remember(draftKey) { mutableStateOf("default") }
     var effort by remember(draftKey) { mutableStateOf(taskState.defaultThinkingEffort) }
     var executionMode by remember(draftKey) { mutableStateOf(taskState.defaultMode) }
-    var selectedEmployeeId by remember(draftKey) { mutableStateOf(initialEmployeeId) }
+    var selectedEmployeeId by remember(draftKey) { mutableStateOf<String?>(pendingInitialEmployeeId(initialEmployeeId)) }
     var employees by remember(draftKey) { mutableStateOf<List<com.wand.app.data.SiliconEmployee>?>(null) }
     var employeesLoading by remember(draftKey) { mutableStateOf(true) }
     var employeesError by remember(draftKey) { mutableStateOf<String?>(null) }
@@ -133,7 +154,7 @@ internal fun PendingConversationScreen(
             else -> null
         }
     }
-    var selectedKind by remember(draftKey) { mutableStateOf(taskState.defaultSessionKind) }
+    var selectedKind by remember(draftKey) { mutableStateOf(WorkspaceSessionKind.Structured) }
     LaunchedEffect(target, selectedEmployeeId) {
         if (target.isShell) selectedKind = WorkspaceSessionKind.Pty
         else if (target.isSdk) selectedKind = WorkspaceSessionKind.Structured
@@ -148,12 +169,9 @@ internal fun PendingConversationScreen(
         if (selectedEmployeeId == null) return@LaunchedEffect
         val employee = employees?.firstOrNull { it.id == selectedEmployeeId && !it.archived }
         val candidate = employee?.agents?.firstOrNull()
-        if (employee != null && candidate == null) {
-            employees = employees.orEmpty().filterNot { it.id == selectedEmployeeId }
-            selectedEmployeeId = null
+        if (candidate == null) {
             selectedEmployeeCandidate = null
-            manuallySpecifiedExecution = false
-        } else if (candidate != null) {
+        } else {
             selectedEmployeeCandidate = candidate
             if (!manuallySpecifiedExecution) {
                 target = WorkspaceSessionTarget.fromPreference(candidate.provider, candidate.engine)
@@ -209,15 +227,9 @@ internal fun PendingConversationScreen(
         employeesLoading = true
         employeesError = null
         try {
-            val requestedEmployeeId = initialEmployeeId ?: selectedEmployeeId
             val available = api.listSiliconEmployees(includeArchived = false)
                 .filter { !it.archived && it.agents.isNotEmpty() }
             employees = available
-            if (selectedEmployeeId == requestedEmployeeId && requestedEmployeeId != null && available.none { it.id == requestedEmployeeId }) {
-                selectedEmployeeId = null
-                selectedEmployeeCandidate = null
-                manuallySpecifiedExecution = false
-            }
         } catch (failure: Exception) {
             if (failure is kotlinx.coroutines.CancellationException) throw failure
             employeesError = failure.message ?: "无法加载员工，请重试。"
@@ -265,7 +277,7 @@ internal fun PendingConversationScreen(
     val canResumeCreation = hasKnownSession || hasKnownTask
     val canCreateEmptyShell = target.isShell && composer.draft.isBlank() &&
         composer.attachments.isEmpty() && composer.stagedAttachments.isEmpty()
-    val employeeReady = selectedEmployeeId == null || (!employeesLoading && selectedEmployee != null)
+    val employeeReady = pendingEmployeeIsReady(selectedEmployeeId, employeesLoading, employeesError, selectedEmployee)
     val canCreate = (hasKnownSession || (defaultsReady && employeeReady)) &&
         if (target.isShell) canCreateEmptyShell else composer.canSubmit
     val canSubmit = canCreate && !busy && (!creationStarted || canResumeCreation)
@@ -490,6 +502,18 @@ internal fun PendingConversationScreen(
     )
 
     val optionsEnabled = !busy && !creationStarted
+    val employeeUnavailable = !employeesLoading && employeesError == null && selectedEmployeeId != null && selectedEmployee == null
+    val directoryLabel = taskState.groups.firstOrNull {
+        selectedCwd.isNotBlank() && !it.isGlobal && normalizeWorkspacePath(it.workspaceCwd) == normalizeWorkspacePath(selectedCwd)
+    }?.workspaceName?.takeIf(String::isNotBlank)
+        ?: sessionCwdLeaf(selectedCwd).orEmpty().ifBlank { "选择目录" }
+    val invitationTaskName = if (workspaceTaskId != null) taskName.orEmpty().ifBlank { "当前任务" }
+        else if (createMode) taskTitle.ifBlank { "新任务" } else "默认任务"
+    val inputPlaceholder = when {
+        target.isShell -> "打开空白终端"
+        selectedKind == WorkspaceSessionKind.Pty -> "输入要交给 CLI 的内容（可选）…"
+        else -> "随心输入，描述你想完成的事…"
+    }
     val modelOptions = selectedAgent?.let { agent ->
         com.wand.app.data.boardAgentModelOptions(models, agent.provider)
             .map { it.id to it.label }.distinctBy { it.first }.toMutableList().apply {
@@ -638,6 +662,7 @@ internal fun PendingConversationScreen(
                 backdrop = null,
                 sessionKey = draftKey,
                 draft = composer.draft,
+                placeholder = inputPlaceholder,
                 onDraftChange = composer::editDraft,
                 attachments = composer.attachments,
                 stagedAttachments = composer.stagedAttachments,
@@ -701,12 +726,61 @@ internal fun PendingConversationScreen(
     }) { padding ->
         val direction = LocalLayoutDirection.current
         val topClearance = if (embedded) 0.dp else chatTopIdentityClearance()
-        Column(
+        BoxWithConstraints(
             Modifier.fillMaxSize().padding(
                 start = padding.calculateStartPadding(direction), end = padding.calculateEndPadding(direction),
                 top = padding.calculateTopPadding() + topClearance, bottom = padding.calculateBottomPadding(),
-            ).verticalScroll(rememberScrollState()),
+            ),
         ) {
+          Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+          ) {
+            ProvideTextStyle(MaterialTheme.typography.headlineSmall.copy(color = WandColors.textPrimary)) {
+                if (target.isShell || selectedKind == WorkspaceSessionKind.Pty) {
+                    Text(if (target.isShell) "从这里打开空白终端" else "从这里开始 CLI 工作", textAlign = TextAlign.Center)
+                } else {
+                    FlowRow(
+                        modifier = Modifier.widthIn(max = 600.dp).fillMaxWidth().padding(vertical = 20.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("今天你想与", Modifier.align(Alignment.CenterVertically))
+                        TextButton(
+                            onClick = { openChoice(PendingChoice.Object) }, enabled = optionsEnabled,
+                            modifier = Modifier.align(Alignment.CenterVertically).heightIn(min = 48.dp)
+                                .semantics { contentDescription = "选择员工：当前为 ${selectedEmployee?.name ?: when (selectedEmployeeId) { "e_wand_default" -> "赛博虎妞"; null -> target.label; else -> "所选员工" }}" },
+                        ) {
+                            if (selectedEmployeeId != null) EmployeeAvatar(
+                                id = selectedEmployeeId, name = selectedEmployee?.name,
+                                avatar = selectedEmployee?.avatar, size = 32.dp,
+                            ) else WandProviderMark(provider = target.provider)
+                            Icon(WandIcons.expand, contentDescription = null, modifier = Modifier.size(14.dp))
+                        }
+                        Text("在", Modifier.align(Alignment.CenterVertically))
+                        TextButton(
+                            onClick = { attachOpen = false; focusManager.clearFocus(); directoryOpen = true },
+                            enabled = optionsEnabled && workspaceTaskId == null,
+                            modifier = Modifier.align(Alignment.CenterVertically).heightIn(min = 48.dp).widthIn(max = 240.dp)
+                                .semantics { contentDescription = "选择运行目录：当前为 $directoryLabel" },
+                        ) {
+                            Text(directoryLabel, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (workspaceTaskId == null) Icon(WandIcons.expand, contentDescription = null, modifier = Modifier.size(14.dp))
+                        }
+                        Text("的", Modifier.align(Alignment.CenterVertically))
+                        TextButton(
+                            onClick = { openChoice(PendingChoice.Task) }, enabled = optionsEnabled && workspaceTaskId == null,
+                            modifier = Modifier.align(Alignment.CenterVertically).heightIn(min = 48.dp).widthIn(max = 240.dp)
+                                .semantics { contentDescription = "选择任务：当前为 $invitationTaskName" },
+                        ) {
+                            Text(invitationTaskName, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (workspaceTaskId == null) Icon(WandIcons.expand, contentDescription = null, modifier = Modifier.size(14.dp))
+                        }
+                        Text("中创造些什么？", Modifier.align(Alignment.CenterVertically))
+                    }
+                }
+            }
             if ((!defaultsReady && !defaultsError && !hasKnownSession) || employeesLoading || modelsLoading) {
                 CircularProgressIndicator(Modifier.padding(16.dp))
             }
@@ -718,6 +792,12 @@ internal fun PendingConversationScreen(
                 Text(message, color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
                 TextButton(onClick = { employeesError = null; employeeRetry += 1 }) { Text("重试加载员工") }
             }
+            if (employeeUnavailable) Text(
+                if (selectedEmployeeId == "e_wand_default") "赛博虎妞暂不可用，请重试加载员工或选择其他执行对象。"
+                else "所选员工暂不可用，请重试加载员工或选择其他执行对象。",
+                color = WandColors.danger, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+            )
+            if (employeeUnavailable) TextButton(onClick = { employeeRetry += 1 }) { Text("重试加载员工") }
             modelsError?.let { message ->
                 Text(message, color = WandColors.danger, modifier = Modifier.padding(horizontal = 16.dp))
                 TextButton(onClick = { modelsError = null; modelsRetry += 1 }) { Text("重试加载模型") }
@@ -728,6 +808,7 @@ internal fun PendingConversationScreen(
             }
             error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
             taskState.mutationError?.let { message -> if (error == null) Text(message, color = WandColors.danger, modifier = Modifier.padding(16.dp)) }
+          }
         }
         if (!embedded) Box(Modifier.fillMaxSize().padding(padding)) {
             ChatTopIdentityBar(

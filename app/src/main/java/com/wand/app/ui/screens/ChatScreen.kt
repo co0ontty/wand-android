@@ -807,6 +807,7 @@ fun ChatScreen(
         LocalChatApi provides api,
         LocalChatSessionId provides sessionId,
         LocalChatWorkingDirectory provides store.snapshot?.cwd,
+        com.wand.app.ui.LocalMessageLinkContext provides com.wand.app.ui.MessageLinkContext(sessionId, store.snapshot?.cwd),
         LocalCardExpandDefaults provides store.cardDefaults,
         LocalActivityPanelReveal provides revealActivityPanel,
         LocalChatViewportHeightPx provides listViewportHeightPx,

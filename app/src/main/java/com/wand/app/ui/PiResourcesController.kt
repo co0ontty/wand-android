@@ -58,7 +58,7 @@ class PiResourcesController(private val id: String, private val port: PiResource
             try {
                 val saved = port.setPiSkillSelection(id, expected)
                 if (!open || key != revision) return@launch
-                check(saved == expected) { "服务端未确认 Skill 开关或锁定，请重新读取核对" }
+                check(saved.confirms(expected, current.lockedSkills)) { "服务端未确认 Skill 开关或锁定，请重新读取核对" }
                 data = current.copy(selection = saved.selection, lockedSkills = saved.lockedSkills)
                 phase = "saved"; message = "已保存 · 下一轮生效，并成为新建 Pi 会话的默认"
             } catch (_: CancellationException) {

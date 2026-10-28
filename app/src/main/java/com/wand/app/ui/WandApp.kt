@@ -401,6 +401,8 @@ private fun ReadyContent(
     }
     val shellState = rememberSaveableStateHolder()
     val conversationScope = rememberCoroutineScope()
+    val knowledgeController = remember(api) { KnowledgeController(api, conversationScope) }
+    DisposableEffect(knowledgeController) { onDispose { knowledgeController.dispose() } }
     val conversations = remember(api, sessionDrafts) { ConversationStore(api, sessionDrafts, conversationScope, actions.settings.getConversationUi, actions.settings.setConversationUi) }
     DisposableEffect(conversations) { conversations.start(); onDispose { conversations.shutdown() } }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
@@ -514,7 +516,7 @@ private fun ReadyContent(
         }
 
         CompositionLocalProvider(LocalActivityTimelinePreference provides timelinePreference) {
-            if (wideLayout) {
+            if (wideLayout && homeListMode != HomeListMode.Knowledge) {
                 WideReadyContent(
                     shellState = shellState,
                     conversationState = conversations,
@@ -523,6 +525,7 @@ private fun ReadyContent(
                     actions = actions,
                     sessionDrafts = sessionDrafts,
                     taskState = taskState,
+                    knowledgeController = knowledgeController,
                     listPaneWidth = listPaneWidth,
                     windowWidth = maxWidth,
                     sidebarCollapsed = sidebarCollapsed,
@@ -547,6 +550,7 @@ private fun ReadyContent(
                     actions = actions,
                     sessionDrafts = sessionDrafts,
                     taskState = taskState,
+                    knowledgeController = knowledgeController,
                     homeListMode = homeListMode,
                     onHomeListModeChange = changeHomeListMode,
                     onOpenSession = openTaskSession,
@@ -880,6 +884,7 @@ private fun SinglePaneContent(
     actions: HomeActions,
     sessionDrafts: SessionDraftStore,
     taskState: TaskListState,
+    knowledgeController: KnowledgeController,
     homeListMode: HomeListMode,
     onHomeListModeChange: (HomeListMode) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit,
@@ -924,11 +929,12 @@ private fun SinglePaneContent(
             val list: @Composable ((String) -> Unit) -> Unit = { openConversation ->
             shellState.SaveableStateProvider("home-list") {
             TaskListScreen(
-                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer) { id -> conversationState.select(id); openConversation(id) } },
+                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, groups = taskState.groups, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); openConversation(id) } },
                 state = taskState,
                 api = api,
                 boardApi = api,
                 directoryApi = api,
+                knowledgeController = knowledgeController,
                 directoryConversations = conversationState,
                 onOpenConversation = { id -> conversationState.select(id); openConversation(id) },
                 serverDisplayName = actions.connection.serverDisplayName,
@@ -1001,6 +1007,7 @@ private fun WideReadyContent(
     actions: HomeActions,
     sessionDrafts: SessionDraftStore,
     taskState: TaskListState,
+    knowledgeController: KnowledgeController,
     listPaneWidth: Dp,
     windowWidth: Dp,
     sidebarCollapsed: Boolean,
@@ -1129,11 +1136,12 @@ private fun WideReadyContent(
                             shellState.SaveableStateProvider("home-list") {
                             TaskListScreen(
                                 // 侧栏点一条 = 显式打开意图：详情落右栏，而不是靠 selectedId 投影出一个输入框。
-                                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, onCollapseSidebar = onToggleSidebarCollapsed) { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) } },
+                                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, onCollapseSidebar = onToggleSidebarCollapsed, groups = taskState.groups, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) } },
                                 state = taskState,
                                 api = api,
                                 boardApi = api,
                                 directoryApi = api,
+                                knowledgeController = knowledgeController,
                                 directoryConversations = conversationState,
                                 onOpenConversation = { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) },
                                 serverDisplayName = actions.connection.serverDisplayName,
