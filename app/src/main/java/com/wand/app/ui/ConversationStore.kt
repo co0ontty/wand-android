@@ -26,6 +26,7 @@ class ConversationStore(
         private set
     var selectedTitle by mutableStateOf(saved.optString("selectedTitle"))
         private set
+    internal var listFilters by mutableStateOf(com.wand.app.ui.screens.ConversationListFilters())
     val items = mutableStateListOf<ConversationInstance>()
     val employees = mutableStateListOf<SiliconEmployee>()
     val presets = mutableStateListOf<AiTeam>()

@@ -92,7 +92,9 @@ private fun KnowledgeDirectory(controller: KnowledgeController, clearance: Dp, s
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) {
+            if (controller.scope == KnowledgeScope.Global) {
+                Text("所有员工、项目与 CLI", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            } else Box(Modifier.weight(1f)) {
                 TextButton(onClick = { ownerMenu = true }, enabled = !controller.busy && controller.owners != null) {
                     Text(controller.owner?.name ?: if (controller.scope == KnowledgeScope.Personal) "选择员工" else "选择项目",
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
@@ -116,6 +118,12 @@ private fun KnowledgeDirectory(controller: KnowledgeController, clearance: Dp, s
         WandInlineSearchField(expanded = true, query = controller.query, onQueryChange = controller::updateQuery,
             onCollapse = null, placeholder = "搜索标题或正文", autoFocus = false,
             onClear = { controller.updateQuery("") }, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        if (controller.scope == KnowledgeScope.Global) Text("全局约定自动加载，合计最多 24 KB。默认安装同步各 CLI；现有终端会话可能需要重开。",
+            style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary, modifier = Modifier.padding(horizontal = 16.dp))
+        controller.library?.cliSyncErrors?.takeIf { it.isNotEmpty() }?.let { errors ->
+            Text("知识已保存，部分 CLI 尚未同步：${errors.joinToString("；")}", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        }
         if (controller.readOnly) Text("项目已删除，已存文档仍可阅读和删除。", style = MaterialTheme.typography.bodySmall,
             color = WandColors.textSecondary, modifier = Modifier.padding(16.dp))
         if (controller.library?.let { it.total >= it.limit } == true) Text("当前知识库已达 ${controller.library?.limit} 篇上限。",
@@ -126,8 +134,8 @@ private fun KnowledgeDirectory(controller: KnowledgeController, clearance: Dp, s
             controller.loading && controller.library == null -> KnowledgeEmpty("正在读取知识库…", "", Modifier.weight(1f))
             controller.owners == null -> KnowledgeEmpty("暂时无法读取知识库", "点击刷新重试。", Modifier.weight(1f))
             controller.ownerId == null -> KnowledgeEmpty(
-                if (controller.scope == KnowledgeScope.Personal) "还没有员工" else "还没有项目",
-                if (controller.scope == KnowledgeScope.Personal) "创建员工后，就会有独立的个人知识库。" else "创建工作区后，可以在这里保存项目知识。", Modifier.weight(1f))
+                if (controller.scope == KnowledgeScope.Global) "全局知识库不可用" else if (controller.scope == KnowledgeScope.Personal) "还没有员工" else "还没有项目",
+                if (controller.scope == KnowledgeScope.Global) "请更新服务端后重试。" else if (controller.scope == KnowledgeScope.Personal) "创建员工后，就会有独立的个人知识库。" else "创建工作区后，可以在这里保存项目知识。",  Modifier.weight(1f))
             documents.isEmpty() -> Column(Modifier.weight(1f).padding(bottom = clearance), horizontalAlignment = Alignment.CenterHorizontally) {
                 KnowledgeEmpty(if (controller.query.isNotBlank()) "没有找到相关文档" else "这里还没有文档",
                     if (controller.query.isNotBlank()) "试试其他关键词，或清除搜索。" else "在对话中说“记住”，或新建一篇文档。", Modifier.weight(1f))
@@ -217,7 +225,8 @@ private fun KnowledgeDocumentPane(controller: KnowledgeController, clearance: Dp
                                 modifier = Modifier.padding(top = 18.dp, bottom = 28.dp))
                             MarkdownText(document.content)
                             HorizontalDivider(Modifier.padding(top = 36.dp, bottom = 16.dp), color = WandColors.border)
-                            Text(if (controller.scope == KnowledgeScope.Personal) "${controller.owner?.name.orEmpty()}的个人知识 · 其他员工不会读取"
+                            Text(if (controller.scope == KnowledgeScope.Global) "全局约定 · 跨员工、项目与 CLI 自动加载"
+                                else if (controller.scope == KnowledgeScope.Personal) "${controller.owner?.name.orEmpty()}的个人知识 · 其他员工不会读取"
                                 else "${controller.owner?.name.orEmpty()}的项目知识 · 用于此项目的对话",
                                 style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
                         }

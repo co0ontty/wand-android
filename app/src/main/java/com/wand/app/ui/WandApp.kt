@@ -929,7 +929,7 @@ private fun SinglePaneContent(
             val list: @Composable ((String) -> Unit) -> Unit = { openConversation ->
             shellState.SaveableStateProvider("home-list") {
             TaskListScreen(
-                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, groups = taskState.groups, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); openConversation(id) } },
+                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, groups = taskState.conversationGroups, groupsLoading = taskState.loading, groupsError = taskState.loadError, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); openConversation(id) } },
                 state = taskState,
                 api = api,
                 boardApi = api,
@@ -1136,7 +1136,7 @@ private fun WideReadyContent(
                             shellState.SaveableStateProvider("home-list") {
                             TaskListScreen(
                                 // 侧栏点一条 = 显式打开意图：详情落右栏，而不是靠 selectedId 投影出一个输入框。
-                                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, onCollapseSidebar = onToggleSidebarCollapsed, groups = taskState.groups, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) } },
+                                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, onCollapseSidebar = onToggleSidebarCollapsed, groups = taskState.conversationGroups, groupsLoading = taskState.loading, groupsError = taskState.loadError, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) } },
                                 state = taskState,
                                 api = api,
                                 boardApi = api,

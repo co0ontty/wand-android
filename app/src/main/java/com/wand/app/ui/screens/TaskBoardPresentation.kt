@@ -9,6 +9,7 @@ import com.wand.app.data.WorkspaceSessionSummary
 import com.wand.app.data.boardTaskAgentLabels
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
+import com.wand.app.data.humanAcceptanceCurrent
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -20,6 +21,9 @@ internal data class BoardTaskStats(
     val accepted: Int,
     val remaining: Int,
     val high: Int,
+    val backlog: Int = 0,
+    val review: Int = 0,
+    val ready: Int = 0,
 )
 
 internal fun boardTaskStats(tasks: List<BoardTask>): BoardTaskStats {
@@ -31,18 +35,21 @@ internal fun boardTaskStats(tasks: List<BoardTask>): BoardTaskStats {
         when (task.status) {
             "todo" -> todo += 1
             "doing" -> doing += 1
-            "done" -> done += 1
+            "review", "ready", "done" -> done += 1
         }
-        if (task.priority == "high" || task.priority == "urgent") high += 1
+        if (task.status != "archived" && (task.priority == "high" || task.priority == "urgent")) high += 1
     }
     return BoardTaskStats(
         total = tasks.size,
         todo = todo,
         doing = doing,
         done = done,
-        accepted = tasks.count { !it.acceptance?.acceptedAt.isNullOrBlank() },
-        remaining = todo + doing,
+        accepted = tasks.count { it.humanAcceptanceCurrent() },
+        remaining = tasks.count { it.status != "archived" && !it.humanAcceptanceCurrent() },
         high = high,
+        backlog = tasks.count { it.status == "backlog" },
+        review = tasks.count { it.status == "review" || it.status == "done" },
+        ready = tasks.count { it.status == "ready" },
     )
 }
 
@@ -58,8 +65,17 @@ internal fun filterBoardTasks(
     query: String,
     workspaceId: String,
     status: String = "",
-): List<BoardTask> = tasks.filter { task ->
-    boardTaskMatches(task, query, workspaceId) && (status.isBlank() || task.status == status)
+): List<BoardTask> {
+    val byId = tasks.associateBy { it.id }
+    val visible = tasks.filter { task -> boardTaskMatches(task, query, workspaceId) && (status.isBlank() || (if (task.status == "done") "review" else task.status) == status) }.map { item ->
+        var root = item
+        val seen = mutableSetOf(root.id)
+        while (root.parentTaskId != null && seen.add(root.parentTaskId!!)) {
+            root = byId[root.parentTaskId] ?: break
+        }
+        root.id
+    }.toSet()
+    return tasks.filter { it.id in visible }
 }
 
 /** 看板里的安全临时默认组：只投影真实目录会话，不创建 wand task。 */
@@ -106,7 +122,7 @@ internal fun boardStandaloneGroups(
 internal fun sortBoardTasks(tasks: List<BoardTask>): List<BoardTask> = tasks
 
 internal fun groupedBoardTasks(tasks: List<BoardTask>): List<Pair<String, List<BoardTask>>> =
-    BOARD_TASK_STATUSES.map { status -> status to tasks.filter { it.status == status } }
+    BOARD_TASK_STATUSES.map { status -> status to tasks.filter { (if (it.status == "done") "review" else it.status) == status } }
 
 internal fun boardArchivedTasks(tasks: List<BoardTask>): List<BoardTask> =
     tasks.filter { it.status == "archived" }
@@ -116,7 +132,7 @@ internal fun boardDoneSectionOpen(collapsed: Boolean, query: String): Boolean =
     !collapsed || query.isNotBlank()
 
 internal fun boardTaskToggledStatus(status: String): String =
-    if (status == "done" || status == "archived") "todo" else "done"
+    if (status == "archived") "todo" else if (status == "todo") "doing" else status
 
 /**
  * 派发成功后应当自动打开的会话 id。
@@ -282,7 +298,7 @@ internal fun boardTaskIsOverdue(
     dueDate: String,
     status: String,
     today: LocalDate = LocalDate.now(ZoneId.systemDefault()),
-): Boolean = status != "done" && status != "archived" && dueDate < today.toString()
+): Boolean = status != "archived" && dueDate < today.toString()
 
 private val BOARD_TASK_DUE_PATTERN = Regex("^\\d{4}-\\d{2}-\\d{2}$")
 
@@ -393,7 +409,7 @@ internal fun boardTaskProcessingLabel(task: BoardTask): String? {
     }
     if (summary.running == summary.total) return "正在处理..."
     if (summary.queued > 0 && summary.total == 1) return "排队中 · ${summary.queued} 条等待执行"
-    if (!task.acceptance?.acceptedAt.isNullOrBlank()) return "验收通过 · 已完成"
+    if (task.humanAcceptanceCurrent()) return "人工已确认 · 已完成"
     if (!task.acceptance?.blocker.isNullOrBlank()) return "待处理：${task.acceptance?.blocker}"
     return boardTaskSessionSummaryLabel(summary)?.plus(" · 尚待验收")
 }

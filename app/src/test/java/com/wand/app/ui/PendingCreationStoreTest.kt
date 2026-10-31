@@ -78,6 +78,29 @@ class PendingCreationStoreTest {
     }
 
     @Test
+    fun explicitConversationOnlyRecoverySurvivesReopeningWithoutRetryingTask() {
+        val persistence = FakePersistence()
+        val store = PendingCreationStore(persistence)
+        store.markUnconfirmed("scope", PendingCreationOperation.TASK)
+        val unresolvedKey = store.continueWithoutTask("scope")
+        val reopened = PendingCreationStore(persistence)
+        assertTrue(reopened.state("scope").conversationOnly)
+        assertFalse(reopened.state("scope").unconfirmed)
+        assertTrue(reopened.state(unresolvedKey).unconfirmed)
+        assertTrue(runCatching { reopened.markUnconfirmed("scope", PendingCreationOperation.TASK) }.isFailure)
+        reopened.markUnconfirmed("scope", PendingCreationOperation.SESSION)
+        reopened.definiteRejection("scope")
+        assertTrue(reopened.state("scope").conversationOnly)
+        reopened.markUnconfirmed("scope", PendingCreationOperation.SESSION)
+        assertTrue(runCatching { reopened.continueWithoutTask("scope") }.isFailure)
+        assertTrue(reopened.state("scope").unconfirmed)
+        reopened.sessionAccepted("scope", "session")
+        assertEquals("session", reopened.state("scope").sessionId)
+        reopened.clear("scope")
+        assertTrue(reopened.state(unresolvedKey).unconfirmed)
+    }
+
+    @Test
     fun stableScopeSeparatesServersAndEntryKinds() {
         val workspace = PendingCreationStore.stableKey("server-1", "workspace:/repo")
         assertEquals(workspace, PendingCreationStore.stableKey("server-1", "workspace:/repo"))
@@ -114,6 +137,55 @@ class PendingCreationStoreTest {
         store.definiteRejection(key)
         assertEquals("task-1", store.state(key).taskId)
         assertFalse(store.state(key).blocksCreation(volatileUnconfirmed = false, hasKnownSession = false))
+    }
+
+    @Test
+    fun explicitTaskSelectionContinuesUnknownTaskWithStableBinding() {
+        val persistence = FakePersistence()
+        val store = PendingCreationStore(persistence)
+        store.markUnconfirmed("scope", PendingCreationOperation.TASK)
+        store.chooseExistingTask("scope", "chosen-task", "/repo/.worktrees/task", "workspace")
+        val restored = PendingCreationStore(persistence).state("scope")
+        assertEquals("chosen-task", restored.taskId)
+        assertEquals("/repo/.worktrees/task", restored.taskCwd)
+        assertEquals("workspace", restored.taskWorkspaceId)
+        assertFalse(restored.unconfirmed)
+        assertNull(restored.operation)
+        assertFalse(restored.blocksCreation(volatileUnconfirmed = false, hasKnownSession = false))
+    }
+
+    @Test
+    fun taskSelectionCannotUnlockUnknownSessionOrReplaceAcceptedSession() {
+        for (acceptedSession in listOf(false, true)) {
+            val store = PendingCreationStore(FakePersistence())
+            store.recordTaskAccepted("scope", "original-task")
+            if (acceptedSession) store.sessionAccepted("scope", "original-session")
+            store.markUnconfirmed("scope", PendingCreationOperation.SESSION)
+            try {
+                store.chooseExistingTask("scope", "other-task", "/other", "other-workspace")
+                throw AssertionError("Expected unknown-session lock")
+            } catch (_: IllegalStateException) {
+                assertEquals("original-task", store.state("scope").taskId)
+                assertEquals(PendingCreationOperation.SESSION, store.state("scope").operation)
+                assertTrue(store.state("scope").unconfirmed)
+            }
+        }
+    }
+
+    @Test
+    fun failedExplicitTaskSelectionPreservesUnknownLock() {
+        val persistence = FakePersistence()
+        val store = PendingCreationStore(persistence)
+        store.markUnconfirmed("scope", PendingCreationOperation.TASK)
+        persistence.failWrites = true
+        try {
+            store.chooseExistingTask("scope", "chosen-task", "/repo", "workspace")
+            throw AssertionError("Expected persistence failure")
+        } catch (_: PendingCreationPersistenceException) {
+            assertTrue(store.state("scope").unconfirmed)
+            assertEquals(PendingCreationOperation.TASK, store.state("scope").operation)
+            assertNull(store.state("scope").taskId)
+        }
     }
 
     @Test

@@ -508,6 +508,7 @@ internal fun TaskComments(
     childTasks: List<BoardTask> = emptyList(),
     onOpenSession: (String, Boolean) -> Unit = { _, _ -> },
     onOpenTask: (String) -> Unit = {},
+    dispatchPurpose: String = "execution",
 ) {
     var comments by remember(api, taskId) { mutableStateOf<List<TaskComment>>(emptyList()) }
     /** 已经翻出来的更早页；轮询只刷新最新一页，不能把用户翻过的历史抹掉。 */
@@ -644,6 +645,7 @@ internal fun TaskComments(
                 )
                 comment.sourceCommentId?.let { Text("回复评论 $it", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted) }
                 dispatch?.let { Text("已派发给 ${it.employeeName}", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted) }
+                if (comment.reviewWritebackPending) Text("验收结论待回填", style = MaterialTheme.typography.labelSmall, color = WandColors.warning)
                 SelectionContainer {
                     TaskReferenceText(
                         body = comment.body,
@@ -874,10 +876,12 @@ internal fun TaskComments(
                         val digest = MessageDigest.getInstance("SHA-256").digest(payload.toByteArray()).joinToString("") { "%02x".format(it) }
                         val key = "$taskId:$digest"
                         try {
-                            val requestId = prefs.getString(key, null) ?: UUID.randomUUID().toString()
-                            check(prefs.edit().putString(key, requestId).commit()) { "无法保存请求标识，未派发。" }
-                            val saved = api.postTaskComment(taskId, requestId, submitted.body.trim(), submitted.employeeId.ifEmpty { null }, submitted.source)
-                            if (saved.dispatch?.deliveryUncertain != true) prefs.edit().remove(key).commit()
+                            val previous = prefs.getString(key, null)
+                            val requestId = previous ?: UUID.randomUUID().toString()
+                            val purpose = prefs.getString("$key:purpose", null) ?: if (previous != null || submitted.employeeId.isEmpty()) "execution" else dispatchPurpose
+                            check(prefs.edit().putString(key, requestId).putString("$key:purpose", purpose).commit()) { "无法保存请求标识，未派发。" }
+                            val saved = api.postTaskComment(taskId, requestId, submitted.body.trim(), submitted.employeeId.ifEmpty { null }, submitted.source, purpose.takeIf { submitted.employeeId.isNotEmpty() })
+                            if (saved.dispatch?.deliveryUncertain != true) prefs.edit().remove(key).remove("$key:purpose").commit()
                             val rejected = saved.dispatch?.state == "failed"
                             if (!rejected) {
                                 draft = TaskCommentDrafts.accept(taskId, submitted)

@@ -15,7 +15,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wand.app.data.TaskDirectoryGroup
 import com.wand.app.data.WorkspacePort
-import com.wand.app.data.WorkspaceTaskCreation
 import com.wand.app.ui.components.*
 import com.wand.app.ui.theme.WandColors
 import kotlinx.coroutines.CancellationException
@@ -30,29 +29,6 @@ internal fun sessionMoveTargets(groups: List<TaskDirectoryGroup>, sessionId: Str
         query.isBlank() || "${it.workspace} ${it.name}".contains(query.trim(), ignoreCase = true)
     }
 
-/**
- * 未分组会话「归纳为新任务」：建一张没起名的卡，再把这条会话装进去。
- * 合成目录和隐藏的全局空间没有可建卡的项目实体，改建挂同一目录的独立任务。
- * 名字留空 —— 服务端先按会话内容写临时标题，之后交给模型改写，和 Web 端同一条链路。
- */
-internal suspend fun summarizeSessionIntoNewTask(
-    api: WorkspacePort,
-    group: TaskDirectoryGroup,
-    sessionId: String,
-): WorkspaceTaskCreation {
-    val card = if (group.synthetic || group.isGlobal) {
-        api.createStandaloneTask(
-            name = "",
-            cwd = group.workspaceCwd.takeIf { it.isNotBlank() },
-            worktree = false,
-        )
-    } else {
-        api.createWorkspaceTask(workspaceId = group.workspaceId, name = "", worktree = false)
-    }
-    api.moveWorkspaceSession(card.id, sessionId)
-    return card
-}
-
 /** Touch/keyboard equivalent of desktop drag-and-drop, with an explicit destination confirmation. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,7 +38,7 @@ fun SessionMoveSheet(
     sessionTitle: String,
     onDismiss: () -> Unit,
     onMoved: () -> Unit,
-    /** 非空 = 这条会话还没有任务归属，可以就地归纳成新任务。 */
+    /** Optional source directory until fresh destinations have loaded. */
     intoNewTask: TaskDirectoryGroup? = null,
 ) {
     val scope = rememberCoroutineScope()
@@ -83,6 +59,12 @@ fun SessionMoveSheet(
             error = cause.message ?: "无法加载任务，请重试"
         } finally { loading = false }
     }
+    var creatingSection by remember(sessionId) { mutableStateOf(false) }
+    val sourceGroup = groups.firstOrNull { group -> group.standaloneSessions.any { it.id == sessionId }
+        || group.tasks.any { task -> task.sessions.any { it.id == sessionId } } } ?: intoNewTask
+    if (creatingSection && sourceGroup != null) WorkspaceSectionNameDialog(
+        api = api, group = sourceGroup, sessionId = sessionId,
+        onDismiss = { creatingSection = false }, onCreated = { onMoved(); onDismiss() })
     val allTargets = sessionMoveTargets(groups, sessionId, "")
     val duplicateNames = allTargets.groupingBy { it.workspace to it.name }.eachCount()
     // Keep selectable destinations above the disabled source, especially when the IME is open.
@@ -95,54 +77,39 @@ fun SessionMoveSheet(
         modifier = Modifier.imePadding(),
     ) {
         Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).padding(horizontal = 20.dp).navigationBarsPadding()) {
-            Text("移动会话到任务", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
+            Text("移动会话到分区", style = MaterialTheme.typography.titleLarge, color = WandColors.textPrimary)
             Text(sessionTitle, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
-            Text("只改变任务归属，保留运行目录、历史和正在执行的 CLI。",
+            Text("只改变分区归属，保留运行目录、历史和正在执行的 CLI。",
                 style = MaterialTheme.typography.bodySmall, color = WandColors.textMuted,
                 modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
-            WandTextField(value = query, onValueChange = { query = it; selectedId = null }, label = "搜索任务或工作区",
+            WandTextField(value = query, onValueChange = { query = it; selectedId = null }, label = "搜索分区或工作区",
                 singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 12.dp))
             error?.let { message ->
                 Text(message, color = WandColors.danger, modifier = Modifier.padding(top = 8.dp))
-                TextButton(onClick = { retry++ }, enabled = !busy) { Text("重新加载任务") }
+                TextButton(onClick = { retry++ }, enabled = !busy) { Text("重新加载分区") }
             }
             LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth(), contentPadding = PaddingValues(vertical = 8.dp)) {
-                if (!loading && error == null && intoNewTask != null) item(key = "summarize-into-new-task") {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
-                        .clickable(enabled = !busy) {
-                            val group = intoNewTask ?: return@clickable
+                if (!loading && sourceGroup != null) item(key = "new-section") {
+                    TextButton(onClick = { creatingSection = true }, enabled = !busy) { Text("新建分区并移入") }
+                    if (sourceGroup.tasks.any { task -> task.sessions.any { it.id == sessionId } }) {
+                        TextButton(enabled = !busy, onClick = {
                             busy = true
-                            error = null
                             scope.launch {
-                                try {
-                                    summarizeSessionIntoNewTask(api, group, sessionId)
-                                    Toast.makeText(context, "已归纳为新任务，稍后按会话内容自动命名",
-                                        Toast.LENGTH_SHORT).show()
-                                    onMoved()
-                                    onDismiss()
-                                } catch (cause: Exception) {
+                                try { api.unassignWorkspaceSession(sessionId); onMoved(); onDismiss() }
+                                catch (cause: Exception) {
                                     if (cause is CancellationException) throw cause
-                                    error = cause.message ?: "归纳失败，原会话不受影响"
+                                    error = cause.message ?: "移回工作区失败"
                                 } finally { busy = false }
                             }
-                        }
-                        .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(WandIcons.add, contentDescription = null, modifier = Modifier.size(22.dp),
-                            tint = WandColors.textSecondary)
-                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                            Text("归纳为新任务", fontWeight = FontWeight.Medium, color = WandColors.textPrimary)
-                            Text("新建一张任务卡把这条会话装进去，标题稍后按会话内容自动生成",
-                                maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
-                        }
+                        }) { Text("移回工作区（不分区）") }
                     }
                 }
                 if (!loading && error == null && targets.none { !it.current }) item {
-                    Text(if (query.isNotBlank()) "没有匹配的目标任务。"
-                        else if (intoNewTask != null) "还没有其他任务，可以直接归纳为新任务。"
-                        else "还没有其他任务，请先创建一个任务分组。",
+                    Text(if (query.isNotBlank()) "没有匹配的分区。"
+                        else if (intoNewTask != null) "还没有其他分区，可以新建分区并移入。"
+                        else "还没有其他分区。",
                         color = WandColors.textMuted, modifier = Modifier.padding(vertical = 16.dp))
                 }
                 items(targets, key = { it.id }) { target ->
@@ -161,7 +128,7 @@ fun SessionMoveSheet(
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
                         }
-                        if (target.current) Text("当前任务", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
+                        if (target.current) Text("当前分区", style = MaterialTheme.typography.labelSmall, color = WandColors.textMuted)
                     }
                 }
             }
@@ -188,6 +155,48 @@ fun SessionMoveSheet(
                         }
                     })
             }
+        }
+    }
+}
+
+@Composable
+fun WorkspaceSectionNameDialog(
+    api: WorkspacePort,
+    group: TaskDirectoryGroup,
+    onDismiss: () -> Unit,
+    onCreated: () -> Unit,
+    sessionId: String? = null,
+) {
+    var name by remember(group.workspaceId, sessionId) { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    WandDialog(
+        title = if (sessionId == null) "新建分区" else "新建分区并移入",
+        onDismissRequest = { if (!busy) onDismiss() },
+        dismiss = WandDialogAction("取消", enabled = !busy, onClick = onDismiss),
+        confirm = WandDialogAction(label = if (busy) "创建中…" else "创建",
+            enabled = !busy && name.isNotBlank(), onClick = {
+                busy = true
+                error = null
+                scope.launch {
+                    try {
+                        api.createWorkspaceSection(name.trim(), group.workspaceCwd,
+                            group.workspaceId.takeUnless { group.synthetic || group.isGlobal }, sessionId)
+                        onCreated()
+                        onDismiss()
+                    } catch (cause: Exception) {
+                        if (cause is CancellationException) throw cause
+                        error = cause.message ?: "创建分区失败，请重试"
+                    } finally { busy = false }
+                }
+            })
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("在 ${group.workspaceName} 中整理会话，不创建任务卡。")
+            WandTextField(value = name, onValueChange = { name = it }, label = "分区名称",
+                enabled = !busy, singleLine = true, modifier = Modifier.fillMaxWidth())
+            error?.let { Text(it, color = WandColors.danger) }
         }
     }
 }

@@ -27,7 +27,7 @@ class TaskBoardPresentationTest {
         assertEquals(BoardTaskSessionState.Unknown, boardTaskSessionState(session(status = "")))
         val card = task(status = "done", sessions = listOf(session(status = "exited"), session(status = "idle")))
         assertEquals(0, boardTaskStats(listOf(card)).accepted)
-        val accepted = card.copy(acceptance = com.wand.app.data.BoardTaskAcceptance("a: report; b: verification", "", "2000-01-01"))
+        val accepted = card.copy(acceptance = com.wand.app.data.BoardTaskAcceptance("a: report; b: verification", "", "2000-01-01", confirmedRevision = 0))
         assertEquals(1, boardTaskStats(listOf(accepted)).accepted)
     }
     @Test
@@ -44,7 +44,8 @@ class TaskBoardPresentationTest {
         assertEquals(2, stats.todo)
         assertEquals(1, stats.doing)
         assertEquals(1, stats.done)
-        assertEquals(3, stats.remaining)
+        assertEquals(4, stats.remaining)
+        assertEquals(1, stats.review)
         assertEquals(2, stats.high)
     }
 
@@ -83,7 +84,7 @@ class TaskBoardPresentationTest {
                 task(id = "b", status = "backlog"),
             ),
         )
-        assertEquals(listOf("backlog", "todo", "doing", "done"), grouped.map { it.first })
+        assertEquals(listOf("backlog", "todo", "doing", "review", "ready"), grouped.map { it.first })
         assertEquals(listOf("b"), grouped[0].second.map { it.id })
         assertEquals(listOf("t"), grouped[1].second.map { it.id })
         assertTrue(grouped[2].second.isEmpty())
@@ -99,9 +100,11 @@ class TaskBoardPresentationTest {
 
     @Test
     fun completeToggleReopensDoneTasks() {
-        assertEquals("done", boardTaskToggledStatus("todo"))
-        assertEquals("done", boardTaskToggledStatus("doing"))
-        assertEquals("todo", boardTaskToggledStatus("done"))
+        assertEquals("doing", boardTaskToggledStatus("todo"))
+        assertEquals("doing", boardTaskToggledStatus("doing"))
+        assertEquals("done", boardTaskToggledStatus("done"))
+        assertEquals("review", boardTaskToggledStatus("review"))
+        assertEquals("ready", boardTaskToggledStatus("ready"))
         assertEquals("todo", boardTaskToggledStatus("archived"))
     }
 
@@ -114,9 +117,9 @@ class TaskBoardPresentationTest {
         )
         val stats = boardTaskStats(tasks)
         assertEquals(1, stats.done)
-        assertEquals(1, stats.remaining)
+        assertEquals(2, stats.remaining)
         assertEquals(listOf("a"), boardArchivedTasks(tasks).map { it.id })
-        val doneGroup = groupedBoardTasks(tasks).first { it.first == "done" }
+        val doneGroup = groupedBoardTasks(tasks).first { it.first == "review" }
         assertEquals(listOf("d"), doneGroup.second.map { it.id })
         assertEquals(listOf("a"), filterBoardTasks(tasks, "", "", "archived").map { it.id })
     }
@@ -236,7 +239,9 @@ class TaskBoardPresentationTest {
     @Test
     fun closedTasksAndMalformedDatesNeverReadAsOverdue() {
         val today = LocalDate.parse("2026-03-20")
-        assertFalse(boardTaskIsOverdue("2026-03-14", "done", today))
+        assertTrue(boardTaskIsOverdue("2026-03-14", "done", today))
+        assertTrue(boardTaskIsOverdue("2026-03-14", "review", today))
+        assertTrue(boardTaskIsOverdue("2026-03-14", "ready", today))
         assertFalse(boardTaskIsOverdue("2026-03-14", "archived", today))
         assertTrue(boardTaskIsOverdue("2026-03-14", "doing", today))
         assertFalse(boardTaskIsOverdue("2026-03-20", "todo", today))
@@ -396,9 +401,9 @@ class TaskBoardPresentationTest {
      */
     @Test
     fun groupAddButtonDescriptionQuotesStatusName() {
-        assertEquals("在「待办」中新建任务", boardGroupAddTaskDescription("todo"))
-        assertEquals("在「进行中」中新建任务", boardGroupAddTaskDescription("doing"))
-        assertEquals("在「等你确认」中新建任务", boardGroupAddTaskDescription("done"))
+        assertEquals("在「等待认领」中新建任务", boardGroupAddTaskDescription("todo"))
+        assertEquals("在「执行中」中新建任务", boardGroupAddTaskDescription("doing"))
+        assertEquals("在「待验收」中新建任务", boardGroupAddTaskDescription("done"))
         for (status in BOARD_TASK_STATUSES) {
             val description = boardGroupAddTaskDescription(status)
             val label = boardTaskStatusLabel(status)

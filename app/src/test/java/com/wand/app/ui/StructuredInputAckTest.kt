@@ -72,6 +72,7 @@ class StructuredInputAckTest {
             }
             val body = request.get(5, TimeUnit.SECONDS)
             assertTrue(body.getBoolean("respondImmediately"))
+            assertNotNull(java.util.UUID.fromString(body.getString("idempotencyKey")))
             assertFalse(body.has("interrupt"))
             assertEquals("second", body.getString("input"))
             // Virtual time may already advance past the success icon's dwell while I/O resumes.

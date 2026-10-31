@@ -420,6 +420,7 @@ data class WorkspaceTask(
     val status: WorkspaceTaskStatus,
     val createdAt: String?,
     val lastOpenedAt: String?,
+    val kind: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject): WorkspaceTask? {
@@ -431,6 +432,7 @@ data class WorkspaceTask(
                 name = o.str("name") ?: "",
                 worktree = WorkspaceTaskWorktree.parse(o.obj("worktree")),
                 layout = TaskWindowLayout.parse(o.opt("layout")),
+                kind = o.str("kind"),
                 status = parseWorkspaceTaskStatus(o.str("status")),
                 createdAt = o.str("createdAt"),
                 lastOpenedAt = o.str("lastOpenedAt"),
@@ -551,6 +553,11 @@ data class WorkspaceTaskSummary(
     val totalSessions: Int,
     val executionStatus: String? = null,
     val queuedExecutionCount: Int = 0,
+    /** Business stage comes only from boardTaskStatus, never workspace active/done or ID presence. */
+    val boardTaskId: String? = null,
+    val boardTaskStatus: String? = null,
+    val archived: Boolean = false,
+    val parentWorkspaceTaskId: String? = null,
 ) {
     val hasQueuedExecution: Boolean get() = executionStatus == "queued"
     val hasActiveExecution: Boolean get() = hasQueuedExecution || executionStatus == "running"
@@ -559,6 +566,7 @@ data class WorkspaceTaskSummary(
     val status: WorkspaceTaskStatus get() = task.status
     val worktree: WorkspaceTaskWorktree? get() = task.worktree
     val isIsolated: Boolean get() = isolated || task.worktree != null
+    val createdAt: String? get() = task.createdAt
 
     companion object {
         fun parse(o: JSONObject): WorkspaceTaskSummary? {
@@ -572,6 +580,10 @@ data class WorkspaceTaskSummary(
                 totalSessions = o.int("totalSessions")
                     ?: o.arr("sessions")?.length()
                     ?: 0,
+                boardTaskId = o.str("boardTaskId"),
+                boardTaskStatus = o.str("boardTaskStatus"),
+                archived = o.bool("archived") == true,
+                parentWorkspaceTaskId = o.str("parentWorkspaceTaskId"),
                 executionStatus = o.str("executionStatus"),
                 queuedExecutionCount = o.int("queuedExecutionCount")?.coerceAtLeast(0) ?: 0,
             )
@@ -591,6 +603,7 @@ data class TaskDirectoryGroup(
     val tasks: List<WorkspaceTaskSummary>,
     val standaloneSessions: List<WorkspaceSessionSummary>,
     val createdAt: String? = null,
+    val latestActivityAt: String? = null,
     val global: Boolean = false,
 ) {
     val id: String get() = workspaceId
@@ -608,12 +621,38 @@ data class TaskDirectoryGroup(
                 standaloneSessions = o.arr("standaloneSessions")
                     ?.let(WorkspaceSessionSummary::parseList) ?: emptyList(),
                 createdAt = o.str("createdAt"),
+                latestActivityAt = o.str("latestActivityAt"),
                 global = o.bool("global") ?: false,
             )
         }
 
         fun parseList(arr: JSONArray): List<TaskDirectoryGroup> =
             arr.parseEach { parse(it) }
+    }
+}
+
+/** Legacy scope retains active tasks and their ancestors, independently of board stage. */
+fun activeTaskDirectoryGroups(groups: List<TaskDirectoryGroup>): List<TaskDirectoryGroup> {
+    val tasksById = groups.flatMap { it.tasks }.associateBy { it.id }
+    val retainedIds = mutableSetOf<String>()
+    tasksById.values.filterNot { it.archived }.forEach { active ->
+        var ancestor: WorkspaceTaskSummary? = active
+        while (ancestor != null && retainedIds.add(ancestor.id)) {
+            ancestor = ancestor.parentWorkspaceTaskId?.let(tasksById::get)
+        }
+    }
+    return groups.mapNotNull { group ->
+        val tasks = group.tasks.filter { it.id in retainedIds }.map { task ->
+            val sessions = task.sessions.filterNot { it.archived == true }
+            if (sessions.size == task.sessions.size) task else task.copy(
+                sessions = sessions,
+                totalSessions = (task.totalSessions - (task.sessions.size - sessions.size)).coerceAtLeast(0),
+            )
+        }
+        val standalone = group.standaloneSessions.filterNot { it.archived == true }
+        if ((group.synthetic || group.isGlobal) && tasks.isEmpty() && standalone.isEmpty()) null
+        else if (tasks == group.tasks && standalone == group.standaloneSessions) group
+        else group.copy(tasks = tasks, standaloneSessions = standalone)
     }
 }
 

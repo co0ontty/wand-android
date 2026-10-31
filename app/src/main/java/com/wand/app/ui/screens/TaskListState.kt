@@ -1,10 +1,12 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.wand.app.data.activeTaskDirectoryGroups
 import com.wand.app.data.normalizeWorkspacePath
 import com.wand.app.data.GLOBAL_WORKSPACE_ID
 import com.wand.app.data.RecentPath
@@ -34,8 +36,10 @@ class TaskListState(
     private val port: WorkspacePort,
     private val expansionStore: TaskListExpansionStore = MemoryTaskListExpansionStore(),
 ) : ScopedStore() {
-    var groups by mutableStateOf<List<TaskDirectoryGroup>>(emptyList())
+    /** Full shared response for conversation archive filters; legacy views use groups below. */
+    var conversationGroups by mutableStateOf<List<TaskDirectoryGroup>>(emptyList())
         private set
+    val groups by derivedStateOf { activeTaskDirectoryGroups(conversationGroups) }
     var loading by mutableStateOf(true)
         private set
     var loadError by mutableStateOf<String?>(null)
@@ -216,7 +220,7 @@ class TaskListState(
                 return true
             }
             val incoming = applyPendingGroupOrder(page.groups, pendingGroupOrder)
-            if (groups != incoming) groups = incoming
+            if (conversationGroups != incoming) conversationGroups = incoming
             groupsRevision = page.revision
             loadError = null
             true
@@ -579,8 +583,8 @@ class TaskListState(
         if (from < 0 || to < 0) return
         val next = movedItem(current, from, to)
         if (next == current) return
-        groups = next
         pendingGroupOrder = groupIdsInOrder(next)
+        conversationGroups = applyPendingGroupOrder(conversationGroups, pendingGroupOrder)
     }
 
     fun finishDirectoryReorder() {
@@ -593,7 +597,7 @@ class TaskListState(
     }
 
     fun cancelDirectoryReorder() {
-        dragStartOrder?.let { groups = applyPendingGroupOrder(groups, it) }
+        dragStartOrder?.let { conversationGroups = applyPendingGroupOrder(conversationGroups, it) }
         pendingGroupOrder = dragPreviousPendingOrder
         dragStartOrder = null
         dragPreviousPendingOrder = null

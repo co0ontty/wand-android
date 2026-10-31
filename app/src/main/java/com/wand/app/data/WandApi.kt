@@ -381,6 +381,7 @@ class WandApi(baseUrl: String, val token: String?,
         input: String,
     ): SessionSnapshot {
         val body = JSONObject().put("input", input).put("respondImmediately", true)
+            .put("idempotencyKey", java.util.UUID.randomUUID().toString())
         return SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/input", body))
     }
 
@@ -657,6 +658,10 @@ class WandApi(baseUrl: String, val token: String?,
     override suspend fun archiveMission(missionId: String): MissionInfo =
         MissionInfo.parse(requestObject("POST", "/api/missions/${encode(missionId)}/archive"))
 
+    suspend fun mergeWorktrees(sessionId: String, branch: String, head: String): JSONObject =
+        requestObject("POST", "/api/sessions/$sessionId/git/merge-worktrees",
+            JSONObject().put("expectedBranch", branch).put("expectedHead", head), timeoutSec = 180)
+
     // MARK: - Git 快速提交
 
     suspend fun gitStatus(sessionId: String): GitStatusResult =
@@ -729,12 +734,20 @@ class WandApi(baseUrl: String, val token: String?,
     override suspend fun getBoardTask(id: String): BoardTask? =
         BoardTask.parse(requestObject("GET", "/api/wand-tasks/${encode(id)}"))
 
-    override suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?): TaskComment {
+    override suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?): TaskComment =
+        postTaskComment(id, requestId, body, employeeId, sourceCommentId, null)
+
+    override suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?, purpose: String?): TaskComment {
+        if (purpose == "review" && employeeId != null) {
+            val task = getBoardTask(id)
+            if (task == null || task.id != id || task.workflowVersion != 1) throw WandApiException(409, "服务端尚不支持验收派发；草稿与原请求标识已保留，请更新服务并核对，不会改用普通执行。")
+        }
         if (employeeId.isNullOrEmpty()) {
             TaskCommentMention.validationMessage(body, "")?.let { throw WandApiException(400, it) }
         }
         val payload = JSONObject().put("requestId", requestId).put("body", body)
         employeeId?.let { payload.put("employeeId", it) }; sourceCommentId?.let { payload.put("sourceCommentId", it) }
+        if (employeeId != null && purpose != null) payload.put("purpose", purpose)
         val response = requestObject("POST", "/api/wand-tasks/${encode(id)}/comments", payload)
         return TaskComment.parseList(JSONObject().put("comments", org.json.JSONArray().put(response.getJSONObject("comment"))), id).single()
     }
@@ -793,9 +806,12 @@ class WandApi(baseUrl: String, val token: String?,
         )),
     ) ?: throw WandApiException(500, "创建任务响应无效。")
 
-    override suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask =
-        BoardTask.parse(requestObject("PATCH", "/api/wand-tasks/${encode(id)}", body))
+    override suspend fun updateBoardTask(id: String, body: JSONObject): BoardTask {
+        val task = BoardTask.parse(requestObject("PATCH", "/api/wand-tasks/${encode(id)}", body))
             ?: throw WandApiException(500, "更新任务响应无效。")
+        if (body.has("workflow") && (task.workflowVersion != 1 || task.id != id)) throw WandApiException(409, "服务端不支持两级验收或回执不匹配当前任务；请更新服务并核对，不能将此响应当作验收通过。")
+        return task
+    }
 
     override suspend fun deleteBoardTask(id: String) {
         requestData("DELETE", "/api/wand-tasks/${encode(id)}")
@@ -1006,20 +1022,13 @@ class WandApi(baseUrl: String, val token: String?,
 
     override suspend fun startWorktreeMergeAgent(
         workspace: Workspace,
-        provider: String,
         prompt: String,
+        provider: String?,
     ): SessionSnapshot {
-        val command = WandProvider.cliCommandFor(provider)
-        val body = JSONObject()
-            .put("kind", "pty")
-            .put("command", command)
-            .put("provider", provider)
-            .put("cwd", workspace.cwd)
-            .put("mode", "managed")
-            .put("initialInput", prompt)
-            .put("sessionSource", "interactive")
-            .put("workspaceId", workspace.id)
-        return SessionSnapshot.parse(requestObject("POST", "/api/sessions", body))
+        val body = JSONObject().put("prompt", prompt)
+        return SessionSnapshot.parse(
+            requestObject("POST", "/api/workspaces/${encode(workspace.id)}/worktree-merge-agent", body),
+        )
     }
 
     override suspend fun listWorkspaceTasks(workspaceId: String): List<WorkspaceTask> =
@@ -1054,10 +1063,10 @@ class WandApi(baseUrl: String, val token: String?,
     }
 
     override suspend fun listTaskGroups(): List<TaskDirectoryGroup> =
-        listTaskGroupsPage().groups
+        activeTaskDirectoryGroups(listTaskGroupsPage().groups)
 
     override suspend fun listTaskGroupsPage(revision: String?): TaskGroupsPage {
-        val path = "/api/tasks?revision=${encode(revision ?: "")}"
+        val path = "/api/tasks?includeArchived=1&revision=${encode(revision ?: "")}"
         return TaskGroupsPage.parse(requestData("GET", path))
     }
 
@@ -1236,6 +1245,18 @@ class WandApi(baseUrl: String, val token: String?,
             JSONObject().put("sessionIds", JSONArray(ids)),
         )
         return response.int("deleted") ?: 0
+    }
+
+    override suspend fun createWorkspaceSection(name: String, cwd: String, workspaceId: String?, sessionId: String?): WorkspaceTaskCreation {
+        val body = JSONObject().put("name", name).put("cwd", cwd)
+        workspaceId?.let { body.put("workspaceId", it) }
+        sessionId?.let { body.put("sessionId", it) }
+        return WorkspaceTaskCreation.parse(requestObject("POST", "/api/workspace-sections", body))
+            ?: throw WandApiException(500, "分区创建响应无效。")
+    }
+
+    override suspend fun unassignWorkspaceSession(sessionId: String) {
+        requestObject("POST", "/api/workspace-sections/unassign", JSONObject().put("sessionId", sessionId))
     }
 
     override suspend fun moveWorkspaceSession(taskId: String, sessionId: String) {

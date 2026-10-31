@@ -63,6 +63,8 @@ data class TaskComment(
      * 由 [TaskCommentReference.executionReferenceChips] 回到子任务列表里换编号。
      */
     val referencedTaskIdentifiers: List<String> = emptyList(),
+    val purpose: String? = null,
+    val reviewWritebackPending: Boolean = false,
 ) {
     companion object {
         fun parseList(response: JSONObject, taskId: String): List<TaskComment> {
@@ -96,7 +98,7 @@ data class TaskComment(
                         )
                     },
                     referenced,
-                    referencedIdentifiers)
+                    referencedIdentifiers, purpose = item.str("purpose"), reviewWritebackPending = item.optBoolean("reviewWritebackPending", false))
             }
         }
     }

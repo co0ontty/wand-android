@@ -1117,7 +1117,9 @@ fun ChatScreen(
             FloatingChatControls(showBack = showBack, onBack = onBack,
                 identity = liveEmployee?.name ?: store.snapshot?.employeeName ?: store.snapshot?.providerLabel ?: "当前会话",
                 cwd = store.snapshot?.cwd, onTarget = { targetPickerOpen = true },
-                gitEnabled = quickCommit.status?.isGit == true,
+                // 状态未知（还没取到 / 上一次失败）也允许打开：面板自己重试，
+                // 只有确认不是 git 仓库才禁用。
+                gitEnabled = quickCommit.status?.isGit != false,
                 onGit = { resources.dismiss(); quickCommit.openPanel() },
                 onStop = { stopRequest++; Unit }.takeIf { store.isResponding },
                 taskSessions = taskSessions,
@@ -1885,6 +1887,11 @@ private fun QueueBar(
             }
         }
         if (expanded) Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState())) {
+            Text(if (store.snapshot?.structuredState?.inputMode == "steer" ||
+                (store.snapshot?.provider == "pi" && store.snapshot?.structuredState?.engine == "core"))
+                "下一安全边界追加" else "本轮结束后按顺序发送",
+                color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             if (recovery != null) {
                 Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     .semantics { liveRegion = LiveRegionMode.Polite }) {

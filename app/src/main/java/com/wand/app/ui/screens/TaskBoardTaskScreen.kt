@@ -42,7 +42,10 @@ import com.wand.app.data.TeamRunAction
 import com.wand.app.data.Workspace
 import com.wand.app.data.WorkspacePort
 import com.wand.app.data.boardTaskStatusLabel
+import com.wand.app.data.boardWorkflowBody
 import com.wand.app.data.displayStatusLabel
+import com.wand.app.data.humanAcceptanceCurrent
+import com.wand.app.data.aiVerificationCurrent
 import com.wand.app.ui.components.ToolbarIconButton
 import com.wand.app.ui.components.WandBreadcrumb
 import com.wand.app.ui.components.WandCrumb
@@ -52,15 +55,27 @@ import com.wand.app.ui.components.WandButton
 import com.wand.app.ui.components.WandIcons
 import com.wand.app.ui.components.WandTextField
 import com.wand.app.ui.theme.WandColors
-import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private object TaskAcceptanceDraftCache {
-    val values = linkedMapOf<String, Pair<String, String>>()
+    data class Draft(val evidence: String, val blocker: String)
+
+    val values = linkedMapOf<String, Draft>()
+    private val workflowRequests = linkedMapOf<String, String>()
+
     fun save(id: String, evidence: String, blocker: String) {
         if (values.size >= 100 && !values.containsKey(id)) values.remove(values.keys.first())
-        values[id] = evidence to blocker
+        values[id] = Draft(evidence, blocker)
+    }
+
+    /** Same evidence/blocker fingerprint is one user intent, so unknown retries reuse its UUID. */
+    fun workflowRequestId(id: String, version: String, action: String, evidence: String, blocker: String): String {
+        val key = org.json.JSONArray(listOf(id, version, action, evidence, blocker)).toString()
+        workflowRequests[key]?.let { return it }
+        if (workflowRequests.size >= 100) workflowRequests.remove(workflowRequests.keys.first())
+        return UUID.randomUUID().toString().also { workflowRequests[key] = it }
     }
 }
 
@@ -115,6 +130,8 @@ fun TaskBoardTaskScreen(
     var acceptanceBlocker by remember(taskId) { mutableStateOf("") }
     var acceptanceDraftTaskId by remember(taskId) { mutableStateOf<String?>(null) }
     var acceptanceDraftDirty by remember(taskId) { mutableStateOf(false) }
+    var workflowAction by remember(taskId) { mutableStateOf<String?>(null) }
+    var workflowOutcome by remember(taskId) { mutableStateOf("idle") }
 
     fun applyLoaded(loaded: BoardTask?) {
         if (loaded == null) {
@@ -124,8 +141,8 @@ fun TaskBoardTaskScreen(
         }
         task = loaded
         if (acceptanceDraftTaskId != loaded.id) {
-            acceptanceEvidence = TaskAcceptanceDraftCache.values[loaded.id]?.first ?: loaded.acceptance?.evidence.orEmpty()
-            acceptanceBlocker = TaskAcceptanceDraftCache.values[loaded.id]?.second ?: loaded.acceptance?.blocker.orEmpty()
+            acceptanceEvidence = TaskAcceptanceDraftCache.values[loaded.id]?.evidence ?: loaded.acceptance?.evidence.orEmpty()
+            acceptanceBlocker = TaskAcceptanceDraftCache.values[loaded.id]?.blocker ?: loaded.acceptance?.blocker.orEmpty()
             acceptanceDraftTaskId = loaded.id
             acceptanceDraftDirty = TaskAcceptanceDraftCache.values.containsKey(loaded.id)
         }
@@ -181,20 +198,25 @@ fun TaskBoardTaskScreen(
         }
     }
 
-    fun patch(body: org.json.JSONObject, after: suspend () -> Unit = {}) {
-        if (busy) return
+    fun patch(body: org.json.JSONObject, reportError: Boolean = true, outcome: (Boolean) -> Unit = {}, after: suspend () -> Unit = {}) {
+        if (busy) { outcome(false); return }
         busy = true
+        if (reportError) error = null
         scope.launch {
+            var committed = false
             try {
-                applyLoaded(api.updateBoardTask(taskId, body))
+                val updated = api.updateBoardTask(taskId, body)
+                committed = true
+                applyLoaded(updated)
                 if (body.has("acceptance")) acceptanceDraftDirty = false
                 after()
                 onTaskChanged()
                 refresh()
             } catch (e: Exception) {
-                error = e.message ?: "保存失败"
+                if (reportError) error = e.message ?: "保存失败"
             } finally {
                 busy = false
+                outcome(committed)
             }
         }
     }
@@ -339,6 +361,8 @@ fun TaskBoardTaskScreen(
                         blocker = acceptanceBlocker,
                         busy = busy,
                         dirty = acceptanceDraftDirty,
+                        feedbackAction = workflowAction,
+                        feedbackPhase = workflowOutcome,
                         onEvidenceChange = {
                             acceptanceEvidence = it
                             acceptanceDraftDirty = true
@@ -349,16 +373,24 @@ fun TaskBoardTaskScreen(
                             acceptanceDraftDirty = true
                             TaskAcceptanceDraftCache.save(taskId, acceptanceEvidence, acceptanceBlocker)
                         },
-                        onSave = { accepted ->
+                            onWorkflow = { action ->
                             val evidence = acceptanceEvidence.trim()
                             val blocker = acceptanceBlocker.trim()
-                            val incompleteChildren = childTasks.any { it.acceptance?.acceptedAt.isNullOrBlank() }
-                            if (accepted && (evidence.isEmpty() || blocker.isNotEmpty() || incompleteChildren)) return@TaskBoardAcceptancePane
-                            val value = org.json.JSONObject()
-                                .put("evidence", acceptanceEvidence)
-                                .put("blocker", acceptanceBlocker)
-                                .put("acceptedAt", if (accepted) Instant.now().toString() else org.json.JSONObject.NULL)
-                            patch(org.json.JSONObject().put("acceptance", value))
+                            val incompleteChildren = childTasks.any { !it.humanAcceptanceCurrent() }
+                            val valid = when (action) {
+                                "submit" -> evidence.isNotEmpty() && blocker.isEmpty()
+                                "pass" -> evidence.isNotEmpty() && blocker.isEmpty() && childTasks.all { it.aiVerificationCurrent() }
+                                "fail", "return" -> blocker.isNotEmpty()
+                                "accept" -> current.aiVerificationCurrent() && evidence.isNotEmpty() && blocker.isEmpty() && !incompleteChildren
+                                else -> false
+                            }
+                            if (!valid) return@TaskBoardAcceptancePane
+                            val requestId = TaskAcceptanceDraftCache.workflowRequestId(taskId, current.updatedAt, action, evidence, blocker)
+                            workflowAction = action; workflowOutcome = "pending"
+                            patch(boardWorkflowBody(action, requestId, current.updatedAt, evidence, blocker), reportError = false, outcome = { accepted ->
+                                workflowOutcome = if (accepted) "accepted" else "unknown"
+                                if (accepted && acceptanceEvidence.trim() == evidence && acceptanceBlocker.trim() == blocker) acceptanceDraftDirty = false
+                            })
                         },
                     )
                     }
@@ -382,21 +414,6 @@ fun TaskBoardTaskScreen(
                     },
                     onDispatch = { agent, prompt, subject -> dispatch(agent, prompt, subject) },
                     onTeamRunAction = ::teamRunAction,
-                    onDelete = delete@{
-                        if (busy) return@delete
-                        busy = true
-                        scope.launch {
-                            try {
-                                api.deleteBoardTask(taskId)
-                                onTaskChanged()
-                                onBack()
-                            } catch (e: Exception) {
-                                error = e.message ?: "归档失败"
-                            } finally {
-                                busy = false
-                            }
-                        }
-                    },
                     onOpenSession = { sessionId, structured ->
                         onOpenSession(
                             TaskSessionRoute(
@@ -432,13 +449,21 @@ private fun TaskBoardAcceptancePane(
     blocker: String,
     busy: Boolean,
     dirty: Boolean,
+    feedbackAction: String?,
+    feedbackPhase: String,
     onEvidenceChange: (String) -> Unit,
     onBlockerChange: (String) -> Unit,
-    onSave: (Boolean) -> Unit,
+    onWorkflow: (String) -> Unit,
 ) {
-    val incompleteChildren = childTasks.count { it.acceptance?.acceptedAt.isNullOrBlank() }
-    val accepted = !task.acceptance?.acceptedAt.isNullOrBlank()
-    val canAccept = evidence.trim().isNotEmpty() && blocker.trim().isEmpty() && incompleteChildren == 0
+    val incompleteChildren = childTasks.count { !it.humanAcceptanceCurrent() }
+    val aiCurrent = task.aiVerificationCurrent()
+    val humanCurrent = task.humanAcceptanceCurrent()
+    val historicalAcceptance = task.acceptance?.acceptedAt != null && !humanCurrent
+    val canSubmit = task.status == "doing" && evidence.trim().isNotEmpty() && blocker.trim().isEmpty()
+    val canPass = task.status == "review" && evidence.trim().isNotEmpty() && blocker.trim().isEmpty() && childTasks.all { it.aiVerificationCurrent() }
+    val canFail = task.status == "review" && blocker.trim().isNotEmpty()
+    val canReturn = task.status == "ready" && blocker.trim().isNotEmpty()
+    val canAccept = task.status == "ready" && aiCurrent && evidence.trim().isNotEmpty() && blocker.trim().isEmpty() && incompleteChildren == 0
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -472,39 +497,61 @@ private fun TaskBoardAcceptancePane(
             isError = false,
             modifier = Modifier.fillMaxWidth(),
         )
+        listOf(
+            Triple("submit", "提交 AI 验收", canSubmit),
+            Triple("pass", "记录 AI 通过", canPass),
+            Triple("fail", "验收失败并退回", canFail),
+            Triple("accept", "确认并归档", canAccept),
+            Triple("return", "退回执行", canReturn),
+        ).chunked(2).forEach { actions ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                actions.forEach { (action, label, enabled) ->
+                    val successCopy = when (action) { "submit" -> "已提交 AI 验收"; "pass" -> "已进入待归档"; "accept" -> "已确认并归档"; else -> "已退回执行" }
+                    val copy = if (feedbackAction != action) label else when (feedbackPhase) {
+                        "pending" -> "提交中…"
+                        "unknown" -> "未确认，请核对"
+                        "accepted" -> successCopy
+                        else -> label
+                    }
+                    WandButton(label = copy, onClick = { onWorkflow(action) }, enabled = !busy && enabled,
+                        loading = feedbackAction == action && feedbackPhase == "pending",
+                        reserveLabels = listOf(label, "提交中…", "未确认，请核对", successCopy),
+                        variant = if (action == "accept" || action == "submit") WandButtonVariant.Primary else WandButtonVariant.Secondary,
+                        compact = false, modifier = Modifier.weight(1f))
+                }
+                if (actions.size == 1) Box(Modifier.weight(1f))
+            }
+        }
+        Text(
+            when {
+                aiCurrent -> "AI 验证通过 · 当前交付 revision ${task.deliveryRevision}"
+                task.verification != null -> "AI 验证结果已过期或未通过"
+                task.legacyReview -> "历史未知：旧记录未证明当前交付已通过"
+                else -> "AI 尚未验证当前交付"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (aiCurrent) WandColors.success else WandColors.warning,
+        )
+        Text(
+            when {
+                humanCurrent -> "人工已确认 · 已归档"
+                historicalAcceptance -> "历史人工记录（未确认当前交付）"
+                else -> "人工尚未确认当前交付"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (humanCurrent) WandColors.success else WandColors.textSecondary,
+        )
         if (childTasks.isNotEmpty()) {
             Text(
-                if (incompleteChildren == 0) "直接子任务均已验收通过"
-                else "仍有 $incompleteChildren 个直接子任务未验收通过，主目标不能通过",
+                if (incompleteChildren == 0) "直接子任务均已人工确认"
+                else "仍有 $incompleteChildren 个直接子任务未人工确认；AI 与人工验收分别核对",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (incompleteChildren == 0) WandColors.success else WandColors.warning,
             )
         }
-        if (accepted) {
-            Text("验收通过 · 已完成", style = MaterialTheme.typography.labelLarge, color = WandColors.success)
-            WandButton(label = "保存并重新验收", onClick = { onSave(false) }, enabled = !busy, variant = WandButtonVariant.Secondary)
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                WandButton(
-                    label = "保存交付与缺口",
-                    onClick = { onSave(false) },
-                    enabled = !busy && dirty,
-                    variant = WandButtonVariant.Secondary,
-                    compact = true,
-                    modifier = Modifier.weight(1f),
-                )
-                WandButton(
-                    label = "确认验收通过",
-                    onClick = { onSave(true) },
-                    enabled = !busy && canAccept,
-                    variant = WandButtonVariant.Success,
-                    compact = true,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+        if (feedbackPhase == "unknown") Text("操作未确认；草稿与请求标识已保留，请核对当前任务及服务版本。", style = MaterialTheme.typography.labelSmall, color = WandColors.warning)
+        if (dirty && task.status !in setOf("doing", "review", "ready")) {
+            Text("草稿已保留；进入进行中或验收流程后提交。", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary)
         }
     }
 }

@@ -64,12 +64,18 @@ fun conversationTaskLiveText(steps: List<AiTeamLiveStep>): String = steps.filter
 
 data class ConversationTaskStartup(val state: String, val error: String?)
 
-data class ConversationTask(val task: BoardTask, val runs: List<AiTeamRun>, val startup: ConversationTaskStartup? = null) {
+data class ConversationTask(val task: BoardTask, val runs: List<AiTeamRun>, val startup: ConversationTaskStartup? = null,
+    // Preserve missing fields instead of BoardTask's legacy display defaults.
+    val boardTaskStatus: String? = task.status,
+    val workspaceKnown: Boolean = true,
+) {
     companion object {
         fun parse(json: JSONObject): ConversationTask? {
             val task = json.obj("task")?.let(BoardTask::parse) ?: return null
             val startup = json.obj("startup")?.let { ConversationTaskStartup(it.optString("state"), it.str("error")) }
-            return ConversationTask(task, AiTeamRun.parseList(json.arr("runs")), startup)
+            return ConversationTask(task, AiTeamRun.parseList(json.arr("runs")), startup,
+                boardTaskStatus = json.obj("task")?.str("status"),
+                workspaceKnown = json.obj("task")?.has("workspaceId") == true)
         }
     }
 }

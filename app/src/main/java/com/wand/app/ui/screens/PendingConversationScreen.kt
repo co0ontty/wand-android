@@ -66,7 +66,7 @@ import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.theme.WandColors
 
-private enum class PendingChoice { Object, Tool, Kind, Task, TaskName, Model, Mode, Thinking }
+private enum class PendingChoice { Object, Tool, Kind, Task, TaskName, Model, Mode, Thinking, RecoveryTask }
 
 internal fun pendingInitialEmployeeId(explicitId: String?): String =
     explicitId?.takeIf(String::isNotBlank) ?: "e_wand_default"
@@ -198,8 +198,14 @@ internal fun PendingConversationScreen(
     var persistedCreation by remember(creationStore, creationKey) {
         mutableStateOf(creationStore.state(creationKey))
     }
+    LaunchedEffect(persistedCreation.conversationOnly, createMode) {
+        if (persistedCreation.conversationOnly) createMode = false
+    }
     var acceptedTaskDetail by remember(creationStore, creationKey) {
         mutableStateOf<com.wand.app.data.WorkspaceTaskDetail?>(null)
+    }
+    var recoveryTasks by remember(creationKey) {
+        mutableStateOf<List<Pair<String, com.wand.app.data.WorkspaceTaskSummary>>>(emptyList())
     }
     var creationStarted by remember(draftKey, creationKey) {
         mutableStateOf(
@@ -340,7 +346,7 @@ internal fun PendingConversationScreen(
                                 ?: workspaceTaskId?.let { id -> taskState.groups.flatMap { it.tasks }.firstOrNull { it.id == id }?.task?.workspaceId }
                                 ?: targetWorkspaceId
                             creatingSession = true
-                            val taskId = if (existingTaskId != null || createMode) {
+                            val taskId = if (existingTaskId != null || (createMode && !persistedCreation.conversationOnly)) {
                                 if (existingTaskId != null) {
                                     existingTaskId
                                 } else {
@@ -620,6 +626,29 @@ internal fun PendingConversationScreen(
                 if (id != "name") closeChoice()
             }, onDismiss = closeChoice,
         )
+        PendingChoice.RecoveryTask -> ComposerChoiceSheet(
+            title = "选择已创建的任务继续",
+            options = recoveryTasks.map { (workspaceName, task) -> task.id to "$workspaceName · ${task.name}" },
+            selected = "",
+            searchable = true, searchPlaceholder = "搜索已创建的任务",
+            onSelect = { id ->
+                val task = recoveryTasks.firstOrNull { it.second.id == id }?.second
+                if (task != null && !busy) {
+                    try {
+                        creationStore.chooseExistingTask(creationKey, task.id, task.cwd, task.task.workspaceId)
+                        persistedCreation = creationStore.state(creationKey)
+                        drafts.setPendingCreatedTask(draftKey, task.id)
+                        drafts.setPendingCreationUnconfirmed(draftKey, false)
+                        selectedCwd = task.cwd
+                        error = "已选择任务「${task.name}」。草稿已保留，再次发送会继续创建会话。"
+                        recoveryTasks = emptyList()
+                    } catch (failure: Exception) {
+                        error = failure.message ?: "无法保存任务续接状态，请勿重复创建。"
+                    }
+                }
+                closeChoice()
+            }, onDismiss = closeChoice,
+        )
         PendingChoice.TaskName -> WandDialog(
             title = "任务名称", onDismissRequest = closeChoice,
             confirm = WandDialogAction("完成", closeChoice),
@@ -807,6 +836,44 @@ internal fun PendingConversationScreen(
                     modifier = Modifier.padding(16.dp))
             }
             error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            if (persistedCreation.unconfirmed && persistedCreation.operation == com.wand.app.ui.PendingCreationOperation.TASK && !hasKnownSession) {
+                Text("上次创建尚未确认。可以读取任务列表，选择要继续的任务；输入会保留，任务不会重复创建。",
+                    color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                TextButton(enabled = !busy, onClick = {
+                    busy = true
+                    error = null
+                    scope.launch {
+                        try {
+                            val page = api.listTaskGroupsPage(revision = null)
+                            // Explicitly choosing a real task does not require proving
+                            // that the earlier POST was absent. Legacy arrays also work.
+                            check(!page.unchanged) { "未取得完整任务列表，请重试读取。" }
+                            recoveryTasks = page.groups.flatMap { group ->
+                                group.tasks.filter { !it.archived }.map { group.workspaceName to it }
+                            }
+                            if (recoveryTasks.isEmpty()) error = "没有可继续的任务。输入已保留，请稍后重试读取；上次请求不会自动重发。"
+                            else { focusManager.clearFocus(); attachOpen = false; choice = PendingChoice.RecoveryTask }
+                        } catch (failure: Exception) {
+                            if (failure is kotlinx.coroutines.CancellationException) throw failure
+                            error = "无法读取任务列表：${failure.message}"
+                        } finally {
+                            busy = false
+                        }
+                    }
+                }) { Text("选择已有任务继续") }
+                TextButton(enabled = !busy, onClick = {
+                    try {
+                        creationStore.continueWithoutTask(creationKey)
+                        persistedCreation = creationStore.state(creationKey)
+                        drafts.setPendingCreationUnconfirmed(draftKey, false)
+                        createMode = false
+                        creationStarted = false
+                        error = "输入已保留。点击发送直接开始对话；上次任务结果保留，不会重复创建。"
+                    } catch (failure: Exception) {
+                        error = failure.message ?: "无法保存直接对话状态。"
+                    }
+                }) { Text("跳过任务，直接开始对话") }
+            }
             taskState.mutationError?.let { message -> if (error == null) Text(message, color = WandColors.danger, modifier = Modifier.padding(16.dp)) }
           }
         }

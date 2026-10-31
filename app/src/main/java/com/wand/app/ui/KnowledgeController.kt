@@ -187,6 +187,16 @@ class KnowledgeController(private val api: KnowledgePort, private val coroutineS
                 selected = result; original = KnowledgeDraft(result.title, result.content, result.folder)
                 draft = original; editing = false; conflict = false; notice = "已保存"
                 clearComparison()
+                if (targetScope == KnowledgeScope.Global) {
+                    try {
+                        val refreshed = api.knowledgeLibrary(targetScope, id)
+                        require(refreshed.scope == targetScope && refreshed.ownerId == id) { "知识归属不一致" }
+                        if (current(ticket)) library = refreshed
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        if (current(ticket)) error = "知识已保存，CLI 同步状态暂不可读，请刷新确认。"
+                    }
+                }
             } catch (_: CancellationException) {
             } catch (e: Exception) {
                 if (current(ticket)) {

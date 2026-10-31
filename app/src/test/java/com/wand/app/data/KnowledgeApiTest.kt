@@ -76,8 +76,21 @@ class KnowledgeApiTest {
         assertTrue(runCatching { KnowledgeLibrary.parse(json) }.isFailure)
     }
 
+    @Test fun globalLibraryHasItsOwnOwnerAndReportsSyncConflicts() {
+        val owners = KnowledgeOwners.parse(JSONObject("""{"global":{"id":"global","name":"全局知识库"},"employees":[],"projects":[]}"""))
+        assertEquals("global", owners.forScope(KnowledgeScope.Global).single().id)
+        assertTrue(owners.forScope(KnowledgeScope.Personal).isEmpty())
+        val json = JSONObject().put("scope", "global").put("ownerId", "global").put("ownerName", "全局知识库")
+            .put("total", 1).put("limit", 200).put("entries", org.json.JSONArray().put(document("global").put("scope", "global")))
+            .put("cliSync", org.json.JSONArray("""[{"provider":"Pi","path":"/fixture/AGENTS.md","error":"区块被修改"}]"""))
+        val library = KnowledgeLibrary.parse(json)
+        assertEquals(KnowledgeScope.Global, library.scope)
+        assertEquals("Pi：区块被修改", library.cliSyncErrors.single())
+        assertEquals("global", KnowledgeDraft("规则", "ego lite").json(KnowledgeScope.Global, "global").getString("scope"))
+    }
+
     @Test fun invalidScopeAndVersionAreRejected() {
-        assertTrue(runCatching { KnowledgeDocument.parse(document().put("scope", "global")) }.isFailure)
+        assertTrue(runCatching { KnowledgeDocument.parse(document().put("scope", "unknown")) }.isFailure)
         assertTrue(runCatching { KnowledgeDocument.parse(document(revision = 0)) }.isFailure)
     }
 }

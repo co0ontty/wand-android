@@ -557,16 +557,24 @@ private fun PtyTopBar(
                     DropdownMenu(moreOpen, onDismissRequest = { moreOpen = false }) {
                         SessionIconActions(buildList {
                             add(SessionIconAction("会话文件", WandIcons.folder, enabled = filesEnabled, onClick = openFiles))
+                            // 与 iOS 同一套规则：只有「确认不是 git 仓库」才缺席；
+                            // 工作区干净、状态还没取到都保留入口，面板自己解释并重试。
                             val git = quickCommit.status
                             val changed = git?.files.orEmpty().size
                             val ahead = git?.ahead ?: 0
-                            if (git?.isGit == true && (changed > 0 || ahead > 0 || quickCommit.entryLocked)) {
+                            val worktrees = git?.worktreeCount ?: 0
+                            if (git == null || git.isGit) {
+                                val title = when (quickCommit.entryPhase) {
+                                    com.wand.app.ui.QuickCommitEntryPhase.Loading -> "快捷提交执行中"
+                                    com.wand.app.ui.QuickCommitEntryPhase.Done -> "快捷提交完成"
+                                    com.wand.app.ui.QuickCommitEntryPhase.Idle -> when {
+                                        git == null -> "变更与提交，正在读取 git 状态"
+                                        changed == 0 && ahead == 0 && worktrees == 0 -> "变更与提交，工作区干净"
+                                        else -> "变更与提交，$changed 个文件变更，$ahead 个提交待推送"
+                                    }
+                                }
                                 add(SessionIconAction(
-                                    when (quickCommit.entryPhase) {
-                                        com.wand.app.ui.QuickCommitEntryPhase.Loading -> "快捷提交执行中"
-                                        com.wand.app.ui.QuickCommitEntryPhase.Done -> "快捷提交完成"
-                                        com.wand.app.ui.QuickCommitEntryPhase.Idle -> "变更与提交，$changed 个文件变更，$ahead 个提交待推送"
-                                    },
+                                    title,
                                     if (quickCommit.entryPhase == com.wand.app.ui.QuickCommitEntryPhase.Done) WandIcons.statusDone else WandIcons.commit,
                                     enabled = !quickCommit.entryLocked, onClick = onOpenQuickCommit,
                                 ))

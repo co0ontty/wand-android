@@ -174,12 +174,40 @@ class TaskBoardModelsTest {
     @Test
     fun statusAndPriorityLabelsCoverBoardColumns() {
         assertEquals("待立项", boardTaskStatusLabel("backlog"))
-        assertEquals("待办", boardTaskStatusLabel("todo"))
-        assertEquals("进行中", boardTaskStatusLabel("doing"))
-        assertEquals("等你确认", boardTaskStatusLabel("done"))
+        assertEquals("等待认领", boardTaskStatusLabel("todo"))
+        assertEquals("执行中", boardTaskStatusLabel("doing"))
+        assertEquals("待验收", boardTaskStatusLabel("done"))
+        assertEquals("待验收", boardTaskStatusLabel("review"))
+        assertEquals("待归档", boardTaskStatusLabel("ready"))
         assertEquals("紧急", boardTaskPriorityLabel("urgent"))
         assertEquals("无优先级", boardTaskPriorityLabel("none"))
         assertEquals("Pi", boardTaskProviderLabel("pi"))
+    }
+
+    @Test
+    fun aiReviewAndHumanConfirmationAreDifferentVersionedFacts() {
+        val item = JSONObject("""{"id":"review","status":"ready","deliveryRevision":2,"workflowVersion":1,"verification":{"verdict":"passed","revision":2,"evidence":"report","blocker":"","reviewedAt":"2026-10-28"},"acceptance":{"evidence":"report","blocker":"","acceptedAt":null}}""")
+        val ready = requireNotNull(BoardTask.parse(item))
+        assertTrue(ready.aiVerificationCurrent())
+        assertFalse(ready.humanAcceptanceCurrent())
+        assertFalse(ready.copy(deliveryRevision = 3).aiVerificationCurrent())
+        val accepted = requireNotNull(BoardTask.parse(item.put("status", "archived").put("acceptance", JSONObject().put("evidence", "report").put("blocker", "").put("acceptedAt", "2026-10-28").put("confirmedRevision", 2))))
+        assertTrue(accepted.humanAcceptanceCurrent())
+        val legacy = requireNotNull(BoardTask.parse(JSONObject().put("id", "legacy").put("status", "done")))
+        assertEquals("review", legacy.status)
+        assertTrue(legacy.legacyReview)
+        assertFalse(legacy.aiVerificationCurrent())
+    }
+
+    @Test
+    fun workflowBodyRetainsExactIntentAndClickedSnapshot() {
+        val body = boardWorkflowBody("accept", "fixed-request-id", "clicked-version", "report", "")
+        val workflow = body.getJSONObject("workflow")
+        assertEquals("accept", workflow.getString("action"))
+        assertEquals("fixed-request-id", workflow.getString("requestId"))
+        assertEquals("clicked-version", workflow.getString("expectedUpdatedAt"))
+        assertFalse(body.has("acceptance"))
+        assertFalse(body.has("status"))
     }
 
     /** 目录桩：Claude 配了默认模型 opus，Codex 没配（默认名由 CLI 自己报在目录项里）。 */

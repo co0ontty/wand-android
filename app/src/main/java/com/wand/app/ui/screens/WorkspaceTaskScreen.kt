@@ -537,7 +537,7 @@ private fun SessionSummaryRow(
                     text = { Text("打开") },
                     onClick = { menuOpen = false; onClick() },
                 )
-                DropdownMenuItem(text = { Text("移动到任务") },
+                DropdownMenuItem(text = { Text("移动到分区") },
                     onClick = { menuOpen = false; onMove() })
                 DropdownMenuItem(
                     text = { Text("删除终端", color = WandColors.danger) },

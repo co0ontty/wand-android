@@ -3,12 +3,16 @@ package com.wand.app.data
 import org.json.JSONObject
 
 enum class KnowledgeScope(val wire: String, val label: String) {
-    Project("project", "项目知识库"), Personal("personal", "个人知识库");
+    Global("global", "全局"), Project("project", "项目"), Personal("personal", "个人");
 }
 
 data class KnowledgeOwner(val id: String, val name: String, val readOnly: Boolean = false)
-data class KnowledgeOwners(val employees: List<KnowledgeOwner>, val projects: List<KnowledgeOwner>) {
-    fun forScope(scope: KnowledgeScope) = if (scope == KnowledgeScope.Personal) employees else projects
+data class KnowledgeOwners(val employees: List<KnowledgeOwner>, val projects: List<KnowledgeOwner>, val global: KnowledgeOwner? = null) {
+    fun forScope(scope: KnowledgeScope) = when (scope) {
+        KnowledgeScope.Global -> listOfNotNull(global)
+        KnowledgeScope.Personal -> employees
+        KnowledgeScope.Project -> projects
+    }
     companion object {
         fun parse(json: JSONObject): KnowledgeOwners {
             fun owners(key: String) = json.getJSONArray(key).let { array ->
@@ -16,7 +20,9 @@ data class KnowledgeOwners(val employees: List<KnowledgeOwner>, val projects: Li
                     KnowledgeOwner(it.getString("id"), it.getString("name"), it.optBoolean("readOnly"))
                 } }
             }
-            return KnowledgeOwners(owners("employees"), owners("projects"))
+            return KnowledgeOwners(owners("employees"), owners("projects"), json.optJSONObject("global")?.let {
+                KnowledgeOwner(it.getString("id"), it.getString("name"))
+            })
         }
     }
 }
@@ -41,6 +47,7 @@ data class KnowledgeDocument(
 data class KnowledgeLibrary(
     val scope: KnowledgeScope, val ownerId: String, val ownerName: String,
     val readOnly: Boolean, val entries: List<KnowledgeDocument>, val total: Int, val limit: Int,
+    val cliSyncErrors: List<String> = emptyList(),
 ) {
     companion object {
         fun parse(json: JSONObject): KnowledgeLibrary {
@@ -50,7 +57,11 @@ data class KnowledgeLibrary(
             val entries = (0 until array.length()).map { KnowledgeDocument.parse(array.getJSONObject(it)) }
             require(entries.all { it.scope == scope && it.ownerId == ownerId }) { "知识归属不一致" }
             return KnowledgeLibrary(scope, ownerId, json.getString("ownerName"), json.optBoolean("readOnly"),
-                entries, json.getInt("total"), json.getInt("limit"))
+                entries, json.getInt("total"), json.getInt("limit"), json.optJSONArray("cliSync")?.let { sync ->
+                    (0 until sync.length()).mapNotNull { index -> sync.getJSONObject(index).let { item ->
+                        item.optString("error").takeIf { it.isNotEmpty() }?.let { "${item.optString("provider")}：$it" }
+                    } }
+                }.orEmpty())
         }
     }
 }

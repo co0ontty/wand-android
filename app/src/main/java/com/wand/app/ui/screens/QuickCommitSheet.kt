@@ -10,9 +10,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector2D
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -76,6 +74,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -141,12 +142,14 @@ fun GitChangesButton(
     compact: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val status = quickCommit.status ?: return
-    if (!status.isGit) return
+    // 入口只在「确认不是 git 仓库」时缺席：工作区干净、状态还没取到都保留入口，
+    // 面板自己解释状态并重试。之前干净就整块消失，等于 git 面板打不开。
+    val status = quickCommit.status
+    if (status != null && !status.isGit) return
     var modified = 0
     var deleted = 0
     var added = 0
-    status.files.orEmpty().forEach { file ->
+    status?.files.orEmpty().forEach { file ->
         val fileStatus = file.status.uppercase()
         when {
             fileStatus.contains("?") || fileStatus.contains("A") -> added++
@@ -155,16 +158,17 @@ fun GitChangesButton(
         }
     }
     val total = modified + deleted + added
-    val ahead = status.ahead ?: 0
-    if (quickCommit.entryPhase == QuickCommitEntryPhase.Idle && total == 0 && ahead == 0) return
-    val label = if (total > 0) {
-        listOfNotNull(
+    val ahead = status?.ahead ?: 0
+    val clean = total == 0 && ahead == 0 && (status?.worktreeCount ?: 0) == 0
+    val label = when {
+        status == null -> "…"
+        total > 0 -> listOfNotNull(
             modified.takeIf { it > 0 }?.let { "~$it" },
             deleted.takeIf { it > 0 }?.let { "-$it" },
             added.takeIf { it > 0 }?.let { "+$it" },
         ).joinToString(" ")
-    } else {
-        "↑$ahead"
+        ahead > 0 -> "↑$ahead"
+        else -> "干净"
     }
     val activeTint = when (quickCommit.entryPhase) {
         QuickCommitEntryPhase.Loading -> WandColors.brand
@@ -191,10 +195,11 @@ fun GitChangesButton(
     val accessibilityState = when (quickCommit.entryPhase) {
         QuickCommitEntryPhase.Loading -> "正在准备快捷提交"
         QuickCommitEntryPhase.Done -> "快捷提交完成"
-        QuickCommitEntryPhase.Idle -> if (total > 0) {
-            "共 $total 个文件变更，修改 $modified 个，删除 $deleted 个，新增 $added 个"
-        } else {
-            "$ahead 个提交待推送"
+        QuickCommitEntryPhase.Idle -> when {
+            status == null -> "正在读取 git 状态"
+            total > 0 -> "共 $total 个文件变更，修改 $modified 个，删除 $deleted 个，新增 $added 个"
+            ahead > 0 -> "$ahead 个提交待推送"
+            else -> "工作区干净"
         }
     }
 
@@ -204,6 +209,7 @@ fun GitChangesButton(
             enabled = !quickCommit.entryLocked,
             total = total,
             ahead = ahead,
+            clean = clean || status == null,
             activeTint = tintTone,
             activeBackground = containerTone,
             accessibilityState = accessibilityState,
@@ -294,6 +300,8 @@ private fun CompactGitChangesButton(
     enabled: Boolean,
     total: Int,
     ahead: Int,
+    /** 无改动（或状态还没取到）：不挂计数徽标，图标本身仍是入口。 */
+    clean: Boolean,
     activeTint: Color,
     activeBackground: Color,
     accessibilityState: String,
@@ -368,7 +376,7 @@ private fun CompactGitChangesButton(
             }
         }
 
-        if (phase == QuickCommitEntryPhase.Idle) {
+        if (phase == QuickCommitEntryPhase.Idle && !clean) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -502,6 +510,25 @@ private fun FormPanel(
 
     CommitWorkspaceLens(commitLensState(status = s, loading = qc.statusLoading))
 
+    // 状态没取到：给一个原地重试，不让面板变成死胡同。
+    if (s == null && !qc.statusLoading) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "暂时读不到 git 状态，可能是网络或服务端临时失败。",
+                fontSize = 12.sp,
+                color = WandColors.textMuted,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedButton(
+                onClick = { qc.loadStatus(force = true) },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.heightIn(min = 32.dp),
+            ) {
+                Text("重试", fontSize = 12.sp)
+            }
+        }
+    }
+
     // 非 Git 目录：lens 报状态，表单区解释为什么下面的控件都用不了（§2.11「信息不丢失」）。
     if (s != null && !s.isGit) {
         Text(
@@ -595,21 +622,24 @@ private fun FormPanel(
     MagneticDock(
         hasChanges = hasChanges,
         hasSubmodule = hasSubmodule,
-        busy = qc.submitting,
-        busyLabel = busyLabel,
-        archiveSelected = qc.archiveRelatedTasks,
-        onArchiveToggle = { qc.archiveRelatedTasks = !qc.archiveRelatedTasks },
+        busy = qc.inFlight || qc.generating,
+        busyLabel = if (qc.mergingWorktrees) "合并并推送中…" else qc.worktreeFeedback ?: busyLabel,
+        worktreeCount = s?.worktreeCount ?: 0,
+        ahead = s?.ahead ?: 0,
+        feedback = qc.worktreeFeedback,
         isHapticEnabled = isHapticEnabled,
-        onAction = { action, sub, archive ->
-            qc.archiveRelatedTasks = archive
-            qc.submit(action, sub)
+        onAction = { action, sub ->
+            if (action == "merge-worktrees") qc.mergeWorktrees()
+            else if (action == "commit-push" && !hasChanges) qc.pushCommitsOnly()
+            else qc.submit(action, sub)
         },
     )
 
     val hint = when {
-        qc.submitting -> ""
-        !hasChanges -> "工作区干净，无可提交"
-        else -> "拖动磁吸组合 · 丢进提交区执行 · 点归档球，提交后把当前任务移出列表" +
+        qc.inFlight -> ""
+        qc.worktreeFeedback != null -> qc.worktreeFeedback.orEmpty()
+        !hasChanges -> "工作区干净。Worktree：合并全部工作树到当前分支并推送。"
+        else -> "拖动气泡组合 · 丢进提交区执行 · Worktree：合并全部工作树到当前分支并推送" +
             (if (hasSubmodule) "\nSub 球可选，纳入后递归处理 submodule" else "")
     }
     if (hint.isNotEmpty()) {
@@ -621,33 +651,7 @@ private fun FormPanel(
         )
     }
 
-    // 工作区干净但本地领先远端：dock 无事可做，给一个「仅推送」直达按钮。
-    val ahead = s?.ahead ?: 0
-    if (!hasChanges && ahead > 0 && !qc.submitting) {
-        WandButton(
-            label = if (qc.pushing) {
-                "推送中…"
-            } else {
-                "推送 ↑$ahead 个待推 commit" + if (hasSubmodule) "（含子模块）" else ""
-            },
-            onClick = { qc.pushCommitsOnly() },
-            enabled = !qc.pushing,
-            loading = qc.pushing,
-            variant = WandButtonVariant.Secondary,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        qc.pushError?.let {
-            Text(it, fontSize = 12.sp, color = WandColors.danger)
-        }
-    }
 
-    Row(modifier = Modifier.fillMaxWidth()) {
-        WandButton(
-            label = "取消",
-            onClick = onDismiss,
-            variant = WandButtonVariant.Text,
-        )
-    }
 }
 
 /** lens 的语义色档位；色值由 Composable 侧从 `WandColors` 取，纯函数不碰主题。 */
@@ -895,6 +899,7 @@ private fun ResultPair(label: String, old: String, new: String) {
 private val ACTION_ORDER = listOf("commit", "tag", "push")
 
 private fun composeAction(members: List<String>): String {
+    if ("worktree" in members) return "merge-worktrees"
     val hasTag = "tag" in members
     val hasPush = "push" in members
     return when {
@@ -910,6 +915,7 @@ private fun tapIntent(id: String): Pair<String, Boolean> = when (id) {
     "tag" -> "commit-tag" to false
     "push" -> "commit-push" to false
     "sub" -> "commit" to true
+    "worktree" -> "merge-worktrees" to false
     else -> "commit" to false
 }
 
@@ -919,50 +925,29 @@ private fun MagneticDock(
     hasSubmodule: Boolean,
     busy: Boolean,
     busyLabel: String,
-    archiveSelected: Boolean,
-    onArchiveToggle: () -> Unit,
+    worktreeCount: Int,
+    ahead: Int,
+    feedback: String?,
     isHapticEnabled: () -> Boolean,
-    onAction: (action: String, includeSubmodule: Boolean, archive: Boolean) -> Unit,
+    onAction: (action: String, includeSubmodule: Boolean) -> Unit,
 ) {
-    // 执行中：dock 整体替换为 busy 面板（对齐网页 qc-dock-busy）。
-    if (busy) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .wandCardSurface()
-                .padding(horizontal = 16.dp),
-        ) {
-            CircularProgressIndicator(
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(busyLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        return
-    }
-
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
     val allIds = remember(hasSubmodule) {
-        ACTION_ORDER + "archive" + if (hasSubmodule) listOf("sub") else emptyList()
+        ACTION_ORDER + (if (hasSubmodule) listOf("sub") else emptyList()) + "worktree"
     }
     val commitColor = WandColors.brand
     val tagColor = WandColors.info
     val pushColor = WandColors.success
     val subColor = lerp(WandColors.info, WandColors.success, 0.45f)
-    val archiveColor = WandColors.warning
-    val chipColors = remember(commitColor, tagColor, pushColor, subColor, archiveColor) {
+    val chipColors = remember(commitColor, tagColor, pushColor, subColor) {
         mapOf("commit" to commitColor, "tag" to tagColor, "push" to pushColor,
-            "sub" to subColor, "archive" to archiveColor)
+            "sub" to subColor, "worktree" to tagColor)
     }
     val chipLabels = mapOf("commit" to "Commit", "tag" to "Tag", "push" to "Push",
-        "sub" to "Sub", "archive" to "归档")
+        "sub" to "Sub", "worktree" to "Worktree")
 
     var fieldSize by remember { mutableStateOf(IntSize.Zero) }
     val chipSizes = remember { mutableStateMapOf<String, IntSize>() }
@@ -985,26 +970,15 @@ private fun MagneticDock(
     fun cw(id: String): Float = chipSizes[id]?.width?.toFloat() ?: defaultChipWPx
     fun chipH(): Float = chipSizes.values.firstOrNull()?.height?.toFloat() ?: defaultChipHPx
 
-    // 四颗气泡排成 2×2；有 Sub 时增加底部中央一颗，归档球仍在固定位置。
     fun homePositions(): Map<String, Offset> {
         val fw = fieldSize.width.toFloat()
         val fh = fieldSize.height.toFloat()
-        val h = chipH()
-        val pos = mutableMapOf<String, Offset>()
-        val topY = (fh * 0.18f - h / 2f).coerceAtLeast(marginPx)
-        val botY = (fh * (if (hasSubmodule) 0.55f else 0.72f) - h / 2f)
-            .coerceAtMost(fh - h - marginPx)
-        fun colL(w: Float) = (fw * 0.27f - w / 2f).coerceAtLeast(marginPx)
-        fun colR(w: Float) = (fw * 0.73f - w / 2f).coerceAtMost(fw - w - marginPx)
-        pos["commit"] = Offset(colL(cw("commit")), topY)
-        pos["tag"] = Offset(colR(cw("tag")), topY)
-        pos["push"] = Offset(colL(cw("push")), botY)
-        pos["archive"] = Offset(colR(cw("archive")), botY)
-        if (hasSubmodule) {
-            pos["sub"] = Offset((fw - cw("sub")) / 2f,
-                (fh * 0.86f - h / 2f).coerceAtMost(fh - h - marginPx))
-        }
-        return pos
+        val rows = (allIds.size + 1) / 2
+        return allIds.mapIndexed { index, id ->
+            val centerX = fw * (if (index % 2 == 0) 0.27f else 0.73f)
+            id to Offset((centerX - cw(id) / 2f).coerceAtLeast(marginPx),
+                ((index / 2 + 0.5f) * fh / rows - chipH() / 2f).coerceAtLeast(marginPx))
+        }.toMap()
     }
 
     // 几何就绪（场地 + 所有气泡都量过尺寸）且不在拖动中 → 钉回原位。
@@ -1018,7 +992,9 @@ private fun MagneticDock(
         }
     }
 
-    val enabled = hasChanges
+    val motionEnabled = !reduceMotionEnabled()
+    val enabled = !busy && (hasChanges || worktreeCount > 0 || ahead > 0)
+    fun chipEnabled(id: String) = !busy && if (id == "worktree") worktreeCount > 0 else if (id == "push") hasChanges || ahead > 0 else hasChanges
     val composedAction = dragMembers?.let { composeAction(it) } ?: "commit"
     val launchTone = when (composedAction) {
         "commit-tag" -> tagColor
@@ -1027,7 +1003,7 @@ private fun MagneticDock(
         else -> commitColor
     }
 
-    Row(modifier = Modifier.fillMaxWidth().height(170.dp)) {
+    Row(modifier = Modifier.fillMaxWidth().height(200.dp)) {
         // —— 力场 ——
         Box(
             modifier = Modifier
@@ -1038,6 +1014,7 @@ private fun MagneticDock(
                 .onSizeChanged { fieldSize = it }
                 .pointerInputDock(
                     enabled = enabled,
+                    chipEnabled = ::chipEnabled,
                     allIds = allIds,
                     pickupRPx = pickupRPx,
                     gapPx = gapPx,
@@ -1055,13 +1032,8 @@ private fun MagneticDock(
                         allIds.forEach { id ->
                             home[id]?.let { target ->
                                 scope.launch {
-                                    animFor(id).animateTo(
-                                        target,
-                                        spring(
-                                            dampingRatio = 0.62f,
-                                            stiffness = Spring.StiffnessMediumLow,
-                                        ),
-                                    )
+                                    if (motionEnabled) animFor(id).animateTo(target, WandMotion.settleSpringSpec())
+                                    else animFor(id).snapTo(target)
                                 }
                             }
                         }
@@ -1077,8 +1049,6 @@ private fun MagneticDock(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                     },
-                    archiveSelected = archiveSelected,
-                    onArchiveToggle = onArchiveToggle,
                     onAction = onAction,
                 ),
         ) {
@@ -1097,7 +1067,7 @@ private fun MagneticDock(
             // 气泡们
             allIds.forEach { id ->
                 val anim = animFor(id)
-                val active = dragMembers?.contains(id) == true || (id == "archive" && archiveSelected)
+                val active = dragMembers?.contains(id) == true
                 val color = chipColors[id] ?: commitColor
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1110,12 +1080,21 @@ private fun MagneticDock(
                         .graphicsLayer {
                             alpha = when {
                                 !placed -> 0f
-                                !enabled -> 0.45f
+                                !chipEnabled(id) -> 0.45f
                                 else -> 1f
                             }
-                            if (active) {
+                            if (active && motionEnabled) {
                                 scaleX = 1.06f
                                 scaleY = 1.06f
+                            }
+                        }
+                        .semantics(mergeDescendants = true) {
+                            role = Role.Button
+                            contentDescription = if (id == "worktree") "合并全部 Worktree 到当前分支并推送" else "${chipLabels[id]} 气泡"
+                            if (!chipEnabled(id)) disabled()
+                            onClick {
+                                if (chipEnabled(id)) { val intent = tapIntent(id); onAction(intent.first, intent.second); true }
+                                else false
                             }
                         }
                         .onSizeChanged { chipSizes[id] = it }
@@ -1167,7 +1146,7 @@ private fun MagneticDock(
                         Modifier
                     }
                 )
-                .clickable(enabled = enabled) { onAction("commit", false, archiveSelected) },
+                .clickable(enabled = !busy && hasChanges) { onAction("commit", false) },
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowForward,
@@ -1176,7 +1155,7 @@ private fun MagneticDock(
                 modifier = Modifier.size(22.dp),
             )
             Text(
-                if (hot) "松手执行" else "提交",
+                if (busy) busyLabel else feedback ?: if (hot) "松手执行" else "提交",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = if (hot) launchTone else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1188,10 +1167,11 @@ private fun MagneticDock(
 /**
  * dock 手势：场地坐标系内 hit-test 气泡 → 跟手拖动 → 磁吸拾取（场地内任意气泡
  * 都可被吸进组合）→ 出场地右缘即「热」（悬在发射区上方）→
- * 松手：归档单击只切换选择，其余单击直发；热区=组合执行；否则全员弹回。
+ * 单击直发；热区执行组合；Worktree 独立；其它落点全员弹回。
  */
 private fun Modifier.pointerInputDock(
     enabled: Boolean,
+    chipEnabled: (String) -> Boolean,
     allIds: List<String>,
     pickupRPx: Float,
     gapPx: Float,
@@ -1208,10 +1188,8 @@ private fun Modifier.pointerInputDock(
     snapTo: (String, Offset) -> Unit,
     tick: () -> Unit,
     thud: () -> Unit,
-    archiveSelected: Boolean,
-    onArchiveToggle: () -> Unit,
-    onAction: (String, Boolean, Boolean) -> Unit,
-): Modifier = pointerInput(enabled, allIds, archiveSelected) {
+    onAction: (String, Boolean) -> Unit,
+): Modifier = pointerInput(enabled, allIds) {
     if (!enabled) return@pointerInput
     awaitEachGesture {
         val down = awaitFirstDown()
@@ -1220,7 +1198,7 @@ private fun Modifier.pointerInputDock(
         val h = chipH()
         val anchor = allIds.firstOrNull { id ->
             val p = animFor(id).value
-            down.position.x >= p.x && down.position.x <= p.x + cw(id) &&
+            chipEnabled(id) && down.position.x >= p.x && down.position.x <= p.x + cw(id) &&
                 down.position.y >= p.y && down.position.y <= p.y + h
         } ?: return@awaitEachGesture
         down.consume()
@@ -1238,9 +1216,9 @@ private fun Modifier.pointerInputDock(
             if (!moved && (pos - down.position).getDistance() > slop) moved = true
             if (!moved) return@drag
 
-            // 磁吸拾取：指尖扫过松散气泡的原位中心即入队（含 Sub / 归档）。
-            for (id in allIds) {
-                if (id in members) continue
+            // 只拾取主动作，Sub 必须显式抓取，Worktree 保持独立。
+            for (id in ACTION_ORDER) {
+                if (anchor == "worktree" || !chipEnabled(id) || id in members) continue
                 val hp = homesAtDown[id] ?: continue
                 val center = Offset(hp.x + cw(id) / 2f, hp.y + h / 2f)
                 if ((pos - center).getDistance() < pickupRPx) {
@@ -1290,17 +1268,11 @@ private fun Modifier.pointerInputDock(
 
         if (!completed) return@awaitEachGesture
         if (!moved) {
-            if (anchor == "archive") {
-                onArchiveToggle()
-            } else {
-                // 原地单击 → 直接执行该气泡自己的动作。
-                val (action, sub) = tapIntent(anchor)
-                onAction(action, sub, archiveSelected)
-            }
+            val (action, sub) = tapIntent(anchor)
+            onAction(action, sub)
         } else if (endHot) {
             // 丢进发射区 → 执行组合动作（commit 永远隐含）。
-            onAction(composeAction(endMembers), "sub" in endMembers,
-                archiveSelected || "archive" in endMembers)
+            onAction(composeAction(endMembers), "sub" in endMembers)
         }
         // 松手在别处：springHome() 已让全员弹回，不执行任何动作。
     }

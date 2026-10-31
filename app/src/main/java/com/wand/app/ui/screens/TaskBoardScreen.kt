@@ -100,6 +100,8 @@ import com.wand.app.data.boardTaskPriorityLabel
 import com.wand.app.data.boardTaskAgentLabel
 import com.wand.app.data.boardTaskProviderLabel
 import com.wand.app.data.boardTaskStatusLabel
+import com.wand.app.data.humanAcceptanceCurrent
+import com.wand.app.data.aiVerificationCurrent
 import com.wand.app.data.displayStatusLabel
 import com.wand.app.data.patchBoardTaskBody
 import com.wand.app.ui.components.BrandLogos
@@ -301,9 +303,7 @@ fun TaskBoardScreen(
                     onFilterWorkspace = { filterWorkspaceId = it },
                     onStatusFilter = { statusFilter = it },
                     onOpen = { task -> onOpenTaskDetail(task.id) },
-                    onToggleComplete = { task ->
-                        patchTask(task.id, patchBoardTaskBody(status = boardTaskToggledStatus(task.status)))
-                    },
+                    onToggleComplete = { task -> onOpenTaskDetail(task.id) },
                     onSwipeAction = { task, action ->
                         val status = boardTaskSwipeTargetStatus(action)
                         if (status != null) {
@@ -452,7 +452,8 @@ private fun TaskBoardList(
                         "backlog" to "待立项",
                         "todo" to "待办",
                         "doing" to "进行中",
-                        "done" to "等你确认",
+                        "review" to "待验收",
+                        "ready" to "待归档",
                         "archived" to "归档",
                     ),
                     selected = statusFilter,
@@ -507,31 +508,18 @@ private fun TaskBoardList(
             }
         } else if (tasks.isNotEmpty() && statusFilter.isBlank()) {
             grouped.forEach { (status, items) ->
-                val sectionArchived = if (status == "done") archived else emptyList()
-                if (items.isEmpty() && sectionArchived.isEmpty()) return@forEach
+                if (items.isEmpty()) return@forEach
                 item(key = "header-$status") {
                     BoardSectionHeader(
                         status = status,
                         count = items.size,
                         onAdd = onCreateForStatus,
-                        expanded = status != "done" || doneOpen,
-                        onToggle = if (status == "done") ({ doneCollapsed = !doneCollapsed }) else null,
+                        expanded = status != "review" || doneOpen,
+                        onToggle = if (status == "review") ({ doneCollapsed = !doneCollapsed }) else null,
                     )
                 }
-                if (status != "done" || doneOpen) {
+                if (status != "review" || doneOpen) {
                     items(items, key = { it.id }) { task -> taskRow(task) }
-                }
-                if (status == "done" && sectionArchived.isNotEmpty()) {
-                    item(key = "archive-header") {
-                        BoardArchiveHeader(
-                            count = sectionArchived.size,
-                            expanded = archiveOpen,
-                            onToggle = { archiveCollapsed = !archiveCollapsed },
-                        )
-                    }
-                    if (archiveOpen) {
-                        items(sectionArchived, key = { it.id }) { task -> taskRow(task) }
-                    }
                 }
             }
         } else if (tasks.isNotEmpty()) {
@@ -669,10 +657,13 @@ private fun TaskBoardHero(
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             maxItemsInEachRow = if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) 1 else 3) {
-            BoardMetric("待办", stats.todo, boardStatusColor("todo"), Modifier.weight(1f))
-            BoardMetric("进行中", stats.doing, boardStatusColor("doing"), Modifier.weight(1f))
-            BoardMetric("已验收", stats.accepted, boardStatusColor("done"), Modifier.weight(1f))
+            BoardMetric("待立项", stats.backlog, boardStatusColor("backlog"), Modifier.weight(1f))
+            BoardMetric("等待认领", stats.todo, boardStatusColor("todo"), Modifier.weight(1f))
+            BoardMetric("执行中", stats.doing, boardStatusColor("doing"), Modifier.weight(1f))
+            BoardMetric("待验收", stats.review, boardStatusColor("review"), Modifier.weight(1f))
+            BoardMetric("待归档", stats.ready, boardStatusColor("ready"), Modifier.weight(1f))
         }
+        Text("${stats.accepted} / ${stats.total} 个主目标由人工确认；AI 通过不提前计入完成。", color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -869,9 +860,7 @@ private fun BoardTaskItem(
         onRevealedChange = onRevealedChange,
         onAction = onSwipeAction,
         modifier = modifier,
-        extraActions = listOf(HomeRowAction("detail", "详情", WandIcons.read, WandColors.info, onOpen)) +
-            if (task.status in listOf("archived", "done")) emptyList() else listOf(
-                HomeRowAction("archive", "归档", WandIcons.archive, WandColors.warning) { onSwipeAction(BoardTaskSwipeAction.Archive) }),
+        extraActions = listOf(HomeRowAction("detail", "详情", WandIcons.read, WandColors.info, onOpen)),
     ) {
         BoardTaskCard(
             task = task,
@@ -902,7 +891,7 @@ private fun BoardTaskCard(
     onToggleComplete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
 ) {
-    val done = task.status == "done" || task.status == "archived"
+    val done = task.humanAcceptanceCurrent()
     val model = boardTaskCardModel(task, showWorkspace)
     // 展开态给全量内容：描述不再截两行、会话不再只留前三条、标签不再折成 +N。
     val visibleSessions = if (expanded) {
@@ -924,6 +913,7 @@ private fun BoardTaskCard(
             BoardStatusCheck(
                 status = task.status,
                 onClick = onToggleComplete,
+                confirmed = task.humanAcceptanceCurrent(),
                 modifier = Modifier,
             )
             Text(
@@ -934,7 +924,7 @@ private fun BoardTaskCard(
                 lineHeight = 21.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                textDecoration = if (!task.acceptance?.acceptedAt.isNullOrBlank()) TextDecoration.LineThrough else TextDecoration.None,
+                textDecoration = if (task.humanAcceptanceCurrent()) TextDecoration.LineThrough else TextDecoration.None,
                 modifier = Modifier.weight(1f).padding(top = 12.dp),
             )
             model.identifier?.let { identifier ->
@@ -950,7 +940,7 @@ private fun BoardTaskCard(
             }
         }
         HomeExecutionBadge(homeExecutionState(task))
-        Text(if (!task.acceptance?.acceptedAt.isNullOrBlank()) "验收通过 · 已完成" else if (!task.acceptance?.blocker.isNullOrBlank()) "待处理：${task.acceptance?.blocker}" else "未验收", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary, modifier = Modifier.padding(top = 6.dp))
+        Text(if (task.humanAcceptanceCurrent()) "人工已确认 · 已完成" else if (task.aiVerificationCurrent()) "AI 已通过 · 待你确认归档" else if (!task.acceptance?.acceptedAt.isNullOrBlank() || task.legacyReview) "历史验收记录 · 待核对" else if (!task.acceptance?.blocker.isNullOrBlank()) "待处理：${task.acceptance?.blocker}" else "未验收", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary, modifier = Modifier.padding(top = 6.dp))
         model.body?.let { body ->
             Text(
                 body,
@@ -1147,9 +1137,10 @@ private fun BoardTaskSessions(
 private fun BoardStatusCheck(
     status: String,
     onClick: () -> Unit,
+    confirmed: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val done = status == "done" || status == "archived"
+    val done = confirmed
     val doing = status == "doing"
     val green = WandColors.success
     // 勾选圈是看板上最高频的一次点按：底、描边和勾同步过渡，状态变化不再硬闪。
@@ -1167,8 +1158,8 @@ private fun BoardStatusCheck(
     Box(
         modifier = modifier
             .size(48.dp).clip(CircleShape)
-            .toggleable(value = done, role = Role.Checkbox, onValueChange = { onClick() })
-            .semantics { contentDescription = if (done) "重新打开任务" else "转为等你确认" }
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "查看${boardTaskStatusLabel(status)}任务的交付与验收" }
             .padding(15.dp)
             .border(1.5.dp, stroke, CircleShape)
             .background(fill),
@@ -1326,7 +1317,6 @@ internal fun TaskBoardDetailPane(
     onRemember: (BoardTaskAgent) -> Unit,
     onDispatch: suspend (BoardTaskAgent, String, ExecutionSubject) -> Boolean,
     onTeamRunAction: (TeamRunAction) -> Unit,
-    onDelete: () -> Unit,
     onOpenSession: (String, Boolean) -> Unit,
     onMoveSession: (com.wand.app.data.BoardTaskSession) -> Unit,
     baseUrl: String = "",
@@ -1356,7 +1346,6 @@ internal fun TaskBoardDetailPane(
             dispatchSubjectKey = "cli"
         }
     }
-    val done = task.status == "done" || task.status == "archived"
     LaunchedEffect(commentsApi, task.id) {
         val api = commentsApi
         childTasks = if (api == null) emptyList() else runCatching { api.listBoardTaskChildren(task.id) }.getOrDefault(emptyList())
@@ -1399,14 +1388,6 @@ internal fun TaskBoardDetailPane(
                 compact = true,
                 modifier = Modifier.weight(1f),
             )
-            WandButton(
-                label = if (done) "重新打开" else "转为等你确认",
-                onClick = { onPatch(patchBoardTaskBody(status = boardTaskToggledStatus(task.status))) },
-                enabled = !busy,
-                variant = WandButtonVariant.Secondary,
-                compact = true,
-                modifier = Modifier.weight(1f),
-            )
         }
         if (task.description.isNotBlank()) {
             Text(task.description, style = MaterialTheme.typography.bodyMedium,
@@ -1414,13 +1395,14 @@ internal fun TaskBoardDetailPane(
         }
         acceptanceContent()
         TaskReferenceableTasks(childTasks, onOpenTask)
-        commentsApi?.let { TaskComments(it, task.id, employees, childTasks, onOpenSession, onOpenTask) }
+        commentsApi?.let { TaskComments(it, task.id, employees, childTasks, onOpenSession, onOpenTask, dispatchPurpose = if (task.status == "review") "review" else "execution") }
         HorizontalDivider(color = WandColors.border.copy(alpha = 0.5f))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             WandChoice(
                 label = "状态 · ${task.displayStatusLabel()}",
-                options = BOARD_TASK_DETAIL_STATUSES.map { it to boardTaskStatusLabel(it) },
-                onSelect = { if (!busy && it != task.status) onPatch(patchBoardTaskBody(status = it)) },
+                options = (listOf("backlog", "todo", "doing") + task.status.takeUnless { it in setOf("backlog", "todo", "doing") }.orEmpty())
+                    .distinct().map { it to boardTaskStatusLabel(it) },
+                onSelect = { if (!busy && it != task.status && it in setOf("backlog", "todo", "doing")) onPatch(patchBoardTaskBody(status = it)) },
                 enabled = !busy,
             )
             WandChoice(
@@ -1644,12 +1626,10 @@ internal fun TaskBoardDetailPane(
                 )
             }
         }
-        WandButton(
-            label = "归档",
-            onClick = onDelete,
-            enabled = !busy,
-            variant = WandButtonVariant.Danger,
-            compact = true,
+        Text(
+            "归档只能通过详情顶部的“确认并归档”完成；不会直接删除或跳过人工确认。",
+            color = WandColors.textMuted,
+            style = MaterialTheme.typography.labelSmall,
         )
         Spacer(Modifier.height(24.dp))
     }
@@ -1666,7 +1646,8 @@ internal fun boardCreateDispatches(status: String): Boolean = status == "doing"
 private fun boardStatusColor(status: String): Color = when (status) {
     "todo" -> WandColors.thinking
     "doing" -> WandColors.success
-    "done" -> WandColors.info
+    "review" -> WandColors.info
+    "ready" -> WandColors.success
     else -> WandColors.textMuted
 }
 

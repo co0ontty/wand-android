@@ -218,9 +218,7 @@ fun WorkspaceWorktreeReviewSheet(
                                     current,
                                     selectedTaskIds,
                                 )
-                                val provider = workspace.defaultProvider?.takeIf { it.isNotEmpty() }
-                                    ?: "claude"
-                                val started = api.startWorktreeMergeAgent(workspace, provider, prompt)
+                                val started = api.startWorktreeMergeAgent(workspace, prompt)
                                 onMergeAgentStarted(started)
                             } catch (error: Exception) {
                                 errorMessage = error.message ?: "无法启动 Worktree 合并 Agent。"

@@ -99,6 +99,7 @@ data class BoardTaskAcceptance(
     val evidence: String,
     val blocker: String,
     val acceptedAt: String?,
+    val confirmedRevision: Int? = null,
 ) {
     companion object {
         fun parse(item: JSONObject?): BoardTaskAcceptance? {
@@ -107,6 +108,7 @@ data class BoardTaskAcceptance(
                 evidence = item.str("evidence") ?: "",
                 blocker = item.str("blocker") ?: "",
                 acceptedAt = item.str("acceptedAt")?.takeIf { it.isNotBlank() },
+                confirmedRevision = item.int("confirmedRevision"),
             )
         }
     }
@@ -167,6 +169,30 @@ data class BoardTaskSession(
     }
 }
 
+data class BoardTaskVerification(
+    val verdict: String,
+    val evidence: String,
+    val blocker: String,
+    val reviewedAt: String?,
+    val revision: Int,
+    val sourceSessionId: String?,
+    val reviewerId: String?,
+) {
+    companion object {
+        fun parse(item: JSONObject?): BoardTaskVerification? = item?.let {
+            BoardTaskVerification(
+                verdict = it.str("verdict") ?: "unverified",
+                evidence = it.str("evidence") ?: "",
+                blocker = it.str("blocker") ?: "",
+                reviewedAt = it.str("reviewedAt"),
+                revision = it.int("revision") ?: 0,
+                sourceSessionId = it.str("sourceSessionId"),
+                reviewerId = it.str("reviewerId"),
+            )
+        }
+    }
+}
+
 data class BoardTask(
     val id: String,
     val workspaceId: String?,
@@ -183,6 +209,10 @@ data class BoardTask(
     val agent: BoardTaskAgent?,
     val executionSubject: ExecutionSubject? = null,
     val acceptance: BoardTaskAcceptance? = null,
+    val deliveryRevision: Int = 0,
+    val workflowVersion: Int? = null,
+    val verification: BoardTaskVerification? = null,
+    val legacyReview: Boolean = false,
     val createdAt: String,
     val updatedAt: String,
     val sessionIds: List<String>,
@@ -206,7 +236,7 @@ data class BoardTask(
                 title = item.str("title") ?: "任务",
                 titleSource = item.str("titleSource") ?: "user",
                 description = item.str("description") ?: "",
-                status = item.str("status") ?: "todo",
+                status = (item.str("status") ?: "todo").let { if (it == "done") "review" else it },
                 priority = item.str("priority") ?: "none",
                 labels = item.arr("labels")?.stringItems(ignoreBlank = true) ?: emptyList(),
                 dueDate = item.str("dueDate")?.takeIf { it.isNotBlank() },
@@ -214,6 +244,10 @@ data class BoardTask(
                 agent = BoardTaskAgent.parse(item.obj("agent")),
                 executionSubject = ExecutionSubject.parse(item.obj("executionSubject")),
                 acceptance = BoardTaskAcceptance.parse(item.obj("acceptance")),
+                deliveryRevision = (item.int("deliveryRevision") ?: 0).coerceAtLeast(0),
+                verification = BoardTaskVerification.parse(item.obj("verification")),
+                legacyReview = item.bool("legacyReview") == true || item.str("status") == "done",
+                workflowVersion = item.int("workflowVersion"),
                 createdAt = item.str("createdAt") ?: "",
                 updatedAt = item.str("updatedAt") ?: "",
                 sessionIds = item.arr("sessionIds")?.stringItems(ignoreBlank = true) ?: emptyList(),
@@ -266,15 +300,28 @@ data class BoardDispatchResult(
 
 fun BoardTask.displayStatusLabel(): String = if (status == "doing" && executionStatus == "queued") "排队中" else boardTaskStatusLabel(status)
 
+fun BoardTask.aiVerificationCurrent(): Boolean = verification?.revision == deliveryRevision && verification.verdict == "passed" && verification.evidence.isNotBlank() && verification.blocker.isBlank()
+fun BoardTask.humanAcceptanceCurrent(): Boolean = !acceptance?.acceptedAt.isNullOrBlank() && acceptance?.confirmedRevision == deliveryRevision && !acceptance?.evidence.isNullOrBlank() && acceptance?.blocker.isNullOrBlank()
+
 fun boardTaskStatusLabel(status: String): String = when (status) {
     "queued" -> "排队中"
     "backlog" -> "待立项"
-    "todo" -> "待办"
-    "doing" -> "进行中"
-    "done" -> "等你确认"
+    "todo" -> "等待认领"
+    "doing" -> "执行中"
+    "review" -> "待验收"
+    "ready" -> "待归档"
+    "done" -> "待验收"
     "archived" -> "归档"
     else -> status
 }
+
+fun boardWorkflowBody(action: String, requestId: String, expectedUpdatedAt: String, evidence: String, blocker: String): JSONObject =
+    JSONObject().put("workflow", JSONObject()
+        .put("action", action)
+        .put("requestId", requestId)
+        .put("expectedUpdatedAt", expectedUpdatedAt)
+        .put("evidence", evidence)
+        .put("blocker", blocker))
 
 fun boardTaskPriorityLabel(priority: String): String = when (priority) {
     "urgent" -> "紧急"
@@ -284,8 +331,8 @@ fun boardTaskPriorityLabel(priority: String): String = when (priority) {
     else -> "无优先级"
 }
 
-val BOARD_TASK_STATUSES = listOf("backlog", "todo", "doing", "done")
-val BOARD_TASK_DETAIL_STATUSES = listOf("backlog", "todo", "doing", "done", "archived")
+val BOARD_TASK_STATUSES = listOf("backlog", "todo", "doing", "review", "ready")
+val BOARD_TASK_DETAIL_STATUSES = listOf("backlog", "todo", "doing", "review", "ready", "archived")
 val BOARD_TASK_PRIORITIES = listOf("none", "urgent", "high", "medium", "low")
 val BOARD_TASK_PROVIDERS = WandProvider.entries.map { it.id }
 
@@ -569,6 +616,8 @@ interface TaskBoardPort : TaskChangeSource {
         listBoardTasks().filter { it.parentTaskId == parentId }
     suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?): TaskComment =
         throw UnsupportedOperationException("当前客户端未提供评论提交能力。")
+    suspend fun postTaskComment(id: String, requestId: String, body: String, employeeId: String?, sourceCommentId: String?, purpose: String?): TaskComment =
+        postTaskComment(id, requestId, body, employeeId, sourceCommentId)
     suspend fun createBoardTask(
         title: String,
         description: String,

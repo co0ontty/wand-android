@@ -92,7 +92,7 @@ internal fun ConversationGroupAvatar(instance: ConversationInstance, size: andro
 }
 
 private fun conversationWorkSessions(groups: List<TaskDirectoryGroup>): List<HomeRecentConversation> =
-    recentHomeConversations(groups, limit = Int.MAX_VALUE).filter { it.session.teamChat == null }
+    conversationFilterSessions(groups).filter { it.session.teamChat == null }
 
 internal fun conversationPersonSessions(groups: List<TaskDirectoryGroup>): Map<String, List<HomeRecentConversation>> =
     conversationWorkSessions(groups).filter { it.session.employeeId != null }.groupBy { it.session.employeeId!! }
@@ -126,6 +126,7 @@ private fun ConversationOwnedSessions(
     sessions: List<HomeRecentConversation>,
     onOpenSession: (TaskSessionRoute) -> Unit,
     heading: String? = null,
+    associationsAvailable: Boolean = true,
 ) {
     Column(Modifier.fillMaxWidth().padding(start = 28.dp, end = 8.dp, bottom = 8.dp)) {
         if (heading != null) Text(heading, Modifier.padding(vertical = 8.dp), color = WandColors.textMuted, style = MaterialTheme.typography.labelMedium)
@@ -134,7 +135,7 @@ private fun ConversationOwnedSessions(
                 onOpenSession(taskSessionRoute(item.session, item.group, item.task))
             }.padding(vertical = 6.dp)) {
                 Text(item.session.title ?: "会话", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
-                Text(listOfNotNull(item.session.status, item.group.workspaceName).joinToString(" · "),
+                Text("${conversationSessionStage(item, associationsAvailable).label} · ${conversationWorkspaceLabel(item.group)}",
                     color = WandColors.textMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -144,10 +145,13 @@ private fun ConversationOwnedSessions(
 @Composable
 internal fun ConversationList(state: ConversationStore, bottomClearance: androidx.compose.ui.unit.Dp = 68.dp, onOpenEmployee: (String) -> Unit = {},
     onOpenSettings: () -> Unit = {}, onSwitchServer: () -> Unit = {}, onCollapseSidebar: (() -> Unit)? = null,
-    groups: List<TaskDirectoryGroup> = emptyList(), onOpenSession: (TaskSessionRoute) -> Unit = {}, onSelect: (String) -> Unit) {
+    groups: List<TaskDirectoryGroup> = emptyList(), groupsLoading: Boolean = false, groupsError: String? = null, onOpenSession: (TaskSessionRoute) -> Unit = {}, onSelect: (String) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var create by rememberSaveable { mutableStateOf(false) }
-    var listTier by rememberSaveable { mutableStateOf(ConversationListTier.All.storageValue) }
+    val appliedFilters = state.listFilters
+    val listTier = appliedFilters.tier.storageValue
+    val associationsAvailable = !groupsLoading && groupsError == null
+    val workspaceOptions = conversationWorkspaceOptions(groups)
     var swipedId by rememberSaveable { mutableStateOf<String?>(null) }
     var dissolveId by rememberSaveable { mutableStateOf<String?>(null) }
     var deleteId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -158,7 +162,6 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     var pendingId by remember { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var navigationMenu by remember { mutableStateOf(false) }
-    var rangeMenu by remember { mutableStateOf(false) }
     var expandedPeople by remember { mutableStateOf(setOf<String>()) }
     val scope = rememberCoroutineScope()
     fun isBusy(): Boolean = pendingId != null || batchBusy
@@ -213,7 +216,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     val conversationListState = state.listState("conversations")
     // 滚动、切档、开建档面板都要收起唯一那一条划开的行；切档同时清掉多选态，避免残留跨档选中。
     LaunchedEffect(conversationListState.isScrollInProgress) { if (conversationListState.isScrollInProgress) swipedId = null }
-    LaunchedEffect(listTier) { swipedId = null; exitSelection() }
+    LaunchedEffect(appliedFilters) { swipedId = null; exitSelection() }
     LaunchedEffect(create) { if (create) swipedId = null }
     val searchTrigger = remember { androidx.compose.ui.focus.FocusRequester() }
     val createTrigger = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -241,38 +244,37 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 modifier = Modifier.heightIn(min = 48.dp).focusRequester(createTrigger).then(layer.region("actions"))) { Text(if (create) "收起" else "建群") }
             Box {
                 TextButton(onClick = { navigationMenu = true }, enabled = !create, modifier = Modifier.heightIn(min = 48.dp)) { Text("更多") }
-                DropdownMenu(navigationMenu, onDismissRequest = { navigationMenu = false; rangeMenu = false }) {
-                    if (rangeMenu) {
-                        DropdownMenuItem(text = { Text("消息范围") }, leadingIcon = { Icon(WandIcons.back, "返回更多") },
-                            onClick = { rangeMenu = false })
-                        HorizontalDivider()
-                        ConversationListTier.entries.forEach { tier -> DropdownMenuItem(
-                            text = { Text(if (tier == ConversationListTier.All) "全部消息" else tier.label) },
-                            trailingIcon = { if (tier.storageValue == listTier) Icon(WandIcons.check, null, tint = WandColors.brand) },
-                            onClick = { listTier = tier.storageValue; navigationMenu = false; rangeMenu = false }) }
-                    } else {
-                        DropdownMenuItem(text = { Text("消息范围") }, trailingIcon = { Icon(WandIcons.chevronRight, null) },
-                            onClick = { rangeMenu = true })
-                        DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(WandIcons.settings, null) }, onClick = { navigationMenu = false; onOpenSettings() })
-                        DropdownMenuItem(text = { Text("切换服务器") }, leadingIcon = { Icon(WandIcons.swapServer, null) }, onClick = { navigationMenu = false; onSwitchServer() })
-                        onCollapseSidebar?.let { collapse -> DropdownMenuItem(text = { Text("收起侧栏") }, onClick = { navigationMenu = false; collapse() }) }
-                    }
+                DropdownMenu(navigationMenu, onDismissRequest = { navigationMenu = false }) {
+                    DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(WandIcons.settings, null) }, onClick = { navigationMenu = false; onOpenSettings() })
+                    DropdownMenuItem(text = { Text("切换服务器") }, leadingIcon = { Icon(WandIcons.swapServer, null) }, onClick = { navigationMenu = false; onSwitchServer() })
+                    onCollapseSidebar?.let { collapse -> DropdownMenuItem(text = { Text("收起侧栏") }, onClick = { navigationMenu = false; collapse() }) }
                 }
             }
         }
-        if (!create) WandInlineSearchField(true, query, { query = it }, null, "搜索聊天或任务",
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).heightIn(min = 40.dp).then(layer.region("search")),
-            autoFocus = false, focusRequester = searchTrigger, onClear = { query = "" })
+        if (!create) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WandInlineSearchField(true, query, { query = it }, null, "搜索聊天或任务",
+                    modifier = Modifier.weight(1f).then(layer.region("search")),
+                    autoFocus = false, focusRequester = searchTrigger, onClear = { query = "" })
+                ConversationFilterControls(appliedFilters, workspaceOptions) { state.listFilters = it }
+            }
+            if (appliedFilters.count > 0) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(conversationFilterSummary(appliedFilters, workspaceOptions), Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
+                TextButton(onClick = { state.listFilters = ConversationListFilters() }) { Text("清除") }
+            }
+        }
         WandInlinePanel(visible = create, growFrom = Alignment.Top,
             modifier = (if (create) Modifier.weight(1f) else Modifier).then(layer.region("form"))) {
             forms.SaveableStateProvider("create-group") {
                 ConversationGroupEditor(state, onClose = { close(true) }, onAccepted = { create = false; onSelect(it) })
             }
         }
-        val personSessions = conversationPersonSessions(groups)
-        val unboundSessions = conversationUnboundSessions(groups)
         val provisional = provisionalConversationPeople(groups, state.items, state.employees)
-        val rows = filterConversationList(state.items + provisional, ConversationListTier.of(listTier), query)
+        val projection = projectConversationList(state.items + provisional, groups, appliedFilters, query, associationsAvailable)
+        val rows = projection.rows.map { it.item }
+        val unboundSessions = projection.unbound
         val persistedIds = state.items.map { it.id }.toSet()
         val selectedRows = rows.filter { it.id in selectedIds }
         val batchAction = conversationBatchAction(selectedRows.map { it.pinnedAt != null })
@@ -296,17 +298,24 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 Box(Modifier.size(44.dp).clip(WandShapes.md).background(WandColors.surface))
                 Column(Modifier.padding(start = 12.dp)) { repeat(2) { Box(Modifier.padding(vertical = 4.dp).width(120.dp).height(12.dp).background(WandColors.surface)) } }
             } }
-            items(rows, key = { it.id }) { item ->
+            if (groupsLoading) item { Text("正在加载任务关联…", Modifier.padding(12.dp)) }
+            if (groupsError != null) item { Text("任务关联加载失败，筛选结果可能不完整", Modifier.padding(12.dp), color = WandColors.danger) }
+            if (associationsAvailable && appliedFilters.stage != ConversationTaskStage.All &&
+                conversationFilterSessions(groups).any { conversationSessionStage(it) == ConversationTaskStage.Unknown }) item {
+                Text("部分会话任务状态未知，未归入未关联任务。", Modifier.padding(12.dp), color = WandColors.textMuted)
+            }
+            items(projection.rows, key = { it.item.id }) { projected ->
+                val item = projected.item
                 val employee = state.employees.firstOrNull { it.id == item.peerEmployeeId }
-                val matchingTasks = if (query.isBlank()) item.tasks else item.tasks.filter { it.task.title.contains(query, ignoreCase = true) }
+                val matchingTasks = projected.tasks
                 val expanded = if (query.isNotBlank()) matchingTasks.isNotEmpty() else item.id in state.expandedGroups
                 val selected = state.selectedId == item.id
                 val managedSelected = item.id in selectedIds
                 val archived = isConversationArchived(item)
                 val summary = if (item.external != null) "钉钉 · " + item.preview.ifBlank { item.external.statusText } else if (item.dissolvedAt != null) "群聊已解散 · 点击查看或恢复" else item.preview.ifBlank { if (item.kind == "group") "尚未有消息" else "还没有消息" }
                 // 归档的对话不再是「等你回复/在跑」，只留给归档标记；否则和未归档的排成一样。
-                val status = if (archived) null else item.tasks.flatMap { it.runs }.firstOrNull { it.status in listOf("waiting_user", "awaiting_approval", "failed", "running") }?.status
-                val ownedSessions = item.peerEmployeeId?.let { personSessions[it] }.orEmpty()
+                val status = if (archived || item.kind == "dm") null else matchingTasks.flatMap { it.runs }.firstOrNull { it.status in listOf("waiting_user", "awaiting_approval", "failed", "running") }?.status
+                val ownedSessions = projected.sessions
                 val sessionsOpen = item.id in expandedPeople || query.isNotBlank()
                 val provisionalRow = item.id !in persistedIds
                 Column {
@@ -349,7 +358,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (status != null) Text(conversationRunLabel(status), fontSize = 12.sp, color = if (status == "failed") WandColors.danger else WandColors.textSecondary, maxLines = 1)
-                                Text(if (archived) "$ConversationArchivedLabel · $summary" else summary,
+                                Text(if (ownedSessions.isNotEmpty()) "${ownedSessions.size} 条匹配会话" else if (matchingTasks.isNotEmpty()) "${matchingTasks.size} 条匹配任务" else if (archived) "$ConversationArchivedLabel · $summary" else summary,
                                     Modifier.weight(1f), fontSize = 14.sp, lineHeight = 20.sp, color = WandColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
@@ -359,21 +368,28 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                         ) {
                             Icon(WandIcons.chevronRight, if (sessionsOpen) "收起${item.title}的会话" else "展开${item.title}的会话",
                                 Modifier.rotate(if (sessionsOpen) 90f else 0f).size(18.dp), tint = WandColors.textMuted)
-                        } else if (!selecting && listTier != ConversationListTier.Archived.storageValue && item.tasks.isNotEmpty()) WandMorphIconButton(expanded, WandIcons.expand, WandIcons.expand,
+                        } else if (!selecting && matchingTasks.isNotEmpty()) WandMorphIconButton(expanded, WandIcons.expand, WandIcons.expand,
                             if (expanded) "收起群任务" else "展开群任务", { if (item.id in state.expandedGroups) state.expandedGroups.remove(item.id) else state.expandedGroups.add(item.id) }, touchSize = 48.dp, rotationDegrees = 180f)
                         else if (!selecting) Icon(WandIcons.chevronRight, null, Modifier.padding(horizontal = 10.dp).size(16.dp), tint = WandColors.textMuted)
                     }
                   }
-                  if (sessionsOpen && ownedSessions.isNotEmpty()) ConversationOwnedSessions(ownedSessions, onOpenSession)
-                    WandInlinePanel(expanded && listTier != ConversationListTier.Archived.storageValue, growFrom = Alignment.Top) {
+                  if (sessionsOpen && ownedSessions.isNotEmpty()) ConversationOwnedSessions(ownedSessions, onOpenSession, associationsAvailable = associationsAvailable)
+                    WandInlinePanel(expanded, growFrom = Alignment.Top) {
                     Column {
                     matchingTasks.forEach { task ->
                         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable {
                             state.filter(item.id, task.task.id)
                             onSelect(item.id)
                         }.padding(start = 76.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(task.task.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(conversationTaskStatusLabel(task), Modifier.widthIn(min = 64.dp), style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary)
+                            Column(Modifier.weight(1f)) {
+                                Text(task.task.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                val workspaceId = conversationGroupTaskWorkspaceId(task)
+                                val workspaceName = workspaceOptions.firstOrNull { it.first == workspaceId }?.second
+                                    ?: task.task.workspace?.name ?: workspaceId ?: "工作区未知"
+                                Text("${ConversationTaskStage.fromBoard(task.boardTaskStatus).label} · $workspaceName",
+                                    style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                     }
@@ -382,16 +398,16 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 }
             }
             if (unboundSessions.isNotEmpty()) item(key = "other-sessions") {
-                ConversationOwnedSessions(unboundSessions, onOpenSession, heading = "其他会话")
+                ConversationOwnedSessions(unboundSessions, onOpenSession, heading = "其他会话", associationsAvailable = associationsAvailable)
             }
-            if (rows.isEmpty() && unboundSessions.isEmpty() && !state.loading && state.error == null) item {
-                val empty = conversationListEmptyState(query, ConversationListTier.of(listTier))
+            if (rows.isEmpty() && unboundSessions.isEmpty() && !state.loading && state.error == null && !groupsLoading && groupsError == null) item {
+                val empty = if (appliedFilters.count > 0) ConversationListEmptyState.Filtered else conversationListEmptyState(query, ConversationListTier.of(listTier))
                 EmptyState(icon = WandIcons.toolResult, title = empty.title, subtitle = empty.explanation,
                     actionText = empty.action, onAction = {
                         when (empty) {
                             ConversationListEmptyState.Empty -> { create = true; keyboard?.hide() }
                             ConversationListEmptyState.Search -> { query = ""; runCatching { searchTrigger.requestFocus() } }
-                            ConversationListEmptyState.Filtered -> { query = ""; listTier = ConversationListTier.All.storageValue; keyboard?.hide() }
+                            ConversationListEmptyState.Filtered -> { state.listFilters = ConversationListFilters(); keyboard?.hide() }
                         }
                     })
             }

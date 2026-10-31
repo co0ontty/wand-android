@@ -24,11 +24,11 @@ interface WorkspacePort : TaskChangeSource {
         throw UnsupportedOperationException("worktree 概览接口不可用")
     }
 
-    /** 启动只绑定项目的 Worktree 合并 Agent（POST /api/sessions，kind=pty，mode=managed）。 */
+    /** 启动只绑定项目的 Worktree 合并 Agent（POST /api/workspaces/:id/worktree-merge-agent，由系统运维员工「勤劳的初二」执行）。 */
     suspend fun startWorktreeMergeAgent(
         workspace: Workspace,
-        provider: String,
         prompt: String,
+        provider: String? = null,
     ): SessionSnapshot {
         throw UnsupportedOperationException("worktree 合并接口不可用")
     }
@@ -64,12 +64,12 @@ interface WorkspacePort : TaskChangeSource {
         throw UnsupportedOperationException("创建独立任务接口不可用")
     }
 
-    /** GET /api/tasks —— 跨目录任务聚合（目录组一级容器）。 */
+    /** 活跃任务聚合，保留旧工作区/移动会话入口的默认归档范围。 */
     suspend fun listTaskGroups(): List<TaskDirectoryGroup> {
         throw UnsupportedOperationException("任务聚合接口不可用")
     }
 
-    /** GET /api/tasks?revision= —— 轮询时若未变则 unchanged，避免整表重绘。 */
+    /** GET /api/tasks?includeArchived=1&revision= —— 完整成员关系，未变则 unchanged。 */
     suspend fun listTaskGroupsPage(revision: String? = null): TaskGroupsPage {
         return TaskGroupsPage(listTaskGroups())
     }
@@ -162,6 +162,14 @@ interface WorkspacePort : TaskChangeSource {
     /** 结束并删除指定会话（POST /api/sessions/batch-delete）。 */
     suspend fun deleteWorkspaceSessions(sessionIds: List<String>): Int {
         throw UnsupportedOperationException("删除会话接口不可用")
+    }
+
+    suspend fun createWorkspaceSection(name: String, cwd: String, workspaceId: String? = null, sessionId: String? = null): WorkspaceTaskCreation {
+        throw UnsupportedOperationException("当前服务不支持会话分区，请更新服务端")
+    }
+
+    suspend fun unassignWorkspaceSession(sessionId: String) {
+        throw UnsupportedOperationException("当前服务不支持移回工作区，请更新服务端")
     }
 
     /** Exclusive reassignment; preserves the running CLI, history and cwd. */

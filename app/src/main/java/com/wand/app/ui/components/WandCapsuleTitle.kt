@@ -62,7 +62,8 @@ fun WandCapsuleTitle(
     val capsuleHeight = avatarSize + capsuleInset * 2
     val renderSize = maxOf(48.dp, avatarSize)
     val overhang = (renderSize - avatarSize) / 2
-    Box(modifier = modifier.height(capsuleHeight)) {
+    // 背景占满父布局提供的净宽，不能由标题长短或是否有副标题决定。
+    Box(modifier = modifier.fillMaxWidth().height(capsuleHeight)) {
         // Only the background is clipped by the native material. Never mask the portrait.
         Box(Modifier.matchParentSize().glassSurface(backdrop, RoundedCornerShape(percent = 50),
             WandGlass.clear.copy(tint = fill, rimShade = stroke), drawRim = true))

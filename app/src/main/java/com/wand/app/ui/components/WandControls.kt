@@ -36,6 +36,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.VisualTransformation
@@ -95,6 +97,7 @@ fun WandButton(
     icon: ImageVector? = null,
     trailingIcon: ImageVector? = null,
     compact: Boolean = false,
+    reserveLabels: List<String> = emptyList(),
 ) {
     val content: @Composable RowScope.() -> Unit = {
         if (loading || icon != null) {
@@ -114,7 +117,14 @@ fun WandButton(
                 iconSize = 18.dp,
             )
         }
-        Text(label, style = MaterialTheme.typography.labelLarge)
+        else if (reserveLabels.isNotEmpty()) Box(Modifier.size(18.dp))
+        if (reserveLabels.isEmpty()) Text(label, style = MaterialTheme.typography.labelLarge)
+        else Box(contentAlignment = Alignment.Center) {
+            // Native text measurement reserves the largest real feedback state at any font scale.
+            reserveLabels.forEach { candidate -> Text(candidate, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.alpha(0f).clearAndSetSemantics { }) }
+            Text(label, style = MaterialTheme.typography.labelLarge)
+        }
         if (!loading && trailingIcon != null) {
             Icon(trailingIcon, contentDescription = null, modifier = Modifier.size(18.dp))
         }

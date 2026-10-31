@@ -8,6 +8,14 @@ import org.junit.Test
 
 class ChatSessionEventReducerTest {
     @Test
+    fun piSteeringCapabilityIsDecodedWithoutAssumingEveryCliSupportsIt() {
+        val current = StructuredSessionState.parse(org.json.JSONObject("""{"engine":"cli","inFlight":true,"inputMode":"steer"}"""))
+        assertEquals("steer", current?.inputMode)
+        val legacy = StructuredSessionState.parse(org.json.JSONObject("""{"engine":"cli","inFlight":true}"""))
+        assertNull(legacy?.inputMode)
+    }
+
+    @Test
     fun websocketInitAndStatusCarryEmployeeIdentityAndToolWithoutLosingSessionContext() {
         val initial = WsIncoming.parse(org.json.JSONObject("""{"type":"init","sessionId":"s1","data":{"id":"s1","sessionKind":"structured","provider":"pi","runner":"pi-cli-json","status":"idle","employeeId":"employee-1","employeeName":"开发伙伴","employeeAvatar":"cat:1","cwd":"/repo","workspaceTaskId":"task-1","messages":[]}}"""))!!.toSessionEvent()!!
         val initialized = ChatSessionEventReducer.reduce(ChatSessionEventState(), initial)

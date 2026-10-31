@@ -48,9 +48,6 @@ class QuickCommitStore(
         set(value) {
             drafts = drafts.onTagTyped(value)
         }
-    /** 仅本次提交生效；归档由服务端按本次关联任务与项目范围执行。 */
-    var archiveRelatedTasks by mutableStateOf(false)
-
     var generating by mutableStateOf(false)
         private set
     var submitting by mutableStateOf(false)
@@ -76,7 +73,12 @@ class QuickCommitStore(
     private var lastFetchAt = 0L
     private var entryFeedbackToken = 0
 
-    val inFlight: Boolean get() = submitting || pushing
+    var mergingWorktrees by mutableStateOf(false)
+        private set
+    var worktreeFeedback by mutableStateOf<String?>(null)
+        private set
+
+    val inFlight: Boolean get() = submitting || pushing || mergingWorktrees
     val entryLocked: Boolean get() = inFlight || entryPhase != QuickCommitEntryPhase.Idle
 
     var entryPhase by mutableStateOf(QuickCommitEntryPhase.Idle)
@@ -104,9 +106,10 @@ class QuickCommitStore(
     // MARK: - 面板开合
 
     fun openPanel() {
+        if (inFlight) { panelOpen = true; return }
+        worktreeFeedback = null
         // §2.22 S12：打开只复位「本次请求」的状态，不清草稿。
         // 之前每次打开都清空 messageDraft/tagDraft，任何关闭路径 + 重开都会丢掉已输入内容。
-        archiveRelatedTasks = false
         generating = false
         submitting = false
         autoGenerating = false
@@ -145,14 +148,13 @@ class QuickCommitStore(
     // MARK: - 提交
 
     fun submit(action: String, includeSubmodule: Boolean) {
-        if (submitting) return
+        if (inFlight || generating) return
         val withTag = action == "commit-tag" || action == "commit-tag-push"
         val push = action == "commit-push" || action == "commit-tag-push"
         val userTag = if (withTag) tagDraft.trim() else ""
         val message = messageDraft.trim()
         val autoMessage = message.isEmpty()
         val before = status
-        val archiveIntent = archiveRelatedTasks
 
         submitting = true
         beginEntryLoading()
@@ -172,7 +174,6 @@ class QuickCommitStore(
                     autoTag = withTag && userTag.isEmpty(),
                     push = push,
                     submodule = includeSubmodule,
-                    archiveRelatedTasks = archiveIntent,
                 )
                 val outcome = QuickCommitOutcome(
                     includeSubmodule = includeSubmodule,
@@ -189,11 +190,6 @@ class QuickCommitStore(
                 val toastMessage = buildString {
                     append(outcome.summaryText())
                     if (push && outcome.pushError == null) append("，已推送")
-                    if (archiveIntent) {
-                        if (r.archiveError != null) append("，归档失败：").append(r.archiveError)
-                        else if (r.archivedTaskCount > 0) append("，已归档 ${r.archivedTaskCount} 个关联任务")
-                        else append("，没有可归档的关联任务")
-                    }
                     outcome.pushError?.let { append("，推送失败：").append(it) }
                 }
                 if (outcome.pushError == null) {
@@ -221,6 +217,38 @@ class QuickCommitStore(
             }
             submitting = false
             autoGenerating = false
+        }
+    }
+
+    fun mergeWorktrees() {
+        if (inFlight || generating) return
+        val before = status ?: return
+        val branch = before.branch ?: return
+        val head = before.head ?: return
+        mergingWorktrees = true
+        worktreeFeedback = "合并并推送中…"
+        error = null
+        beginEntryLoading()
+        scope.launch {
+            try {
+                val result = api.mergeWorktrees(sessionId, branch, head)
+                if (result.optBoolean("ok") && result.optBoolean("pushed")) {
+                    val count = result.optJSONArray("mergedBranches")?.length() ?: 0
+                    worktreeFeedback = "已合并 $count 个 Worktree 到 ${result.optString("targetBranch")} 并推送"
+                    finishEntrySuccess()
+                } else {
+                    worktreeFeedback = "操作失败"
+                    error = result.optString("error").ifEmpty { "合并或推送未完成" }
+                    failEntry(error ?: "合并失败")
+                }
+            } catch (e: Exception) {
+                worktreeFeedback = "操作失败"
+                error = e.message ?: "合并 Worktree 失败"
+                failEntry(error ?: "合并失败")
+            } finally {
+                mergingWorktrees = false
+                loadStatus(force = true)
+            }
         }
     }
 

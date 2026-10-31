@@ -235,6 +235,7 @@ fun TaskListScreen(
     var archiveTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<WorkspaceTaskSummary?>(null) }
     var deleteSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
+    var sectionCreateTarget by remember { mutableStateOf<com.wand.app.data.TaskDirectoryGroup?>(null) }
     var moveSessionTarget by remember { mutableStateOf<WorkspaceSessionSummary?>(null) }
     var selecting by remember { mutableStateOf(false) }
     var selectedTaskIds by remember { mutableStateOf(setOf<String>()) }
@@ -842,6 +843,11 @@ fun TaskListScreen(
         )
     }
 
+    sectionCreateTarget?.let { group ->
+        WorkspaceSectionNameDialog(api, group, onDismiss = { sectionCreateTarget = null },
+            onCreated = { scope.launch { state.refreshAfterMutation() } })
+    }
+
     moveSessionTarget?.let { session ->
         // 还挂在某个目录组的未分组列表里 = 这条会话没有任务归属，才给「归纳为新任务」。
         val ungrouped = state.groups.firstOrNull { group ->
@@ -979,7 +985,7 @@ fun TaskListScreen(
 
     deleteTarget?.let { summary ->
         WandDialog(
-            title = "删除任务？",
+            title = if (summary.task.kind == "section") "删除分区？" else "删除任务？",
             onDismissRequest = { if (!state.mutationBusy) deleteTarget = null },
             icon = WandIcons.delete,
             confirm = WandDialogAction(
@@ -998,7 +1004,8 @@ fun TaskListScreen(
             dismiss = WandDialogAction("取消", onClick = { deleteTarget = null }),
         ) {
             Text(
-                if (summary.isolated) "任务「${summary.name}」、其中的会话及未被其他会话使用的独立 worktree 将被删除，此操作无法撤销。"
+                if (summary.task.kind == "section") "删除分区「${summary.name}」，会话移回工作区并继续保留。"
+                else if (summary.isolated) "任务「${summary.name}」、其中的会话及未被其他会话使用的独立 worktree 将被删除，此操作无法撤销。"
                 else "任务「${summary.name}」及其中的会话将被删除，工作目录不受影响。此操作无法撤销。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = WandColors.textSecondary,
@@ -1453,6 +1460,7 @@ fun TaskListScreen(
                             },
                             onMoveSession = { moveSessionTarget = it },
                             onNewTask = { onNewConversation(group.workspaceCwd, group.workspaceId.takeUnless { group.synthetic }, null, null, null, true) },
+                            onNewSection = { sectionCreateTarget = group },
                             onRenameDirectory = {
                                 renameDirectoryDraft = group.workspaceName
                                 renameDirectoryTarget = group

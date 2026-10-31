@@ -10,8 +10,10 @@ class TaskBoardSwipeTest {
     @Test
     fun swipeActionsFollowTaskStatus() {
         assertEquals(listOf(BoardTaskSwipeAction.Start), boardTaskSwipeActions("todo"))
-        assertEquals(listOf(BoardTaskSwipeAction.Complete), boardTaskSwipeActions("doing"))
-        assertEquals(listOf(BoardTaskSwipeAction.Archive), boardTaskSwipeActions("done"))
+        assertTrue(boardTaskSwipeActions("doing").isEmpty())
+        assertTrue(boardTaskSwipeActions("done").isEmpty())
+        assertTrue(boardTaskSwipeActions("review").isEmpty())
+        assertTrue(boardTaskSwipeActions("ready").isEmpty())
         assertTrue(boardTaskSwipeActions("archived").isEmpty())
         assertTrue(boardTaskSwipeActions("").isEmpty())
     }
@@ -26,7 +28,7 @@ class TaskBoardSwipeTest {
     @Test
     fun advanceActionsMapToNextStatusOnly() {
         assertEquals("doing", boardTaskSwipeTargetStatus(BoardTaskSwipeAction.Start))
-        assertEquals("done", boardTaskSwipeTargetStatus(BoardTaskSwipeAction.Complete))
+        assertNull(boardTaskSwipeTargetStatus(BoardTaskSwipeAction.Complete))
         // 归档走 DELETE /api/wand-tasks/:id，不通过状态补丁。
         assertNull(boardTaskSwipeTargetStatus(BoardTaskSwipeAction.Archive))
     }

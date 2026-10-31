@@ -601,6 +601,7 @@ data class StructuredSessionState(
      * 老服务端不返回该字段时保持 null，展示上按 CLI 处理。
      */
     val engine: String? = null,
+    val inputMode: String? = null,
 ) {
     companion object {
         fun parse(o: JSONObject?): StructuredSessionState? {
@@ -612,6 +613,7 @@ data class StructuredSessionState(
                 inFlight = o.bool("inFlight"),
                 activeRequestId = o.str("activeRequestId"),
                 engine = o.str("engine"),
+                inputMode = o.str("inputMode"),
             )
         }
     }
@@ -1327,6 +1329,8 @@ data class GitStatusResult(
     val latestTag: String?,
     val hasSubmodule: Boolean?,
     val error: String?,
+    val head: String? = null,
+    val worktreeCount: Int = 0,
 ) {
     companion object {
         fun parse(o: JSONObject): GitStatusResult {
@@ -1351,6 +1355,8 @@ data class GitStatusResult(
                 lastCommitSubject = lastCommit?.str("subject"),
                 latestTag = o.str("latestTag"),
                 hasSubmodule = o.bool("hasSubmodule"),
+                head = o.str("head"),
+                worktreeCount = o.int("worktreeCount") ?: 0,
                 error = o.str("error"),
             )
         }

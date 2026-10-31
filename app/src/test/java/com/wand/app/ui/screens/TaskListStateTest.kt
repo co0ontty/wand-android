@@ -684,6 +684,65 @@ class TaskListStateTest {
         assertTrue(state.groups.isEmpty())
     }
 
+    @Test
+    fun sharedTaskPageRetainsConversationArchivesWithoutChangingLegacyGroups() = runBlocking {
+        val full = com.wand.app.data.TaskGroupsPage.parse("""{"groups":[{
+            "workspaceId":"w","workspaceName":"Workspace","tasks":[
+                {"id":"archived","workspaceId":"w","archived":true,"boardTaskStatus":"doing",
+                 "sessions":[{"id":"archived-child","archived":false}]},
+                {"id":"active","workspaceId":"w","boardTaskStatus":"archived","totalSessions":2,
+                 "sessions":[{"id":"visible"},{"id":"hidden","archived":true}]}
+            ],"standaloneSessions":[{"id":"loose"},{"id":"loose-archived","archived":true}]
+        }]}""").groups
+        val port = FakeWorkspacePort().apply { groups = full }
+        val state = TaskListState(port)
+        assertTrue(state.load())
+        assertEquals(full, state.conversationGroups)
+        assertEquals(listOf("active"), state.groups.single().tasks.map { it.id })
+        assertEquals(listOf("visible"), state.groups.single().tasks.single().sessions.map { it.id })
+        assertEquals(1, state.groups.single().tasks.single().totalSessions)
+        assertEquals(listOf("loose"), state.groups.single().standaloneSessions.map { it.id })
+        val completeSnapshot = state.conversationGroups
+        val activeSnapshot = state.groups
+        port.groupsUnchanged = true
+        assertTrue(state.load())
+        assertSame(completeSnapshot, state.conversationGroups)
+        assertSame(activeSnapshot, state.groups)
+        port.groupsUnchanged = false
+        port.listGroupsFailure = IllegalStateException("unavailable")
+        assertFalse(state.load())
+        assertSame(completeSnapshot, state.conversationGroups)
+        assertSame(activeSnapshot, state.groups)
+        assertNotNull(state.loadError)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun directoryReorderPreservesFullConversationMembership() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val archived = WorkspaceTaskSummary.parse(JSONObject()
+            .put("id", "archived").put("workspaceId", "a").put("archived", true))!!
+        val port = FakeWorkspacePort().apply {
+            groups = listOf(group("a", "/a").copy(tasks = listOf(archived)), group("b", "/b"))
+        }
+        val state = TaskListState(port)
+        try {
+            assertTrue(state.load())
+            state.startDirectoryReorder("a")
+            state.moveDirectory("a", "b")
+            assertEquals(listOf("b", "a"), state.groups.map { it.id })
+            assertEquals(listOf("b", "a"), state.conversationGroups.map { it.id })
+            assertEquals(listOf(archived), state.conversationGroups.last().tasks)
+            assertTrue(state.groups.last().tasks.isEmpty())
+            state.cancelDirectoryReorder()
+            assertEquals(listOf("a", "b"), state.conversationGroups.map { it.id })
+            assertEquals(listOf(archived), state.conversationGroups.first().tasks)
+        } finally {
+            state.shutdown()
+            Dispatchers.resetMain()
+        }
+    }
+
     private class FakeWorkspacePort : WorkspacePort {
         var groups: List<TaskDirectoryGroup> = emptyList()
         var groupsUnchanged = false

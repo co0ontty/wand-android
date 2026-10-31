@@ -10,13 +10,11 @@ import com.wand.app.ui.theme.WandColors
 /** 松手时按速度判定「划开 / 收起」的最小速度（px/s）。 */
 internal const val BOARD_TASK_SWIPE_OPEN_VELOCITY = 480f
 
-/** 任务卡右划可以触发的动作：待办→开始、进行中→完成、已完成→归档。 */
+/** 任务卡右划只允许规划态进入执行；验收与归档必须走 workflow。 */
 internal enum class BoardTaskSwipeAction { Start, Complete, Archive }
 
 internal fun boardTaskSwipeActions(status: String): List<BoardTaskSwipeAction> = when (status) {
     "todo" -> listOf(BoardTaskSwipeAction.Start)
-    "doing" -> listOf(BoardTaskSwipeAction.Complete)
-    "done" -> listOf(BoardTaskSwipeAction.Archive)
     // 归档任务已经在归档区里，不再提供滑动动作。
     else -> emptyList()
 }
@@ -34,7 +32,7 @@ internal fun boardTaskSwipeActionLabel(action: BoardTaskSwipeAction): String = w
  */
 internal fun boardTaskSwipeTargetStatus(action: BoardTaskSwipeAction): String? = when (action) {
     BoardTaskSwipeAction.Start -> "doing"
-    BoardTaskSwipeAction.Complete -> "done"
+    BoardTaskSwipeAction.Complete -> null
     BoardTaskSwipeAction.Archive -> null
 }
 

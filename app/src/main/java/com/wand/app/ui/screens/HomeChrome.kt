@@ -639,6 +639,7 @@ internal fun HomeWorkspaceCard(
     onOpenSession: (WorkspaceSessionSummary, WorkspaceTaskSummary?) -> Unit,
     onMoveSession: (WorkspaceSessionSummary) -> Unit,
     onNewTask: () -> Unit,
+    onNewSection: () -> Unit = {},
     onRenameDirectory: () -> Unit,
     organizationApi: WandApi? = null,
     searchQuery: String = "",
@@ -672,7 +673,7 @@ internal fun HomeWorkspaceCard(
         menuOpen = false
     }
     val directoryActions = listOf(
-        HomeRowAction("new", "新建任务", WandIcons.add, WandColors.brand, onNewTask),
+        HomeRowAction("new", "新建分区", WandIcons.add, WandColors.brand, onNewSection),
         HomeRowAction("organize", "整理", WandIcons.thinking, WandColors.info) { organizationPanelOpen = true },
     ) + (if (group.isGlobal) emptyList() else listOf(
         HomeRowAction("rename", "重命名", WandIcons.rename, WandColors.warning, onRenameDirectory))) +
@@ -765,6 +766,10 @@ internal fun HomeWorkspaceCard(
                     containerColor = WandColors.bgElevated,
                 ) {
                     if (!group.isGlobal) {
+                        DropdownMenuItem(
+                            text = { Text("新建分区") },
+                            onClick = { menuOpen = false; onNewSection() },
+                        )
                         DropdownMenuItem(
                             text = { Text("在这里新建任务") },
                             leadingIcon = { Icon(WandIcons.add, contentDescription = null) },
@@ -883,14 +888,14 @@ internal fun HomeWorkspaceCard(
                     ) {
                         if (group.tasks.isNotEmpty()) HomeHairline()
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
+                            if (group.tasks.isNotEmpty()) Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(start = 6.dp, top = 6.dp, bottom = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "${group.standaloneSessions.size} 个未分组任务",
+                                    "${group.standaloneSessions.size} 个未分区会话",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = WandColors.textMuted,
                                     modifier = Modifier.weight(1f),
@@ -1026,7 +1031,7 @@ private fun HomeTaskBlock(
         HomeSwipeRow(id = "task:" + task.id, enabled = !selecting, actions = listOf(
             HomeRowAction("new", "新建会话", WandIcons.add, WandColors.brand, onNewWindow),
             HomeRowAction("rename", "重命名", WandIcons.edit, WandColors.info, onRename),
-            HomeRowAction("archive", "归档", WandIcons.archive, WandColors.warning, onArchive),
+            HomeRowAction("archive", if (task.task.kind == "section") "删除分区" else "归档", WandIcons.archive, WandColors.warning, if (task.task.kind == "section") onDelete else onArchive),
         )) {
         Row(
             modifier = Modifier
@@ -1097,7 +1102,7 @@ private fun HomeTaskBlock(
                         onClick = { menuOpen = false; onNewWindow() },
                     )
                     DropdownMenuItem(
-                        text = { Text("打开任务") },
+                        text = { Text(if (task.task.kind == "section") "打开分区" else "打开任务") },
                         onClick = { menuOpen = false; onOpen() },
                     )
                     DropdownMenuItem(
@@ -1110,15 +1115,15 @@ private fun HomeTaskBlock(
                             onClick = { menuOpen = false; onClear() },
                         )
                     }
-                    DropdownMenuItem(
+                    if (task.task.kind != "section") DropdownMenuItem(
                         text = { Text("归档任务") },
                         leadingIcon = { Icon(WandIcons.archive, contentDescription = null) },
                         onClick = { menuOpen = false; onArchive() },
                     )
                     // 归档是软删除；只有隔离任务才在归档之外再提供真删（清理 Worktree）。
-                    if (task.isIsolated) {
+                    if (task.isIsolated || task.task.kind == "section") {
                         DropdownMenuItem(
-                            text = { Text("删除任务并清理 Worktree", color = WandColors.danger) },
+                            text = { Text(if (task.task.kind == "section") "删除分区（保留会话）" else "删除任务并清理 Worktree", color = WandColors.danger) },
                             onClick = { menuOpen = false; onDelete() },
                         )
                     }
@@ -1733,7 +1738,7 @@ internal fun HomeSessionRow(
                     onClick = { menuOpen = false; onClick() },
                 )
                 DropdownMenuItem(
-                    text = { Text("移动到任务") },
+                    text = { Text("移动到分区") },
                     leadingIcon = { Icon(WandIcons.folder, contentDescription = null) },
                     onClick = { menuOpen = false; onMove() },
                 )
