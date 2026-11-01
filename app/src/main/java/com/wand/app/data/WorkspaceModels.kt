@@ -373,8 +373,14 @@ data class WorkspaceSessionSummary(
     val workspaceTaskId: String? = null,
     val ptyCommandRunning: Boolean? = null,
     val executionStatus: String? = null,
+    val engine: String? = null,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
+    val toolLabel: String get() = when {
+        provider.isNullOrBlank() || provider in setOf("shell", "terminal") -> "终端"
+        provider == "pi" && engine in setOf("core", "sdk") -> WorkspaceSessionTarget.WandAgent.label
+        else -> WorkspaceSessionTarget.fromRaw(provider)?.label ?: provider.orEmpty()
+    }
 
     companion object {
         fun parse(o: JSONObject): WorkspaceSessionSummary? {
@@ -403,6 +409,7 @@ data class WorkspaceSessionSummary(
                 workspaceTaskId = o.str("workspaceTaskId")?.takeIf { it.isNotBlank() },
                 ptyCommandRunning = o.bool("ptyCommandRunning"),
                 executionStatus = o.str("executionStatus"),
+                engine = o.str("engine") ?: o.obj("structuredState")?.str("engine"),
             )
         }
 
@@ -605,6 +612,8 @@ data class TaskDirectoryGroup(
     val createdAt: String? = null,
     val latestActivityAt: String? = null,
     val global: Boolean = false,
+    val userAdded: Boolean = false,
+    val directoryVisible: Boolean = true,
 ) {
     val id: String get() = workspaceId
     val isGlobal: Boolean get() = global || workspaceId == GLOBAL_WORKSPACE_ID
@@ -623,6 +632,8 @@ data class TaskDirectoryGroup(
                 createdAt = o.str("createdAt"),
                 latestActivityAt = o.str("latestActivityAt"),
                 global = o.bool("global") ?: false,
+                userAdded = o.bool("userAdded") ?: false,
+                directoryVisible = o.bool("directoryVisible") ?: true,
             )
         }
 

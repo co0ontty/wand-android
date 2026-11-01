@@ -81,6 +81,8 @@ interface WorkspacePort : TaskChangeSource {
     suspend fun recentTaskPaths(): List<RecentPath> = emptyList()
 
     /** 目录浏览：返回当前路径下的目录与文件。 */
+    suspend fun listWorkspaceDirectories(path: String): DirectoryListing = listDirectory(path)
+
     suspend fun listDirectory(path: String): DirectoryListing {
         throw UnsupportedOperationException("目录浏览接口不可用")
     }

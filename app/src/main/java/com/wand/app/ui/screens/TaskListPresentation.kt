@@ -50,7 +50,7 @@ enum class HomeListMode(val storageValue: String) {
             "board" -> Tasks
             "contacts" -> Contacts
             "knowledge" -> Knowledge
-            else -> Im
+            else -> Sessions
         }
     }
 }
@@ -319,51 +319,6 @@ internal data class SidebarManageSelection(
     val count: Int get() = taskIds.size + sessionIds.size
     val isEmpty: Boolean get() = count == 0
 }
-
-/** 窄栏一项一个目录，顺序与展开后的目录树一致。 */
-internal data class CollapsedRailDirectory(
-    val group: TaskDirectoryGroup,
-    val activity: String?,
-)
-
-private val RAIL_ATTENTION_STATUSES = setOf(
-    "failed",
-    "waiting-input",
-    "waiting_input",
-    "permission-blocked",
-    "reconnecting",
-)
-
-internal fun sessionRailActivity(session: WorkspaceSessionSummary): String? = when {
-    session.status in RAIL_ATTENTION_STATUSES -> "attention"
-    session.inFlight == true || session.ptyBusy == true || session.status == "thinking" -> "running"
-    else -> null
-}
-
-internal fun directoryRailActivity(group: TaskDirectoryGroup): String? {
-    val sessions = group.tasks.flatMap { it.sessions } + group.standaloneSessions
-    if (sessions.any { sessionRailActivity(it) == "attention" }) return "attention"
-    if (sessions.any { sessionRailActivity(it) == "running" }) return "running"
-    return null
-}
-
-/** 当前任务或终端落在这个目录里时，窄栏文件夹保持选中。 */
-internal fun directoryContainsSelection(
-    group: TaskDirectoryGroup,
-    selectedTaskId: String?,
-    selectedSessionId: String?,
-): Boolean {
-    if (!selectedTaskId.isNullOrBlank() && group.tasks.any { it.id == selectedTaskId }) return true
-    val sessionId = selectedSessionId?.takeIf { it.isNotBlank() } ?: return false
-    if (group.standaloneSessions.any { it.id == sessionId }) return true
-    return group.tasks.any { task -> task.sessions.any { it.id == sessionId } }
-}
-
-/** 平板窄栏：每个可见目录一个文件夹，不再把任务摊平成图标。 */
-internal fun collapsedRailDirectories(groups: List<TaskDirectoryGroup>): List<CollapsedRailDirectory> =
-    directoryTreeGroups(groups).map { group ->
-        CollapsedRailDirectory(group = group, activity = directoryRailActivity(group))
-    }
 
 internal fun collectManagedIds(groups: List<TaskDirectoryGroup>): SidebarManageSelection {
     val taskIds = linkedSetOf<String>()

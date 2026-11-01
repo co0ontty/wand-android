@@ -1,5 +1,11 @@
 package com.wand.app.ui.screens
 
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+
 import androidx.compose.runtime.saveable.rememberSaveable
 
 import androidx.compose.animation.AnimatedContent
@@ -145,7 +151,8 @@ fun TaskListScreen(
     modifier: Modifier = Modifier,
     homeListMode: HomeListMode = HomeListMode.Sessions,
     onHomeListModeChange: (HomeListMode) -> Unit = {},
-    conversationList: (@Composable (androidx.compose.ui.unit.Dp) -> Unit)? = null,
+    conversationList: (@Composable (androidx.compose.ui.unit.Dp, Boolean,
+        (WorkspaceSessionSummary) -> Unit, (WorkspaceSessionSummary) -> Unit) -> Unit)? = null,
     selectedTaskId: String? = null,
     selectedSessionId: String? = null,
     interactionEnabled: Boolean = true,
@@ -170,12 +177,11 @@ fun TaskListScreen(
     onCreateTeam: (String) -> Unit = {},
     onOpenGroupChat: (String) -> Unit = {},
     onSwitchServer: () -> Unit,
-    onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val menuDensity = androidx.compose.ui.platform.LocalDensity.current
     var menuHeight by remember { mutableStateOf(HomeMenuPillHeight) }
-    val menuClearance = maxOf(68.dp, menuHeight + 12.dp)
+    val menuClearance = 0.dp
     val contactContext = androidx.compose.ui.platform.LocalContext.current
     var newTaskOpen by remember { mutableStateOf(false) }
     var sessionComposer by remember { mutableStateOf(false) }
@@ -262,7 +268,7 @@ fun TaskListScreen(
     }
     val runningOnly = recentFold.filtersRunning || workspaceFold.filtersRunning
     // 内容不由投影删减：一级行（员工、工作区）永远留着，卡片按区档位决定露哪几行。
-    val searchedGroups = searchHomeGroups(allGroups, workspaceQuery, contactsEmployees)
+    val searchedGroups = searchHomeGroups(allGroups.filter { it.userAdded }, workspaceQuery, contactsEmployees)
     val visibleGroups = if (attentionOnly) attentionOnlyGroups(searchedGroups) else searchedGroups
     val contactConversations = recentHomeConversations(allGroups, limit = Int.MAX_VALUE)
 
@@ -1175,7 +1181,7 @@ fun TaskListScreen(
     // 通讯录自带顶栏（搜索框就在页头），IM 列表在 conversationList 非空时也自带；
     // 这两种情况不叠根壳的 HomeTopBar。
     val modeOwnsTopBar = homeListMode == HomeListMode.Knowledge || homeListMode == HomeListMode.Contacts ||
-        (homeListMode == HomeListMode.Im && conversationList != null)
+        ((homeListMode == HomeListMode.Im || homeListMode == HomeListMode.Sessions) && conversationList != null)
     CompositionLocalProvider(LocalHomeSwipeOwner provides homeSwipeOwner) {
     Column(
         modifier = modifier
@@ -1189,6 +1195,20 @@ fun TaskListScreen(
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Column(Modifier.fillMaxSize().glassBackdropSource(homeBackdrop)) {
+                if (homeListMode != HomeListMode.Sessions && homeListMode != HomeListMode.Im) {
+                    var featureMenuOpen by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { selectHomeMode(HomeListMode.Sessions) }, enabled = interactionEnabled) { Text("返回工作区") }
+                        Spacer(Modifier.weight(1f))
+                        Box {
+                            IconButton(onClick = { featureMenuOpen = true }, enabled = interactionEnabled) { Icon(WandIcons.more, "功能菜单") }
+                            DropdownMenu(featureMenuOpen, { featureMenuOpen = false }) {
+                                DropdownMenuItem(text = { Text("知识库") }, onClick = { featureMenuOpen = false; selectHomeMode(HomeListMode.Knowledge) })
+                                DropdownMenuItem(text = { Text("任务") }, onClick = { featureMenuOpen = false; selectHomeMode(HomeListMode.Tasks) })
+                            }
+                        }
+                    }
+                }
                 if (!modeOwnsTopBar) HomeTopBar(
                     title = if (homeListMode == HomeListMode.Tasks) "任务" else "工作区",
                     serverDisplayName = serverDisplayName,
@@ -1197,11 +1217,8 @@ fun TaskListScreen(
                     newTaskEnabled = interactionEnabled && !selecting && !recentCreationBusy() && !newTaskOpen && !newTaskSubmitting,
                     onOpenSettings = { invalidateRecentConversationOpening(); onOpenSettings() },
                     onSwitchServer = { invalidateRecentConversationOpening(); onSwitchServer() },
-                    onCollapseSidebar = onCollapseSidebar?.let { collapse ->
-                        { invalidateRecentConversationOpening(); collapse() }
-                    },
                 )
-                if (homeListMode == HomeListMode.Sessions) {
+                if (homeListMode == HomeListMode.Sessions && conversationList == null) {
                     com.wand.app.ui.components.WandInlineSearchField(
                         expanded = true,
                         query = workspaceQuery,
@@ -1215,7 +1232,7 @@ fun TaskListScreen(
                 }
                 // 整行的显隐只有 [homeActivityStripVisible] 一个门，且就在调用处：
                 // 「只看等你」的开关长在这一行里，组件内不得再有第二套早退（D13/S24）。
-                if (homeListMode != HomeListMode.Knowledge && homeListMode != HomeListMode.Im && homeListMode != HomeListMode.Contacts &&
+                if (homeListMode != HomeListMode.Knowledge && homeListMode != HomeListMode.Im && homeListMode != HomeListMode.Sessions && homeListMode != HomeListMode.Contacts &&
                     homeActivityStripVisible(showingBoard, activityStats)
                 ) {
                     HomeActivityStrip(
@@ -1291,11 +1308,16 @@ fun TaskListScreen(
                         onOpenConversation = onOpenConversation,
                         onOpenGroupChat = onOpenGroupChat,
                         onCreateTeam = onCreateTeam,
-                        onCollapseSidebar = onCollapseSidebar,
                     )
                     }
-                } else if (projection == HomeListMode.Im.storageValue && conversationList != null) {
-                    conversationList(menuClearance)
+                } else if ((projection == HomeListMode.Im.storageValue || projection == HomeListMode.Sessions.storageValue) && conversationList != null) {
+                    conversationList(menuClearance, interactionEnabled && !state.mutationBusy,
+                        { session -> homeSwipeOwner.value = null; moveSessionTarget = session },
+                        { session ->
+                            homeSwipeOwner.value = null
+                            state.clearMutationError()
+                            deleteSessionTarget = session
+                        })
                 } else WandPullToRefresh(
                     isRefreshing = refreshingSessions,
                     onRefresh = {
@@ -1390,6 +1412,9 @@ fun TaskListScreen(
                                     color = WandColors.textMuted,
                                     modifier = Modifier.padding(vertical = 12.dp))
                             }
+                        }
+                        item(key = "workspace-add") {
+                            AddWorkspaceButton { scope.launch { state.load(silent = true) } }
                         }
                         item(key = "workspace-tree-header") {
                             HomeSectionHeaderRow(
@@ -1520,29 +1545,7 @@ fun TaskListScreen(
                 }
             }
             }
-            // 按参考图保留悬浮胶囊；按枚举映射目的地，列表余量包含外围留白。
-            // 管理态让位给批量操作；列表余量继续由实测导航高度决定。
-            if (!selecting) {
-                HomeMenuPill(
-                    mode = homeListMode,
-                    backdrop = homeBackdrop,
-                    enabled = interactionEnabled,
-                    onSelect = { item ->
-                        when (item) {
-                            HomeMenuPillItem.Chats -> selectHomeMode(HomeListMode.Sessions)
-                            HomeMenuPillItem.Tasks -> selectHomeMode(HomeListMode.Tasks)
-                            HomeMenuPillItem.Im -> selectHomeMode(HomeListMode.Im)
-                            HomeMenuPillItem.Knowledge -> selectHomeMode(HomeListMode.Knowledge)
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .widthIn(max = 440.dp)
-                        .fillMaxWidth()
-                        .onSizeChanged { menuHeight = with(menuDensity) { it.height.toDp() } },
-                )
-            }
+
         }
     }
     }

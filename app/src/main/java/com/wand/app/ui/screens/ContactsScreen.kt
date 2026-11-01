@@ -115,7 +115,6 @@ fun ContactsScreen(
     onOpenConversation: (String) -> Unit,
     onOpenGroupChat: (String) -> Unit,
     onCreateTeam: (String) -> Unit,
-    onCollapseSidebar: (() -> Unit)? = null,
 ) {
     val api = conversations.api
     val scope = rememberCoroutineScope()
@@ -284,7 +283,6 @@ fun ContactsScreen(
             interactionEnabled = interactionEnabled,
             onOpenSettings = onOpenSettings,
             onSwitchServer = onSwitchServer,
-            onCollapseSidebar = onCollapseSidebar,
             menuActions = { dismiss ->
                 DropdownMenuItem(text = { Text(if (dispatchOpen) "收起派工" else "派工") },
                     onClick = { dismiss(); if (dispatchOpen) closeDispatchPanel()
@@ -487,7 +485,7 @@ fun ContactsScreen(
                                     enabled = !anyBusy,
                                     error = rowErrors[team.id],
                                     showDivider = next is ContactSlot.Team,
-                                    onOpen = { openTeamConversation(team) },
+                                    onOpen = { if (!conversationBusy()) onOpenTeam(team.id) },
                                     onAvatar = { if (!conversationBusy()) onOpenTeam(team.id) },
                                     managementEnabled = !anyBusy,
                                     modifier = Modifier.animateItem(
@@ -520,7 +518,7 @@ fun ContactsScreen(
                                     showDivider = next is ContactSlot.Employee,
                                     onAvatar = { if (!conversationBusy()) onOpenEmployee(employee.id) },
                                     managementEnabled = !anyBusy,
-                                    onOpen = { openEmployeeConversation(employee) },
+                                    onOpen = { if (!conversationBusy()) onOpenEmployee(employee.id) },
                                     modifier = Modifier.animateItem(
                                         fadeInSpec = if (motionEnabled) WandMotion.tweenFast() else null,
                                         placementSpec = if (motionEnabled) WandMotion.tweenNormal() else null,
@@ -593,7 +591,7 @@ private fun ContactPersonRow(
         enabled = enabled,
         error = error,
         showDivider = showDivider,
-        openDescription = "与${employee.name}聊天",
+        openDescription = "查看${employee.name}的资料",
         onOpen = onOpen,
         modifier = modifier,
         avatar = {
@@ -681,7 +679,6 @@ private fun ContactDirectoryRow(
 ) {
     Column(modifier.fillMaxWidth()) {
         HomeSwipeRow(id, enabled = enabled, actions = listOf(
-            HomeRowAction("message", "聊天", WandIcons.chat, WandColors.brand, onOpen),
             HomeRowAction("profile", "资料", WandIcons.agent, WandColors.info, onProfile),
         )) {
         Row(
@@ -696,7 +693,7 @@ private fun ContactDirectoryRow(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = ContactRowMinHeight)
-                    .combinedClickable(enabled = enabled, role = Role.Button, onClick = onOpen,
+                    .combinedClickable(enabled = enabled, role = Role.Button, onClick = onProfile,
                         onLongClickLabel = "查看资料", onLongClick = onProfile)
                     .semantics { contentDescription = openDescription }
                     .padding(start = 4.dp),

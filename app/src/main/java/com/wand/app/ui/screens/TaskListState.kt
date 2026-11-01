@@ -293,9 +293,7 @@ class TaskListState(
                     ?: throw IllegalStateException("工作区已不存在，请重新选择目录")
                 normalizedCwd.isNotEmpty() -> workspaces.firstOrNull {
                     normalizeWorkspacePath(it.cwd) == normalizeWorkspacePath(normalizedCwd)
-                } ?: port.createWorkspace(
-                    normalizedCwd.trimEnd('/').substringAfterLast('/').ifBlank { "工作区" }, normalizedCwd,
-                )
+                }
                 else -> null
             }
             val task = if (project != null) {

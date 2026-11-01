@@ -36,7 +36,7 @@ class ConversationFiltersTest {
     @Test fun sameSessionIntersectionNeverCombinesSiblingMatches() {
         val groups = listOf(group("a", listOf(task("review-a", "review", listOf(session("a"))))),
             group("b", listOf(task("doing-b", "doing", listOf(session("b"))))))
-        val filters = ConversationListFilters(ConversationTaskStage.Review, "b")
+        val filters = ConversationListFilters(stage = ConversationTaskStage.Review, workspaceId = "b")
         assertTrue(projectConversationList(listOf(person()), groups, filters, "").rows.isEmpty())
         val match = projectConversationList(listOf(person()), groups, filters.copy(workspaceId = "a"), "").rows.single()
         assertEquals(listOf("a"), match.sessions.map { it.session.id })
@@ -60,7 +60,7 @@ class ConversationFiltersTest {
     @Test fun onlyExplicitStandaloneWithoutBindingIsNoneAndFailureIsUnknown() {
         val groups = listOf(group(tasks = listOf(task("old", null, listOf(session("container")))),
             standalone = listOf(session("standalone"), session("bound", binding = "missing"))))
-        val filters = ConversationListFilters(ConversationTaskStage.None)
+        val filters = ConversationListFilters(stage = ConversationTaskStage.None)
         assertEquals(listOf("standalone"), projectConversationList(listOf(person()), groups, filters, "").rows.single().sessions.map { it.session.id })
         assertTrue(projectConversationList(listOf(person()), groups, filters, "", associationsAvailable = false).rows.isEmpty())
         assertTrue(projectConversationList(listOf(person()), emptyList(), filters, "").rows.isEmpty())
@@ -83,7 +83,7 @@ class ConversationFiltersTest {
 
     @Test fun taskArchiveAndSessionArchiveAreIndependentAndArchivedChildrenAreNotLost() {
         val groups = listOf(group(tasks = listOf(task("t", "archived", listOf(session("live"), session("archived", archived = true))))))
-        val all = ConversationListFilters(ConversationTaskStage.Archived)
+        val all = ConversationListFilters(stage = ConversationTaskStage.Archived)
         assertEquals(2, projectConversationList(listOf(person()), groups, all, "").rows.single().sessions.size)
         assertEquals(listOf("live"), projectConversationList(listOf(person()), groups,
             all.copy(tier = ConversationListTier.Active), "").rows.single().sessions.map { it.session.id })
@@ -106,36 +106,36 @@ class ConversationFiltersTest {
         assertFalse(conversationSessionMatches(item, ConversationListFilters(tier = ConversationListTier.Active)))
         assertFalse(conversationSessionMatches(item, ConversationListFilters(activeOnly = true)))
         assertEquals(listOf("s"), projectConversationList(listOf(person()), groups,
-            ConversationListFilters(ConversationTaskStage.Doing, "w", ConversationListTier.Archived), "")
+            ConversationListFilters(stage = ConversationTaskStage.Doing, workspaceId = "w", tier = ConversationListTier.Archived), "")
             .rows.single().sessions.map { it.session.id })
         assertTrue(projectConversationList(listOf(person()), groups,
-            ConversationListFilters(ConversationTaskStage.Doing, "w", ConversationListTier.Active), "").rows.isEmpty())
+            ConversationListFilters(stage = ConversationTaskStage.Doing, workspaceId = "w", tier = ConversationListTier.Active), "").rows.isEmpty())
     }
 
     @Test fun mobileGroupFiltersItsRealBoardTasksWithoutCrossTaskMatches() {
         val tasks = listOf(groupTask("review-a", "done", "a"), groupTask("doing-b", "doing", "b"))
         val chat = person().copy(id = "group", kind = "group", peerEmployeeId = null, tasks = tasks)
-        val filters = ConversationListFilters(ConversationTaskStage.Review, "b")
+        val filters = ConversationListFilters(stage = ConversationTaskStage.Review, workspaceId = "b")
         assertTrue(projectConversationList(listOf(chat), emptyList(), filters, "").rows.isEmpty())
         val match = projectConversationList(listOf(chat), emptyList(), filters.copy(workspaceId = "a"), "").rows.single()
         assertEquals(listOf("review-a"), match.tasks.map { it.task.id })
-        assertTrue(projectConversationList(listOf(chat), emptyList(), ConversationListFilters(ConversationTaskStage.None), "").rows.isEmpty())
+        assertTrue(projectConversationList(listOf(chat), emptyList(), ConversationListFilters(stage = ConversationTaskStage.None), "").rows.isEmpty())
         assertEquals(2, projectConversationList(listOf(chat), emptyList(), ConversationListFilters(), "").rows.single().tasks.size)
     }
 
     @Test fun missingGroupFieldsAreUnknownNotTodoOrUnassigned() {
         val old = groupTask("old", null, null, known = false)
         assertNull(old.boardTaskStatus)
-        assertFalse(conversationGroupTaskMatches(old, ConversationListFilters(ConversationTaskStage.Todo)))
+        assertFalse(conversationGroupTaskMatches(old, ConversationListFilters(stage = ConversationTaskStage.Todo)))
         assertFalse(conversationGroupTaskMatches(old, ConversationListFilters(workspaceId = UnassignedConversationWorkspace)))
         assertTrue(conversationGroupTaskMatches(groupTask("global", "ready", null),
-            ConversationListFilters(ConversationTaskStage.Ready, UnassignedConversationWorkspace)))
+            ConversationListFilters(stage = ConversationTaskStage.Ready, workspaceId = UnassignedConversationWorkspace)))
     }
 
     @Test fun otherSessionsUseSameSearchAndIntersectionAndDeduplicate() {
         val s = session("other", employee = null)
         val groups = listOf(group(tasks = listOf(task("t", "review", listOf(s, s)))))
-        val filters = ConversationListFilters(ConversationTaskStage.Review, "w")
+        val filters = ConversationListFilters(stage = ConversationTaskStage.Review, workspaceId = "w")
         assertEquals(1, projectConversationList(emptyList(), groups, filters, "other").unbound.size)
         assertTrue(projectConversationList(emptyList(), groups, filters, "missing").unbound.isEmpty())
         assertTrue(projectConversationList(emptyList(), groups, filters.copy(stage = ConversationTaskStage.Ready), "").unbound.isEmpty())
@@ -146,7 +146,7 @@ class ConversationFiltersTest {
         val idle = session("idle").put("inFlight", false).put("sessionKind", "structured")
         val groups = listOf(group(tasks = listOf(task("t", "review", listOf(running, idle)))))
         val source = person()
-        val filters = ConversationListFilters(ConversationTaskStage.Review, "w", activeOnly = true)
+        val filters = ConversationListFilters(stage = ConversationTaskStage.Review, workspaceId = "w", activeOnly = true)
         assertEquals(listOf("running"), projectConversationList(listOf(source), groups, filters, "").rows.single().sessions.map { it.session.id })
         assertTrue(projectConversationList(listOf(source), groups, filters.copy(stage = ConversationTaskStage.Doing), "").rows.isEmpty())
         assertEquals(2, groups.single().tasks.single().sessions.size)
@@ -158,14 +158,33 @@ class ConversationFiltersTest {
         val json = task("t", "review", listOf(session("s"))).apply { remove("boardTaskId") }
         val item = conversationFilterSessions(listOf(group(tasks = listOf(json)))).single()
         assertEquals(ConversationTaskStage.Review, conversationSessionStage(item))
-        assertTrue(conversationSessionMatches(item, ConversationListFilters(ConversationTaskStage.Review)))
-        assertFalse(conversationSessionMatches(item, ConversationListFilters(ConversationTaskStage.None)))
+        assertTrue(conversationSessionMatches(item, ConversationListFilters(stage = ConversationTaskStage.Review)))
+        assertFalse(conversationSessionMatches(item, ConversationListFilters(stage = ConversationTaskStage.None)))
     }
 
     @Test fun filterCountAndStaleWorkspaceSummaryRemainClearable() {
-        val filters = ConversationListFilters(ConversationTaskStage.Review, "deleted", ConversationListTier.Active, true)
+        val filters = ConversationListFilters(stage = ConversationTaskStage.Review, workspaceId = "deleted", tier = ConversationListTier.Active, activeOnly = true)
         assertEquals(4, filters.count)
         assertTrue(conversationFilterSummary(filters, emptyList()).contains("工作区不可用（deleted）"))
         assertEquals(0, ConversationListFilters().count)
+    }
+
+    @Test fun employeeFilterMatchesByEmployeeId() {
+        val s1 = session("s1", employee = "emp-1")
+        val s2 = session("s2", employee = "emp-2")
+        val s3 = session("s3", employee = null)
+        val groups = listOf(group("A", standalone = listOf(s1, s2, s3)))
+        val sessions = conversationFilterSessions(groups)
+        val filter1 = ConversationListFilters(employeeIds = setOf("emp-1"))
+        assertEquals(listOf("s1"), sessions.filter { conversationSessionMatches(it, filter1) }.map { it.session.id })
+        val filterNone = ConversationListFilters(employeeIds = setOf("none"))
+        assertEquals(listOf("s3"), sessions.filter { conversationSessionMatches(it, filterNone) }.map { it.session.id })
+        val filterMulti = ConversationListFilters(employeeIds = setOf("emp-1", "emp-2"))
+        assertEquals(setOf("s1", "s2"), sessions.filter { conversationSessionMatches(it, filterMulti) }.map { it.session.id }.toSet())
+        assertEquals(1, filter1.count)
+        val options = conversationEmployeeOptions(sessions)
+        assertTrue(options.any { it.first == "none" })
+        assertTrue(options.any { it.first == "emp-1" })
+        assertTrue(options.any { it.first == "emp-2" })
     }
 }

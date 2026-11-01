@@ -49,7 +49,6 @@ fun KnowledgeScreen(
         if (!hasDocument) HomeTopBar(
             title = "知识库", serverDisplayName = serverDisplayName, interactionEnabled = !controller.busy,
             onNewTask = null, newTaskEnabled = false,
-            onCollapseSidebar = null,
             onOpenSettings = { controller.guard(onOpenSettings) },
             onSwitchServer = { controller.guard(onSwitchServer) },
         )
@@ -101,6 +100,9 @@ private fun KnowledgeDirectory(controller: KnowledgeController, clearance: Dp, s
                     Icon(WandIcons.expand, contentDescription = "选择知识库归属", Modifier.size(20.dp))
                 }
                 DropdownMenu(expanded = ownerMenu, onDismissRequest = { ownerMenu = false }, modifier = Modifier.heightIn(max = 360.dp)) {
+                    if (controller.scope == KnowledgeScope.Project) AddWorkspaceButton { workspace ->
+                        ownerMenu = false; controller.refreshOwners(preferredOwnerId = workspace.id)
+                    }
                     controller.owners?.forScope(controller.scope).orEmpty().forEach { owner ->
                         DropdownMenuItem(text = { Text(owner.name + if (owner.readOnly) " · 只读" else "") },
                             onClick = { ownerMenu = false; controller.selectOwner(owner.id) },

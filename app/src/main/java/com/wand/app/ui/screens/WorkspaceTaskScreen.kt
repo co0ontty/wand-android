@@ -285,11 +285,6 @@ fun WorkspaceTaskScreen(
                         onDismissRequest = { taskMenuOpen = false },
                         containerColor = WandColors.bgElevated,
                     ) {
-                        if (onOpenIm != null) {
-                            DropdownMenuItem(text = { Text("打开聊天") },
-                                leadingIcon = { Icon(WandIcons.toolResult, contentDescription = null) },
-                                onClick = { taskMenuOpen = false; onOpenIm() })
-                        }
                         DropdownMenuItem(
                             text = { Text("并行任务") },
                             leadingIcon = { Icon(WandIcons.agent, contentDescription = null) },

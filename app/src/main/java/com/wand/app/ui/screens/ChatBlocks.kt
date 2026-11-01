@@ -1462,11 +1462,17 @@ private fun ChatMessageTime(
 @Composable
 private fun UserTurnView(turn: ConversationTurn, compact: Boolean, showTime: Boolean, tail: Boolean) {
     val parentBlocks = remember(turn.content) { turn.content.filter { it.subagentMeta() == null } }
-    if (parentBlocks.any { it is ContentBlock.Text && it.text.isNotBlank() }) {
-        UserBubble(turn.copy(content = parentBlocks), compact = compact, showTime = showTime, tail = tail)
-    }
-    parentBlocks.filterNot { it is ContentBlock.Text }.forEach { block ->
-        BlockView(block, foldKey = cardMessageScope(LocalChatSessionId.current, turn.role, turn.createdAt, ""))
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        if (parentBlocks.any { it is ContentBlock.Text && it.text.isNotBlank() }) {
+            UserBubble(turn.copy(content = parentBlocks), compact = compact, showTime = showTime, tail = tail)
+        }
+        parentBlocks.filterNot { it is ContentBlock.Text }.forEach { block ->
+            BlockView(block, foldKey = cardMessageScope(LocalChatSessionId.current, turn.role, turn.createdAt, ""))
+        }
+        if (!turn.readAt.isNullOrBlank()) {
+            Text("已读", style = MaterialTheme.typography.labelSmall, color = WandColors.textSecondary,
+                modifier = Modifier.semantics { contentDescription = "服务端已接收并开始处理" })
+        }
     }
 }
 
@@ -3122,8 +3128,10 @@ private fun toolLabel(name: String): String {
             "send_input", "send_message" -> "发送子任务消息"
             "wait", "wait_agent" -> "等待子代理"
             "close_agent" -> "关闭子代理"
+            "review" -> "代码评审"
             else -> "多 Agent 协作"
         }
+        lower.contains("contextcompaction") -> "压缩上下文"
         lower == "tool_search" || lower.contains("toolsearch") -> "查找可用工具"
         lower.contains("apply_patch") || lower.contains("patch_apply") -> "应用补丁"
         lower.contains("view_image") || lower.contains("imagegen") -> "处理图片"

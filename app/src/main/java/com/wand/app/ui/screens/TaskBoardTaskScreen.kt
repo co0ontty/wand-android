@@ -319,7 +319,6 @@ fun TaskBoardTaskScreen(
                     enabled = !busy,
                     onClick = { scope.launch { refresh(showProgress = true) } },
                 )
-                onOpenIm?.let { WandButton("聊天", it, modifier = Modifier.size(48.dp), variant = WandButtonVariant.Text) }
             },
         )
         Box(

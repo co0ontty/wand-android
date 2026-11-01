@@ -10,7 +10,7 @@ import com.wand.app.data.WorkspacePort
 import com.wand.app.data.normalizeWorkspacePath
 import kotlinx.coroutines.CancellationException
 
-/** 空目录表示未归属；未登记的目录只在真正提交时创建工作区。 */
+/** 空目录表示未归属；选择目录本身不登记工作区。 */
 internal data class WorkspaceDirectorySelection(val cwd: String, val workspaceId: String? = null)
 
 internal fun selectableDirectoryWorkspaces(workspaces: List<Workspace>): List<Workspace> =
@@ -34,7 +34,6 @@ internal suspend fun resolveCreationWorkspace(api: WorkspacePort, selection: Wor
     }
     val cwd = selection.cwd.trim()
     return workspaces.firstOrNull { normalizeWorkspacePath(it.cwd) == normalizeWorkspacePath(cwd) }
-        ?: api.createWorkspace(cwd.trimEnd('/').substringAfterLast('/').ifBlank { "工作区" }, cwd)
 }
 
 internal fun parentWorkspaceDirectory(path: String): String =
@@ -80,7 +79,7 @@ internal class WorkspaceDirectoryPickerState(private val api: WorkspacePort, ini
         listing = null
         error = null
         try {
-            val loaded = api.listDirectory(requested)
+            val loaded = api.listWorkspaceDirectories(requested)
             if (request == revision) listing = loaded
         } catch (failure: Exception) {
             if (failure is CancellationException) throw failure

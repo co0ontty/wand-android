@@ -94,16 +94,17 @@ internal fun ConversationFilterControls(
                             }
                         }
                         if (matches.isEmpty()) Text("未找到工作区", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium)
+                        AddWorkspaceButton { workspace -> draft = draft.copy(workspaceId = workspace.id); field = null }
                     }
                     ConversationFilterDropdown(
                         label = "归档", fullLabel = "对话归档范围",
-                        value = if (draft.tier == ConversationListTier.All) "全部对话" else draft.tier.label,
+                        value = draft.tier.filterLabel,
                         expanded = field == ConversationFilterField.Archive,
                         onOpen = { field = ConversationFilterField.Archive }, onDismiss = { field = null },
                         modifier = Modifier.weight(1f),
                     ) {
                         ConversationListTier.entries.forEach { tier ->
-                            ConversationFilterOption(if (tier == ConversationListTier.All) "全部对话" else tier.label,
+                            ConversationFilterOption(tier.filterLabel,
                                 draft.tier == tier) { draft = draft.copy(tier = tier); field = null }
                         }
                     }
@@ -172,10 +173,13 @@ private fun ConversationFilterOption(label: String, selected: Boolean, onClick: 
         trailingIcon = { if (selected) Icon(WandIcons.check, null) })
 }
 
-internal fun conversationFilterSummary(filters: ConversationListFilters, workspaces: List<Pair<String, String>>): String =
+internal fun conversationFilterSummary(filters: ConversationListFilters, workspaces: List<Pair<String, String>>, employees: List<Pair<String, String>> = emptyList()): String =
     buildList {
+        if (filters.runtimes.isNotEmpty()) add(ConversationRuntime.entries.filter { it in filters.runtimes }.joinToString("、") { it.label })
+        if (filters.workspaceIds.isNotEmpty()) add(filters.workspaceIds.map { id -> workspaces.firstOrNull { it.first == id }?.second ?: "工作区不可用" }.joinToString("、"))
+        if (filters.employeeIds.isNotEmpty()) add("员工：" + filters.employeeIds.map { id -> employees.firstOrNull { it.first == id }?.second ?: "员工不可用" }.joinToString("、"))
         if (filters.stage != ConversationTaskStage.All) add(filters.stage.label)
         filters.workspaceId?.let { id -> add(workspaces.firstOrNull { it.first == id }?.second ?: "工作区不可用（$id）") }
-        if (filters.tier != ConversationListTier.All) add("对话${filters.tier.label}")
+        if (filters.tier != ConversationListTier.Active) add(if (filters.tier == ConversationListTier.All) filters.tier.filterLabel else "对话${filters.tier.label}")
         if (filters.activeOnly) add("只看活动会话")
     }.joinToString(" · ")

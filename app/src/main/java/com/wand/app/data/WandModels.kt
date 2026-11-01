@@ -497,6 +497,8 @@ data class ConversationTurn(
     val usage: TurnUsage? = null,
     val createdAt: String? = null,
     val completedAt: String? = null,
+    /** Server-confirmed processing start for this specific user input. */
+    val readAt: String? = null,
     /** 系统提示行（团队 relay 的 notice）：弱化居中展示，不当作助手回复折叠。 */
     val notice: Boolean = false,
     /** 群聊署名；普通会话没有。 */
@@ -523,6 +525,7 @@ data class ConversationTurn(
                 usage = TurnUsage.parse(o.obj("usage")),
                 createdAt = o.str("createdAt"),
                 completedAt = o.str("completedAt"),
+                readAt = o.str("readAt"),
                 notice = o.bool("notice") == true,
                 author = TurnAuthor.parse(o.obj("author")),
                 reportFile = TeamReportFile.parse(o.obj("reportFile")),
@@ -629,6 +632,8 @@ private val STRUCTURED_RUNNERS = setOf(
     "codex-cli-exec",
     "opencode-cli-run",
     "grok-cli-headless",
+    "qoder-cli-acp",
+    // 旧会话里可能仍是 print 时代的 runner 值；读历史时照旧算结构化会话。
     "qoder-cli-print",
     "pi-cli-json",
     "structured",
@@ -1420,5 +1425,24 @@ data class QuickCommitResult(
                 archiveError = o.str("archiveError"),
             )
         }
+    }
+}
+
+/**
+ * Codex 下一条输入预测。`state=ready` 时 text 是可编辑草稿建议；
+ * `unsupported` / `failed` 时 reason 是如实原因（账户或协议不支持）。
+ * 预测只由用户显式触发，客户端不得自动发送。
+ */
+@Immutable
+data class CodexPrediction(
+    val state: String,
+    val text: String?,
+    val reason: String?,
+) {
+    val suggestion: String? get() = if (state == "ready") text?.trim()?.takeIf { it.isNotEmpty() } else null
+
+    companion object {
+        fun parse(o: JSONObject): CodexPrediction =
+            CodexPrediction(state = o.str("state") ?: "", text = o.str("text"), reason = o.str("reason"))
     }
 }

@@ -49,14 +49,18 @@ internal fun WorkspaceDirectoryPicker(
     onSelect: (WorkspaceDirectorySelection) -> Unit,
     onDismiss: () -> Unit,
     allowUnassigned: Boolean = false,
+    allowAdd: Boolean = true,
 ) {
     val state = remember(api) { WorkspaceDirectoryPickerState(api, currentCwd) }
     val scope = rememberCoroutineScope()
-    var browsing by remember { mutableStateOf(false) }
+    var browsing by remember { mutableStateOf(!allowAdd) }
+    var recent by remember { mutableStateOf<List<com.wand.app.data.RecentPath>>(emptyList()) }
     var pathDraft by remember { mutableStateOf(state.path) }
     var pathEdited by remember { mutableStateOf(false) }
     LaunchedEffect(state) {
         state.loadChoices()
+        recent = runCatching { api.recentTaskPaths() }.getOrDefault(emptyList())
+        if (!allowAdd) state.browse(currentCwd.ifBlank { "/" })
         if (currentCwd.isBlank()) {
             val default = runCatching { api.taskDefaultCwd() }.getOrNull()
             if (!pathEdited) pathDraft = default?.trim()?.takeIf { it.isNotBlank() } ?: "/"
@@ -82,6 +86,7 @@ internal fun WorkspaceDirectoryPicker(
                     color = WandColors.textPrimary, modifier = Modifier.weight(1f).padding(top = 12.dp))
                 WandIconButton(WandIcons.close, "关闭工作区选择", onDismiss)
             }
+            if (allowAdd) AddWorkspaceButton { onSelect(WorkspaceDirectorySelection(it.cwd, it.id)) }
             Text("运行目录在服务器上；选择未使用的目录也可以开始。",
                 style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
             WandInPlaceSwap(contentKey = browsing, enterScale = 1f, exitScale = 1f) { shown ->
@@ -90,6 +95,12 @@ internal fun WorkspaceDirectoryPicker(
                 WandButton("浏览其他目录", { browse(pathDraft) }, icon = WandIcons.folder,
                     variant = WandButtonVariant.Secondary, modifier = Modifier.fillMaxWidth())
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                    if (recent.isNotEmpty()) item { Text("最近执行目录", color = WandColors.textSecondary) }
+                    items(recent, key = { "recent:" + it.path }) { item ->
+                        WorkspaceDirectoryOption(item.name ?: item.path, item.path, normalizeWorkspacePath(item.path) == normalizeWorkspacePath(currentCwd)) {
+                            onSelect(directorySelection(item.path, state.workspaces))
+                        }
+                    }
                     if (allowUnassigned) item {
                         WorkspaceDirectoryOption("未归属工作区", "使用临时目录", currentCwd.isBlank()) {
                             onSelect(WorkspaceDirectorySelection(""))

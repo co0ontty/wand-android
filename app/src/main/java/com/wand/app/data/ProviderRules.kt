@@ -38,7 +38,7 @@ enum class WandProvider(
     Codex("codex", "Codex", "codex-cli-exec", "codex"),
     OpenCode("opencode", "OpenCode", "opencode-cli-run", "opencode"),
     Grok("grok", "Grok", "grok-cli-headless", "grok"),
-    Qoder("qoder", "Qoder", "qoder-cli-print", "qodercli"),
+    Qoder("qoder", "Qoder", "qoder-cli-acp", "qodercli"),
     Pi("pi", "Pi", "pi-cli-json", "pi"),
     ;
 

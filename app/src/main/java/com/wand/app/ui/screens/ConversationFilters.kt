@@ -1,5 +1,8 @@
 package com.wand.app.ui.screens
 
+import com.wand.app.ui.withLiveTitle
+
+import com.wand.app.data.activityStatus
 import com.wand.app.data.ConversationInstance
 import com.wand.app.data.ConversationTask
 import com.wand.app.data.TaskDirectoryGroup
@@ -19,19 +22,51 @@ internal enum class ConversationTaskStage(val value: String, val label: String) 
 
 internal const val UnassignedConversationWorkspace = "__unassigned__"
 
+internal enum class ConversationRuntime(val label: String, val hint: String?) {
+    Confirmation("需要我确认", "等你授权或补充回答的会话"),
+    Running("运行中", "含刚完成但未查看的会话"),
+    Queued("排队中", "等待开始执行的会话"),
+    Idle("空闲", "本轮已跑完，等你下一次输入"),
+    Finished("已结束", "进程已退出或被停止的会话"),
+    Failed("运行失败", "执行失败的会话"),
+}
+
+internal fun conversationRuntime(item: HomeRecentConversation): ConversationRuntime? {
+    if (com.wand.app.ui.SessionTitleStore.permissionBlockedOf(item.session.id) == true) return ConversationRuntime.Confirmation
+    val status = item.session.withLiveTitle().activityStatus()
+    if (status == "failed") return ConversationRuntime.Failed
+    // 归档行不参与「当前状态」筛选，只有运行失败与已结束能把它找回来（与 Web/macOS/iOS 同一口径）。
+    // 能不能借「已结束」看到归档行只由归档档决定：conversationSessionMatches 里档位是 AND，
+    // 默认「未归档」把它挡住，选到「全部（含已归档）」或「已归档」才放行。
+    if (conversationSessionArchived(item)) return if (status in listOf("exited", "stopped")) ConversationRuntime.Finished else null
+    return when (status) {
+        "permission", "permission-blocked", "waiting-input", "waiting_input" -> ConversationRuntime.Confirmation
+        "queued" -> ConversationRuntime.Queued
+        "running", "thinking", "reconnecting", "just-completed" -> ConversationRuntime.Running
+        "exited", "stopped" -> ConversationRuntime.Finished
+        "idle" -> ConversationRuntime.Idle
+        else -> null
+    }
+}
+
 internal data class ConversationListFilters(
+    val runtimes: Set<ConversationRuntime> = emptySet(),
+    val workspaceIds: Set<String> = emptySet(),
     val stage: ConversationTaskStage = ConversationTaskStage.All,
     val workspaceId: String? = null,
-    val tier: ConversationListTier = ConversationListTier.All,
+    val tier: ConversationListTier = ConversationListTier.Active,
     val activeOnly: Boolean = false,
+    /** Server employee IDs; "none" is the explicit unassigned value. */
+    val employeeIds: Set<String> = emptySet(),
 ) {
-    val count: Int get() = listOf(stage != ConversationTaskStage.All, workspaceId != null,
-        tier != ConversationListTier.All, activeOnly).count { it }
-    val hasTaskConditions: Boolean get() = stage != ConversationTaskStage.All || workspaceId != null || activeOnly
+    /** 默认档「未归档」不算加了条件；显式选「全部（含已归档）」或「已归档」才是筛选。 */
+    val count: Int get() = listOf(runtimes.isNotEmpty(), workspaceIds.isNotEmpty(), employeeIds.isNotEmpty(), stage != ConversationTaskStage.All, workspaceId != null,
+        tier != ConversationListTier.Active, activeOnly).count { it }
+    val hasTaskConditions: Boolean get() = runtimes.isNotEmpty() || workspaceIds.isNotEmpty() || stage != ConversationTaskStage.All || workspaceId != null || activeOnly
 }
 
 internal fun conversationWorkspaceId(group: TaskDirectoryGroup): String =
-    if (group.synthetic || group.isGlobal) UnassignedConversationWorkspace else group.workspaceId
+    if (!group.userAdded || group.synthetic || group.isGlobal) UnassignedConversationWorkspace else group.workspaceId
 
 internal fun conversationWorkspaceLabel(group: TaskDirectoryGroup): String =
     if (conversationWorkspaceId(group) == UnassignedConversationWorkspace) "未分配"
@@ -58,7 +93,10 @@ internal fun conversationSessionMatches(
     filters: ConversationListFilters,
     associationsAvailable: Boolean = true,
 ): Boolean =
-    (filters.stage == ConversationTaskStage.All || conversationSessionStage(item, associationsAvailable) == filters.stage) &&
+    (filters.runtimes.isEmpty() || conversationRuntime(item) in filters.runtimes) &&
+        (filters.workspaceIds.isEmpty() || (associationsAvailable && conversationWorkspaceId(item.group) in filters.workspaceIds)) &&
+        (filters.employeeIds.isEmpty() || (item.session.employeeId ?: "none") in filters.employeeIds) &&
+        (filters.stage == ConversationTaskStage.All || conversationSessionStage(item, associationsAvailable) == filters.stage) &&
         (filters.workspaceId == null || (associationsAvailable && conversationWorkspaceId(item.group) == filters.workspaceId)) &&
         (when (filters.tier) {
             ConversationListTier.All -> true
@@ -73,7 +111,20 @@ internal fun conversationGroupTaskWorkspaceId(task: ConversationTask): String? =
 }
 
 internal fun conversationGroupTaskMatches(task: ConversationTask, filters: ConversationListFilters): Boolean =
-    (filters.stage == ConversationTaskStage.All || ConversationTaskStage.fromBoard(task.boardTaskStatus) == filters.stage) &&
+    // A group task has no single employee; employee filtering only keeps matching session rows.
+    filters.employeeIds.isEmpty() &&
+        (filters.workspaceIds.isEmpty() || conversationGroupTaskWorkspaceId(task) in filters.workspaceIds) &&
+        (filters.runtimes.isEmpty() || filters.runtimes.any { runtime ->
+            when (runtime) {
+                ConversationRuntime.Confirmation -> task.runs.any { it.status in listOf("permission", "permission-blocked", "waiting-input", "waiting_input") }
+                ConversationRuntime.Running -> task.task.executionStatus == "running" || task.runs.any { it.status in listOf("running", "thinking", "just-completed") }
+                ConversationRuntime.Queued -> task.task.executionStatus == "queued" || task.runs.any { it.status == "queued" }
+                ConversationRuntime.Idle -> task.task.executionStatus == null && task.runs.any { it.status == "idle" }
+                ConversationRuntime.Finished -> task.runs.any { it.status in listOf("exited", "stopped") }
+                ConversationRuntime.Failed -> task.task.executionStatus == "failed" || task.runs.any { it.status == "failed" }
+            }
+        }) &&
+        (filters.stage == ConversationTaskStage.All || ConversationTaskStage.fromBoard(task.boardTaskStatus) == filters.stage) &&
         (filters.workspaceId == null || conversationGroupTaskWorkspaceId(task) == filters.workspaceId) &&
         (!filters.activeOnly || task.runs.any { conversationRunActive(it.status) } ||
             task.task.executionStatus in listOf("queued", "running"))
@@ -125,6 +176,14 @@ internal fun projectConversationList(
 }
 
 internal fun conversationWorkspaceOptions(groups: List<TaskDirectoryGroup>): List<Pair<String, String>> =
-    (listOf(UnassignedConversationWorkspace to "未分配") + groups.map {
+    (listOf(UnassignedConversationWorkspace to "未分配") + groups.filter { it.userAdded }.map {
         conversationWorkspaceId(it) to conversationWorkspaceLabel(it)
     }).distinctBy { it.first }
+
+/** Employees come from the sessions on screen; "all" is rendered by the capsule itself. */
+internal fun conversationEmployeeOptions(entries: List<HomeRecentConversation>): List<Pair<String, String>> {
+    val people = entries.mapNotNull { item ->
+        item.session.employeeId?.takeIf { it != "none" }?.let { id -> id to (item.session.employeeName ?: "员工") }
+    }.distinctBy { it.first }.sortedBy { it.second }
+    return listOf("none" to "未分配员工") + people
+}

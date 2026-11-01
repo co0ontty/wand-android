@@ -57,6 +57,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -999,10 +1000,10 @@ fun ChatScreen(
                     ConversationTurnScrubber(
                         itemCount = scrubberTargets.size,
                         currentItem = currentScrubberItem,
-                        currentPreview = scrubberUserPreview(
+                        preview = { item -> scrubberUserPreview(
                             displayItems,
-                            scrubberTargets.getOrNull(currentScrubberItem) ?: 0,
-                        ),
+                            scrubberTargets.getOrNull(item) ?: 0,
+                        ) },
                         onSelect = { itemIndex, animate ->
                             val displayIndex = scrubberTargets.getOrNull(itemIndex)
                             if (displayIndex != null) {
@@ -1247,7 +1248,12 @@ private fun scrubberUserPreview(items: List<MessageDisplayItem>, index: Int): St
     for (position in index downTo 0) {
         val item = items.getOrNull(position) as? MessageDisplayItem.Turn ?: continue
         if (item.turn.role == "user") {
-            return conversationTurnPreview(item.turn).ifBlank { "用户消息" }
+            val reply = items.drop(position + 1)
+                .takeWhile { it !is MessageDisplayItem.Turn || it.turn.role != "user" }
+                .filterIsInstance<MessageDisplayItem.Turn>()
+                .filter { it.turn.role == "assistant" }
+                .map { conversationTurnPreview(it.turn) }.filter { it.isNotBlank() }.joinToString(" ")
+            return conversationTurnPreview(item.turn).ifBlank { "用户消息" } + "\n" + reply.take(240).ifBlank { "暂无回复摘要" }
         }
     }
     return ""
@@ -1257,7 +1263,7 @@ private fun scrubberUserPreview(items: List<MessageDisplayItem>, index: Int): St
 private fun ConversationTurnScrubber(
     itemCount: Int,
     currentItem: Int,
-    currentPreview: String,
+    preview: (Int) -> String,
     onSelect: (Int, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1267,6 +1273,9 @@ private fun ConversationTurnScrubber(
     // 不要用英文字符数估宽：中文实际占宽约 1em，length*7.dp 会明显偏窄。
     val maxBubbleWidth = (LocalConfiguration.current.screenWidthDp * 0.82f).dp
     var dragging by remember { mutableStateOf(false) }
+    var inspectedItem by remember { mutableStateOf(0) }
+    val displayedItem = (if (dragging) inspectedItem else currentItem).coerceIn(0, itemCount - 1)
+    val currentPreview = preview(displayedItem)
     val railScale by animateFloatAsState(
         targetValue = if (dragging) 1.18f else 1f,
         animationSpec = WandMotion.tweenFast(),
@@ -1283,15 +1292,15 @@ private fun ConversationTurnScrubber(
                         dragging = true
                         val index = ((offset.y / size.height) * itemCount)
                             .toInt().coerceIn(0, itemCount - 1)
-                        latestOnSelect.value(index, false)
+                        inspectedItem = index
                     },
                     onDrag = { change, _ ->
                         change.consume()
                         val index = ((change.position.y / size.height) * itemCount)
                             .toInt().coerceIn(0, itemCount - 1)
-                        latestOnSelect.value(index, false)
+                        inspectedItem = index
                     },
-                    onDragEnd = { dragging = false },
+                    onDragEnd = { latestOnSelect.value(inspectedItem.coerceIn(0, itemCount - 1), true); dragging = false },
                     onDragCancel = { dragging = false },
                 )
             },
@@ -1308,7 +1317,7 @@ private fun ConversationTurnScrubber(
                 .align(Alignment.TopEnd)
                 .offset(
                     x = (-44).dp,
-                    y = scrubberHeight * ((currentItem + 0.5f) / itemCount.toFloat()) - 22.dp,
+                    y = scrubberHeight * ((displayedItem + 0.5f) / itemCount.toFloat()) - 22.dp,
                 ),
         ) {
             Box(
@@ -1322,7 +1331,7 @@ private fun ConversationTurnScrubber(
             ) {
                 Text(
                     text = currentPreview,
-                    maxLines = 2,
+                    maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
@@ -1339,7 +1348,7 @@ private fun ConversationTurnScrubber(
             horizontalAlignment = Alignment.End,
         ) {
             (0 until itemCount).forEach { index ->
-                val distance = kotlin.math.abs(index - currentItem)
+                val distance = kotlin.math.abs(index - displayedItem)
                 val targetWidth = when {
                     distance == 0 -> 30.dp
                     distance == 1 -> 16.dp
@@ -1354,14 +1363,17 @@ private fun ConversationTurnScrubber(
                 val selected = distance == 0
                 Box(
                     modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clickableWithoutRipple { onSelect(index, true) }
+                        .wrapContentSize(Alignment.CenterEnd)
                         .width(width)
                         .height(if (selected) 3.dp else 2.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .background(
                             if (selected) WandColors.brand.copy(alpha = 0.88f)
                             else WandColors.textMuted.copy(alpha = 0.25f),
-                        )
-                        .clickableWithoutRipple { onSelect(index, true) },
+                        ),
                 )
             }
         }
@@ -2227,6 +2239,11 @@ private fun InputBar(
 ) {
     val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
     var showStopConfirm by remember(store.sessionId) { mutableStateOf(false) }
+    // 「预测下一条」：只由用户点击触发（会调用模型），结果只填入空草稿，永不自动发送。
+    val predictScope = rememberCoroutineScope()
+    val predictApi = LocalChatApi.current
+    val latestDraft = rememberUpdatedState(draft)
+    var predicting by remember(store.sessionId) { mutableStateOf(false) }
     LaunchedEffect(stopRequest) { if (stopRequest > 0) showStopConfirm = true }
     var modeOpen by remember(store.sessionId) { mutableStateOf(false) }
     var modelOpen by remember(store.sessionId) { mutableStateOf(false) }
@@ -2283,6 +2300,35 @@ private fun InputBar(
                         )
                     }
                 }
+            }
+            if (store.isStructured && store.snapshot?.provider == "codex" && !store.isResponding && draft.isBlank() && predictApi != null) {
+                WandInlinePanelAction(
+                    icon = WandIcons.sparkle,
+                    label = if (predicting) "正在预测…" else "预测下一条",
+                    enabled = !predicting,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = ComposerActionTouchSize),
+                    onClick = {
+                        onAttachOpenChange(false)
+                        resources.dismiss()
+                        predicting = true
+                        predictScope.launch {
+                            try {
+                                val prediction = predictApi.codexPrediction(store.sessionId)
+                                val suggestion = prediction.suggestion
+                                when {
+                                    suggestion == null -> store.toast = prediction.reason ?: "当前账户不支持预测下一条。"
+                                    // 期间用户已经开始输入：不覆盖草稿。
+                                    latestDraft.value.isNotBlank() -> store.toast = "预测已返回，但草稿已变化，未覆盖。"
+                                    else -> onDraftChange(suggestion)
+                                }
+                            } catch (e: Exception) {
+                                store.toast = e.message ?: "预测失败。"
+                            } finally {
+                                predicting = false
+                            }
+                        }
+                    },
+                )
             }
             if (menuStopVisible) {
                 WandInlinePanelAction(

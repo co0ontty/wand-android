@@ -23,15 +23,20 @@ internal fun conversationCollapsedPreview(text: String): String {
     return text.lineSequence().take(24).joinToString("\n").take(1800).trimEnd() + "…"
 }
 
-/** 归档档位：全部 / 未归档 / 已归档；和侧栏「在跑」是同一套顶部筛选形态。 */
-internal enum class ConversationListTier(val storageValue: String, val label: String) {
-    All("all", "全部"),
-    Active("active", "未归档"),
-    Archived("archived", "已归档"),
+/**
+ * 归档档位：全部 / 未归档 / 已归档；和侧栏「在跑」是同一套顶部筛选形态。
+ * 默认「未归档」：归档是软删除，已归档的任务与会话要用户显式选择档位才回来。
+ * `filterLabel` 是筛选控件里的读法，「全部」必须写明含已归档，不然用户以为默认就包含。
+ */
+internal enum class ConversationListTier(val storageValue: String, val label: String, val filterLabel: String) {
+    All("all", "全部", "全部对话（含已归档）"),
+    Active("active", "未归档", "未归档"),
+    Archived("archived", "已归档", "已归档"),
     ;
 
     companion object {
-        fun of(value: String?): ConversationListTier = entries.firstOrNull { it.storageValue == value } ?: All
+        /** 读不到或认不出的档位回退到默认的「未归档」，不因为缺值就把归档内容放回来。 */
+        fun of(value: String?): ConversationListTier = entries.firstOrNull { it.storageValue == value } ?: Active
     }
 }
 
@@ -43,7 +48,8 @@ internal enum class ConversationListEmptyState(val title: String, val explanatio
 
 internal fun conversationListEmptyState(query: String, tier: ConversationListTier): ConversationListEmptyState = when {
     query.isNotBlank() -> ConversationListEmptyState.Search
-    tier != ConversationListTier.All -> ConversationListEmptyState.Filtered
+    // 只有用户显式选到「已归档」才读作筛选结果为空；默认的「未归档」档不是加的筛选条件。
+    tier == ConversationListTier.Archived -> ConversationListEmptyState.Filtered
     else -> ConversationListEmptyState.Empty
 }
 

@@ -66,7 +66,7 @@ class KnowledgeController(private val api: KnowledgePort, private val coroutineS
         next?.invoke()
     }
 
-    fun refreshOwners() {
+    fun refreshOwners(preferredOwnerId: String? = null) {
         if (busy || !active) return
         val ticket = ++generation
         request?.cancel(); loading = true; error = null
@@ -75,7 +75,7 @@ class KnowledgeController(private val api: KnowledgePort, private val coroutineS
                 val result = api.knowledgeOwners()
                 if (!current(ticket)) return@launch
                 owners = result
-                val id = ownerId?.takeIf { wanted -> result.forScope(scope).any { it.id == wanted } }
+                val id = (preferredOwnerId ?: ownerId)?.takeIf { wanted -> result.forScope(scope).any { it.id == wanted } }
                     ?: result.forScope(scope).firstOrNull()?.id
                 loading = false
                 if (id != null) load(scope, id, selected?.takeIf { it.ownerId == id && it.scope == scope }?.id)

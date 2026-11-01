@@ -440,7 +440,7 @@ private fun TaskBoardList(
         }
         item(key = "filters") {
             Column(modifier = Modifier.padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                WandChoice(
+                WorkspaceChoice(
                     label = workspaces.firstOrNull { it.id == filterWorkspaceId }?.name ?: "所有项目",
                     options = listOf("" to "所有项目") + workspaces.map { it.id to it.name },
                     onSelect = onFilterWorkspace,
@@ -1352,10 +1352,7 @@ internal fun TaskBoardDetailPane(
     }
     val workspaceChoices = buildList {
         add("" to "未归属工作区（使用临时目录）")
-        val seen = workspaces.map { it.id }.toSet()
         workspaces.forEach { add(it.id to it.name) }
-        val current = task.workspace
-        if (current != null && current.id !in seen) add(current.id to current.name)
     }
 
     Column(
@@ -1411,7 +1408,7 @@ internal fun TaskBoardDetailPane(
                 onSelect = { onPatch(patchBoardTaskBody(priority = it)) },
                 enabled = !busy,
             )
-            WandChoice(
+            WorkspaceChoice(
                 label = "工作区 · ${task.workspace?.name ?: "未归属工作区"}",
                 options = workspaceChoices,
                 onSelect = { onPatch(patchBoardTaskBody(workspaceId = it.ifBlank { null })) },

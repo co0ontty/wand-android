@@ -283,6 +283,7 @@ internal fun TeamDispatchPanel(
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 6.dp),
             )
+            AddWorkspaceButton { onPickProject(it.id) }
             return@WandCard
         }
         Box(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
@@ -300,6 +301,7 @@ internal fun TeamDispatchPanel(
                 onDismissRequest = { onToggleProjectMenu() },
                 containerColor = WandColors.bgElevated,
             ) {
+                AddWorkspaceButton { onPickProject(it.id) }
                 projects.forEach { project ->
                     DropdownMenuItem(
                         text = {

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Commit
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -173,6 +174,8 @@ object WandIcons {
 
     /** 停止。 */
     val stop: ImageVector = Icons.Outlined.Stop
+    /** 空闲（本轮已跑完，等下一次输入）。 */
+    val idle: ImageVector = Icons.Outlined.Circle
     val pause: ImageVector = Icons.Outlined.Pause
 
     /** 断线（断线提示条用）。 */
@@ -246,12 +249,6 @@ object WandIcons {
 
     /** 重命名（铅笔）。EditNote 留给内容编辑场景，避免「改名字」和「写内容」混用。 */
     val rename: ImageVector = Icons.Outlined.Edit
-
-    /** 展开侧边栏（汉堡菜单，通用「打开面板」语义）。 */
-    val panelExpand: ImageVector = Icons.Outlined.Menu
-
-    /** 收起侧边栏（面板收起箭头，RTL 自动镜像）。 */
-    val panelCollapse: ImageVector = Icons.AutoMirrored.Outlined.MenuOpen
 
     /** 空态大图标 / 会话列表空态。 */
     val sparkle: ImageVector = Icons.Outlined.AutoAwesome

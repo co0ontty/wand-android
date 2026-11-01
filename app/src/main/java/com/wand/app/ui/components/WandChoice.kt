@@ -62,6 +62,7 @@ fun WandChoice(
     leadingIcon: ImageVector? = null,
     chip: Boolean = false,
     openRequest: Int = 0,
+    action: Pair<String, () -> Unit>? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     LaunchedEffect(openRequest) { if (enabled && openRequest > 0) expanded = true }
@@ -106,6 +107,9 @@ fun WandChoice(
             onDismissRequest = { expanded = false },
             containerColor = WandColors.bgElevated,
         ) {
+            action?.let { (title, callback) ->
+                DropdownMenuItem(text = { Text(title) }, onClick = { expanded = false; callback() }, enabled = enabled)
+            }
             options.forEach { (value, optionLabel) ->
                 DropdownMenuItem(
                     text = { Text(optionLabel) },

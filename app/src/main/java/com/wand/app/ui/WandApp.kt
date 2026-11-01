@@ -86,7 +86,7 @@ import com.wand.app.ui.screens.rememberActivityTimelinePreference
 import com.wand.app.ui.screens.PendingConversationScreen
 import com.wand.app.ui.screens.AiTeamConversationRoute
 import com.wand.app.ui.screens.ConversationChatScreen
-import com.wand.app.ui.screens.ConversationList
+import com.wand.app.ui.screens.UnifiedConversationList
 import com.wand.app.ui.screens.AiTeamDetailScreen
 import com.wand.app.ui.screens.AiTeamEditorScreen
 import com.wand.app.ui.screens.SiliconEmployeeEditorScreen
@@ -107,14 +107,8 @@ import com.wand.app.ui.screens.TaskListState
 import com.wand.app.ui.SharedPreferencesPendingCreationPersistence
 import com.wand.app.ui.PendingCreationStore
 import com.wand.app.ui.screens.PadLandingScreen
-import com.wand.app.ui.screens.CollapsedDirectoryRail
-import com.wand.app.ui.screens.DirectoryPeekOverlay
 import com.wand.app.ui.screens.TaskSessionRoute
-import com.wand.app.ui.screens.collapsedRailDirectories
-import com.wand.app.ui.screens.foldModeEmptyNote
-import com.wand.app.ui.screens.foldModeGroup
 import com.wand.app.ui.screens.taskSessionRoute
-import kotlin.math.abs
 import com.wand.app.ui.screens.siblingSessionsFor
 import com.wand.app.ui.screens.taskSessionTransitionDirection
 import com.wand.app.ui.screens.WorkspaceTaskScreen
@@ -404,7 +398,7 @@ private fun ReadyContent(
     val knowledgeController = remember(api) { KnowledgeController(api, conversationScope) }
     DisposableEffect(knowledgeController) { onDispose { knowledgeController.dispose() } }
     val conversations = remember(api, sessionDrafts) { ConversationStore(api, sessionDrafts, conversationScope, actions.settings.getConversationUi, actions.settings.setConversationUi) }
-    DisposableEffect(conversations) { conversations.start(); onDispose { conversations.shutdown() } }
+    DisposableEffect(conversations) { conversations.startDirectory(); onDispose { conversations.shutdown() } }
     var initialQuickActionConsumed by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     // 工具时间线自动展开是本机偏好：根部提供一次，所有会话界面共用同一份。
@@ -413,7 +407,6 @@ private fun ReadyContent(
     val taskState = remember(api, context) {
         TaskListState(api, SharedTaskListExpansionStore(context, api.baseUrl))
     }
-    var sidebarCollapsed by rememberSaveable { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val homeListMode = nav.homeMode ?: nav.initializeHomeMode(actions.settings.getHomeListMode())
@@ -515,7 +508,8 @@ private fun ReadyContent(
             openDetail(if (structured) Screen.Chat(sessionId) else Screen.PtyTerminal(sessionId))
         }
 
-        CompositionLocalProvider(LocalActivityTimelinePreference provides timelinePreference) {
+        CompositionLocalProvider(LocalActivityTimelinePreference provides timelinePreference,
+            com.wand.app.ui.screens.LocalWorkspacePort provides api) {
             if (wideLayout && homeListMode != HomeListMode.Knowledge) {
                 WideReadyContent(
                     shellState = shellState,
@@ -528,7 +522,6 @@ private fun ReadyContent(
                     knowledgeController = knowledgeController,
                     listPaneWidth = listPaneWidth,
                     windowWidth = maxWidth,
-                    sidebarCollapsed = sidebarCollapsed,
                     homeListMode = homeListMode,
                     onHomeListModeChange = changeHomeListMode,
                     selectedSessionId = nav.current.sessionIdOrNull(),
@@ -536,7 +529,6 @@ private fun ReadyContent(
                     onOpenBoardSession = openBoardSession,
                     onOpenRestoredSession = openSnapshot,
                     onOpenSettings = openSettings,
-                    onToggleSidebarCollapsed = { sidebarCollapsed = !sidebarCollapsed },
                     onOpenWorkspaceTask = openWorkspaceTask,
                     onOpenBoardTaskDetail = openBoardTaskDetail,
                     showDetailBack = showDetailBack,
@@ -605,13 +597,7 @@ private fun SessionDetailScreen(
     when (screen) {
         is Screen.SessionList -> Unit
         is Screen.Conversation -> {
-            // 详情打开的是这条导航记录自己的对象；后台恢复/重建时 selectedId 可能已被异步默认选择改写。
-            // provider key 带会话 id：同一会话「详情→列表→再打开」草稿、项目/目标和派发意图继续留着；
-            // 另一条会话是新 key，不继承上一个对象的派发状态。
-            shellState.SaveableStateProvider("im-detail-${screen.conversationId}") {
-                ConversationChatScreen(conversationState, screen.conversationId, actions.settings.isHapticEnabled,
-                    onContacts = onOpenContacts, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSession = { id -> conversationState.openSession(id) { nav.push(it.detailScreen()) } }, showBack = showBack, onBack = { nav.pop() })
-            }
+            LaunchedEffect(screen.conversationId) { nav.replaceTop(Screen.SessionList) }
         }
         is Screen.Chat -> ChatScreen(
             api = api,
@@ -754,7 +740,6 @@ private fun SessionDetailScreen(
         is Screen.SiliconEmployeeEditor -> SiliconEmployeeEditorScreen(
             api = api,
             employeeId = screen.employeeId,
-            onMessage = { id -> val conversationId = com.wand.app.data.employeeConversationId(id); conversationState.select(conversationId); nav.replaceTop(Screen.Conversation(conversationId)) },
             onBack = { nav.pop() },
         )
         is Screen.AiTeamDetail -> AiTeamDetailScreen(
@@ -785,13 +770,10 @@ private fun SessionDetailScreen(
             showBack = showBack,
             onBack = { nav.pop() },
             onOpenSession = { id -> conversationState.openSession(id) { nav.push(it.detailScreen()) } },
-            onResolved = { run, id ->
+            onResolved = { run, _ ->
                 if (nav.current == screen) {
-                    conversationState.filter(id, run.taskId)
-                    conversationState.target(id, if (run.status in listOf("running", "awaiting_approval", "waiting_user"))
-                        com.wand.app.data.ConversationTarget(run.taskId, run.id) else null)
-                    conversationState.select(id)
-                    nav.replaceTop(Screen.Conversation(id))
+                    if (run.taskId.isNotBlank()) nav.replaceTop(Screen.TaskBoard(taskId = run.taskId))
+                    else nav.replaceTop(Screen.SessionList)
                 }
             },
         )
@@ -929,7 +911,12 @@ private fun SinglePaneContent(
             val list: @Composable ((String) -> Unit) -> Unit = { openConversation ->
             shellState.SaveableStateProvider("home-list") {
             TaskListScreen(
-                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, groups = taskState.conversationGroups, groupsLoading = taskState.loading, groupsError = taskState.loadError, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); openConversation(id) } },
+                conversationList = { clearance, enabled, move, delete -> UnifiedConversationList(conversationState, clearance,
+                    interactionEnabled = enabled, onMoveSession = move, onDeleteSession = delete,
+                    onReload = { taskState.load(silent = true) }, showsFilters = nav.current is Screen.SessionList, onMode = onHomeListModeChange, onCreate = { workspaceId ->
+                    val cwd = taskState.conversationGroups.firstOrNull { it.workspaceId == workspaceId }?.workspaceCwd
+                    nav.push(pendingConversationScreen(pendingConversationEntryScope(workspaceId, null, cwd), cwd = cwd, workspaceId = workspaceId))
+                }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, groups = taskState.conversationGroups, groupsLoading = taskState.loading, groupsError = taskState.loadError, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); openConversation(id) } },
                 state = taskState,
                 api = api,
                 boardApi = api,
@@ -1010,7 +997,6 @@ private fun WideReadyContent(
     knowledgeController: KnowledgeController,
     listPaneWidth: Dp,
     windowWidth: Dp,
-    sidebarCollapsed: Boolean,
     homeListMode: HomeListMode,
     onHomeListModeChange: (HomeListMode) -> Unit,
     selectedSessionId: String?,
@@ -1018,7 +1004,6 @@ private fun WideReadyContent(
     onOpenBoardSession: (String, Boolean) -> Unit,
     onOpenRestoredSession: (SessionSnapshot) -> Unit,
     onOpenSettings: () -> Unit,
-    onToggleSidebarCollapsed: () -> Unit,
     onOpenWorkspaceTask: (String, String, String, String) -> Unit,
     onOpenBoardTaskDetail: (String) -> Unit,
     showDetailBack: Boolean,
@@ -1038,14 +1023,8 @@ private fun WideReadyContent(
     val maxSidebarWidth = (windowWidth - 360.dp)
         .coerceAtLeast(minSidebarWidth)
         .coerceAtMost(420.dp)
-    // 通讯录虽然是一个页签，但和 IM 一样自带页头与名单；折叠成目录轨道就看不到它了，
-    // 所以这两种模式都不进折叠态。
-    val collapsedForMode = sidebarCollapsed && homeListMode != HomeListMode.Im &&
-        homeListMode != HomeListMode.Contacts
     val sidebarContentWidth = if (homeListMode == HomeListMode.Im) {
         listPaneWidth.coerceIn(280.dp, minOf(400.dp, windowWidth - 360.dp))
-    } else if (collapsedForMode) {
-        56.dp
     } else {
         (listPaneWidth + sidebarDragDeltaDp.dp).coerceIn(minSidebarWidth, maxSidebarWidth)
     }
@@ -1054,21 +1033,7 @@ private fun WideReadyContent(
         animationSpec = WandMotion.settleSpringSpec(),
         label = "wideSidebarWidth",
     )
-    var peekDirectoryId by rememberSaveable { mutableStateOf<String?>(null) }
-    var peekAnchorTop by remember { mutableStateOf(0.dp) }
-    val rootWindowTop = remember { floatArrayOf(0f) }
     val selectedTaskId = nav.current.taskIdOrNull()
-    val peeked = collapsedRailDirectories(taskState.groups)
-        .firstOrNull { it.group.workspaceId == peekDirectoryId }
-    LaunchedEffect(sidebarCollapsed, peekDirectoryId, taskState.groups) {
-        val missing = peekDirectoryId != null && peeked == null
-        if (!collapsedForMode || missing) peekDirectoryId = null
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .onGloballyPositioned { rootWindowTop[0] = it.positionInWindow().y },
-    ) {
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -1079,108 +1044,60 @@ private fun WideReadyContent(
                 .width(sidebarWidth)
                 .fillMaxHeight(),
         ) {
-            val reduceMotion = reduceMotionEnabled()
-            AnimatedContent(
-                targetState = collapsedForMode,
-                modifier = Modifier.fillMaxSize(),
-                transitionSpec = {
-                    if (reduceMotion) {
-                        fadeIn(snap()) togetherWith fadeOut(snap())
-                    } else {
-                        fadeIn(WandMotion.tweenEnter()) togetherWith fadeOut(WandMotion.tweenExit())
-                    }
-                },
-                label = "wideSidebarContent",
-            ) { collapsed ->
-                Box(
+            // 宽屏时这里是侧栏：内容留出与中缝等宽的呼吸位，
+            // 卡片不再贴着中缝被切，两侧栏目有同一种页边距节奏。
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp),
+            ) {
+                shellState.SaveableStateProvider("home-list") {
+                TaskListScreen(
+                    // 侧栏点一条 = 显式打开意图：详情落右栏，而不是靠 selectedId 投影出一个输入框。
+                    conversationList = { clearance, enabled, move, delete -> UnifiedConversationList(conversationState, clearance,
+        interactionEnabled = enabled, onMoveSession = move, onDeleteSession = delete,
+        onReload = { taskState.load(silent = true) }, showsFilters = nav.current is Screen.SessionList, onMode = onHomeListModeChange, onCreate = { workspaceId ->
+        val cwd = taskState.conversationGroups.firstOrNull { it.workspaceId == workspaceId }?.workspaceCwd
+        nav.push(pendingConversationScreen(pendingConversationEntryScope(workspaceId, null, cwd), cwd = cwd, workspaceId = workspaceId))
+    }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, groups = taskState.conversationGroups, groupsLoading = taskState.loading, groupsError = taskState.loadError, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) } },
+                    state = taskState,
+                    api = api,
+                    boardApi = api,
+                    directoryApi = api,
+                    knowledgeController = knowledgeController,
+                    directoryConversations = conversationState,
+                    onOpenConversation = { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) },
+                    serverDisplayName = actions.connection.serverDisplayName,
                     modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.TopStart,
-                ) {
-                    if (collapsed) {
-                        CollapsedDirectoryRail(
-                            groups = taskState.groups,
-                            selectedTaskId = selectedTaskId,
-                            selectedSessionId = selectedSessionId,
-                            peekDirectoryId = peekDirectoryId,
-                            rootWindowTop = { rootWindowTop[0] },
-                            onToggleDirectory = { group, top ->
-                                if (peekDirectoryId == group.workspaceId) {
-                                    peekDirectoryId = null
-                                } else {
-                                    peekAnchorTop = top
-                                    peekDirectoryId = group.workspaceId
-                                }
-                            },
-                            onDirectoryTop = { top ->
-                                if (abs(peekAnchorTop.value - top.value) > 0.5f) peekAnchorTop = top
-                            },
-                            onNewTask = {
-                                peekDirectoryId = null
-                                taskState.requestNewTask()
-                                onToggleSidebarCollapsed()
-                            },
-                            onExpandSidebar = {
-                                peekDirectoryId = null
-                                onToggleSidebarCollapsed()
-                            },
-                            onOpenIm = { peekDirectoryId = null; onHomeListModeChange(HomeListMode.Im) },
-                        )
-                    } else {
-                        // 宽屏时这里是侧栏：内容留出与中缝等宽的呼吸位，
-                        // 卡片不再贴着中缝被切，两侧栏目有同一种页边距节奏。
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 12.dp),
-                        ) {
-                            shellState.SaveableStateProvider("home-list") {
-                            TaskListScreen(
-                                // 侧栏点一条 = 显式打开意图：详情落右栏，而不是靠 selectedId 投影出一个输入框。
-                                conversationList = { clearance -> ConversationList(conversationState, clearance, onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) }, onOpenSettings = onOpenSettings, onSwitchServer = actions.navigation.switchServer, onCollapseSidebar = onToggleSidebarCollapsed, groups = taskState.conversationGroups, groupsLoading = taskState.loading, groupsError = taskState.loadError, onOpenSession = { route -> nav.push(route.toScreen()) }) { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) } },
-                                state = taskState,
-                                api = api,
-                                boardApi = api,
-                                directoryApi = api,
-                                knowledgeController = knowledgeController,
-                                directoryConversations = conversationState,
-                                onOpenConversation = { id -> conversationState.select(id); nav.setDetail(Screen.Conversation(id)) },
-                                serverDisplayName = actions.connection.serverDisplayName,
-                                modifier = Modifier.fillMaxSize(),
-                                homeListMode = homeListMode,
-                                onHomeListModeChange = onHomeListModeChange,
-                                selectedSessionId = selectedSessionId,
-                                selectedTaskId = selectedTaskId,
-                                onOpenTask = onOpenWorkspaceTask,
-                                onOpenSession = onOpenSession,
-                                onNewConversation = { cwd, workspaceId, taskId, taskName, employeeId, createMode ->
-                                    val entryScope = pendingConversationEntryScope(workspaceId, taskId, cwd)
-                                    nav.push(pendingConversationScreen(
-                                        entry = entryScope, cwd = cwd,
-                                        workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
-                                        initialEmployeeId = employeeId, initialCreateMode = createMode,
-                                        taskWorktree = taskId == null && taskState.defaultTaskWorktree,
-                                    ))
-                                },
-                                onOpenBoardSession = onOpenBoardSession,
-                                onOpenBoardTaskDetail = onOpenBoardTaskDetail,
-                                onOpenRestoredSession = onOpenRestoredSession,
-                                onTaskRenamed = nav::renameWorkspaceTask,
-                                onTaskClosed = nav::closeWorkspaceTask,
-                                onSessionClosed = nav::closeSession,
-                                onOpenSettings = onOpenSettings,
-                                onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) },
-                                onOpenTeam = { nav.push(Screen.AiTeamDetail(it)) },
-                                onCreateEmployee = { nav.push(Screen.SiliconEmployeeEditor()) },
-                                onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
-                                onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
-                                onSwitchServer = actions.navigation.switchServer,
-                                onCollapseSidebar = onToggleSidebarCollapsed.takeUnless {
-                                    homeListMode == HomeListMode.Im || homeListMode == HomeListMode.Contacts
-                                },
-                            )
-                            }
-                        }
-                    }
+                    homeListMode = homeListMode,
+                    onHomeListModeChange = onHomeListModeChange,
+                    selectedSessionId = selectedSessionId,
+                    selectedTaskId = selectedTaskId,
+                    onOpenTask = onOpenWorkspaceTask,
+                    onOpenSession = onOpenSession,
+                    onNewConversation = { cwd, workspaceId, taskId, taskName, employeeId, createMode ->
+                        val entryScope = pendingConversationEntryScope(workspaceId, taskId, cwd)
+                        nav.push(pendingConversationScreen(
+                            entry = entryScope, cwd = cwd,
+                            workspaceId = workspaceId, workspaceTaskId = taskId, taskName = taskName,
+                            initialEmployeeId = employeeId, initialCreateMode = createMode,
+                            taskWorktree = taskId == null && taskState.defaultTaskWorktree,
+                        ))
+                    },
+                    onOpenBoardSession = onOpenBoardSession,
+                    onOpenBoardTaskDetail = onOpenBoardTaskDetail,
+                    onOpenRestoredSession = onOpenRestoredSession,
+                    onTaskRenamed = nav::renameWorkspaceTask,
+                    onTaskClosed = nav::closeWorkspaceTask,
+                    onSessionClosed = nav::closeSession,
+                    onOpenSettings = onOpenSettings,
+                    onOpenEmployee = { nav.push(Screen.SiliconEmployeeEditor(it)) },
+                    onOpenTeam = { nav.push(Screen.AiTeamDetail(it)) },
+                    onCreateEmployee = { nav.push(Screen.SiliconEmployeeEditor()) },
+                    onCreateTeam = { templateId -> nav.push(Screen.AiTeamEditor(templateId = templateId)) },
+                    onOpenGroupChat = { runId -> nav.push(Screen.AiTeamChat(runId)) },
+                    onSwitchServer = actions.navigation.switchServer,
+                )
                 }
             }
         }
@@ -1254,7 +1171,7 @@ private fun WideReadyContent(
                     )
                 }
             }
-            if (!collapsedForMode && homeListMode != HomeListMode.Im) {
+            if (homeListMode != HomeListMode.Im) {
                 SidebarResizeHandle(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
@@ -1265,39 +1182,7 @@ private fun WideReadyContent(
                     },
                 )
             }
-            if (collapsedForMode && peeked != null) {
-                val directory = peeked.group
-                // 目录预览跟随首页三段式档位：在跑档下列在跑、失败和待处理的会话，
-                // 整条被筛空时保留目录身份、由 peek 自己的空态说明原因。
-                val peekGroup = foldModeGroup(taskState.workspaceFold, directory)
-                DirectoryPeekOverlay(
-                    anchorTop = peekAnchorTop,
-                    group = peekGroup,
-                    emptyNote = foldModeEmptyNote(taskState.workspaceFold),
-                    selectedTaskId = selectedTaskId,
-                    selectedSessionId = selectedSessionId,
-                    onOpenTask = { task ->
-                        peekDirectoryId = null
-                        onOpenWorkspaceTask(
-                            task.task.workspaceId,
-                            task.id,
-                            directory.workspaceName,
-                            task.name,
-                        )
-                    },
-                    onOpenSession = { session, task ->
-                        peekDirectoryId = null
-                        onOpenSession(taskSessionRoute(session, directory, task))
-                    },
-                    onExpand = {
-                        peekDirectoryId = null
-                        onToggleSidebarCollapsed()
-                    },
-                    onDismiss = { peekDirectoryId = null },
-                )
-            }
         }
-    }
     }
 }
 

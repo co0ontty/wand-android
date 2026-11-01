@@ -206,6 +206,25 @@ class ConversationStore(
         } finally { if (older) historyLoading.remove(id) }
     }
     fun retry() { scope.launch { refresh(); load(selectedId) } }
+    fun startDirectory() {
+        selectedId = ""
+        refreshJob = scope.launch {
+            while (true) {
+                try {
+                    val employeeList = api.listSiliconEmployees(includeArchived = true)
+                    if (employeeList != employees.toList()) { employees.clear(); employees.addAll(employeeList) }
+                    val presetList = api.listAiTeams()
+                    if (presetList != presets.toList()) { presets.clear(); presets.addAll(presetList) }
+                    val projectList = api.listWorkspaces()
+                    if (projectList != projects.toList()) { projects.clear(); projects.addAll(projectList) }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
+                loading = false
+                delay(30_000)
+            }
+        }
+    }
     fun start() {
         refreshJob = scope.launch { while (true) { refresh(); delay(30_000) } }
     }

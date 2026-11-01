@@ -407,6 +407,13 @@ class WandApi(baseUrl: String, val token: String?,
     suspend fun stopSession(id: String): SessionSnapshot =
         SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/stop"))
 
+    /**
+     * Codex 下一条输入预测。只由用户点击触发（会调用模型）；能力取决于账户与协议，
+     * unsupported 时如实返回原因，不降级成猜测文本。
+     */
+    suspend fun codexPrediction(id: String): CodexPrediction =
+        CodexPrediction.parse(requestObject("POST", "/api/sessions/${encode(id)}/prediction", JSONObject(), 60))
+
     // MARK: - 排队消息（仅结构化会话）
 
     /** 由服务端按 index 摘掉队列项并立即发送，避免客户端与自动 flush 重复发送。 */
@@ -1011,7 +1018,7 @@ class WandApi(baseUrl: String, val token: String?,
             requestObject(
                 "POST",
                 "/api/workspaces",
-                JSONObject().put("name", name).put("cwd", cwd),
+                JSONObject().put("name", name).put("cwd", cwd).put("userAdded", true),
             ),
         ) ?: throw WandApiException(500, "创建项目响应无效。")
 
@@ -1069,6 +1076,9 @@ class WandApi(baseUrl: String, val token: String?,
         val path = "/api/tasks?includeArchived=1&revision=${encode(revision ?: "")}"
         return TaskGroupsPage.parse(requestData("GET", path))
     }
+
+    override suspend fun listWorkspaceDirectories(path: String): DirectoryListing =
+        DirectoryListing.parse(requestObject("GET", "/api/directory?q=${encode(path)}&foldersOnly=true"))
 
     override suspend fun listDirectory(path: String): DirectoryListing =
         DirectoryListing.parse(requestObject("GET", "/api/directory?q=${encode(path)}"))

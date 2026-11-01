@@ -188,18 +188,8 @@ fun AiTeamDetailScreen(
         scope.launch {
             try {
                 val direct = api.startDirectTeamRun(teamId, submittedWorkspaceId, submittedNote)
-                // 成功 = 直接落到这一轮的群聊页：那里能看到派工、能立刻补一句要求。
-                val runId = direct.detail.run.id
-                if (runId.isNotBlank()) {
-                    onOpenGroupChat(runId)
-                } else {
-                    val taskId = aiTeamDirectRunTaskId(direct)
-                    if (taskId.isNotBlank()) {
-                        onOpenTask(taskId)
-                    } else {
-                        startUnconfirmed = true
-                    }
-                }
+                val taskId = aiTeamDirectRunTaskId(direct)
+                if (taskId.isNotBlank()) onOpenTask(taskId) else startUnconfirmed = true
             } catch (e: Exception) {
                 startUnconfirmed = teamDirectFailureUnconfirmed(e)
                 if (!startUnconfirmed) submitError = e.message ?: "开工失败"
@@ -438,12 +428,11 @@ private fun AiTeamActivityCard(
                             )
                         }
                         WandButton(
-                            label = if (run.chatSessionId != null) "进入群聊" else "查看任务",
+                            label = "查看任务",
                             onClick = {
-                                if (run.chatSessionId != null) onOpenGroupChat(run.id)
-                                else if (run.taskId.isNotBlank()) onOpenTask(run.taskId)
+                                if (run.taskId.isNotBlank()) onOpenTask(run.taskId)
                             },
-                            enabled = actionsEnabled && (run.chatSessionId != null || run.taskId.isNotBlank()),
+                            enabled = actionsEnabled && run.taskId.isNotBlank(),
                             variant = WandButtonVariant.Text,
                             compact = true,
                         )

@@ -150,7 +150,6 @@ internal fun HomeTopBar(
     interactionEnabled: Boolean,
     onOpenSettings: () -> Unit,
     onSwitchServer: () -> Unit,
-    onCollapseSidebar: (() -> Unit)?,
     onNewTask: (() -> Unit)? = null,
     newTaskEnabled: Boolean = interactionEnabled,
     /** 模式专属动作（如通讯录的派工 / 创建）：同一根顶栏的右侧槽位，不另开一条标题栏。 */
@@ -182,15 +181,6 @@ internal fun HomeTopBar(
             androidx.compose.material3.TextButton(onClick = onNewTask, enabled = newTaskEnabled) { Text("新建") }
         }
         trailingActions?.invoke()
-        if (onCollapseSidebar != null) {
-            WandIconButton(
-                icon = WandIcons.panelCollapse,
-                contentDescription = "收起任务侧边栏",
-                onClick = onCollapseSidebar,
-                enabled = interactionEnabled,
-                variant = WandIconButtonVariant.Toolbar,
-            )
-        }
         Box {
             androidx.compose.material3.TextButton(
                 onClick = { menuOpen = !menuOpen },

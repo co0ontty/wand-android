@@ -144,7 +144,7 @@ private fun ConversationOwnedSessions(
 
 @Composable
 internal fun ConversationList(state: ConversationStore, bottomClearance: androidx.compose.ui.unit.Dp = 68.dp, onOpenEmployee: (String) -> Unit = {},
-    onOpenSettings: () -> Unit = {}, onSwitchServer: () -> Unit = {}, onCollapseSidebar: (() -> Unit)? = null,
+    onOpenSettings: () -> Unit = {}, onSwitchServer: () -> Unit = {},
     groups: List<TaskDirectoryGroup> = emptyList(), groupsLoading: Boolean = false, groupsError: String? = null, onOpenSession: (TaskSessionRoute) -> Unit = {}, onSelect: (String) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var create by rememberSaveable { mutableStateOf(false) }
@@ -152,6 +152,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     val listTier = appliedFilters.tier.storageValue
     val associationsAvailable = !groupsLoading && groupsError == null
     val workspaceOptions = conversationWorkspaceOptions(groups)
+    val employeeOptions = conversationEmployeeOptions(conversationFilterSessions(groups))
     var swipedId by rememberSaveable { mutableStateOf<String?>(null) }
     var dissolveId by rememberSaveable { mutableStateOf<String?>(null) }
     var deleteId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -238,7 +239,8 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
     }) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (listTier == ConversationListTier.All.storageValue) "聊天" else ConversationListTier.of(listTier).label,
+            // 默认档「未归档」就是正常的聊天列表，标题不跟着变；只有显式切档位才标出来。
+            Text(if (listTier == ConversationListTier.Active.storageValue) "聊天" else ConversationListTier.of(listTier).label,
                 Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             TextButton(onClick = { create = !create },
                 modifier = Modifier.heightIn(min = 48.dp).focusRequester(createTrigger).then(layer.region("actions"))) { Text(if (create) "收起" else "建群") }
@@ -247,7 +249,6 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 DropdownMenu(navigationMenu, onDismissRequest = { navigationMenu = false }) {
                     DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(WandIcons.settings, null) }, onClick = { navigationMenu = false; onOpenSettings() })
                     DropdownMenuItem(text = { Text("切换服务器") }, leadingIcon = { Icon(WandIcons.swapServer, null) }, onClick = { navigationMenu = false; onSwitchServer() })
-                    onCollapseSidebar?.let { collapse -> DropdownMenuItem(text = { Text("收起侧栏") }, onClick = { navigationMenu = false; collapse() }) }
                 }
             }
         }
@@ -257,10 +258,11 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
                 WandInlineSearchField(true, query, { query = it }, null, "搜索聊天或任务",
                     modifier = Modifier.weight(1f).then(layer.region("search")),
                     autoFocus = false, focusRequester = searchTrigger, onClear = { query = "" })
-                ConversationFilterControls(appliedFilters, workspaceOptions) { state.listFilters = it }
+
             }
+            ConversationCapsules(appliedFilters, workspaceOptions, employeeOptions) { state.listFilters = it }
             if (appliedFilters.count > 0) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(conversationFilterSummary(appliedFilters, workspaceOptions), Modifier.weight(1f),
+                Text(conversationFilterSummary(appliedFilters, workspaceOptions, employeeOptions), Modifier.weight(1f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
                 TextButton(onClick = { state.listFilters = ConversationListFilters() }) { Text("清除") }
             }
@@ -419,7 +421,7 @@ internal fun ConversationList(state: ConversationStore, bottomClearance: android
         WandDialog(title = "解散群聊？", onDismissRequest = { if (!isBusy()) dissolveId = null },
             confirm = WandDialogAction("解散群聊", destructive = true, enabled = !isBusy(), onClick = { update(dissolving, JSONObject().put("dissolved", true)) }),
             dismiss = WandDialogAction("取消", enabled = !isBusy(), onClick = { dissolveId = null })) {
-            Text("群聊将归档并保留在会话列表。历史记录和关联任务保留，恢复后可继续聊天。")
+            Text("群聊将归档并从会话列表隐藏，在筛选的「对话归档范围」里选「已归档」可以找回。历史记录和关联任务保留，恢复后可继续聊天。")
             actionError?.let { Text(it, color = WandColors.danger) }
         }
     }
@@ -1182,7 +1184,8 @@ internal fun ConversationChatScreen(state: ConversationStore, id: String, isHapt
                         Text(if (continueTask != null) "继续任务" else "派新任务", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         WandTextField(title, { title = it }, label = "任务名称", singleLine = true, enabled = continueTask == null)
                         Text("工作项目", fontSize = 14.sp)
-                        state.projects.forEach { project -> Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(projectId == project.id, { projectId = project.id }); Text(project.name) } }
+                        WorkspaceChoice(label = state.projects.firstOrNull { it.id == projectId }?.name ?: "选择工作区",
+                            options = state.projects.map { it.id to it.name }, onSelect = { projectId = it })
                         Text("${detail?.team?.members?.joinToString { it.name } ?: employee?.name.orEmpty()} · ${if (detail?.team?.requirePlanApproval == false) "自动开工" else "需批准计划"}", fontSize = 12.sp, color = WandColors.textSecondary)
                         WandButton("取消派发", {
                             if (unknown == null && composer.discardUnsentDraft()) {

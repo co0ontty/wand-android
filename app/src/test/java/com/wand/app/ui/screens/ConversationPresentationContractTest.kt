@@ -20,7 +20,8 @@ class ConversationPresentationContractTest {
         assertTrue(phone.contains("list { id -> nav.push(Screen.Conversation(id)) }"))
         assertTrue(wide.contains("if (homeListMode == HomeListMode.Im)"))
         assertTrue(wide.contains("else PadLandingScreen"))
-        assertTrue(wide.contains("sidebarCollapsed && homeListMode != HomeListMode.Im &&"))
+        assertFalse(wide.contains("sidebarCollapsed"))
+        assertFalse(app.contains("CollapsedDirectoryRail"))
         assertTrue(wide.contains("coerceIn(280.dp, minOf(400.dp, windowWidth - 360.dp))"))
         assertTrue(app.contains("configuration.screenHeightDp.dp"))
         // 负责人裁决 1：平板能恢复「上次明确打开」的两栏，但根屏右栏不得由 selectedId 变出一个聊天输入框。
@@ -29,6 +30,10 @@ class ConversationPresentationContractTest {
         assertTrue(wide.contains("nav.setDetail(Screen.Conversation(id))"))
         // 负责人裁决 3：详情按会话 id 存 Saveable，回列表再打开留草稿与派发意图，换会话不继承。
         assertTrue(app.contains("shellState.SaveableStateProvider(\"im-detail-$" + "{screen.conversationId}\")"))
+        val unified = source("ui/screens/UnifiedConversationList.kt")
+        // 列表顶部第一件东西是搜索框，不再重复「会话」标题。
+        assertFalse(unified.contains("Text(\"会话\""))
+        assertTrue(unified.indexOf("label = \"搜索会话\"") < unified.indexOf("TextButton(onClick = { onCreate"))
         val list = source("ui/screens/TaskListScreen.kt")
         assertFalse(list.contains("legacyConversations"))
         assertFalse(list.contains("工作窗口 / 历史对话"))
