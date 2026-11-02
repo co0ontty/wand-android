@@ -3,6 +3,8 @@ package com.wand.app.ui.screens
 import kotlinx.coroutines.launch
 import com.wand.app.ui.withLiveTitle
 
+import androidx.compose.animation.core.*
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -100,19 +102,19 @@ internal fun UnifiedConversationList(
                     )) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
                         .clickable(enabled = interactionEnabled, onClick = open)
-                        .padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Icon(BrandLogos.painterForProvider(item.session.provider), contentDescription = null,
-                            tint = BrandLogos.tintForProvider(item.session.provider, MaterialTheme.colorScheme.onSurface),
-                            modifier = Modifier.padding(top = 2.dp).size(28.dp))
-                        Spacer(Modifier.width(12.dp))
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(item.session.title ?: item.task?.name ?: "会话", maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                            Text(listOfNotNull(item.session.toolLabel, item.session.employeeName).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            SessionListStatus(item.session)
-                            conversationWorkspaceLabel(item.group)?.let { workspace ->
-                                Text(workspace, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val subhead = listOfNotNull(item.session.toolLabel, item.session.employeeName, conversationWorkspaceLabel(item.group)).joinToString(" · ")
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(BrandLogos.painterForProvider(item.session.provider), contentDescription = null,
+                                    tint = BrandLogos.tintForProvider(item.session.provider, MaterialTheme.colorScheme.onSurface),
+                                    modifier = Modifier.size(14.dp))
+                                Text(subhead, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
+                        SessionStatusGlyph(item.session, modifier = Modifier.padding(start = 12.dp))
                     }
                     }
                 }
@@ -133,6 +135,78 @@ internal fun UnifiedConversationList(
     }
     }
 
+}
+
+/** 与 Web 端 TaskStatusGlyph 保持一致的运行状态动效图标 */
+@Composable
+private fun SessionStatusGlyph(session: WorkspaceSessionSummary, modifier: Modifier = Modifier) {
+    if (session.archived == true) return
+    val live = session.withLiveTitle()
+    val status = live.activityStatus().replace('_', '-')
+    val isBlocked = com.wand.app.ui.SessionTitleStore.permissionBlockedOf(session.id) == true
+
+    when {
+        isBlocked || status in setOf("permission", "permission-blocked", "waiting-input", "reconnecting") -> {
+            val infiniteTransition = rememberInfiniteTransition(label = "attention-breath")
+            val alpha by infiniteTransition.animateFloat(
+                initialValue = 0.45f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(850, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "attention-alpha"
+            )
+            Icon(
+                WandIcons.permission,
+                contentDescription = "待处理",
+                tint = WandColors.warning.copy(alpha = alpha),
+                modifier = modifier.size(16.dp)
+            )
+        }
+        status in setOf("running", "thinking") -> {
+            val infiniteTransition = rememberInfiniteTransition(label = "spin")
+            val angle by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1000, easing = LinearEasing)
+                ),
+                label = "spin-angle"
+            )
+            val tint = if (status == "thinking") WandColors.info else WandColors.success
+            Icon(
+                WandIcons.refresh,
+                contentDescription = if (status == "thinking") "思考中" else "运行中",
+                tint = tint,
+                modifier = modifier.size(16.dp).rotate(angle)
+            )
+        }
+        status == "queued" -> {
+            Icon(
+                WandIcons.history,
+                contentDescription = "排队中",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = modifier.size(16.dp)
+            )
+        }
+        status == "just-completed" -> {
+            Icon(
+                WandIcons.check,
+                contentDescription = "刚完成",
+                tint = WandColors.success,
+                modifier = modifier.size(16.dp)
+            )
+        }
+        status == "failed" -> {
+            Icon(
+                WandIcons.error,
+                contentDescription = "失败",
+                tint = WandColors.danger,
+                modifier = modifier.size(16.dp)
+            )
+        }
+    }
 }
 
 /** Same activity vocabulary as the Web sidebar; process liveness is not turn activity. */

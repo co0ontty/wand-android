@@ -77,8 +77,8 @@ object BrandLogos {
 
     fun resolveTint(provider: String?, tint: Color, onDark: Boolean = false): Color =
         when (provider) {
-            "opencode", "qoder", "claude" -> Color.Unspecified
-            "codex", "grok", "pi" -> if (onDark) Color.White else Color.Black
+            "opencode", "qoder", "claude", "pi" -> Color.Unspecified
+            "codex", "grok" -> if (onDark) Color.White else Color.Black
             else -> tint
         }
 
@@ -142,14 +142,14 @@ private fun piIcon(): ImageVector =
         viewportWidth = 469.43f,
         viewportHeight = 469.43f,
     ).addPath(
-        pathData = addPathNodes(
-            "M0 0H352.07V234.71H234.71V352.07H117.36V469.43H0ZM117.36 117.36V234.71H234.71V117.36Z",
-        ),
-        fill = SolidColor(Color.Black),
-        pathFillType = PathFillType.EvenOdd,
+        pathData = addPathNodes("M0 0H352.07V234.71H234.71V117.36H0Z"),
+        fill = SolidColor(Color(0xFFF09082)),
+    ).addPath(
+        pathData = addPathNodes("M0 117.36H117.36V234.71H234.71V352.07H117.36V469.43H0Z"),
+        fill = SolidColor(Color(0xFF4D9ABF)),
     ).addPath(
         pathData = addPathNodes("M352.07 234.71H469.43V469.43H352.07Z"),
-        fill = SolidColor(Color.Black),
+        fill = SolidColor(Color(0xFFF1BE58)),
     ).build()
 
 private const val CLAUDE_PATH =

@@ -20,7 +20,7 @@ class BrandLogosTest {
         assertEquals(Color.Unspecified, BrandLogos.resolveTint("opencode", tint))
         assertEquals(Color.Unspecified, BrandLogos.resolveTint("qoder", tint))
         assertEquals(Color.Unspecified, BrandLogos.resolveTint("claude", tint))
-        assertEquals(Color.Black, BrandLogos.resolveTint("pi", tint, onDark = false))
+        assertEquals(Color.Unspecified, BrandLogos.resolveTint("pi", tint))
         assertEquals(Color.White, BrandLogos.resolveTint("codex", tint, onDark = true))
         assertEquals(Color.Black, BrandLogos.resolveTint("grok", tint, onDark = false))
         assertEquals(tint, BrandLogos.resolveTint("terminal", tint))

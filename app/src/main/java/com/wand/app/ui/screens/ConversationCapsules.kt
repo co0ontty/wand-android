@@ -1,6 +1,7 @@
 package com.wand.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +35,8 @@ internal fun ConversationCapsules(
     backdrop: GlassBackdrop? = null,
     onChange: (ConversationListFilters) -> Unit,
 ) {
+    val workspaceApi = LocalWorkspacePort.current
+    var addingWorkspace by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf<CapsuleDimension?>(null) }
     var query by remember(open) { mutableStateOf("") }
     // Display hints live with the mounted controls; they do not change applied filters.
@@ -106,11 +109,10 @@ internal fun ConversationCapsules(
                     DropdownMenuItem(text = { Text(option.second) }, modifier = Modifier.semantics { selected = option.first in selectedWorkspaces },
                         trailingIcon = { if (option.first in selectedWorkspaces) Icon(WandIcons.check, "已选中") }, onClick = { workspace(option.first) })
                 }
-                AddWorkspaceButton { created ->
-                    lastWorkspace = created.id
-                    onChange(filters.copy(workspaceIds = setOf(created.id), workspaceId = null))
+                if (workspaceApi != null) DropdownMenuItem(text = { Text("添加工作区") }, onClick = {
                     open = null
-                }
+                    addingWorkspace = true
+                })
             }
         }
         Box {
@@ -131,6 +133,14 @@ internal fun ConversationCapsules(
             }
         }
     }
+    // Dialog 生命周期归稳定的筛选控件，菜单关闭或键盘弹出不会销毁表单。
+    if (addingWorkspace && workspaceApi != null) AddWorkspaceDialog(workspaceApi,
+        onDismiss = { addingWorkspace = false },
+        onCreated = { created ->
+            lastWorkspace = created.id
+            onChange(filters.copy(workspaceIds = setOf(created.id), workspaceId = null))
+            addingWorkspace = false
+        })
 }
 
 @Composable
@@ -142,15 +152,22 @@ private fun ConversationCapsuleTrigger(
     val selectedColor = MaterialTheme.colorScheme.primaryContainer
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.width(100.dp)) {
         Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        Row(Modifier.glassSurface(backdrop, RoundedCornerShape(percent = 50), WandGlass.regular, drawRim = true).padding(2.dp)) {
-            IconButton(onClick = onClear, modifier = Modifier.size(48.dp).semantics { selected = selectedCount == 0 },
-                colors = IconButtonDefaults.iconButtonColors(containerColor = if (selectedCount == 0) selectedColor else androidx.compose.ui.graphics.Color.Transparent)) {
+        Row(
+            Modifier.glassSurface(backdrop, RoundedCornerShape(percent = 50), WandGlass.regular, drawRim = true)
+                .clickable(onClick = onExpand)
+                .semantics {
+                    this.selected = selectedCount > 0
+                    this.stateDescription = if (selectedCount == 0) "$summary；常用选项：${option.title}" else summary
+                }
+                .padding(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)
+                .background(if (selectedCount == 0) selectedColor else androidx.compose.ui.graphics.Color.Transparent, CircleShape)) {
                 Icon(allIcon, allDescription, tint = MaterialTheme.colorScheme.primary)
             }
-            IconButton(onClick = onExpand, modifier = Modifier.size(48.dp).semantics {
-                selected = selectedCount > 0
-                stateDescription = if (selectedCount == 0) "$summary；常用选项：${option.title}" else summary
-            }, colors = IconButtonDefaults.iconButtonColors(containerColor = if (selectedCount > 0) selectedColor else androidx.compose.ui.graphics.Color.Transparent)) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)
+                .background(if (selectedCount > 0) selectedColor else androidx.compose.ui.graphics.Color.Transparent, CircleShape)) {
                 Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
                     WandInPlaceSwap(option, Modifier.size(32.dp), enterScale = 1f, exitScale = 1f) { displayed ->
                         val current = displayed as CapsuleOption

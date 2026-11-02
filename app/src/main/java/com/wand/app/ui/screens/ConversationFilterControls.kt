@@ -27,6 +27,8 @@ internal fun ConversationFilterControls(
     workspaces: List<Pair<String, String>>,
     onApply: (ConversationListFilters) -> Unit,
 ) {
+    val workspaceApi = LocalWorkspacePort.current
+    var addingWorkspace by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(applied) }
     var field by remember { mutableStateOf<ConversationFilterField?>(null) }
@@ -94,7 +96,11 @@ internal fun ConversationFilterControls(
                             }
                         }
                         if (matches.isEmpty()) Text("未找到工作区", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium)
-                        AddWorkspaceButton { workspace -> draft = draft.copy(workspaceId = workspace.id); field = null }
+                        if (workspaceApi != null) DropdownMenuItem(text = { Text("添加工作区") }, onClick = {
+                            field = null
+                            open = false
+                            addingWorkspace = true
+                        })
                     }
                     ConversationFilterDropdown(
                         label = "归档", fullLabel = "对话归档范围",
@@ -128,6 +134,13 @@ internal fun ConversationFilterControls(
             }
         }
     }
+    if (addingWorkspace && workspaceApi != null) AddWorkspaceDialog(workspaceApi,
+        onDismiss = { addingWorkspace = false; open = true },
+        onCreated = { workspace ->
+            draft = draft.copy(workspaceId = workspace.id)
+            addingWorkspace = false
+            open = true
+        })
 }
 
 @Composable

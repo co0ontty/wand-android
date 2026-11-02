@@ -58,6 +58,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -628,10 +629,10 @@ private fun FormPanel(
         ahead = s?.ahead ?: 0,
         feedback = qc.worktreeFeedback,
         isHapticEnabled = isHapticEnabled,
-        onAction = { action, sub ->
-            if (action == "merge-worktrees") qc.mergeWorktrees()
+        onAction = { action, sub, worktree ->
+            if (action == "merge-worktrees" || (worktree && !hasChanges)) qc.mergeWorktrees()
             else if (action == "commit-push" && !hasChanges) qc.pushCommitsOnly()
-            else qc.submit(action, sub)
+            else qc.submit(action, sub, includeWorktrees = worktree)
         },
     )
 
@@ -639,7 +640,7 @@ private fun FormPanel(
         qc.inFlight -> ""
         qc.worktreeFeedback != null -> qc.worktreeFeedback.orEmpty()
         !hasChanges -> "工作区干净。Worktree：合并全部工作树到当前分支并推送。"
-        else -> "拖动气泡组合 · 丢进提交区执行 · Worktree：合并全部工作树到当前分支并推送" +
+        else -> "拖动可用气泡互相吸附 · 含 Worktree 的组合先提交并推送所选操作，再合并全部工作树并推送" +
             (if (hasSubmodule) "\nSub 球可选，纳入后递归处理 submodule" else "")
     }
     if (hint.isNotEmpty()) {
@@ -899,7 +900,7 @@ private fun ResultPair(label: String, old: String, new: String) {
 private val ACTION_ORDER = listOf("commit", "tag", "push")
 
 private fun composeAction(members: List<String>): String {
-    if ("worktree" in members) return "merge-worktrees"
+    if (members == listOf("worktree")) return "merge-worktrees"
     val hasTag = "tag" in members
     val hasPush = "push" in members
     return when {
@@ -929,7 +930,7 @@ private fun MagneticDock(
     ahead: Int,
     feedback: String?,
     isHapticEnabled: () -> Boolean,
-    onAction: (action: String, includeSubmodule: Boolean) -> Unit,
+    onAction: (action: String, includeSubmodule: Boolean, includeWorktrees: Boolean) -> Unit,
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -995,6 +996,9 @@ private fun MagneticDock(
     val motionEnabled = !reduceMotionEnabled()
     val enabled = !busy && (hasChanges || worktreeCount > 0 || ahead > 0)
     fun chipEnabled(id: String) = !busy && if (id == "worktree") worktreeCount > 0 else if (id == "push") hasChanges || ahead > 0 else hasChanges
+    // pointerInput 的协程跨重组保留；执行与禁用状态读取本轮最新值。
+    val currentChipEnabled = rememberUpdatedState<(String) -> Boolean>(::chipEnabled)
+    val currentOnAction = rememberUpdatedState(onAction)
     val composedAction = dragMembers?.let { composeAction(it) } ?: "commit"
     val launchTone = when (composedAction) {
         "commit-tag" -> tagColor
@@ -1014,7 +1018,7 @@ private fun MagneticDock(
                 .onSizeChanged { fieldSize = it }
                 .pointerInputDock(
                     enabled = enabled,
-                    chipEnabled = ::chipEnabled,
+                    chipEnabled = { currentChipEnabled.value(it) },
                     allIds = allIds,
                     pickupRPx = pickupRPx,
                     gapPx = gapPx,
@@ -1049,7 +1053,7 @@ private fun MagneticDock(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                     },
-                    onAction = onAction,
+                    onAction = { action, sub, worktree -> currentOnAction.value(action, sub, worktree) },
                 ),
         ) {
             clusterRect?.let { r ->
@@ -1093,7 +1097,7 @@ private fun MagneticDock(
                             contentDescription = if (id == "worktree") "合并全部 Worktree 到当前分支并推送" else "${chipLabels[id]} 气泡"
                             if (!chipEnabled(id)) disabled()
                             onClick {
-                                if (chipEnabled(id)) { val intent = tapIntent(id); onAction(intent.first, intent.second); true }
+                                if (chipEnabled(id)) { val intent = tapIntent(id); onAction(intent.first, intent.second, id == "worktree"); true }
                                 else false
                             }
                         }
@@ -1146,7 +1150,7 @@ private fun MagneticDock(
                         Modifier
                     }
                 )
-                .clickable(enabled = !busy && hasChanges) { onAction("commit", false) },
+                .clickable(enabled = !busy && hasChanges) { onAction("commit", false, false) },
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowForward,
@@ -1167,7 +1171,7 @@ private fun MagneticDock(
 /**
  * dock 手势：场地坐标系内 hit-test 气泡 → 跟手拖动 → 磁吸拾取（场地内任意气泡
  * 都可被吸进组合）→ 出场地右缘即「热」（悬在发射区上方）→
- * 单击直发；热区执行组合；Worktree 独立；其它落点全员弹回。
+ * 单击直发；热区执行完整组合（含 Sub / Worktree）；其它落点全员弹回。
  */
 private fun Modifier.pointerInputDock(
     enabled: Boolean,
@@ -1188,7 +1192,7 @@ private fun Modifier.pointerInputDock(
     snapTo: (String, Offset) -> Unit,
     tick: () -> Unit,
     thud: () -> Unit,
-    onAction: (String, Boolean) -> Unit,
+    onAction: (String, Boolean, Boolean) -> Unit,
 ): Modifier = pointerInput(enabled, allIds) {
     if (!enabled) return@pointerInput
     awaitEachGesture {
@@ -1216,9 +1220,9 @@ private fun Modifier.pointerInputDock(
             if (!moved && (pos - down.position).getDistance() > slop) moved = true
             if (!moved) return@drag
 
-            // 只拾取主动作，Sub 必须显式抓取，Worktree 保持独立。
-            for (id in ACTION_ORDER) {
-                if (anchor == "worktree" || !chipEnabled(id) || id in members) continue
+            // 所有可用胶囊都能双向吸附；未进入组合的 Sub 不扩大提交范围。
+            for (id in allIds) {
+                if (!chipEnabled(id) || id in members) continue
                 val hp = homesAtDown[id] ?: continue
                 val center = Offset(hp.x + cw(id) / 2f, hp.y + h / 2f)
                 if ((pos - center).getDistance() < pickupRPx) {
@@ -1266,13 +1270,13 @@ private fun Modifier.pointerInputDock(
         setClusterRect(null)
         springHome()
 
-        if (!completed) return@awaitEachGesture
+        if (!completed || endMembers.any { !chipEnabled(it) }) return@awaitEachGesture
         if (!moved) {
             val (action, sub) = tapIntent(anchor)
-            onAction(action, sub)
+            onAction(action, sub, anchor == "worktree")
         } else if (endHot) {
-            // 丢进发射区 → 执行组合动作（commit 永远隐含）。
-            onAction(composeAction(endMembers), "sub" in endMembers)
+            // 起手胶囊不改变组合含义，保留全部动作与范围。
+            onAction(composeAction(endMembers), "sub" in endMembers, "worktree" in endMembers)
         }
         // 松手在别处：springHome() 已让全员弹回，不执行任何动作。
     }

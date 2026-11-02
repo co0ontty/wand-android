@@ -147,10 +147,14 @@ class QuickCommitStore(
 
     // MARK: - 提交
 
-    fun submit(action: String, includeSubmodule: Boolean) {
+    fun submit(action: String, includeSubmodule: Boolean, includeWorktrees: Boolean = false) {
         if (inFlight || generating) return
+        if (includeWorktrees && status?.branch.isNullOrBlank()) {
+            error = "当前分支不可用，请刷新 Git 状态后重试。"
+            return
+        }
         val withTag = action == "commit-tag" || action == "commit-tag-push"
-        val push = action == "commit-push" || action == "commit-tag-push"
+        val push = includeWorktrees || action == "commit-push" || action == "commit-tag-push"
         val userTag = if (withTag) tagDraft.trim() else ""
         val message = messageDraft.trim()
         val autoMessage = message.isEmpty()
@@ -166,6 +170,7 @@ class QuickCommitStore(
         pushError = null
         result = null
         scope.launch {
+            var completedCommit: String? = null
             try {
                 val r = api.quickCommit(
                     sessionId = sessionId,
@@ -192,11 +197,29 @@ class QuickCommitStore(
                     if (push && outcome.pushError == null) append("，已推送")
                     outcome.pushError?.let { append("，推送失败：").append(it) }
                 }
-                if (outcome.pushError == null) {
+                // Commit 已落地就消费草稿；后续 Worktree 失败不能让用户重做提交。
+                drafts = drafts.onCommitSuccess()
+                if (includeWorktrees && outcome.pushError == null) {
+                    completedCommit = outcome.summaryText() + if (outcome.pushed) "，已推送" else ""
+                    // 先推送所选子模块/Tag，确保合并后的父仓库不引用未推送的子模块。
+                    check(r.ok && outcome.pushed) { "提交或推送未完成，已停止合并 Worktree。" }
+                    val current = api.gitStatus(sessionId)
+                    val branch = checkNotNull(before?.branch)
+                    val commitHash = r.commitHash.orEmpty()
+                    val head = current.head.orEmpty()
+                    check(current.branch == branch && commitHash.isNotBlank() && head.startsWith(commitHash)) {
+                        "当前分支或提交已经变化，请刷新 Git 状态后单独合并 Worktree。"
+                    }
+                    autoGenerating = false
+                    worktreeFeedback = "合并并推送中…"
+                    val summary = performWorktreeMerge(branch, head)
+                    worktreeFeedback = summary
+                    panelOpen = false
+                    onToast("$completedCommit；$summary")
+                    finishEntrySuccess()
+                } else if (outcome.pushError == null) {
                     result = null
                     panelOpen = false
-                    // commit 已落地 → 草稿被消费，下一次打开是空的（§2.22 验收 6）。
-                    drafts = drafts.onCommitSuccess()
                     onToast(toastMessage)
                     finishEntrySuccess()
                 } else {
@@ -204,20 +227,31 @@ class QuickCommitStore(
                     // 用户已手动关闭时不重新弹出，失败信息会以 toast 呈现。
                     result = outcome
                     pushError = outcome.pushError
-                    // commit 同样已经落地，草稿没有保留价值了。
-                    drafts = drafts.onCommitSuccess()
                     failEntry(toastMessage)
                 }
                 loadStatus(force = true)
             } catch (e: Exception) {
-                // 失败不清草稿：用户要能在原地改文案直接重试。
-                val message = e.message ?: "快捷提交失败"
+                // 已完成提交时明确报告进度；未收到提交回执时仍保留原草稿。
+                val progress = completedCommit?.let { "$it；Worktree 未完成：" }.orEmpty()
+                val message = progress + (e.message ?: "快捷提交失败")
                 error = message
+                if (includeWorktrees) worktreeFeedback = "操作失败"
                 failEntry(message)
+            } finally {
+                submitting = false
+                autoGenerating = false
+                if (includeWorktrees) loadStatus(force = true)
             }
-            submitting = false
-            autoGenerating = false
         }
+    }
+
+    private suspend fun performWorktreeMerge(branch: String, head: String): String {
+        val result = api.mergeWorktrees(sessionId, branch, head)
+        check(result.optBoolean("ok") && result.optBoolean("pushed")) {
+            result.optString("error").ifEmpty { "合并或推送未完成" }
+        }
+        val count = result.optJSONArray("mergedBranches")?.length() ?: 0
+        return "已合并 $count 个 Worktree 到 ${result.optString("targetBranch")} 并推送"
     }
 
     fun mergeWorktrees() {
@@ -231,16 +265,8 @@ class QuickCommitStore(
         beginEntryLoading()
         scope.launch {
             try {
-                val result = api.mergeWorktrees(sessionId, branch, head)
-                if (result.optBoolean("ok") && result.optBoolean("pushed")) {
-                    val count = result.optJSONArray("mergedBranches")?.length() ?: 0
-                    worktreeFeedback = "已合并 $count 个 Worktree 到 ${result.optString("targetBranch")} 并推送"
-                    finishEntrySuccess()
-                } else {
-                    worktreeFeedback = "操作失败"
-                    error = result.optString("error").ifEmpty { "合并或推送未完成" }
-                    failEntry(error ?: "合并失败")
-                }
+                worktreeFeedback = performWorktreeMerge(branch, head)
+                finishEntrySuccess()
             } catch (e: Exception) {
                 worktreeFeedback = "操作失败"
                 error = e.message ?: "合并 Worktree 失败"
