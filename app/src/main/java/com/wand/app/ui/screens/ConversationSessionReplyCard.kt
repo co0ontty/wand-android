@@ -53,7 +53,7 @@ internal fun ConversationSessionReplyCard(turn: ConversationTurn, protocol: Chat
                 }, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
                     color = if (preview?.status == "failed") WandColors.danger else WandColors.textSecondary)
                 if (protocol?.isResponding == true) TextButton(onClick = protocol::stopResponding) { Text("停止") }
-                TextButton(enabled = preview?.status != "unavailable", onClick = onOpen) { Text("查看会话") }
+                TextButton(enabled = preview?.status != "unavailable", onClick = onOpen) { Text(if (preview?.historyOnly == true) "查看历史回复" else "查看会话") }
             }
         }
     }

@@ -361,7 +361,7 @@ fun ChatScreen(
             sessionId = sessionId,
             drafts = drafts,
             parentScope = composerScope,
-            ready = { !store.loading && !store.providerSwitching && !store.directoryChanging && store.snapshot != null && resources.phase != "saving" },
+            ready = { !store.loading && store.snapshot?.historyOnly != true && !store.providerSwitching && !store.directoryChanging && store.snapshot != null && resources.phase != "saving" },
             send = store::submitInput,
             notice = { store.toast = it },
         )
@@ -2237,6 +2237,11 @@ private fun InputBar(
     attachOpen: Boolean,
     onAttachOpenChange: (Boolean) -> Unit,
 ) {
+    if (store.snapshot?.historyOnly == true) {
+        Text("历史回复 · 只读，执行会话已回收", Modifier.fillMaxWidth().padding(12.dp),
+            style = MaterialTheme.typography.bodySmall, color = WandColors.textSecondary)
+        return
+    }
     val canSend = draft.isNotBlank() || pendingAttachments.isNotEmpty()
     var showStopConfirm by remember(store.sessionId) { mutableStateOf(false) }
     // 「预测下一条」：只由用户点击触发（会调用模型），结果只填入空草稿，永不自动发送。

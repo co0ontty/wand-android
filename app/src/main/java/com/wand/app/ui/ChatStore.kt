@@ -292,11 +292,12 @@ class ChatStore(
     }
 
     fun handleEnterForeground() {
-        if (!active) return
+        if (!active || snapshot?.historyOnly == true) return
         socket.reconnectForForeground()
     }
 
     private fun connectSocket() {
+        if (snapshot?.historyOnly == true) return
         socket.connect()
         socket.subscribe(sessionId)
     }
@@ -312,6 +313,7 @@ class ChatStore(
     // MARK: - 推送合流
 
     private fun apply(snap: SessionSnapshot) {
+        if (snap.historyOnly) socket.close()
         queueRealtimeRevision += 1
         applyRealtimeState(
             ChatSessionEventReducer.applySnapshot(
@@ -625,6 +627,7 @@ class ChatStore(
 
     /** Protocol send only: composer owns content, submit concurrency and inline feedback. */
     suspend fun submitInput(text: String) {
+        check(snapshot?.historyOnly != true) { "历史回复只读，执行会话已回收" }
         check(!providerSwitching) { "工具正在切换，请稍后发送" }
         check(!directoryChanging) { "运行目录正在切换，请稍后发送" }
         val trimmed = text.trim()
@@ -907,6 +910,7 @@ class ChatStore(
 
     /** 会话已结束时按 claudeSessionId 原地恢复（服务端 reuseId 复用本会话）。 */
     fun resume() {
+        if (snapshot?.historyOnly == true) return
         scope.launch {
             try {
                 val snap = api.resumeSession(sessionId)

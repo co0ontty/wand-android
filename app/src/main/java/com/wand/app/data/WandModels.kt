@@ -706,6 +706,7 @@ data class SessionSnapshot(
     val directoryLocked: Boolean = false,
     val completionRevision: Int? = null,
     val viewedCompletionRevision: Int? = null,
+    val historyOnly: Boolean = false,
 ) {
     val isStructured: Boolean get() = isStructuredSession(sessionKind, runner)
 
@@ -776,6 +777,7 @@ data class SessionSnapshot(
             directoryLocked = sessionDirectoryLocked(o),
             completionRevision = o.int("completionRevision"),
             viewedCompletionRevision = o.int("viewedCompletionRevision"),
+            historyOnly = o.bool("historyOnly") == true,
         )
 
         fun parseList(arr: JSONArray): List<SessionSnapshot> =

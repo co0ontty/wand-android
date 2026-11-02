@@ -375,10 +375,10 @@ fun TaskBoardTaskScreen(
                             onWorkflow = { action ->
                             val evidence = acceptanceEvidence.trim()
                             val blocker = acceptanceBlocker.trim()
-                            val incompleteChildren = childTasks.any { !it.humanAcceptanceCurrent() }
+                            val incompleteChildren = childTasks.any { !it.aiVerificationCurrent() }
                             val valid = when (action) {
                                 "submit" -> evidence.isNotEmpty() && blocker.isEmpty()
-                                "pass" -> evidence.isNotEmpty() && blocker.isEmpty() && childTasks.all { it.aiVerificationCurrent() }
+                                "pass" -> evidence.isNotEmpty() && blocker.isEmpty() && childTasks.all { it.status in setOf("review", "ready", "archived") && it.acceptance?.blocker.isNullOrBlank() }
                                 "fail", "return" -> blocker.isNotEmpty()
                                 "accept" -> current.aiVerificationCurrent() && evidence.isNotEmpty() && blocker.isEmpty() && !incompleteChildren
                                 else -> false
@@ -454,12 +454,12 @@ private fun TaskBoardAcceptancePane(
     onBlockerChange: (String) -> Unit,
     onWorkflow: (String) -> Unit,
 ) {
-    val incompleteChildren = childTasks.count { !it.humanAcceptanceCurrent() }
+    val incompleteChildren = childTasks.count { !it.aiVerificationCurrent() }
     val aiCurrent = task.aiVerificationCurrent()
     val humanCurrent = task.humanAcceptanceCurrent()
     val historicalAcceptance = task.acceptance?.acceptedAt != null && !humanCurrent
     val canSubmit = task.status == "doing" && evidence.trim().isNotEmpty() && blocker.trim().isEmpty()
-    val canPass = task.status == "review" && evidence.trim().isNotEmpty() && blocker.trim().isEmpty() && childTasks.all { it.aiVerificationCurrent() }
+    val canPass = task.status == "review" && evidence.trim().isNotEmpty() && blocker.trim().isEmpty() && childTasks.all { it.status in setOf("review", "ready", "archived") && it.acceptance?.blocker.isNullOrBlank() }
     val canFail = task.status == "review" && blocker.trim().isNotEmpty()
     val canReturn = task.status == "ready" && blocker.trim().isNotEmpty()
     val canAccept = task.status == "ready" && aiCurrent && evidence.trim().isNotEmpty() && blocker.trim().isEmpty() && incompleteChildren == 0
@@ -542,8 +542,8 @@ private fun TaskBoardAcceptancePane(
         )
         if (childTasks.isNotEmpty()) {
             Text(
-                if (incompleteChildren == 0) "直接子任务均已人工确认"
-                else "仍有 $incompleteChildren 个直接子任务未人工确认；AI 与人工验收分别核对",
+                if (incompleteChildren == 0) "直接子任务均有当前交付的验收记录"
+                else "仍有 $incompleteChildren 个直接子任务尚未通过当前交付验收；主需求统一确认归档",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (incompleteChildren == 0) WandColors.success else WandColors.warning,
             )

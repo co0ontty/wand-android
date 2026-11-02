@@ -33,10 +33,10 @@ data class ConversationSessionLink(val sessionId: String, val title: String) {
     }
 }
 
-data class ConversationSessionPreview(val status: String, val text: String) {
+data class ConversationSessionPreview(val status: String, val text: String, val historyOnly: Boolean = false) {
     companion object {
         fun parse(json: JSONObject?): ConversationSessionPreview? = json?.let {
-            ConversationSessionPreview(it.str("status") ?: "starting", it.str("text").orEmpty().takeLast(4000))
+            ConversationSessionPreview(it.str("status") ?: "starting", it.str("text").orEmpty().takeLast(4000), it.optBoolean("historyOnly", false))
         }
     }
 }

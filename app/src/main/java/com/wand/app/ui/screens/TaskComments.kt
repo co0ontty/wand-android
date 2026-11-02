@@ -271,6 +271,7 @@ private fun TaskExecutionCard(
                 color = WandColors.textPrimary,
             )
             TaskStatusPill(dispatch.statusLabel, dispatchStatusTone(status))
+            dispatch.deliveryStatus?.let { Text(if (it == "submitted") "交付已提交" else "尚未提交交付", style = MaterialTheme.typography.labelSmall) }
             Text(
                 taskDeliveryLabel(dispatch),
                 style = MaterialTheme.typography.labelSmall,

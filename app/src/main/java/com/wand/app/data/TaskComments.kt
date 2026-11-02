@@ -23,6 +23,9 @@ data class TaskCommentDispatch(
     /** 本评论引用的子任务 id，按正文出现顺序。 */
     val referencedTaskIds: List<String> = emptyList(),
     val resultAnchor: TaskCommentResultAnchor? = null,
+    val executionTaskId: String? = null,
+    val deliveryStatus: String? = null,
+    val blocker: String? = null,
 ) {
     val deliveryUncertain: Boolean get() = state in setOf("pending", "unknown") || status in setOf("pending", "unknown")
 
@@ -33,7 +36,7 @@ data class TaskCommentDispatch(
     val statusLabel: String get() = when (status ?: state) {
         "paused" -> "已暂停"; "queued" -> "排队中"; "pending" -> "等待确认"; "accepted" -> "已创建执行"; "running" -> "执行中"; "blocked" -> "等待审批"
         "idle" -> "本轮已结束"; "exited" -> "会话已退出"; "stopped" -> "已停止"; "failed" -> "执行失败"
-        "done" -> "已完成"; "unknown" -> "送达未知 · 不会重放"; "history" -> "历史会话"; "unavailable" -> "会话不可用"
+        "done" -> "本轮已结束"; "unknown" -> "送达未知 · 不会重放"; "history" -> "历史会话"; "unavailable" -> "会话不可用"
         else -> "状态未确认"
     }
 
@@ -71,14 +74,17 @@ data class TaskComment(
             val comments = response.optJSONArray("comments") ?: return emptyList()
             return (0 until comments.length()).mapNotNull { index ->
                 val item = comments.optJSONObject(index) ?: return@mapNotNull null
-                if (item.optString("taskId") != taskId || item.optString("id").isBlank() ||
+                if ((item.optString("taskId") != taskId && item.optString("activityTaskId") != taskId && item.optJSONObject("dispatch")?.optString("executionTaskId") != taskId) || item.optString("id").isBlank() ||
                     item.optString("body").isBlank()) return@mapNotNull null
                 val referenced = item.arr("referencedTaskIds")?.stringItems(ignoreBlank = true).orEmpty()
                 val referencedIdentifiers = item.arr("referencedTaskIdentifiers")?.stringItems(ignoreBlank = true).orEmpty()
-                TaskComment(item.getString("id"), taskId, item.optString("authorName"),
+                TaskComment(item.getString("id"), item.getString("taskId"), item.optString("authorName"),
                     item.getString("body"), item.optString("createdAt"), item.optString("sourceCommentId").takeUnless { it.isBlank() || it == "null" },
                     item.optJSONObject("dispatch")?.let { d ->
                         TaskCommentDispatch(
+                            executionTaskId = d.str("executionTaskId"),
+                            deliveryStatus = d.str("deliveryStatus"),
+                            blocker = d.str("blocker"),
                             employeeId = d.optString("employeeId"),
                             employeeName = d.optString("employeeName"),
                             state = d.optString("state"),
