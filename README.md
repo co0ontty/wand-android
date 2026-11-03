@@ -20,7 +20,8 @@ Kotlin 2.2 / compileSdk 36 兼容的版本）。构建会改写它的触摸判�
 
 - Android 工程代码放在此目录中。
 - APK 构建产物**不要提交到仓库**。
-- 本地 debug 分发包默认放在 `dist/apk/`，服务端通过 `config.json` 里的 `android.apkDir` 指向它。
+- 未配置本机原生存储策略时，本地 debug 分发包默认放在 `dist/apk/`；配置 `WAND_BUILD_STORAGE_ROOT` 后默认放在外盘的项目 `dist/`。服务端通过 `config.json` 里的 `android.apkDir` 指向分发目录。
+- `APK_DIST_DIR` 只指定最终 APK 与 `.last-debug-version` 的分发目录，可以指向内盘的 `~/.wand/android/`；不改变 Gradle 编译、project cache、模块输出与临时文件的位置，也不跳过外盘挂载、卷身份和容量校验。
 
 ## 本地分发流程
 
@@ -30,9 +31,11 @@ Kotlin 2.2 / compileSdk 36 兼容的版本）。构建会改写它的触摸判�
 ./debug.sh
 # 或只产出本地分发包、不安装到设备：
 SKIP_INSTALL=1 ./debug.sh
+# 分发到 Wand 本机服务目录，不安装到设备：
+SKIP_INSTALL=1 APK_DIST_DIR="$HOME/.wand/android" ./debug.sh
 ```
 
-`debug.sh` 会生成：
+未配置本机原生存储策略且未设置 `APK_DIST_DIR` 时，`debug.sh` 会生成：
 
 ```text
 dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
@@ -40,7 +43,7 @@ dist/apk/wand-vX.Y.Z-debug.MMDDHHMM.apk
 
 其中 `X.Y.Z` 取 Android 仓库与所在主仓库的最高正式语义 tag（`vX.Y.Z`），避免子仓标签晚于主仓发布时生成更低版本、被旧 Beta 包遮蔽。独立检出只取 Android 自身标签；不创建或推送标签。
 
-2. 在 wand 服务端 `config.json` 中打开 Android APK 分发，并把目录指向本子模块的 `dist/apk/`：
+2. 在 wand 服务端 `config.json` 中打开 Android APK 分发，并把目录指向实际分发目录（默认 `dist/apk/` 的示例如下；使用 `APK_DIST_DIR` 时改为对应目录）：
 
 ```json
 {

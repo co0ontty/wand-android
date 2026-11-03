@@ -213,6 +213,8 @@ class WandApi(baseUrl: String, val token: String?,
     suspend fun conversations(): List<ConversationInstance> =
         ConversationInstance.parseList(requestObject("GET", "/api/conversations"))
 
+    suspend fun exportDiagnostics(): String = requestData("GET", "/api/diagnostics/export")
+
     suspend fun deleteConversation(id: String) { requestObject("DELETE", "/api/conversations/${encode(id)}") }
 
     suspend fun updateConversationListState(id: String, patch: JSONObject): ConversationInstance =

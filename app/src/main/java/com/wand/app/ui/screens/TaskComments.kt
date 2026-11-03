@@ -575,7 +575,9 @@ internal fun TaskComments(
             it.title.contains(referenceQuery.query, ignoreCase = true)
     }
     val matches = if (mention == null) emptyList() else activeEmployees.filter { mention.text.isEmpty() || it.name.contains(mention.text, ignoreCase = true) }
-    val bound = activeEmployees.firstOrNull { it.id == draft.employeeId }
+    // 派发目标直接由正文里的 @名字 决定：只要 @ 了在职员工就视为派发，不再要求必须从下拉里选过。
+    val bound = TaskCommentMention.resolve(draft.body, activeEmployees) { it.name }
+        ?: activeEmployees.firstOrNull { it.id == draft.employeeId }
     val dispatching = bound != null && TaskCommentMention.holds(draft.body, bound.name)
     val validation = if (field.composition != null) "请先完成输入法组字，再提交评论。"
         else if (mention != null) "请先从 @ 候选列表选择员工，或删除未完成的提及。"
@@ -811,7 +813,9 @@ internal fun TaskComments(
         WandTextField(
             value = field,
             onValueChange = { value ->
-                val person = activeEmployees.firstOrNull { it.id == draft.employeeId }
+                // 正文里 @ 到的在职员工就是派发目标；下拉选过的那位作为兜底。
+                val person = TaskCommentMention.resolve(value.text, activeEmployees) { it.name }
+                    ?: activeEmployees.firstOrNull { it.id == draft.employeeId }
                 val employeeId = if (person != null && TaskCommentMention.holds(value.text, person.name)) person.id else ""
                 draft = TaskCommentDrafts.set(taskId, draft.copy(body = value.text, employeeId = employeeId))
                 field = value
@@ -859,7 +863,8 @@ internal fun TaskComments(
         WandButton(label = submitLabel, modifier = Modifier.fillMaxWidth(),
             enabled = !busy && validation == null, onClick = submit@{
                 if (!busy) {
-                    val person = activeEmployees.firstOrNull { it.id == draft.employeeId }
+                    val person = TaskCommentMention.resolve(draft.body, activeEmployees) { it.name }
+                        ?: activeEmployees.firstOrNull { it.id == draft.employeeId }
                     val name = if (person != null && TaskCommentMention.holds(draft.body, person.name)) person.name else ""
                     val error = if (field.composition != null) "请先完成输入法组字，再提交评论。"
                         else if (TaskCommentMention.query(field.text, field.selection.end) != null)

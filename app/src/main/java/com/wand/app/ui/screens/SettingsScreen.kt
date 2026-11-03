@@ -132,6 +132,8 @@ fun SettingsScreen(
     var betaChannel by remember { mutableStateOf(settings.isBetaChannel()) }
     var appearanceMode by remember { mutableStateOf(settings.getAppearanceMode()) }
     var exportingLogs by remember { mutableStateOf(false) }
+    var diagnosticsResult by remember { mutableStateOf<String?>(null) }
+    var diagnosticsLocation by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val appContext = context.applicationContext
     val logScope = rememberCoroutineScope()
@@ -363,9 +365,39 @@ fun SettingsScreen(
                                 SettingsDestination.Diagnostics -> {
                                     SettingsSection(
                                         title = "",
-                                        description = "导出运行与崩溃日志。",
+                                        description = "复现后导出服务端诊断（最近 30 分钟），或本机运行与崩溃日志。服务端诊断不含聊天正文、终端输出或凭据，不自动上传。",
                                     ) {
                                         SettingsCard(modifier = Modifier.fillMaxWidth()) {
+                                            ActionRow(
+                                                label = diagnosticsResult ?: "导出服务端诊断",
+                                                supportingText = diagnosticsLocation,
+                                                busyLabel = "正在导出…",
+                                                busy = exportingLogs,
+                                                enabled = !exportingLogs,
+                                                icon = WandIcons.download,
+                                                iconTint = WandColors.info,
+                                                onClick = {
+                                                    if (exportingLogs) return@ActionRow
+                                                    exportingLogs = true
+                                                    logScope.launch {
+                                                        val result = runCatching {
+                                                            val report = api.exportDiagnostics()
+                                                            withContext(Dispatchers.IO) {
+                                                                WandDiagnostics.saveReportToDownloads(appContext, report, "wand-diagnostics-${System.currentTimeMillis()}.json")
+                                                            }
+                                                        }
+                                                        exportingLogs = false
+                                                        result.onSuccess { location ->
+                                                            diagnosticsResult = "诊断文件已保存"
+                                                            diagnosticsLocation = location
+                                                        }.onFailure {
+                                                            diagnosticsResult = "导出失败，点击重试"
+                                                            diagnosticsLocation = "请确认服务端已更新且连接正常"
+                                                        }
+                                                    }
+                                                },
+                                            )
+                                            RowDivider()
                                             ActionRow(
                                                 label = "保存到「下载」",
                                                 busyLabel = "正在导出…",

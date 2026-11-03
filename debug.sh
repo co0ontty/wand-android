@@ -6,6 +6,7 @@
 #   ./debug.sh                 # 编译 + 推送到所有在线设备
 #   SKIP_BUILD=1 ./debug.sh    # 跳过编译，直接安装现有 APK 到所有设备
 #   SKIP_INSTALL=1 ./debug.sh  # 只编译并复制分发 APK，不安装到设备
+#   SKIP_INSTALL=1 APK_DIST_DIR="$HOME/.wand/android" ./debug.sh  # 分发到本机服务目录
 #   LAUNCH=1 ./debug.sh        # 安装后顺带拉起 Wand
 #   EMULATOR=1 ./debug.sh      # 特殊模式：启动/复用本机模拟器并安装+启动
 #   AVD_NAME=pixel_9 EMULATOR=1 ./debug.sh
@@ -53,10 +54,12 @@ if [[ -n "${WAND_BUILD_STORAGE_ROOT:-}" ]]; then
   DEFAULT_APK_DIST_DIR="$WAND_BUILD_STORAGE_ROOT/android/$PROJECT_KEY/dist"
 fi
 APK_PATH="$APP_BUILD_DIR/outputs/apk/debug/app-debug.apk"
+# APK_DIST_DIR only receives the finished APK and version stamp. It may be the
+# service's internal-disk distribution directory; compilation stays under the
+# native storage policy regardless of this destination.
 APK_DIST_DIR="${APK_DIST_DIR:-$DEFAULT_APK_DIST_DIR}"
 if type wand_assert_external_build_path >/dev/null 2>&1; then
   wand_assert_external_build_path "$APP_BUILD_DIR"
-  wand_assert_external_build_path "$APK_DIST_DIR"
 fi
 STAMP_FILE="$APK_DIST_DIR/.last-debug-version"
 

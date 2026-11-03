@@ -79,4 +79,8 @@ internal object TaskCommentMention {
     }
 
     fun holds(body: String, name: String): Boolean = mentionRanges(body, name).isNotEmpty()
+
+    /** 正文里 @ 到的在职员工即派发目标；名字可能含空格，优先匹配最长（最具体）的名字。 */
+    fun <T> resolve(body: String, employees: List<T>, name: (T) -> String): T? =
+        employees.filter { name(it).isNotEmpty() }.sortedByDescending { name(it).length }.firstOrNull { holds(body, name(it)) }
 }

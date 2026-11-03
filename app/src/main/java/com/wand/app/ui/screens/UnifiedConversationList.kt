@@ -139,14 +139,23 @@ internal fun UnifiedConversationList(
             if (queuedTasks.isNotEmpty()) {
                 item(key = "queued-tasks-header") { Text("排队任务 · ${queuedTasks.size}", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall) }
                 items(queuedTasks, key = { "queued-task:" + it.second.id }) { (group, task) ->
-                    Column(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                        .clickable(enabled = interactionEnabled) { task.boardTaskId?.let(onOpenQueuedTask) }
-                        .padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(task.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                        Text(listOfNotNull(task.boardTaskIdentifier, task.assignedExecutorName, group.workspaceName,
-                            "${task.pendingDispatchCount} 条派发排队中").joinToString(" · "),
-                            maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                        .clickable(enabled = interactionEnabled) {
+                            swipeOwner?.value = null
+                            task.boardTaskId?.let(onOpenQueuedTask)
+                        }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(task.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                            Text(listOfNotNull(task.boardTaskIdentifier, task.assignedExecutorName, group.workspaceName,
+                                "${task.pendingDispatchCount} 条派发排队中").joinToString(" · "),
+                                maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(WandIcons.history, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 12.dp).size(16.dp))
                     }
                 }
             }
