@@ -560,12 +560,17 @@ data class WorkspaceTaskSummary(
     val totalSessions: Int,
     val executionStatus: String? = null,
     val queuedExecutionCount: Int = 0,
+    val queuedDispatchCount: Int? = null,
+    val assignedExecutorId: String? = null,
+    val assignedExecutorName: String? = null,
+    val boardTaskIdentifier: String? = null,
     /** Business stage comes only from boardTaskStatus, never workspace active/done or ID presence. */
     val boardTaskId: String? = null,
     val boardTaskStatus: String? = null,
     val archived: Boolean = false,
     val parentWorkspaceTaskId: String? = null,
 ) {
+    val pendingDispatchCount: Int get() = queuedDispatchCount ?: if (hasQueuedExecution) queuedExecutionCount else 0
     val hasQueuedExecution: Boolean get() = executionStatus == "queued"
     val hasActiveExecution: Boolean get() = hasQueuedExecution || executionStatus == "running"
     val id: String get() = task.id
@@ -593,6 +598,10 @@ data class WorkspaceTaskSummary(
                 parentWorkspaceTaskId = o.str("parentWorkspaceTaskId"),
                 executionStatus = o.str("executionStatus"),
                 queuedExecutionCount = o.int("queuedExecutionCount")?.coerceAtLeast(0) ?: 0,
+                queuedDispatchCount = o.int("queuedDispatchCount")?.coerceAtLeast(0),
+                assignedExecutorId = o.optJSONObject("assignedExecutor")?.str("id"),
+                assignedExecutorName = o.optJSONObject("assignedExecutor")?.str("name"),
+                boardTaskIdentifier = o.str("boardTaskIdentifier"),
             )
         }
     }
@@ -671,6 +680,8 @@ data class TaskGroupsPage(
     val groups: List<TaskDirectoryGroup>,
     val revision: String? = null,
     val unchanged: Boolean = false,
+    /** null：旧服务端没有正式任务数组。空列表表示这次快照确实没有正式任务。 */
+    val formalTasks: List<BoardTask>? = null,
 ) {
     companion object {
         fun parse(text: String): TaskGroupsPage {
@@ -681,6 +692,7 @@ data class TaskGroupsPage(
                     groups = o.arr("groups")?.let(TaskDirectoryGroup::parseList) ?: emptyList(),
                     revision = o.str("revision"),
                     unchanged = o.optBoolean("unchanged", false),
+                    formalTasks = if (o.has("tasks")) BoardTask.parseList(o.optJSONArray("tasks")) else null,
                 )
             }
             return TaskGroupsPage(TaskDirectoryGroup.parseList(JSONArray(trimmed)))

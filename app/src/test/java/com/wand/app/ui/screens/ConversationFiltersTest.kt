@@ -18,9 +18,9 @@ class ConversationFiltersTest {
             }
 
     private fun group(id: String = "w", tasks: List<JSONObject> = emptyList(), standalone: List<JSONObject> = emptyList(),
-        synthetic: Boolean = false, global: Boolean = false): TaskDirectoryGroup = TaskDirectoryGroup.parse(
+        synthetic: Boolean = false, global: Boolean = false, userAdded: Boolean = true): TaskDirectoryGroup = TaskDirectoryGroup.parse(
         JSONObject().put("workspaceId", id).put("workspaceName", "项目 $id").put("workspaceCwd", "/same/path")
-            .put("synthetic", synthetic).put("global", global).put("tasks", JSONArray(tasks))
+            .put("userAdded", userAdded).put("synthetic", synthetic).put("global", global).put("tasks", JSONArray(tasks))
             .put("standaloneSessions", JSONArray(standalone)))!!
 
     private fun person() = ConversationInstance.parse(JSONObject().put("id", "dm_e").put("kind", "dm")
@@ -71,19 +71,20 @@ class ConversationFiltersTest {
         val groups = listOf(group("real", standalone = listOf(session("real"))),
             group("synthetic", standalone = listOf(session("synthetic")), synthetic = true),
             group("global", standalone = listOf(session("global")), global = true),
-            group("wand-global", standalone = listOf(session("wand-global"))))
+            group("wand-global", standalone = listOf(session("wand-global"))),
+            group("automatic", standalone = listOf(session("automatic")), userAdded = false))
         val all = projectConversationList(listOf(person()), groups, ConversationListFilters(), "")
-        assertEquals(4, all.rows.single().sessions.size)
+        assertEquals(5, all.rows.single().sessions.size)
         val filtered = projectConversationList(listOf(person()), groups,
             ConversationListFilters(workspaceId = UnassignedConversationWorkspace), "")
-        assertEquals(setOf("synthetic", "global", "wand-global"), filtered.rows.single().sessions.map { it.session.id }.toSet())
+        assertEquals(setOf("synthetic", "global", "wand-global", "automatic"), filtered.rows.single().sessions.map { it.session.id }.toSet())
         assertEquals("未分配", conversationWorkspaceLabel(groups[1]))
         assertEquals("real", conversationWorkspaceId(groups[0]))
     }
 
     @Test fun taskArchiveAndSessionArchiveAreIndependentAndArchivedChildrenAreNotLost() {
         val groups = listOf(group(tasks = listOf(task("t", "archived", listOf(session("live"), session("archived", archived = true))))))
-        val all = ConversationListFilters(stage = ConversationTaskStage.Archived)
+        val all = ConversationListFilters(stage = ConversationTaskStage.Archived, tier = ConversationListTier.All)
         assertEquals(2, projectConversationList(listOf(person()), groups, all, "").rows.single().sessions.size)
         assertEquals(listOf("live"), projectConversationList(listOf(person()), groups,
             all.copy(tier = ConversationListTier.Active), "").rows.single().sessions.map { it.session.id })
@@ -163,7 +164,7 @@ class ConversationFiltersTest {
     }
 
     @Test fun filterCountAndStaleWorkspaceSummaryRemainClearable() {
-        val filters = ConversationListFilters(stage = ConversationTaskStage.Review, workspaceId = "deleted", tier = ConversationListTier.Active, activeOnly = true)
+        val filters = ConversationListFilters(stage = ConversationTaskStage.Review, workspaceId = "deleted", tier = ConversationListTier.All, activeOnly = true)
         assertEquals(4, filters.count)
         assertTrue(conversationFilterSummary(filters, emptyList()).contains("工作区不可用（deleted）"))
         assertEquals(0, ConversationListFilters().count)

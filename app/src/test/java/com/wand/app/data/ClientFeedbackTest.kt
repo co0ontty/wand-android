@@ -134,7 +134,7 @@ class ClientFeedbackTest {
         }.use { server ->
             try { WandApi(server.baseUrl, null).listBoardTasks(); fail("Expected 503") }
             catch (error: WandApiException) { assertEquals(503, error.status) }
-            assertTrue(server.next().first.startsWith("GET /api/wand-tasks "))
+            assertTrue(server.next().first.startsWith("GET /api/tasks?"))
             val feedback = server.next()
             val json = JSONObject(feedback.second)
             assertEquals("http_5xx", json.getString("event")); assertEquals("tasks", json.getString("feature"))

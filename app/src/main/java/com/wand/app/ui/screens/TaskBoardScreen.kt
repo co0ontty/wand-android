@@ -86,6 +86,7 @@ import com.wand.app.data.ModelsResponse
 import com.wand.app.data.SiliconEmployee
 import com.wand.app.data.TaskBoardPort
 import com.wand.app.data.TaskDirectoryGroup
+import com.wand.app.data.activeTaskDirectoryGroups
 import com.wand.app.data.Workspace
 import com.wand.app.data.TeamRunAction
 import com.wand.app.data.WorkspaceSessionSummary
@@ -166,6 +167,7 @@ fun TaskBoardScreen(
     var filterWorkspaceId by remember { mutableStateOf(linkedWorkspaceId.orEmpty()) }
     var statusFilter by remember { mutableStateOf("") }
     val refreshMutex = remember(api, workspaceApi) { kotlinx.coroutines.sync.Mutex() }
+    var listRevision by remember(api, workspaceApi) { mutableStateOf<String?>(null) }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
     fun openSession(id: String, structured: Boolean) {
@@ -180,18 +182,18 @@ fun TaskBoardScreen(
     suspend fun refresh(showProgress: Boolean = false) = refreshMutex.withLock {
         if (showProgress) loading = true
         try {
-            tasks = api.listBoardTasks()
+            val page = workspaceApi.listTaskGroupsPage(listRevision)
+            if (!page.unchanged) {
+                val formal = page.formalTasks
+                tasks = formal ?: api.listBoardTasks()
+                directoryGroups = activeTaskDirectoryGroups(page.groups)
+                listRevision = page.revision
+            }
             refreshError = null
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            refreshError = e.message ?: "无法加载任务。"
-        }
-        try {
-            directoryGroups = workspaceApi.listTaskGroups()
             directoryError = null
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            directoryError = e.message ?: "无法加载未分组会话。"
+            refreshError = e.message ?: "无法加载任务。"
         } finally {
             loading = false
         }
@@ -291,6 +293,12 @@ fun TaskBoardScreen(
                 )
                 else -> TaskBoardList(
                     tasks = visible,
+                    queuedTasks = tasks.filter { task ->
+                        task.status != "archived" &&
+                            (task.executionStatus == "queued" || (task.queuedExecutionCount ?: task.queuedCommentCount) > 0) &&
+                            boardTaskMatches(task, query, filterWorkspaceId) &&
+                            (statusFilter.isBlank() || task.status == statusFilter)
+                    },
                     stats = stats,
                     projectName = projectName,
                     workspaces = workspaces,
@@ -350,6 +358,7 @@ fun TaskBoardScreen(
 @Composable
 private fun TaskBoardList(
     tasks: List<BoardTask>,
+    queuedTasks: List<BoardTask>,
     stats: BoardTaskStats,
     projectName: String,
     workspaces: List<Workspace>,
@@ -371,7 +380,8 @@ private fun TaskBoardList(
     modifier: Modifier = Modifier,
     bottomClearance: Dp = 0.dp,
 ) {
-    val grouped = groupedBoardTasks(tasks)
+    val queuedIds = queuedTasks.map { it.id }.toSet()
+    val grouped = groupedBoardTasks(tasks.filter { it.id !in queuedIds })
     val archived = boardArchivedTasks(tasks)
     var archiveCollapsed by remember { mutableStateOf(true) }
     var doneCollapsed by remember { mutableStateOf(true) }
@@ -489,7 +499,14 @@ private fun TaskBoardList(
                 )
             }
         }
-        if (tasks.isEmpty() && standaloneGroups.isEmpty()) {
+        if (queuedTasks.isNotEmpty()) {
+            item(key = "queued-header") {
+                Text("排队任务 · ${queuedTasks.size}", style = MaterialTheme.typography.titleSmall,
+                    color = WandColors.textSecondary, modifier = Modifier.padding(vertical = 8.dp))
+            }
+            items(queuedTasks, key = { "queued-${it.id}" }) { task -> taskRow(task) }
+        }
+        if (tasks.isEmpty() && standaloneGroups.isEmpty() && queuedTasks.isEmpty()) {
             item(key = "empty") {
                 EmptyState(
                     icon = WandIcons.todo,
@@ -523,7 +540,7 @@ private fun TaskBoardList(
                 }
             }
         } else if (tasks.isNotEmpty()) {
-            items(tasks, key = { it.id }) { task -> taskRow(task) }
+            items(tasks.filter { it.id !in queuedIds }, key = { it.id }) { task -> taskRow(task) }
         }
     }
     pendingSwipe?.let { (task, action) ->

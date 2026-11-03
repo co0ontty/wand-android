@@ -913,6 +913,7 @@ private fun SinglePaneContent(
             TaskListScreen(
                 conversationList = { clearance, enabled, move, delete -> UnifiedConversationList(conversationState, clearance,
                     interactionEnabled = enabled, onMoveSession = move, onDeleteSession = delete,
+                    onOpenQueuedTask = { id -> nav.push(Screen.TaskBoard(taskId = id)) },
                     onReload = { taskState.load(silent = true) }, showsFilters = nav.current is Screen.SessionList, onMode = onHomeListModeChange, onCreate = { workspaceId ->
                     val cwd = taskState.conversationGroups.firstOrNull { it.workspaceId == workspaceId }?.workspaceCwd
                     nav.push(pendingConversationScreen(pendingConversationEntryScope(workspaceId, null, cwd), cwd = cwd, workspaceId = workspaceId))
@@ -1056,6 +1057,7 @@ private fun WideReadyContent(
                     // 侧栏点一条 = 显式打开意图：详情落右栏，而不是靠 selectedId 投影出一个输入框。
                     conversationList = { clearance, enabled, move, delete -> UnifiedConversationList(conversationState, clearance,
         interactionEnabled = enabled, onMoveSession = move, onDeleteSession = delete,
+        onOpenQueuedTask = { id -> nav.push(Screen.TaskBoard(taskId = id)) },
         onReload = { taskState.load(silent = true) }, showsFilters = nav.current is Screen.SessionList, onMode = onHomeListModeChange, onCreate = { workspaceId ->
         val cwd = taskState.conversationGroups.firstOrNull { it.workspaceId == workspaceId }?.workspaceCwd
         nav.push(pendingConversationScreen(pendingConversationEntryScope(workspaceId, null, cwd), cwd = cwd, workspaceId = workspaceId))

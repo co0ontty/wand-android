@@ -48,6 +48,8 @@ class WandApi(baseUrl: String, val token: String?,
 
     val baseUrl: String = WandHttp.normalizeBaseUrl(baseUrl)
     private val client = WandHttp.clientFor(this.baseUrl)
+    private var retainedFormalTasks: List<BoardTask>? = null
+    private var retainedFormalRevision: String? = null
     private val feedback = ClientFeedback(this.baseUrl, token)
     private val taskMutations = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     override val taskChanges = taskMutations.asSharedFlow()
@@ -734,8 +736,16 @@ class WandApi(baseUrl: String, val token: String?,
     // MARK: - 任务管理（WandTask 看板）
 
     override suspend fun listBoardTasks(workspaceId: String?): List<BoardTask> {
-        val query = workspaceId?.takeIf { it.isNotBlank() }?.let { "?workspaceId=${encode(it)}" }.orEmpty()
-        return BoardTask.parseList(requestArray("GET", "/api/wand-tasks$query"))
+        val page = listTaskGroupsPage(if (retainedFormalTasks != null) retainedFormalRevision else null)
+        val tasks = when {
+            page.unchanged && retainedFormalTasks != null -> retainedFormalTasks!!
+            page.formalTasks != null -> page.formalTasks
+            else -> {
+                val query = workspaceId?.takeIf { it.isNotBlank() }?.let { "?workspaceId=${encode(it)}" }.orEmpty()
+                return BoardTask.parseList(requestArray("GET", "/api/wand-tasks$query"))
+            }
+        }
+        return if (workspaceId.isNullOrBlank()) tasks else tasks.filter { it.workspaceId == workspaceId }
     }
 
     override suspend fun getBoardTask(id: String): BoardTask? =
@@ -1074,7 +1084,12 @@ class WandApi(baseUrl: String, val token: String?,
 
     override suspend fun listTaskGroupsPage(revision: String?): TaskGroupsPage {
         val path = "/api/tasks?includeArchived=1&revision=${encode(revision ?: "")}"
-        return TaskGroupsPage.parse(requestData("GET", path))
+        val page = TaskGroupsPage.parse(requestData("GET", path))
+        if (!page.unchanged && page.formalTasks != null) {
+            retainedFormalTasks = page.formalTasks
+            retainedFormalRevision = page.revision
+        }
+        return page
     }
 
     override suspend fun listWorkspaceDirectories(path: String): DirectoryListing =

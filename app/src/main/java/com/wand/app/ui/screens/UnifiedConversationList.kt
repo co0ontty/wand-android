@@ -33,6 +33,7 @@ internal fun UnifiedConversationList(
     onDeleteSession: (WorkspaceSessionSummary) -> Unit,
     onOpenSettings: () -> Unit, onSwitchServer: () -> Unit,
     groups: List<TaskDirectoryGroup>, groupsLoading: Boolean, groupsError: String?,
+    onOpenQueuedTask: (String) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit, onCreate: (String?) -> Unit, onReload: suspend () -> Unit, showsFilters: Boolean, onMode: (HomeListMode) -> Unit, onSelect: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -47,7 +48,23 @@ internal fun UnifiedConversationList(
     DisposableEffect(Unit) { onDispose { swipeOwner?.value = null } }
     val workspaces = conversationWorkspaceOptions(groups)
     val entries = conversationFilterSessions(groups).distinctBy { it.session.id }
-    val employees = conversationEmployeeOptions(entries)
+    val employees = (conversationEmployeeOptions(entries) + groups.flatMap { it.tasks }.mapNotNull { task ->
+        task.assignedExecutorId?.takeIf { task.pendingDispatchCount > 0 }?.let { it to (task.assignedExecutorName ?: "员工") }
+    }).distinctBy { it.first }
+    val queuedTasks = groups.flatMap { group ->
+        group.tasks.filter { task ->
+            val workspace = conversationWorkspaceId(group)
+            task.pendingDispatchCount > 0 && !task.archived && task.boardTaskId != null &&
+                filters.tier != ConversationListTier.Archived &&
+                (filters.runtimes.isEmpty() || ConversationRuntime.Queued in filters.runtimes) &&
+                (filters.workspaceIds.isEmpty() || workspace in filters.workspaceIds) &&
+                (filters.workspaceId == null || workspace == filters.workspaceId) &&
+                (filters.employeeIds.isEmpty() || (task.assignedExecutorId ?: "none") in filters.employeeIds) &&
+                (filters.stage == ConversationTaskStage.All || filters.stage == ConversationTaskStage.fromBoard(task.boardTaskStatus)) &&
+                listOfNotNull(task.name, task.boardTaskIdentifier, group.workspaceName, task.assignedExecutorName)
+                    .joinToString(" ").contains(query.trim(), ignoreCase = true)
+        }.map { group to it }
+    }.distinctBy { it.second.id }
     val rows = entries.filter { item ->
         conversationSessionMatches(item, filters, !groupsLoading && groupsError == null) &&
             listOfNotNull(item.session.title, item.session.toolLabel, item.session.employeeName, conversationWorkspaceLabel(item.group)).any { it.contains(query.trim(), ignoreCase = true) }
@@ -119,12 +136,26 @@ internal fun UnifiedConversationList(
                     }
                 }
             }
+            if (queuedTasks.isNotEmpty()) {
+                item(key = "queued-tasks-header") { Text("排队任务 · ${queuedTasks.size}", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall) }
+                items(queuedTasks, key = { "queued-task:" + it.second.id }) { (group, task) ->
+                    Column(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                        .clickable(enabled = interactionEnabled) { task.boardTaskId?.let(onOpenQueuedTask) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(task.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                        Text(listOfNotNull(task.boardTaskIdentifier, task.assignedExecutorName, group.workspaceName,
+                            "${task.pendingDispatchCount} 条派发排队中").joinToString(" · "),
+                            maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
             if (attention.isNotEmpty()) item { Text("我需要关注", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall) }
             sessions(attention)
             if (attention.isNotEmpty() && remaining.isNotEmpty()) item { Text("其他会话", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall) }
             sessions(remaining)
             items(history, key = { "history:" + it.id }) { item -> TextButton(onClick = { onSelect(item.id) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(item.title, maxLines = 2) } }
-            if (rows.isEmpty() && history.isEmpty() && !groupsLoading && !state.loading) item {
+            if (rows.isEmpty() && history.isEmpty() && queuedTasks.isEmpty() && !groupsLoading && !state.loading) item {
                 Text(if (filters.count == 0 && query.isEmpty()) "还没有会话" else "没有匹配的会话", Modifier.padding(16.dp))
                 if (filters.count > 0 || query.isNotEmpty()) TextButton(onClick = { state.listFilters = ConversationListFilters(); query = "" }) { Text("清除筛选与搜索") }
             }
