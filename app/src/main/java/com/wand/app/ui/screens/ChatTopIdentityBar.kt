@@ -132,6 +132,7 @@ internal fun ChatTopIdentityBar(
                 fileActivity = fileActivity,
                 thinking = thinking,
                 backdrop = backdrop,
+                modifier = Modifier.weight(1f),
             )
         }
     }

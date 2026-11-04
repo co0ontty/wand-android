@@ -34,6 +34,7 @@ internal fun UnifiedConversationList(
     onOpenSettings: () -> Unit, onSwitchServer: () -> Unit,
     groups: List<TaskDirectoryGroup>, groupsLoading: Boolean, groupsError: String?,
     onOpenQueuedTask: (String) -> Unit,
+    onMergeAgent: (String, String, String) -> Unit,
     onOpenSession: (TaskSessionRoute) -> Unit, onCreate: (String?) -> Unit, onReload: suspend () -> Unit, showsFilters: Boolean, onMode: (HomeListMode) -> Unit, onSelect: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -67,11 +68,35 @@ internal fun UnifiedConversationList(
     }.distinctBy { it.second.id }
     val rows = entries.filter { item ->
         conversationSessionMatches(item, filters, !groupsLoading && groupsError == null) &&
-            listOfNotNull(item.session.title, item.session.toolLabel, item.session.employeeName, conversationWorkspaceLabel(item.group)).any { it.contains(query.trim(), ignoreCase = true) }
+            listOfNotNull(item.session.title, item.session.toolLabel, item.session.employeeName, conversationWorkspaceLabel(item.group), item.task?.worktree?.branch, item.task?.worktree?.path, item.session.cwd).any { it.contains(query.trim(), ignoreCase = true) }
     }
     val history = emptyList<ConversationInstance>()
     val attention = rows.filter { conversationRuntime(it) in setOf(ConversationRuntime.Failed, ConversationRuntime.Confirmation) }
     val remaining = rows.filterNot { it in attention }
+    val projects = groups.filter { it.userAdded && !it.synthetic && !it.isGlobal }
+    val directories = remember(state.api) { mutableStateMapOf<String, SessionDirectory>() }
+    val directoryErrors = remember(state.api) { mutableStateMapOf<String, String>() }
+    var directoryRevision by remember { mutableIntStateOf(0) }
+    var collapsed by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var mergeTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    fun expanded(id: String) = query.isNotBlank() || id !in collapsed
+    fun toggle(id: String) { collapsed = if (id in collapsed) collapsed - id else collapsed + id }
+    fun inside(cwd: String, root: String) = cwd == root || cwd.startsWith(root.trimEnd('/') + "/")
+    fun cwd(item: HomeRecentConversation) = item.task?.worktree?.path ?: item.session.cwd ?: item.group.workspaceCwd
+    fun owner(item: HomeRecentConversation) = projects.filter { p -> p.workspaceId == item.group.workspaceId || inside(cwd(item), p.workspaceCwd) || directories[p.workspaceId]?.worktrees?.any { inside(cwd(item), it.path) } == true }.maxByOrNull { it.workspaceCwd.length }?.workspaceId
+    fun tree(item: HomeRecentConversation, directory: SessionDirectory?) = directory?.worktrees?.filter { inside(cwd(item), it.path) }?.maxByOrNull { it.path.length }?.path
+    LaunchedEffect(projects.map { it.workspaceId to it.workspaceCwd }, directoryRevision) {
+        while (true) {
+            for (project in projects) {
+                try { directories[project.workspaceId] = state.api.sessionDirectory(project.workspaceId); directoryErrors.remove(project.workspaceId) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { directoryErrors[project.workspaceId] = e.message ?: "目录信息暂不可用" }
+            }
+            kotlinx.coroutines.delay(30000)
+        }
+    }
+    mergeTarget?.let { target -> SessionDirectoryMergeDialog(state.api, target.first, target.second,
+        onClose = { mergeTarget = null }, onChanged = { directoryRevision++; scope.launch { onReload() } }, onAgent = onMergeAgent) }
     val backdrop = rememberGlassBackdrop()
         Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().glassBackdropSource(backdrop)) {
@@ -159,10 +184,37 @@ internal fun UnifiedConversationList(
                     }
                 }
             }
-            if (attention.isNotEmpty()) item { Text("我需要关注", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall) }
-            sessions(attention)
-            if (attention.isNotEmpty() && remaining.isNotEmpty()) item { Text("其他会话", Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall) }
-            sessions(remaining)
+            for (project in projects) {
+                val directory = directories[project.workspaceId]
+                val matches = (attention + remaining).filter { owner(it) == project.workspaceId }
+                val trees = directory?.worktrees.orEmpty()
+                if (matches.isEmpty() && (query.isNotEmpty() || filters.count > 0)) continue
+                item(key = "directory:" + project.workspaceId) {
+                    SessionDirectoryHeading(project.workspaceName,
+                        if (directoryErrors.containsKey(project.workspaceId)) "分支与 Worktree 暂不可用" else directory?.let { if (it.isGit) "${it.branch.ifEmpty { "detached HEAD" }} · ${it.worktrees.size} 个 Worktree" else "非 Git 目录" } ?: "正在读取目录…",
+                        null, expanded(project.workspaceId), { toggle(project.workspaceId) })
+                    if (directoryErrors.containsKey(project.workspaceId)) TextButton(onClick = { directoryRevision++ }) { Text("重新读取目录") }
+                }
+                if (expanded(project.workspaceId)) {
+                    if (trees.isNotEmpty()) item(key = "main:" + project.workspaceId) { SessionDirectoryHeading("主目录", directory?.branch, null, expanded(project.workspaceId + ":main"), { toggle(project.workspaceId + ":main") }) }
+                    if (trees.isEmpty() || expanded(project.workspaceId + ":main")) sessions(matches.filter { tree(it, directory) == null })
+                    for (worktree in trees) {
+                        val treeRows = matches.filter { tree(it, directory) == worktree.path }
+                        if (query.isNotBlank() && treeRows.isEmpty() && !(worktree.name + " " + worktree.branch).contains(query, true)) continue
+                        val id = project.workspaceId + ":" + worktree.path
+                        item(key = id) { SessionDirectoryHeading(worktree.name, worktree.branch.ifEmpty { "detached HEAD" }, "${treeRows.size} 个会话", expanded(id), { toggle(id) }, { mergeTarget = project.workspaceId to worktree.path }) }
+                        if (expanded(id)) {
+                            sessions(treeRows)
+                            if (treeRows.isEmpty()) item(key = "empty:" + id) { Text("暂无匹配会话", Modifier.padding(start = 32.dp, bottom = 12.dp), style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                }
+            }
+            val otherRows = (attention + remaining).filter { owner(it) == null }
+            if (otherRows.isNotEmpty()) {
+                item(key = "other") { SessionDirectoryHeading("其他会话", null, "${otherRows.size} 个会话", expanded("other"), { toggle("other") }) }
+                if (expanded("other")) sessions(otherRows)
+            }
             items(history, key = { "history:" + it.id }) { item -> TextButton(onClick = { onSelect(item.id) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(item.title, maxLines = 2) } }
             if (rows.isEmpty() && history.isEmpty() && queuedTasks.isEmpty() && !groupsLoading && !state.loading) item {
                 Text(if (filters.count == 0 && query.isEmpty()) "还没有会话" else "没有匹配的会话", Modifier.padding(16.dp))

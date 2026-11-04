@@ -275,6 +275,17 @@ class WandApi(baseUrl: String, val token: String?,
     suspend fun listSessions(): List<SessionSnapshot> =
         SessionSnapshot.parseList(requestArray("GET", "/api/sessions"))
 
+    suspend fun sessionDirectory(workspaceId: String): SessionDirectory = SessionDirectory.parse(
+        requestObject("GET", "/api/workspaces/${java.net.URLEncoder.encode(workspaceId, "UTF-8")}/directory"))
+
+    suspend fun directoryMergeCheck(workspaceId: String, sourcePath: String): JSONObject = requestObject("POST",
+        "/api/workspaces/${java.net.URLEncoder.encode(workspaceId, "UTF-8")}/directory/merge-check", JSONObject().put("sourcePath", sourcePath))
+
+    suspend fun mergeDirectory(check: JSONObject): JSONObject = requestObject("POST",
+        "/api/workspaces/${java.net.URLEncoder.encode(check.getString("workspaceId"), "UTF-8")}/directory/merge",
+        JSONObject().put("sourcePath", check.getString("worktreePath")).put("sourceBranch", check.getString("sourceBranch"))
+            .put("targetBranch", check.getString("targetBranch")).put("sourceHead", check.getString("sourceHead")).put("targetHead", check.getString("targetHead")))
+
     suspend fun getSession(id: String, blockBudget: Int? = CHAT_BLOCK_WINDOW): SessionSnapshot =
         withContext(Dispatchers.Default) {
             SessionSnapshot.parse(
@@ -383,9 +394,11 @@ class WandApi(baseUrl: String, val token: String?,
     suspend fun sendStructuredInput(
         id: String,
         input: String,
+        expectedQuestionId: String? = null,
     ): SessionSnapshot {
         val body = JSONObject().put("input", input).put("respondImmediately", true)
             .put("idempotencyKey", java.util.UUID.randomUUID().toString())
+        if (expectedQuestionId != null) body.put("expectedQuestionId", expectedQuestionId)
         return SessionSnapshot.parse(requestObject("POST", "/api/sessions/$id/input", body))
     }
 

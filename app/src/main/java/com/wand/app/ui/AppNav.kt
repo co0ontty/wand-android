@@ -28,6 +28,7 @@ sealed class Screen {
         internal fun takeInitialSnapshot(): SessionSnapshot? = initialSnapshot.also { initialSnapshot = null }
     }
     data class PendingConversation(
+        val initialPrompt: String? = null,
         val draftKey: String,
         val cwd: String? = null,
         val workspaceId: String? = null,

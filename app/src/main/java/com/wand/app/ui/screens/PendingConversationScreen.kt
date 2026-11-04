@@ -1,5 +1,8 @@
 package com.wand.app.ui.screens
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import android.net.Uri
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
@@ -66,7 +69,7 @@ import com.wand.app.ui.components.EmployeeAvatar
 import com.wand.app.ui.components.WandProviderMark
 import com.wand.app.ui.theme.WandColors
 
-private enum class PendingChoice { Object, Tool, Kind, Task, TaskName, Model, Mode, Thinking, RecoveryTask }
+private enum class PendingChoice { Object, Tool, Kind, Task, TaskName, Model, Mode, Thinking, RecoveryTask, RecoverySession, SeparateSession }
 
 internal fun pendingInitialEmployeeId(explicitId: String?): String =
     explicitId?.takeIf(String::isNotBlank) ?: "e_wand_default"
@@ -84,6 +87,7 @@ internal fun PendingConversationScreen(
     workspaceTaskId: String? = null,
     taskName: String? = null,
     initialEmployeeId: String? = null,
+    initialPrompt: String? = null,
     initialCreateMode: Boolean = false,
     taskWorktree: Boolean = false,
     creationStore: com.wand.app.ui.PendingCreationStore,
@@ -112,6 +116,9 @@ internal fun PendingConversationScreen(
             send = { error("pending composer cannot send before a session exists") },
             notice = { message -> taskState.reportMutationError(message) },
         )
+    }
+    LaunchedEffect(composer) {
+        if (initialPrompt != null && composer.draft.isEmpty() && composer.attachments.isEmpty()) composer.editDraft(initialPrompt)
     }
     DisposableEffect(composer) {
         onDispose { composer.shutdown() }
@@ -280,6 +287,26 @@ internal fun PendingConversationScreen(
 
     val hasKnownSession = drafts.pendingCreatedSession(draftKey) != null || drafts.pendingTaskWindow(draftKey) != null || persistedCreation.sessionId != null
     val hasKnownTask = drafts.pendingCreatedTask(draftKey) != null || persistedCreation.taskId != null
+    val unknownSession = persistedCreation.unconfirmed &&
+        persistedCreation.operation == com.wand.app.ui.PendingCreationOperation.SESSION && !hasKnownSession
+    var recoverySessions by remember(creationKey) { mutableStateOf<List<SessionSnapshot>>(emptyList()) }
+    var recoveryRetry by remember(creationKey) { mutableStateOf(0) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(api, creationKey, unknownSession, lifecycle, recoveryRetry) {
+        if (unknownSession) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            try {
+                val taskId = persistedCreation.taskId ?: workspaceTaskId
+                recoverySessions = api.listSessions().filter {
+                    it.archived != true && (taskId == null || it.workspaceTaskId == taskId) &&
+                        (selectedCwd.isBlank() || it.cwd == selectedCwd)
+                }.sortedByDescending { it.startedAt }.take(10)
+                error = "已核对会话列表，无法确定上一次创建的是哪一个。"
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                error = "无法读取会话列表：${failure.message}"
+            }
+        }
+    }
     val canResumeCreation = hasKnownSession || hasKnownTask
     val canCreateEmptyShell = target.isShell && composer.draft.isBlank() &&
         composer.attachments.isEmpty() && composer.stagedAttachments.isEmpty()
@@ -489,6 +516,7 @@ internal fun PendingConversationScreen(
                     if (acceptedTaskNotPersisted || acceptedSessionNotPersisted) {
                         drafts.setPendingCreationUnconfirmed(draftKey, true)
                     }
+                    persistedCreation = creationStore.state(creationKey)
                     creationStarted = knownSessionId != null || drafts.pendingTaskWindow(draftKey) != null || drafts.pendingCreatedTask(draftKey) != null || drafts.pendingCreationUnconfirmed(draftKey)
                 } finally {
                     busy = false
@@ -626,6 +654,34 @@ internal fun PendingConversationScreen(
                 if (id != "name") closeChoice()
             }, onDismiss = closeChoice,
         )
+        PendingChoice.RecoverySession -> ComposerChoiceSheet(
+            title = "选择近期会话继续",
+            options = recoverySessions.map { it.id to "${it.title ?: it.command ?: it.id} · ${it.startedAt.orEmpty()}" },
+            selected = "", searchable = true, searchPlaceholder = "搜索会话",
+            onSelect = { id ->
+                try {
+                    creationStore.sessionAccepted(creationKey, id)
+                    persistedCreation = creationStore.state(creationKey)
+                    drafts.setPendingCreatedSession(draftKey, id)
+                    drafts.setPendingCreationUnconfirmed(draftKey, false)
+                    error = "已选择会话，点击发送继续。"
+                } catch (failure: Exception) { error = failure.message }
+                closeChoice()
+            }, onDismiss = closeChoice,
+        )
+        PendingChoice.SeparateSession -> WandDialog(
+            title = "另建一个会话？", onDismissRequest = closeChoice,
+            confirm = WandDialogAction("保留草稿，另建会话", {
+                try {
+                    creationStore.startSeparateSession(creationKey)
+                    persistedCreation = creationStore.state(creationKey)
+                    drafts.setPendingCreationUnconfirmed(draftKey, false)
+                    creationStarted = persistedCreation.taskId != null
+                    error = "草稿已保留，点击发送开始新会话。"
+                } catch (failure: Exception) { error = failure.message }
+                closeChoice()
+            }),
+        ) { Text("上一次可能已创建空会话。草稿会留在这里，等你点击发送。") }
         PendingChoice.RecoveryTask -> ComposerChoiceSheet(
             title = "选择已创建的任务继续",
             options = recoveryTasks.map { (workspaceName, task) -> task.id to "$workspaceName · ${task.name}" },
@@ -836,6 +892,13 @@ internal fun PendingConversationScreen(
                     modifier = Modifier.padding(16.dp))
             }
             error?.let { Text(it, color = WandColors.danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            if (unknownSession && !busy) {
+                TextButton(onClick = { recoveryRetry++ }) { Text("重新核对会话") }
+                if (recoverySessions.isNotEmpty()) {
+                    TextButton(onClick = { choice = PendingChoice.RecoverySession }) { Text("选择近期会话继续") }
+                }
+                TextButton(onClick = { choice = PendingChoice.SeparateSession }) { Text("保留草稿，另建会话") }
+            }
             if (persistedCreation.unconfirmed && persistedCreation.operation == com.wand.app.ui.PendingCreationOperation.TASK && !hasKnownSession) {
                 Text("上次创建尚未确认。可以读取任务列表，选择要继续的任务；输入会保留，任务不会重复创建。",
                     color = WandColors.textSecondary, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)

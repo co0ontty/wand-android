@@ -8,13 +8,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +30,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.wand.app.ui.theme.WandColors
 import com.wand.app.ui.theme.GlassBackdrop
 import com.wand.app.ui.theme.WandGlass
@@ -62,12 +66,14 @@ fun WandCapsuleTitle(
     val capsuleHeight = avatarSize + capsuleInset * 2
     val renderSize = maxOf(48.dp, avatarSize)
     val overhang = (renderSize - avatarSize) / 2
+    val titleStyle = MaterialTheme.typography.labelLarge
+    val textModifier = Modifier.widthIn(max = titleWidth ?: Dp.Infinity).fillMaxWidth()
     // 背景占满父布局提供的净宽，不能由标题长短或是否有副标题决定。
     Box(modifier = modifier.fillMaxWidth().height(capsuleHeight)) {
         // Only the background is clipped by the native material. Never mask the portrait.
         Box(Modifier.matchParentSize().glassSurface(backdrop, RoundedCornerShape(percent = 50),
             WandGlass.clear.copy(tint = fill, rimShade = stroke), drawRim = true))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.width(capsuleInset))
             Box(Modifier.size(avatarSize), contentAlignment = Alignment.Center) {
                 EmployeeAvatar(id = avatarId, name = avatarName, avatar = avatar,
@@ -76,15 +82,22 @@ fun WandCapsuleTitle(
             }
         Column(
             modifier = Modifier
+                .weight(1f)
                 .padding(start = 8.dp + overhang, end = 16.dp),
         ) {
             Text(
                 title,
-                style = MaterialTheme.typography.labelLarge,
+                style = titleStyle,
                 color = titleColor,
+                // 与 iOS minimumScaleFactor(0.82) 一致：先缩字，达到下限后才省略。
+                autoSize = TextAutoSize.StepBased(
+                    minFontSize = titleStyle.fontSize * 0.82f,
+                    maxFontSize = titleStyle.fontSize,
+                    stepSize = 0.1.sp,
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = if (titleWidth != null) Modifier.width(titleWidth) else Modifier,
+                modifier = textModifier,
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(
@@ -93,7 +106,7 @@ fun WandCapsuleTitle(
                     color = subtitleColor,
                     maxLines = 1,
                     overflow = TextOverflow.MiddleEllipsis,
-                    modifier = if (titleWidth != null) Modifier.width(titleWidth) else Modifier.fillMaxWidth(),
+                    modifier = textModifier,
                 )
             }
         }

@@ -234,6 +234,7 @@ internal fun pendingConversationEntryScope(
 
 internal fun pendingConversationScreen(
     entry: String,
+    initialPrompt: String? = null,
     cwd: String? = null,
     workspaceId: String? = null,
     workspaceTaskId: String? = null,
@@ -243,6 +244,7 @@ internal fun pendingConversationScreen(
     taskWorktree: Boolean = false,
 ): Screen.PendingConversation = Screen.PendingConversation(
     draftKey = entry,
+    initialPrompt = initialPrompt,
     cwd = cwd,
     workspaceId = workspaceId,
     workspaceTaskId = workspaceTaskId,
@@ -619,7 +621,7 @@ private fun SessionDetailScreen(
             val pendingCreationStore = remember(api.baseUrl, context) {
                 PendingCreationStore(SharedPreferencesPendingCreationPersistence(context))
             }
-            val entryScope = pendingConversationEntryScope(screen.workspaceId, screen.workspaceTaskId, screen.cwd)
+            val entryScope = if (screen.initialPrompt != null) screen.draftKey else pendingConversationEntryScope(screen.workspaceId, screen.workspaceTaskId, screen.cwd)
             PendingConversationScreen(
                 api = api,
                 taskState = taskState,
@@ -629,6 +631,7 @@ private fun SessionDetailScreen(
                 workspaceTaskId = screen.workspaceTaskId,
                 taskName = screen.taskName,
                 initialEmployeeId = screen.initialEmployeeId,
+                initialPrompt = screen.initialPrompt,
                 initialCreateMode = screen.initialCreateMode,
                 taskWorktree = screen.taskWorktree,
                 creationStore = pendingCreationStore,
@@ -913,6 +916,9 @@ private fun SinglePaneContent(
             TaskListScreen(
                 conversationList = { clearance, enabled, move, delete -> UnifiedConversationList(conversationState, clearance,
                     interactionEnabled = enabled, onMoveSession = move, onDeleteSession = delete,
+                    onMergeAgent = { workspaceId, cwd, prompt ->
+                        nav.push(pendingConversationScreen("merge:" + java.util.UUID.randomUUID(), initialPrompt = prompt, cwd = cwd, workspaceId = workspaceId))
+                    },
                     onOpenQueuedTask = { id -> nav.push(Screen.TaskBoard(taskId = id)) },
                     onReload = { taskState.load(silent = true) }, showsFilters = nav.current is Screen.SessionList, onMode = onHomeListModeChange, onCreate = { workspaceId ->
                     val cwd = taskState.conversationGroups.firstOrNull { it.workspaceId == workspaceId }?.workspaceCwd
@@ -1057,7 +1063,10 @@ private fun WideReadyContent(
                     // 侧栏点一条 = 显式打开意图：详情落右栏，而不是靠 selectedId 投影出一个输入框。
                     conversationList = { clearance, enabled, move, delete -> UnifiedConversationList(conversationState, clearance,
         interactionEnabled = enabled, onMoveSession = move, onDeleteSession = delete,
-        onOpenQueuedTask = { id -> nav.push(Screen.TaskBoard(taskId = id)) },
+        onMergeAgent = { workspaceId, cwd, prompt ->
+                        nav.push(pendingConversationScreen("merge:" + java.util.UUID.randomUUID(), initialPrompt = prompt, cwd = cwd, workspaceId = workspaceId))
+                    },
+                    onOpenQueuedTask = { id -> nav.push(Screen.TaskBoard(taskId = id)) },
         onReload = { taskState.load(silent = true) }, showsFilters = nav.current is Screen.SessionList, onMode = onHomeListModeChange, onCreate = { workspaceId ->
         val cwd = taskState.conversationGroups.firstOrNull { it.workspaceId == workspaceId }?.workspaceCwd
         nav.push(pendingConversationScreen(pendingConversationEntryScope(workspaceId, null, cwd), cwd = cwd, workspaceId = workspaceId))

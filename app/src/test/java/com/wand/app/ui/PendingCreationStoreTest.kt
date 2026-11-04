@@ -26,6 +26,20 @@ class PendingCreationStoreTest {
     }
 
     @Test
+    fun separateSessionAfterRestartKeepsAcceptedTaskAndReleasesCreationLock() {
+        val persistence = FakePersistence()
+        val store = PendingCreationStore(persistence)
+        store.recordTaskAccepted("scope", "task", "/repo", "workspace")
+        store.markUnconfirmed("scope", PendingCreationOperation.SESSION)
+        PendingCreationStore(persistence).startSeparateSession("scope")
+        val restored = PendingCreationStore(persistence).state("scope")
+        assertEquals("task", restored.taskId)
+        assertEquals("/repo", restored.taskCwd)
+        assertFalse(restored.blocksCreation(false, false))
+        assertNull(restored.sessionId)
+    }
+
+    @Test
     fun unknownTaskCreationSurvivesPendingEntryAndStateRecreation() {
         val persistence = FakePersistence()
         val firstStore = PendingCreationStore(persistence)

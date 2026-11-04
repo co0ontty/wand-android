@@ -758,7 +758,7 @@ class ChatStore(
         scope.launch {
             try {
                 if (isStructured) {
-                    api.sendStructuredInput(sessionId, answerText)
+                    api.sendStructuredInput(sessionId, answerText, expectedQuestionId = toolUseId)
                 } else {
                     sendPtyChatInput(answerText)
                 }

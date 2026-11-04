@@ -86,6 +86,12 @@ class PendingCreationStore(private val persistence: PendingCreationPersistence) 
         return unresolvedKey
     }
 
+    fun startSeparateSession(key: String) {
+        val current = state(key)
+        check(current.unconfirmed && current.operation == PendingCreationOperation.SESSION && current.sessionId == null)
+        requireSaved(persistence.write(key, current.copy(unconfirmed = false, operation = null)), "无法保存新建状态。")
+    }
+
     fun sessionAccepted(key: String, sessionId: String) {
         val current = state(key)
         requireSaved(
